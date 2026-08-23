@@ -1,0 +1,14 @@
+{
+  "activeWorkspaceId": "default",
+  "workspaces": [
+    {
+      "id": "default",
+      "name": "My Workspace",
+      "color": "#3b82f6",
+      "icon": "M",
+      "defaultEditor": "code",
+      "defaultPortBase": 8080,
+      "logDir": null
+    }
+  ]
+}

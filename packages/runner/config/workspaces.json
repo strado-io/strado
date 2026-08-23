@@ -1,0 +1,14 @@
+{
+  "activeWorkspaceId": "default",
+  "workspaces": [
+    {
+      "id": "default",
+      "name": "Personal",
+      "color": "#f97f1b",
+      "icon": "P",
+      "defaultEditor": "code",
+      "defaultPortBase": 8080,
+      "logDir": null
+    }
+  ]
+}

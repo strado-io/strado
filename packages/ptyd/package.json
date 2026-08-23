@@ -1,0 +1,25 @@
+{
+  "name": "@strado/ptyd",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./protocol": "./dist/src/protocol.js"
+  },
+  "types": "./dist/src/protocol.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "node-pty": "1.2.0-beta.14"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}

@@ -1,0 +1,48 @@
+# Packaged desktop build (see scripts/package-mac.mjs). The asar carries only
+# the minified main/preload; server, web, Node runtime, and helper binaries
+# ship under Resources/ so external processes (the Node child, Claude's MCP
+# stdio spawn) can read them — asar is invisible to non-Electron processes.
+appId: io.strado.app
+productName: Strado
+electronVersion: 33.4.11
+directories:
+  app: build/pack/app
+  output: release
+asar: true
+# re-adds the server's vendored node_modules that the extraResources copier drops
+afterPack: scripts/after-pack.cjs
+mac:
+  category: public.app-category.developer-tools
+  icon: packages/desktop/assets/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64]
+  # identity: null → ad-hoc build (testers run `xattr -cr` once after install).
+  # package-mac.mjs overrides identity + notarize on the CLI when the signing
+  # env vars are set — see the env contract at the top of that script.
+  identity: null
+  # Inert while identity is null; load-bearing for signed builds. gatekeeperAssess
+  # is off because spctl inside the build races notarization — we verify
+  # explicitly in package-mac.mjs after stapling instead.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: packages/desktop/assets/entitlements.mac.plist
+  entitlementsInherit: packages/desktop/assets/entitlements.mac.plist
+linux:
+  category: Development
+  # Linux-specific icon: full-bleed tile + bigger glyph (docks render icons
+  # without the macOS-style margin baked into icon.png/icns)
+  icon: packages/desktop/assets/icon-linux.png
+  maintainer: "Strado <hello@strado.io>"
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+extraResources:
+  - from: build/pack/bin
+    to: bin
+  - from: build/pack/server
+    to: server
+  - from: build/pack/web
+    to: web

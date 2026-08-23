@@ -1,0 +1,23 @@
+node_modules
+dist/
+.DS_Store
+.env
+.env.local
+*.log
+coverage/
+.vite/
+packages/*/dist/
+*.pre-workspace-bak
+config/*.bak
+
+# Live config is machine-local (see config.example/); .backups/ dirs are the
+# app's own rotating safety net.
+/config/
+packages/server/config/
+
+# packaging artifacts (scripts/package-mac.mjs)
+build/
+release/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

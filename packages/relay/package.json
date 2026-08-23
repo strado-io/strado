@@ -1,0 +1,33 @@
+{
+  "name": "@strado/relay",
+  "version": "0.1.23",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "strado-relay": "dist/serverMain.js",
+    "strado-tunnel": "dist/clientMain.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/serverMain.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^8.3.1",
+    "fastify": "^4.26.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./protocol": "./dist/protocol.js"
+  }
+}

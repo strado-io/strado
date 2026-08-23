@@ -1,0 +1,28 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Linux app icon: unlike macOS (which wants the Apple-grid margin, see
+       app-icon.svg), Linux docks render icons full-bleed — a mac-style margin
+       makes the logo look tiny next to neighbors. Full-canvas tile, pixel-S
+       at ~64% of the canvas. -->
+  <rect width="1024" height="1024" rx="232" fill="#0B0B0D"/>
+  <g transform="translate(192 185.6) scale(2)" fill="#F97F1B">
+    <rect x="92.8" width="38.4" height="38.4"/>
+    <rect x="140.8" width="38.4" height="38.4"/>
+    <rect x="188.8" width="38.4" height="38.4"/>
+    <rect x="236.8" width="38.4" height="38.4"/>
+    <rect x="44.8" y="48" width="38.4" height="38.4"/>
+    <rect x="92.8" y="48" width="38.4" height="38.4"/>
+    <rect x="44.8" y="96" width="38.4" height="38.4"/>
+    <rect x="92.8" y="96" width="38.4" height="38.4"/>
+    <rect x="92.8" y="144" width="38.4" height="38.4"/>
+    <rect x="140.8" y="144" width="38.4" height="38.4"/>
+    <rect x="188.8" y="144" width="38.4" height="38.4"/>
+    <rect x="188.8" y="192" width="38.4" height="38.4"/>
+    <rect x="236.8" y="192" width="38.4" height="38.4"/>
+    <rect x="188.8" y="240" width="38.4" height="38.4"/>
+    <rect x="236.8" y="240" width="38.4" height="38.4"/>
+    <rect x="44.8" y="288" width="38.4" height="38.4"/>
+    <rect x="92.8" y="288" width="38.4" height="38.4"/>
+    <rect x="140.8" y="288" width="38.4" height="38.4"/>
+    <rect x="188.8" y="288" width="38.4" height="38.4"/>
+  </g>
+</svg>

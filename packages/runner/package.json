@@ -1,0 +1,26 @@
+{
+  "name": "@strado/runner",
+  "version": "0.1.26",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "strado-runner": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@strado/relay": "*",
+    "@strado/server": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}

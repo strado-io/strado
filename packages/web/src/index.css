@@ -1,0 +1,100 @@
+@import '@fontsource-variable/jetbrains-mono';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Dark, slim scrollbars to match the graphite theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c3039 transparent; /* zinc-700 thumb */
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #2c3039; /* zinc-700 */
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #4b505c; /* zinc-600 */
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Knowledge Base markdown. Scoped to .kb-markdown so it can't leak into the
+   rest of the app; highlight.js token colors are inlined rather than pulling
+   a theme package. */
+.kb-markdown h1 { @apply mb-3 mt-6 text-xl font-semibold text-zinc-100; }
+.kb-markdown h2 { @apply mb-2 mt-6 text-lg font-semibold text-zinc-100; }
+.kb-markdown h3 { @apply mb-2 mt-5 text-base font-semibold text-zinc-200; }
+.kb-markdown h4 { @apply mb-2 mt-4 text-sm font-semibold text-zinc-200; }
+.kb-markdown h5 { @apply mb-1 mt-4 text-sm font-medium text-zinc-300; }
+.kb-markdown h6 { @apply mb-1 mt-4 text-xs font-medium uppercase tracking-wide text-zinc-400; }
+.kb-markdown p { @apply my-3; }
+.kb-markdown ul { @apply my-3 list-disc pl-5; }
+.kb-markdown ol { @apply my-3 list-decimal pl-5; }
+.kb-markdown li { @apply my-1; }
+.kb-markdown li.task-list-item { @apply list-none; }
+.kb-markdown a { @apply text-sky-400 hover:underline; }
+.kb-markdown code { @apply rounded bg-zinc-900 px-1 py-0.5 text-[12px] text-zinc-200; }
+.kb-markdown pre { @apply my-4 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-3; }
+.kb-markdown pre code { @apply bg-transparent p-0 text-[12px]; }
+.kb-markdown blockquote { @apply my-3 border-l-2 border-zinc-700 pl-3 text-zinc-400; }
+.kb-markdown img { @apply max-w-full h-auto; }
+.kb-markdown table { @apply my-4 w-full border-collapse text-xs; }
+.kb-markdown th { @apply border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-left font-medium text-zinc-200; }
+.kb-markdown td { @apply border border-zinc-800 px-2 py-1 align-top; }
+.kb-markdown hr { @apply my-6 border-zinc-800; }
+.kb-markdown .hljs-keyword, .kb-markdown .hljs-title { @apply text-sky-300; }
+.kb-markdown .hljs-string { @apply text-emerald-300; }
+.kb-markdown .hljs-comment { @apply text-zinc-500; }
+.kb-markdown .hljs-number, .kb-markdown .hljs-literal { @apply text-amber-300; }
+.kb-markdown .hljs-attr, .kb-markdown .hljs-property, .kb-markdown .hljs-variable, .kb-markdown .hljs-params { @apply text-cyan-300; }
+.kb-markdown .hljs-built_in, .kb-markdown .hljs-type { @apply text-teal-300; }
+.kb-markdown .hljs-name, .kb-markdown .hljs-tag { @apply text-rose-300; }
+/* highlight.js v11 emits dotted scopes (title.function, title.class) as two
+   classes: the tiered prefix (hljs-title, already styled above) plus a bare
+   trailing-underscore class with NO hljs- prefix (function_, class_) — see
+   scopeToCSSClass in highlight.js/lib/core.js. `.hljs-function` never
+   matched anything. */
+.kb-markdown .hljs-title.function_, .kb-markdown .hljs-title.class_ { @apply text-violet-300; }
+.kb-markdown .hljs-subst { @apply text-zinc-300; }
+.kb-markdown .hljs-meta { @apply text-zinc-400; }
+
+/* Terminal-style braille spinner: sidebar "agent working" indicator.
+   Chromium animates `content` on pseudo-elements with stepped keyframes. */
+@keyframes braille-spin {
+  0%   { content: '⠋'; }
+  10%  { content: '⠙'; }
+  20%  { content: '⠹'; }
+  30%  { content: '⠸'; }
+  40%  { content: '⠼'; }
+  50%  { content: '⠴'; }
+  60%  { content: '⠦'; }
+  70%  { content: '⠧'; }
+  80%  { content: '⠇'; }
+  90%  { content: '⠏'; }
+  100% { content: '⠋'; }
+}
+.braille-spinner::before {
+  content: '⠋';
+  animation: braille-spin 0.8s steps(1, end) infinite;
+}

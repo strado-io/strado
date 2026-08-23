@@ -1,0 +1,20 @@
+{
+  "repos": [
+    {
+      "id": "my-app",
+      "name": "My App",
+      "path": "/Users/you/code/my-app",
+      "worktreesDir": "/Users/you/code/my-app.worktrees",
+      "projectSubdir": null,
+      "startCommand": "npm run dev",
+      "defaultPort": 5173,
+      "editor": "code",
+      "openUrl": null,
+      "envProfiles": [
+        { "name": "DEV", "envFile": ".env.dev" },
+        { "name": "PROD", "envFile": ".env.prod" }
+      ],
+      "defaultEnvProfile": "DEV"
+    }
+  ]
+}

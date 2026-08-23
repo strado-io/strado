@@ -1,0 +1,27 @@
+{
+  "name": "strado",
+  "version": "0.1.45",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:server dev:web",
+    "dev:server": "npm run build -w packages/ptyd && STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev STRADO_EMBEDS=1 tsx watch packages/server/src/index.ts",
+    "dev:web": "STRADO_SERVER_PORT=7877 npm run dev -w packages/web",
+    "build": "npm run build -w packages/ptyd && npm run build -w packages/relay && npm run build -w packages/web && npm run build -w packages/server",
+    "start": "npm run build && STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev node packages/server/dist/index.js",
+    "desktop": "STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev npm start -w @strado/desktop",
+    "desktop:nocdp": "STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev STRADO_CDP_PORT=0 npm start -w @strado/desktop",
+    "test": "npm run test -w packages/ptyd && npm run test -w packages/relay && npm run test -w packages/runner && npm run test -w packages/server && npm run test -w packages/web",
+    "lint": "echo 'no lint configured'",
+    "postinstall": "node scripts/ensure-node-pty-exec.mjs"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.4.0"
+  }
+}
