@@ -70,7 +70,7 @@ export function probeDaemon(
     socket.once('connect', () => {
       socket.write(encodeFrame({ type: 'hello', protocols: [PROTOCOL_VERSION] }));
     });
-    socket.on('data', (chunk) => {
+    socket.on('data', (chunk: Buffer) => {
       try {
         decoder.push(chunk);
         for (const frame of decoder.drain()) {
