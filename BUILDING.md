@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node 20.x (the web test suite requires it; `nvm use 20`)
+- Node 20.x or 22+ (`.nvmrc` pins 20; the web test suite auto-adapts to newer Node)
 - git 2.40+
 - macOS (Apple Silicon) or Linux x64 for desktop packaging
 
