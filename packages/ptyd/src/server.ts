@@ -154,7 +154,10 @@ export class PtydServer {
     };
     this.conns.add(conn);
     socket.on('drain', () => this.resumePaused(conn));
-    socket.on('data', (chunk) => {
+    // Annotated: @types/node >=26 widens the 'data' payload to
+    // `string | Buffer` for the setEncoding() case. This socket is never
+    // given an encoding, so frames always arrive as Buffers.
+    socket.on('data', (chunk: Buffer) => {
       let frames;
       try {
         conn.decoder.push(chunk);
