@@ -104,7 +104,7 @@ export function createDaemonClient(socketPath: string): DaemonClient {
         const decoder = new FrameDecoder();
         let helloAcked = false;
         s.once('connect', () => s.write(encodeFrame({ type: 'hello', protocols: [PROTOCOL_VERSION] })));
-        s.on('data', (chunk) => {
+        s.on('data', (chunk: Buffer) => {
           if (s !== socket) return; // superseded connection — its frames are stale
           try {
             decoder.push(chunk);

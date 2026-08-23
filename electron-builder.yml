@@ -28,6 +28,13 @@ mac:
   gatekeeperAssess: false
   entitlements: packages/desktop/assets/entitlements.mac.plist
   entitlementsInherit: packages/desktop/assets/entitlements.mac.plist
+  extendInfo:
+    # Pinned explicitly: Electron ships a stock NSMicrophoneUsageDescription
+    # ("This app needs access to the microphone"), so the mic prompt worked by
+    # accident rather than by choice. This is the string macOS shows in the
+    # permission dialog — own the copy here.
+    NSMicrophoneUsageDescription: >-
+      Strado uses the microphone to dictate prompts to your coding agents.
 linux:
   category: Development
   # Linux-specific icon: full-bleed tile + bigger glyph (docks render icons
