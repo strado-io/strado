@@ -13,9 +13,7 @@ Run Claude Code, Codex, and opencode in parallel — each in its own git worktre
 Debug in the built-in browser, edit in the built-in IDE, and verify every change while you steer.
 
 [**Download**](https://strado.io) &nbsp;&bull;&nbsp; [Build from source](BUILDING.md) &nbsp;&bull;&nbsp; [Contributing](CONTRIBUTING.md)
-<!-- hero clip: drop docs/assets/readme/hero.gif here (ptyd survive-restart or parallel-agents recording)
-<img width="full" alt="Parallel agents working across Strado worktrees" src="docs/assets/readme/hero.gif" />
--->
+<img width="100%" alt="Strado dashboard — sprint tickets, worktrees, branches, and time spent per ticket" src="docs/assets/readme/hero.png" />
 </div>
 
 ## Review proof, not promises
@@ -49,7 +47,7 @@ branch, uncommitted changes, env profile, and run status live.
 
 </td>
 <td width="50%">
-<!-- docs/assets/readme/worktrees.png -->
+<img width="100%" alt="Command palette listing worktrees across multiple repos" src="docs/assets/readme/worktrees.png" />
 </td>
 </tr>
 <tr>
@@ -63,7 +61,7 @@ per worktree, plus the embedded IDE.
 
 </td>
 <td width="50%">
-<!-- docs/assets/readme/hub.png -->
+<img width="100%" alt="Hub window switching between Claude, Codex, Shell, and Browser sessions" src="docs/assets/readme/hub.png" />
 </td>
 </tr>
 <tr>
@@ -77,7 +75,7 @@ reading about it.
 
 </td>
 <td width="50%">
-<!-- docs/assets/readme/browser.png -->
+<img width="100%" alt="Embedded browser showing a worktree preview" src="docs/assets/readme/browser.png" />
 </td>
 </tr>
 <tr>
@@ -90,7 +88,7 @@ and MR creation. Arrow keys walk the file list.
 
 </td>
 <td width="50%">
-<!-- docs/assets/readme/diff.png -->
+<img width="100%" alt="Per-hunk diff view with stage, discard, and commit" src="docs/assets/readme/diff.png" />
 </td>
 </tr>
 <tr>
@@ -105,7 +103,7 @@ sessionized with a 15-minute idle gap — no timers, no worklogs to remember.
 
 </td>
 <td width="50%">
-<!-- docs/assets/readme/jira.png -->
+<img width="100%" alt="Worktree settings with Jira ticket, sprint, port, env variables, and tracked time" src="docs/assets/readme/jira.png" />
 </td>
 </tr>
 </table>
