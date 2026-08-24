@@ -36,6 +36,16 @@ export async function registerEventRoutes(app: FastifyInstance) {
     return reply;
   });
 
+  // Output from an onboarding-driven prerequisite install. Same shape as the
+  // channels above: whatever the installer emits, verbatim.
+  app.get('/events/env-install', async (req, reply) => {
+    openStream(reply);
+    const unsubscribe = app.deps.bus.on('envInstall', (evt) => writeEvent(reply, evt.type, evt.data));
+    const beat = setInterval(() => reply.raw.write(': heartbeat\n\n'), HEARTBEAT_MS);
+    req.raw.on('close', () => { clearInterval(beat); unsubscribe(); reply.raw.end(); });
+    return reply;
+  });
+
   app.get<{ Params: { encodedPath: string } }>(
     '/events/logs/:encodedPath',
     async (req, reply) => {
