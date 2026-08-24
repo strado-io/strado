@@ -92,13 +92,23 @@ export function LoginPanel({ onSignedIn }: { onSignedIn: () => void }) {
   if (phase.kind === 'waiting') {
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-sm text-zinc-400">Confirm this code in your browser:</p>
-        <p className="rounded bg-zinc-900 py-3 text-center font-mono text-2xl tracking-[0.2em] text-zinc-100">
-          {phase.userCode}
-        </p>
-        <p className="text-xs text-zinc-600">
-          A tab should have opened. If not,{' '}
-          <a className="underline" href={phase.url} target="_blank" rel="noopener noreferrer">
+        {/* The code is a terminal readout, matching the hosted approval page
+            glyph-for-glyph: same label, same tracking, same orange. Two
+            surfaces that look alike are what make the comparison feel like
+            one act instead of two lookups. */}
+        <div
+          role="group"
+          aria-label="Device code"
+          className="flex flex-col gap-2 rounded-xl border border-zinc-700 bg-zinc-950 px-4 pb-[1.05rem] pt-4 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.4)]"
+        >
+          <span className="text-[0.62rem] uppercase tracking-[0.28em] text-zinc-500">device code</span>
+          <span className="text-center indent-[0.32em] text-[1.9rem] font-bold tracking-[0.32em] text-sky-400 [text-shadow:0_0_22px_rgba(249,127,27,0.4)]">
+            {phase.userCode}
+          </span>
+        </div>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+          Confirm this matches the code in your browser. A tab should have opened — if not,{' '}
+          <a className="text-sky-400 underline" href={phase.url} target="_blank" rel="noopener noreferrer">
             open it here
           </a>
           . You can click the emailed link on any device.
@@ -112,11 +122,18 @@ export function LoginPanel({ onSignedIn }: { onSignedIn: () => void }) {
       {phase.kind === 'expired' && <p className="text-sm text-amber-400">That sign-in attempt expired.</p>}
       {phase.kind === 'error' && <p className="text-sm text-red-400">{phase.message}</p>}
       <button
-        className="rounded bg-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-900 hover:bg-white"
+        className="w-full rounded-[10px] border border-sky-400/20 bg-gradient-to-b from-[#c4550a] to-sky-700 px-3 py-[0.72rem] text-[0.95rem] font-semibold text-[#fbf3ea] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)] transition hover:from-sky-600 hover:to-[#c4550a] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_6px_18px_-12px_rgba(226,103,10,0.55)] active:translate-y-px"
         onClick={begin}
       >
-        {phase.kind === 'idle' ? 'Sign in with email' : 'Try again'}
+        {phase.kind === 'idle' ? 'Sign in' : 'Try again'}
       </button>
+      {/* The button used to say "with email", but the page it opens offers a
+          magic link, Google, and GitHub — naming one of the three read as a
+          promise the browser then broke. Say where it goes and what's on
+          offer instead. */}
+      <p className="text-center text-xs leading-relaxed text-zinc-500">
+        Opens a browser tab — email, Google, or GitHub.
+      </p>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { Worktree } from './types';
+import type { ToolStatus } from './api';
 
 export type WorktreeEvent = {
   type: 'worktree.updated';
@@ -105,6 +106,26 @@ export function subscribeWorkspaces(handler: (evt: WorkspaceListEvent) => void):
   const offs: Unsub[] = types.map((t) => {
     const listener = (e: MessageEvent) => {
       try { handler({ type: t, data: JSON.parse(e.data) }); } catch { /* ignore */ }
+    };
+    es.addEventListener(t, listener as EventListener);
+    return () => es.removeEventListener(t, listener as EventListener);
+  });
+  return () => { for (const off of offs) off(); es.close(); };
+}
+
+export type EnvInstallEvent =
+  | { type: 'output'; data: { id: string; line: string } }
+  | { type: 'done'; data: { id: string; ok: boolean; message: string | null; tool: ToolStatus | null } };
+
+// Live output from an onboarding-driven prerequisite install. One stream covers
+// every tool — each event names its own id, so the welcome screen can run more
+// than one install without opening a socket per row.
+export function subscribeEnvInstall(handler: (evt: EnvInstallEvent) => void): Unsub {
+  const es = new EventSource('/events/env-install');
+  const types: EnvInstallEvent['type'][] = ['output', 'done'];
+  const offs: Unsub[] = types.map((t) => {
+    const listener = (e: MessageEvent) => {
+      try { handler({ type: t, data: JSON.parse(e.data) } as EnvInstallEvent); } catch { /* ignore */ }
     };
     es.addEventListener(t, listener as EventListener);
     return () => es.removeEventListener(t, listener as EventListener);

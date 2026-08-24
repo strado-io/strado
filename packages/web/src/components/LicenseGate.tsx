@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { initTelemetry, track } from '../telemetry';
 import { LoginPanel } from './LoginPanel';
+import { FirstRunCard, ghostButtonClass } from './FirstRunCard';
 
 // Sign-in gate for shipped builds. Dev servers report required:false and
 // render straight through. Once signed in the app works offline — a failed
@@ -79,41 +80,73 @@ export function LicenseGate({ children }: { children: ReactNode }) {
       }
     };
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950 p-4">
-        <div className="w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-950 p-6 shadow-2xl">
-          <h1 className="text-lg font-semibold text-zinc-100">Reconnect to Strado</h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            This install hasn&apos;t been able to confirm its license in a while, and the
-            offline grace period has run out. Reconnect to the internet and retry, or sign
-            in again.
-          </p>
-          <button
-            onClick={() => void retry()}
-            disabled={retrying}
-            className="mt-4 h-10 w-full rounded bg-sky-700 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
-          >
-            {retrying ? 'Checking…' : 'Retry'}
-          </button>
-          <div className="my-4 flex items-center gap-2 text-xs text-zinc-600">
-            <div className="h-px flex-1 bg-zinc-800" />
-            or
-            <div className="h-px flex-1 bg-zinc-800" />
-          </div>
-          <LoginPanel onSignedIn={() => window.location.reload()} />
+      <FirstRunCard
+        title="Reconnect to Strado"
+        lede="This install hasn't been able to confirm its license in a while, and the offline grace period has run out. Reconnect to the internet and retry, or sign in again."
+        footer={<PairingFooter apiUrl={apiUrl} />}
+      >
+        {/* Retry stays a ghost button so the card carries a single orange
+            primary — the sign-in path below, which is the one that works
+            regardless of what the license server says. */}
+        <button
+          onClick={() => void retry()}
+          disabled={retrying}
+          className={`${ghostButtonClass} w-full px-3 py-[0.72rem] text-[0.95rem] font-semibold`}
+        >
+          {retrying ? 'Checking…' : 'Retry'}
+        </button>
+        <div className="my-4 flex items-center gap-3 text-[0.68rem] uppercase tracking-[0.2em] text-zinc-500">
+          <div className="h-px flex-1 bg-zinc-700" />
+          or
+          <div className="h-px flex-1 bg-zinc-700" />
         </div>
-      </div>
+        <LoginPanel onSignedIn={() => window.location.reload()} />
+      </FirstRunCard>
     );
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-zinc-950 p-4">
-      <div className="w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-950 p-6 shadow-2xl">
-        <h1 className="text-lg font-semibold text-zinc-100">Welcome to Strado</h1>
-        <p className="mt-1 text-sm text-zinc-500">This beta requires an account.</p>
-        <div className="mt-4">
-          <LoginPanel onSignedIn={() => window.location.reload()} />
-        </div>
-      </div>
-    </div>
+    <FirstRunCard
+      title="Welcome to Strado"
+      lede="This beta requires an account."
+      footer={<PairingFooter apiUrl={state.apiUrl} />}
+    >
+      <LoginPanel onSignedIn={() => window.location.reload()} />
+    </FirstRunCard>
   );
+}
+
+// Names the host the device code is confirmed against, so a self-hosted or
+// staging endpoint is visible rather than implied.
+function PairingFooter({ apiUrl }: { apiUrl: string }) {
+  return (
+    <>
+      <svg
+        viewBox="0 0 24 24"
+        width="11"
+        height="11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="flex-none opacity-85"
+        aria-hidden="true"
+      >
+        <rect x="4" y="10.5" width="16" height="10" rx="2.2" />
+        <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+      </svg>
+      secure pairing · {hostOf(apiUrl)}
+    </>
+  );
+}
+
+// A configured value that isn't a URL is shown verbatim instead of crashing
+// the one screen that must render.
+function hostOf(apiUrl: string): string {
+  try {
+    return new URL(apiUrl).host;
+  } catch {
+    return apiUrl;
+  }
 }
