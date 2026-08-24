@@ -160,7 +160,7 @@ describe('LicenseGate', () => {
     // itself is the problem, not "you aren't signed in".
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
     // ...and still offers a way out that doesn't depend on connectivity.
-    expect(screen.getByRole('button', { name: /sign in with email/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^sign in$/i })).toBeInTheDocument();
   });
 
   it('a stale license that reaches the cloud in the background opens the app on its own', async () => {

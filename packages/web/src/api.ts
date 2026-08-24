@@ -55,6 +55,17 @@ export type TicketIssueDto = JiraIssueDto & { provider: TicketProviderId; url: s
 export type TicketSprintDto = { id: string; name: string; state: 'active' | 'future'; startDate: string | null; endDate: string | null };
 export type TicketTransitionDto = { id: string; name: string; toStatus: string; toCategory: 'new' | 'indeterminate' | 'done' };
 
+export type ToolStatus = {
+  id: string;
+  label: string;
+  found: boolean;
+  version: string | null;
+  optional: boolean;
+  hint: string | null;
+  installable: boolean;
+  installCommand: string | null;
+};
+
 export type Profile = { fullName: string; callMe: string; telemetryOptOut: boolean };
 export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
@@ -90,9 +101,13 @@ export const api = {
     }>('/api/update-check'),
   },
   envCheck: (fresh = false) =>
-    request<{ tools: Array<{ id: string; label: string; found: boolean; version: string | null; optional: boolean; hint: string | null }> }>(
-      `/api/env-check${fresh ? '?fresh=1' : ''}`,
-    ).then((b) => b.tools),
+    request<{ tools: ToolStatus[] }>(`/api/env-check${fresh ? '?fresh=1' : ''}`).then((b) => b.tools),
+  envInstall: {
+    // The id is all the server accepts — the command it runs comes from the
+    // server's own table, so nothing here can choose what executes.
+    start: (id: string) => request<{ started: true }>(`/api/env-check/install/${encodeURIComponent(id)}`, { method: 'POST' }),
+    cancel: (id: string) => request<{ cancelled: true }>(`/api/env-check/install/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
   activity: {
     beat: (path: string) =>
       request<{ ok: boolean }>('/api/activity/beat', {
