@@ -46,7 +46,7 @@ const noop = vi.fn();
 function renderDashboard() {
   return render(
     <Dashboard
-      onNewWorktree={noop} onOpenWorkspaces={noop} onShowLogs={noop}
+      onNewWorktree={noop} onShowLogs={noop}
       onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
       onCloseOverlays={noop} onDeleteWorktree={noop}
       update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
@@ -79,7 +79,7 @@ describe('Dashboard poll vs workspace switch', () => {
     current.workspace = { ...current.workspace, id: 'ws-b', name: 'B' };
     view.rerender(
       <Dashboard
-        onNewWorktree={noop} onOpenWorkspaces={noop} onShowLogs={noop}
+        onNewWorktree={noop} onShowLogs={noop}
         onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
         onCloseOverlays={noop} onDeleteWorktree={noop}
         update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}

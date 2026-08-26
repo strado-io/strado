@@ -12,10 +12,18 @@ vi.mock('../../api', () => ({
     tickets: { linearConfig: vi.fn().mockResolvedValue({ connected: false, workspaceName: null }) },
     gitlab: { config: vi.fn().mockResolvedValue({ hosts: [] }) },
     github: { config: vi.fn().mockResolvedValue({ hosts: [] }) },
+    workspaces: { list: vi.fn().mockResolvedValue({ activeWorkspaceId: 'default', workspaces: [] }) },
   },
 }));
 
 import { SettingsModal } from './SettingsModal';
+import { WorkspaceContext } from '../../contexts/WorkspaceContext';
+import type { Workspace } from '../../types';
+
+const workspace: Workspace = {
+  id: 'default', name: 'Default', color: '#333333', icon: 'D',
+  defaultEditor: 'code', defaultPortBase: 8080, logDir: null,
+};
 
 describe('SettingsModal', () => {
   it('opens on the section given by the prop', () => {
@@ -53,6 +61,23 @@ describe('SettingsModal', () => {
     render(<SettingsModal onClose={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'GitHub' }));
     expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'github');
+  });
+
+  it('keeps workspace management inside Settings', async () => {
+    render(
+      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
+        <SettingsModal onClose={() => {}} />
+      </WorkspaceContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Manage workspaces' }));
+    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'workspaces');
+    expect(await screen.findByRole('heading', { name: 'Workspaces' })).toBeInTheDocument();
+  });
+
+  it('opens runners in its own infrastructure section', () => {
+    render(<SettingsModal onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Runners\b/ }));
+    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'runners');
   });
 
   it('closes on Escape and on the close button', async () => {
