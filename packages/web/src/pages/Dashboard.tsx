@@ -207,6 +207,9 @@ export function buildDockModel(
 }
 
 export function Dashboard(props: {
+  /** A renderer modal owned by App is open. Native browser/DevTools views
+   *  must be detached because CSS z-index cannot paint above them. */
+  modalOpen?: boolean;
   onNewWorktree: (repoId?: string) => void;
   onOpenWorkspaces?: () => void;
   onShowLogs: (w: Worktree) => void;
@@ -352,6 +355,12 @@ export function Dashboard(props: {
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [showAddRepo, setShowAddRepo] = useState(false);
+  // Full-screen renderer overlays can be owned here or one level up in App.
+  // The Browser preview and its DevTools are native WebContentsViews, so they
+  // have to be parked off-screen while any of these is visible.
+  const modalOpen = !!(
+    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo || showImportTickets
+  );
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem('strado:onboarding-welcomed') === '1');
   const [checklistDismissed, setChecklistDismissed] = useState(
     () => localStorage.getItem('strado:onboarding-dismissed') === '1',
@@ -481,10 +490,9 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The hub suppresses its native browser overlays while the palette is up —
-  // without this the palette would paint UNDER the preview.
+  // Keep palette telemetry separate from native-view suppression; the latter
+  // is passed directly to TerminalView together with every other modal.
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('strado:palette', { detail: { open: showPalette } }));
     if (showPalette) track('palette_used');
   }, [showPalette]);
 
@@ -823,6 +831,7 @@ export function Dashboard(props: {
               sessionCount={dockCount}
               onToggleSessions={() => setDockOpen((v) => !v)}
               runningServers={runningServers}
+              modalOpen={modalOpen}
             />
           </div>
         ) : selectedWorktree ? (
@@ -841,6 +850,7 @@ export function Dashboard(props: {
               sessionCount={dockCount}
               onToggleSessions={() => setDockOpen((v) => !v)}
               runningServers={runningServers}
+              modalOpen={modalOpen}
             />
           </div>
         ) : (
