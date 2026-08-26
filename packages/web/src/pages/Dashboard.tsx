@@ -459,6 +459,9 @@ export function Dashboard(props: {
       } else if (e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setShowPalette((p) => !p);
+      } else if (e.key === ',') {
+        e.preventDefault();
+        setSettingsSection('profile');
       } else if (e.metaKey && e.key.toLowerCase() === 'l') {
         // ⌘L only — NOT Ctrl+L, which is the terminal's clear-screen and must
         // fall through to xterm untouched.
@@ -469,10 +472,11 @@ export function Dashboard(props: {
     // capture phase: xterm stops propagation of keys it handles, so a
     // bubble listener never sees ⌘K/⌘B while a terminal is focused
     window.addEventListener('keydown', onKeyDown, true);
-    // ⌘K pressed inside an embed (Browser preview view, VS Code iframe)
-    // never reaches window listeners; the shell forwards it over IPC
+    // Shortcuts pressed inside an embed (Browser preview view, VS Code iframe)
+    // never reach window listeners; the shell forwards them over IPC.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
       if (combo === 'palette') setShowPalette((p) => !p);
+      else if (combo === 'settings') setSettingsSection('profile');
     });
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
