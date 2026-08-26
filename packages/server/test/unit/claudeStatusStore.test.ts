@@ -60,6 +60,33 @@ describe('claudeStatusStore', () => {
     expect(store.get('/wt/a')).toBe('working'); // session 1 still working
     expect(events.at(-1).data.claudeStatusById).toEqual({ '1': 'working', '2': 'idle' });
   });
+
+  it('tracks whether a namespaced Shell agent is currently open', () => {
+    const store = createClaudeStatusStore(createEventBus());
+    expect(store.active('/wt/a', 'shell:2')).toBe(false);
+    store.set('/wt/a', 'waiting', 'shell:2');
+    expect(store.active('/wt/a', 'shell:2')).toBe(true);
+    // idle between turns is still open — only the launcher's exit report ends it
+    store.set('/wt/a', 'idle', 'shell:2');
+    expect(store.active('/wt/a', 'shell:2')).toBe(true);
+    store.remove('/wt/a', 'shell:2');
+    expect(store.active('/wt/a', 'shell:2')).toBe(false);
+  });
+
+  it('remove drops the session from the listing and announces it', () => {
+    const bus = createEventBus();
+    const store = createClaudeStatusStore(bus);
+    const events: any[] = [];
+    bus.on('worktrees', (e) => events.push(e));
+    store.set('/wt/a', 'working', '1');
+    store.set('/wt/a', 'idle', 'shell:2');
+    store.remove('/wt/a', 'shell:2');
+    expect(store.sessions('/wt/a')).toEqual({ '1': 'working' });
+    expect(events.at(-1).data.claudeStatusById).toEqual({ '1': 'working' });
+    const seen = events.length;
+    store.remove('/wt/a', 'shell:2'); // already gone — nothing to announce
+    expect(events).toHaveLength(seen);
+  });
 });
 
 describe('claudeStatusStore.sessions', () => {

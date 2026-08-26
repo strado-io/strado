@@ -99,6 +99,12 @@ describe('Sidebar tree', () => {
     expect(screen.getAllByRole('status', { name: 'agent working' })).toHaveLength(1);
   });
 
+  it.each(['codexStatus', 'opencodeStatus'] as const)('shows Shell-hosted %s activity through the aggregate status', (field) => {
+    const working = { ...wt('/r1/FD-1', 'FD-1'), [field]: 'working' as const };
+    wrap(<Sidebar {...base} worktrees={[working]} expandedRepos={new Set(['r1'])} />);
+    expect(screen.getByRole('status', { name: 'agent working' })).toBeInTheDocument();
+  });
+
   it('shows no loader for a collapsed repo even when a worktree inside is working', () => {
     const working = { ...wt('/r1/FD-1', 'FD-1'), claudeStatus: 'working' as const };
     wrap(<Sidebar {...base} worktrees={[working]} expandedRepos={new Set()} />);

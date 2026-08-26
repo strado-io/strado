@@ -116,11 +116,23 @@ describe('createAgentOutputBeats', () => {
     expect(touched).toEqual([]);
   });
 
-  it('ignores shell session output entirely (dev servers, tails)', () => {
+  it('ignores uninstrumented shell output (dev servers, tails)', () => {
     const { beat, touched } = setup('working');
     beat('/wt/a\0shell');
     beat('/wt/a\0shell:2');
     expect(touched).toEqual([]);
+  });
+
+  it('beats for output from a working agent hosted in Shell', () => {
+    const touched: string[] = [];
+    const beat = createAgentOutputBeats({
+      touch: (p) => touched.push(p),
+      agentStatus: () => undefined,
+      shellAgentWorking: (_p, id) => id === '2',
+    });
+    beat('/wt/a\0shell');
+    beat('/wt/a\0shell:2');
+    expect(touched).toEqual(['/wt/a']);
   });
 
   it('beats for a working codex session', () => {

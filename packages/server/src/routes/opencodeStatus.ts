@@ -6,9 +6,9 @@ import { AppError } from '../errors.js';
 
 const Body = z.object({
   cwd: z.string().min(1),
-  status: z.enum(['idle', 'working', 'waiting']),
+  status: z.enum(['idle', 'working', 'waiting', 'closed']),
   // Which OpenCode tab this status belongs to (multi-session worktrees).
-  sessionId: z.string().regex(/^\d+$/).optional(),
+  sessionId: z.string().regex(/^(?:\d+|shell:\d+)$/).optional(),
 });
 
 export async function registerOpencodeStatusRoutes(app: FastifyInstance) {
@@ -34,9 +34,12 @@ export async function registerOpencodeStatusRoutes(app: FastifyInstance) {
     }
     if (!owned) throw new AppError('NOT_FOUND', `no repo owns ${cwd}`);
 
-    app.deps.opencodeStatus.set(cwd, status, sessionId ?? '1');
+    // 'closed' means the agent process is gone, which is not the same as an
+    // idle one: the session leaves the map so a Shell tab stops claiming it.
+    if (status === 'closed') app.deps.opencodeStatus.remove(cwd, sessionId ?? '1');
+    else app.deps.opencodeStatus.set(cwd, status, sessionId ?? '1');
     // Agent turn boundaries count as activity for the Time spent column.
-    app.deps.activity.touch(cwd);
+    if (status !== 'closed') app.deps.activity.touch(cwd);
     return { ok: true };
   });
 }

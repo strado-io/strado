@@ -66,4 +66,12 @@ describe('POST /api/opencode/status', () => {
     expect(row.opencodeStatusById).toEqual({ '2': 'waiting' });
     expect(row.opencodeSessions).toEqual([]);
   });
+
+  it('accepts a Shell-hosted agent session and drops it on close', async () => {
+    await app.inject({ method: 'POST', url: '/api/opencode/status', payload: { cwd: repo, status: 'waiting', sessionId: 'shell:4' } });
+    expect(app.deps.opencodeStatus.sessions(repo)['shell:4']).toBe('waiting');
+    const res = await app.inject({ method: 'POST', url: '/api/opencode/status', payload: { cwd: repo, status: 'closed', sessionId: 'shell:4' } });
+    expect(res.statusCode).toBe(200);
+    expect(app.deps.opencodeStatus.sessions(repo)).not.toHaveProperty('shell:4');
+  });
 });

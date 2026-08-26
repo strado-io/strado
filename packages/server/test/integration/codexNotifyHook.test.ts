@@ -60,4 +60,14 @@ describe('codex-notify-hook', () => {
     expect(code).toBe(0);
     expect(received).toEqual([{ cwd: '/tmp/wt-a', status: 'waiting', sessionId: '2' }]);
   });
+
+  it('namespaces completion from Codex launched inside Shell', async () => {
+    const received: any[] = [];
+    const port = await listen(received);
+    await runHook(
+      [String(port), '/tmp/wt-a', JSON.stringify({ type: 'agent-turn-complete' })],
+      { STRADO_SESSION_ID: '3', STRADO_SESSION_MODE: 'shell' },
+    );
+    expect(received).toEqual([{ cwd: '/tmp/wt-a', status: 'waiting', sessionId: 'shell:3' }]);
+  });
 });

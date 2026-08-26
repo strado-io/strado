@@ -21,3 +21,6 @@ release/
 
 # subagent-driven-development scratch (ledger, briefs, review packages)
 .superpowers/
+
+# Strado runs Shell tabs with ZDOTDIR pointed here; zsh would drop history in it
+packages/server/hooks/shell/zsh/.zsh_history

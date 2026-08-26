@@ -6,6 +6,7 @@ export type ClaudeStatusMap = Record<string, ClaudeStatusValue>;
 export type ClaudeNotification = {
   path: string;
   sessionId: string;
+  mode: 'claude' | 'shell';
   title: string;
   /** repo · branch (· on <runner>) — context under the title, '' when unknown */
   body: string;
@@ -30,7 +31,17 @@ function body(w: Worktree, repoNames?: Record<string, string>): string {
 // "Claude" for the primary session, "Claude 2" beyond — matches the tab strip
 // so the notification names the tab it came from.
 function sessionName(id: string): string {
+  if (id.startsWith('shell:')) {
+    const shellId = id.slice('shell:'.length);
+    return shellId === '1' ? 'Claude (Shell)' : `Claude (Shell ${shellId})`;
+  }
   return id === '1' ? 'Claude' : `Claude ${id}`;
+}
+
+function sessionTarget(id: string): { mode: 'claude' | 'shell'; sessionId: string } {
+  return id.startsWith('shell:')
+    ? { mode: 'shell', sessionId: id.slice('shell:'.length) }
+    : { mode: 'claude', sessionId: id };
 }
 
 // A worktree's per-session statuses; older servers only send the aggregate,
@@ -62,10 +73,11 @@ export function computeClaudeNotifications(
     for (const [id, after] of Object.entries(sessionsOf(w))) {
       const before = prev[`${w.path}\0${id}`];
       if (after === before) continue;
+      const target = sessionTarget(id);
       if (after === 'waiting' && before !== undefined) {
         out.push({
           path: w.path,
-          sessionId: id,
+          ...target,
           title: `${label(w)}: ${sessionName(id)} needs your input`,
           body: body(w, repoNames),
           kind: 'waiting',
@@ -73,7 +85,7 @@ export function computeClaudeNotifications(
       } else if (after === 'idle' && before === 'working') {
         out.push({
           path: w.path,
-          sessionId: id,
+          ...target,
           title: `${label(w)}: ${sessionName(id)} finished`,
           body: body(w, repoNames),
           kind: 'finished',

@@ -13,7 +13,10 @@ export const StradoStatus = async () => {
   const cwd = process.env.STRADO_WORKTREE;
   // Which OpenCode tab of the worktree this process is (multi-session);
   // absent on sessions spawned before multi-session — treated as session 1.
-  const sessionId = process.env.STRADO_SESSION_ID;
+  const rawSessionId = process.env.STRADO_SESSION_ID;
+  const sessionId = rawSessionId && process.env.STRADO_SESSION_MODE === 'shell'
+    ? `shell:${rawSessionId}`
+    : rawSessionId;
   // Set only inside a sandbox, where the host's loopback is unreachable: the
   // server is bind-mounted in as a unix socket that forwards status routes.
   const socketPath = process.env.STRADO_SERVER_SOCKET;

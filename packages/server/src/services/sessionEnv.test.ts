@@ -92,5 +92,15 @@ describe('sessionEnv', () => {
     expect(env.STRADO_STATUS_PORT).toBe('7877');
     expect(env.STRADO_SERVER).toBe('http://127.0.0.1:7877');
     expect(env.STRADO_SESSION_ID).toBe('1');
+    expect(env.STRADO_SESSION_MODE).toBe('claude');
+    expect(env.STRADO_AGENT_BIN_DIR).toMatch(/server\/hooks\/bin$/);
+    expect(env.STRADO_SHELL_BOOTSTRAP).toMatch(/server\/hooks\/strado-shell-bootstrap$/);
+    expect(env.STRADO_INNER_SHELL).toBeTruthy();
+  });
+
+  it('identifies generic Shell sessions for namespaced agent statuses', () => {
+    const env = sessionEnv('/tmp/wt\0shell:3', '/tmp/wt');
+    expect(env.STRADO_SESSION_ID).toBe('3');
+    expect(env.STRADO_SESSION_MODE).toBe('shell');
   });
 });

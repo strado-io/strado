@@ -1,0 +1,7 @@
+# Loaded only for an interactive bash inside a Strado Shell tab. Source the
+# user's real config first, then make the scoped agent launchers authoritative.
+if [[ -r ${HOME}/.bashrc ]]; then
+  source "${HOME}/.bashrc"
+fi
+
+export PATH="${STRADO_AGENT_BIN_DIR}:${PATH}"

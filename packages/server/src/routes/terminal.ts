@@ -146,23 +146,28 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // Same rule as codex: only the primary session continues the last
       // conversation; extra tabs start fresh.
       const opencodeCmd = sessionId === '1' ? `opencode --continue || opencode` : `opencode`;
+      // Start a login shell first, then let the bootstrap load the interactive
+      // profile and prepend Strado's launchers AFTER it. User rc files commonly
+      // prepend nvm/Homebrew paths, which otherwise hide the Codex launcher.
+      // Sandboxes override the inner shell to bash.
+      const shellCmd = 'exec "$STRADO_SHELL_BOOTSTRAP"';
       const spec =
         mode === 'shell'
-          ? { file: defaultShell(), args: ['-il'] }
+          ? { file: defaultShell(), args: ['-l', '-c', shellCmd] }
           : mode === 'codex'
             ? { file: defaultShell(), args: ['-l', '-c', codexCmd] }
             : mode === 'opencode'
               ? { file: defaultShell(), args: ['-l', '-c', opencodeCmd] }
               : undefined;
 
-      if (mode === 'claude') {
+      if (mode === 'claude' || mode === 'shell') {
         try {
           await installClaudeHooks(target, Number(process.env.PORT ?? 7777));
         } catch {
           // hook install is best-effort; never block the terminal
         }
       }
-      if (mode === 'opencode') {
+      if (mode === 'opencode' || mode === 'shell') {
         try {
           await installOpencodePlugin(target);
         } catch {
@@ -203,6 +208,13 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         if (mode === 'claude') app.deps.claudeStatus.clear(target, sessionId);
         if (mode === 'codex') app.deps.codexStatus.clear(target, sessionId);
         if (mode === 'opencode') app.deps.opencodeStatus.clear(target, sessionId);
+        if (mode === 'shell') {
+          // the tab is gone, so any agent it hosted is gone with it
+          const shellAgentId = `shell:${sessionId}`;
+          app.deps.claudeStatus.remove(target, shellAgentId);
+          app.deps.codexStatus.remove(target, shellAgentId);
+          app.deps.opencodeStatus.remove(target, shellAgentId);
+        }
         emitSessions();
         if (socket.readyState === socket.OPEN) {
           try { socket.send(`\r\n[process exited ${code}]\r\n`); } catch { /* ignore */ }
@@ -221,6 +233,16 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
           // The notify hook flips it to waiting when the turn completes.
           if (mode === 'codex' && msg.data.includes('\r')) {
             app.deps.codexStatus.set(target, 'working', sessionId);
+          }
+          // A Shell-scoped launcher registers Codex as waiting while its TUI
+          // is open. Codex has no prompt-submit hook, so Enter is the turn
+          // boundary here too — but only while that launcher is active, never
+          // for ordinary commands in a generic Shell tab.
+          if (mode === 'shell' && msg.data.includes('\r')) {
+            const shellAgentId = `shell:${sessionId}`;
+            if (app.deps.codexStatus.active(target, shellAgentId)) {
+              app.deps.codexStatus.set(target, 'working', shellAgentId);
+            }
           }
         } else if (msg.type === 'resize') app.deps.terminal.resize(sessionKey, msg.cols, msg.rows);
       };

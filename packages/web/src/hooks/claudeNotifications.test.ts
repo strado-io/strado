@@ -17,6 +17,7 @@ describe('computeClaudeNotifications', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.path).toBe('/wt/a');
     expect(out[0]!.sessionId).toBe('1');
+    expect(out[0]!.mode).toBe('claude');
     expect(out[0]!.title).toMatch(/needs your input/i);
     expect(out[0]!.kind).toBe('waiting');
   });
@@ -81,6 +82,13 @@ describe('computeClaudeNotifications', () => {
       const prev = snapshotStatuses([wtById('/wt/a', { '1': 'working' })]);
       const out = computeClaudeNotifications(prev, [wtById('/wt/a', { '1': 'working', '2': 'waiting' })]);
       expect(out).toHaveLength(0);
+    });
+
+    it('targets the originating Shell tab for a Shell-hosted Claude', () => {
+      const prev = snapshotStatuses([wtById('/wt/a', { 'shell:2': 'working' })]);
+      const out = computeClaudeNotifications(prev, [wtById('/wt/a', { 'shell:2': 'waiting' })]);
+      expect(out[0]).toMatchObject({ mode: 'shell', sessionId: '2' });
+      expect(out[0]!.title).toMatch(/Claude \(Shell 2\) needs your input/);
     });
   });
 
