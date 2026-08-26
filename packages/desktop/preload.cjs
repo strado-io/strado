@@ -53,8 +53,8 @@ contextBridge.exposeInMainWorld('strado', {
     ipcRenderer.on('strado:scroll-touch', handler);
     return () => ipcRenderer.removeListener('strado:scroll-touch', handler);
   },
-  // Cmd+Arrow chords intercepted inside embedded surfaces (Browser preview,
-  // VS Code iframe) and forwarded to the renderer's tab switcher.
+  // App shortcuts intercepted inside embedded surfaces (Browser preview,
+  // VS Code iframe) and forwarded to the renderer.
   onHotkey: (cb) => {
     const handler = (_e, combo) => cb(combo);
     ipcRenderer.on('strado:hotkey', handler);

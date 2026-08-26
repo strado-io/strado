@@ -336,15 +336,17 @@ if (!gotLock) {
     if (!entry.win.isDestroyed()) entry.win.contentView.removeChildView(entry.view);
     return entry.view.webContents;
   };
-  // Tab-switcher chords pressed inside an embedded surface (Browser preview
-  // view, cross-origin VS Code iframe) never reach the dashboard's window
-  // listeners. Intercept the FIRST chord here and forward it; opening the
+  // App shortcuts pressed inside an embedded surface (Browser preview view,
+  // cross-origin VS Code iframe) never reach the dashboard's window listeners.
+  // Intercept them here and forward them. For switcher chords, opening the
   // switcher parks the preview and hands focus back to the renderer, so the
   // rest of the hold (arrows, Cmd release) lands on the native path. Meta
   // keyups are forwarded too (no preventDefault) as a commit fallback for
   // releases that happen before the focus handoff.
   const hotkeyCombo = (input, opts = {}) => {
-    if (input.type !== 'keyDown' || !input.meta || input.control || input.isAutoRepeat) return null;
+    if (input.type !== 'keyDown' || input.isAutoRepeat) return null;
+    if (input.key === ',' && !input.alt && !input.shift && input.meta !== input.control) return 'settings';
+    if (!input.meta || input.control) return null;
     // Cmd+Arrow = tabs, Cmd+Opt+Arrow = tab groups, Cmd+Shift+Arrow = spaces.
     // Shift used to fall through to the tab move, which silently ate the space
     // chord inside the Browser and VS Code embeds.
