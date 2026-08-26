@@ -14,7 +14,7 @@ const ticketsIssues = vi.fn();
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
-    worktrees: { unmanaged: vi.fn().mockResolvedValue({ worktrees: [] }), list: vi.fn().mockResolvedValue([
+    worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/ENG-45', repoId: 'r1', branch: 'eng-45', meta: { ticketId: 'ENG-45', ticketProvider: 'linear' },
         process: { status: 'idle' }, tracked: true },
     ]) },

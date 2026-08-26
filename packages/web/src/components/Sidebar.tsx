@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { api, type RemoteWorktree, type RunnerStatus, type UnmanagedWorktree } from '../api';
+import { useRef } from 'react';
+import type { RemoteWorktree, RunnerStatus } from '../api';
 import type { RepoConfig, Worktree } from '../types';
 import { useResizableWidth } from '../hooks/resizableWidth';
 import { useSpaceNeighbors } from '../hooks/spaceNeighbors';
@@ -49,12 +49,6 @@ export type Props = {
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
   /** A workspace switch the server refused — shown on the dashboard's banner. */
   onSwitchError?: (message: string) => void;
-  /** An unmanaged worktree was moved into the managed folder — the dashboard
-   * should re-fetch so the new row appears. */
-  onWorktreeMoved?: () => void;
-  /** A sidebar action failed (e.g. move refused over live sessions) — shown on
-   * the dashboard's banner. */
-  onActionError?: (message: string) => void;
 };
 
 // The space name. Deliberately not a control: switching spaces is the swipe
@@ -77,41 +71,9 @@ export function Sidebar({
   taskCount, onCollapse, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  onSwitchError, onWorktreeMoved, onActionError,
+  onSwitchError,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
-
-  // Worktrees git knows about outside the managed folder. Fetched per space
-  // and re-fetched only when the repo SET changes — the dashboard's worktree
-  // poll hands us a fresh `repos` array every cycle, so the array identity is
-  // useless as a dependency; the joined ids are stable.
-  const [unmanaged, setUnmanaged] = useState<UnmanagedWorktree[]>([]);
-  const repoKey = repos.map((r) => r.id).sort().join(',');
-  useEffect(() => {
-    let stale = false;
-    api.worktrees
-      .unmanaged(workspace.id)
-      .then((res) => { if (!stale) setUnmanaged(res.worktrees); })
-      .catch(() => { if (!stale) setUnmanaged([]); });
-    return () => { stale = true; };
-  }, [workspace.id, repoKey]);
-
-  const moveUnmanaged = async (w: UnmanagedWorktree) => {
-    const label = w.branch ?? w.path.split('/').pop() ?? w.path;
-    const ok = confirm(
-      `Move "${label}" into the managed worktrees folder?\n\n` +
-        `${w.path}\n→ ~/.strado/worktrees/${w.repoId}/\n\n` +
-        `Its Claude chat history moves with it. Any running sessions must be stopped first.`,
-    );
-    if (!ok) return;
-    try {
-      await api.worktrees.move(workspace.id, w.path);
-      setUnmanaged((list) => list.filter((u) => u.path !== w.path));
-      onWorktreeMoved?.();
-    } catch (err) {
-      onActionError?.(`Could not move "${label}": ${(err as Error).message}`);
-    }
-  };
 
   // Drag the right edge to resize; pointer capture keeps the drag alive over
   // the VS Code iframe, and the edge follows the cursor so it rarely strays
@@ -156,8 +118,6 @@ export function Sidebar({
         remoteLoading={remoteLoading}
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-        unmanaged={unmanaged}
-        onMoveUnmanaged={moveUnmanaged}
       />
     ),
   });

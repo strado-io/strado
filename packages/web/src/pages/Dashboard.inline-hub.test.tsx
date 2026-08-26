@@ -11,7 +11,7 @@ vi.mock('../hooks/useWorkspace', () => ({
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
-    worktrees: { unmanaged: vi.fn().mockResolvedValue({ worktrees: [] }), list: vi.fn().mockResolvedValue([
+    worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
         process: { status: 'idle' }, tracked: true },
     ]) },

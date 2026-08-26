@@ -15,7 +15,7 @@ let resolveRemote: ((v: { runners: unknown[]; worktrees: unknown[] }) => void) |
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockResolvedValue([{ id: 'ra', name: 'Repo A' }]) },
-    worktrees: { unmanaged: vi.fn().mockResolvedValue({ worktrees: [] }), list: vi.fn().mockResolvedValue([]) },
+    worktrees: { list: vi.fn().mockResolvedValue([]) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: {
       providers: vi.fn().mockResolvedValue([]),
