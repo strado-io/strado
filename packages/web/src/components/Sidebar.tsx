@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type RemoteWorktree, type RunnerStatus, type UnmanagedWorktree } from '../api';
+import type { RemoteWorktree, RunnerStatus } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
 import { useResizableWidth } from '../hooks/resizableWidth';
 import { useSpaceNeighbors } from '../hooks/spaceNeighbors';
