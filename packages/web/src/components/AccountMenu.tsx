@@ -58,8 +58,8 @@ export function AccountMenu({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.license.get().then(({ license: next }) => setLicense(next)).catch(() => setLicense(null));
-    api.profile.get().then(setProfile).catch(() => setProfile(null));
+    api.license?.get?.().then(({ license: next }) => setLicense(next)).catch(() => setLicense(null));
+    api.profile?.get?.().then(setProfile).catch(() => setProfile(null));
   }, []);
 
   useEffect(() => {
