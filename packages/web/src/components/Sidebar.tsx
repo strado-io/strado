@@ -1,6 +1,6 @@
-import { useRef } from 'react';
-import type { RemoteWorktree, RunnerStatus } from '../api';
-import type { RepoConfig, Worktree } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import { api, type RemoteWorktree, type RunnerStatus, type UnmanagedWorktree } from '../api';
+import type { RepoConfig, Workspace, Worktree } from '../types';
 import { useResizableWidth } from '../hooks/resizableWidth';
 import { useSpaceNeighbors } from '../hooks/spaceNeighbors';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
@@ -8,7 +8,7 @@ import { useWorkspace } from '../hooks/useWorkspace';
 import { SidebarBody } from './sidebar/SidebarBody';
 import { SpaceCarousel, type CarouselPane, type SpaceCarouselHandle } from './sidebar/SpaceCarousel';
 import { SpaceDots } from './sidebar/SpaceDots';
-import { OrgChip } from './OrgChip';
+import { AccountMenu } from './AccountMenu';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
 /**
@@ -26,8 +26,6 @@ export type Props = {
   onOpenSettings: () => void;
   onOpenOrgSettings: (section: 'organization') => void;
   onOpenFeedback: () => void;
-  onOpenWorkspaces: () => void;
-  onOpenWorkspaceSettings: () => void;
   taskCount: number;
   onCollapse: () => void;
   onAddRepo: () => void;
@@ -51,23 +49,97 @@ export type Props = {
   onSwitchError?: (message: string) => void;
 };
 
-// The space name. Deliberately not a control: switching spaces is the swipe
-// and the dots at the bottom, so a second affordance here would be a decoy.
-function SpaceHeader({ icon, name }: { icon: string; name: string }) {
+function WorkspaceSwitcher({
+  active,
+  workspaces,
+  onSelect,
+}: {
+  active: Workspace;
+  workspaces: Workspace[];
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
   return (
-    <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-semibold uppercase text-zinc-300">
-        {icon.slice(0, 2)}
-      </span>
-      <span data-testid="space-name" className="truncate text-sm font-medium text-zinc-100">
-        {name}
-      </span>
+    <div ref={ref} className="relative min-w-0">
+      <button
+        type="button"
+        aria-label={`Switch workspace, current: ${active.name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-900"
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-semibold uppercase text-zinc-300">
+          {active.icon.slice(0, 2)}
+        </span>
+        <span data-testid="space-name" className="truncate text-sm font-medium text-zinc-100">
+          {active.name}
+        </span>
+        <svg className="ml-auto shrink-0 text-zinc-600" width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+          <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="Workspaces"
+          className="absolute left-0 top-full z-40 mt-1 w-64 rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+        >
+          {workspaces.map((workspace) => {
+            const selected = workspace.id === active.id;
+            return (
+              <button
+                key={workspace.id}
+                type="button"
+                role="menuitem"
+                aria-current={selected ? 'true' : undefined}
+                onClick={() => {
+                  setOpen(false);
+                  onSelect(workspace.id);
+                }}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${
+                  selected ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-white"
+                  style={{ backgroundColor: workspace.color }}
+                >
+                  {workspace.icon.slice(0, 2)}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                {selected && <span className="text-xs text-emerald-400">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 export function Sidebar({
-  repos, worktrees, selected, onSelect, onOpenSettings, onOpenOrgSettings, onOpenFeedback, onOpenWorkspaces, onOpenWorkspaceSettings,
+  repos, worktrees, selected, onSelect, onOpenSettings, onOpenOrgSettings, onOpenFeedback,
   taskCount, onCollapse, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
@@ -158,7 +230,7 @@ export function Sidebar({
       <div className="border-b border-zinc-900 px-3 py-3">
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
-            <SpaceHeader icon={workspace.icon} name={workspace.name} />
+            <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
           </div>
           <button aria-label="Collapse sidebar" title="Collapse sidebar (⌘B)" onClick={onCollapse}
             className="shrink-0 rounded p-1 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200">«</button>
@@ -177,28 +249,12 @@ export function Sidebar({
           spaces={allWorkspaces}
           activeId={workspace.id}
           onSelect={selectSpace}
-          onOpenSettings={onOpenWorkspaceSettings}
-          onOpenManage={onOpenWorkspaces}
         />
         <UpdateFooter {...update} />
-        <OrgChip onOpenSettings={onOpenOrgSettings} />
-        <button className="group flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-          onClick={onOpenFeedback} aria-label="Send feedback">
-          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden className="shrink-0 text-zinc-600 group-hover:text-zinc-400"
-            fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 3.5h12v8H8l-3 2.5v-2.5H2z" />
-          </svg>
-          Feedback
-        </button>
-        <button className="group flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-          onClick={onOpenSettings} aria-label="App settings">
-          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden className="shrink-0 text-zinc-600 group-hover:text-zinc-400"
-            fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="8" cy="8" r="2.2" />
-            <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" />
-          </svg>
-          Settings
-        </button>
+        <AccountMenu
+          onOpenSettings={(section) => section === 'organization' ? onOpenOrgSettings(section) : onOpenSettings()}
+          onOpenFeedback={onOpenFeedback}
+        />
       </div>
     </aside>
   );

@@ -6,7 +6,6 @@ import { NewWorktreeDialog, CreatePayload } from './components/NewWorktreeDialog
 import { DeleteWorktreeDialog } from './components/DeleteWorktreeDialog';
 import { WorktreeSettingsDialog } from './components/WorktreeSettingsDialog';
 import { LogPanel } from './components/LogPanel';
-import WorkspacesPage from './pages/WorkspacesPage';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
 import { useWorkspace } from './hooks/useWorkspace';
 import { api, type RemoteWorktree } from './api';
@@ -23,7 +22,6 @@ type Dialog =
   | { kind: 'delete'; worktree: Worktree }
   | { kind: 'menu'; worktree: Worktree }
   | { kind: 'logs'; worktree: Worktree }
-  | { kind: 'workspaces' }
   | { kind: 'note'; worktree: Worktree }
   | { kind: 'diff'; worktree: Worktree }
   | { kind: 'deleteRemote'; remote: RemoteWorktree }
@@ -74,7 +72,6 @@ function AppShell() {
           onDismiss: upd.dismiss,
         }}
         onNewWorktree={(repoId?: string) => setDialog({ kind: 'new', repoId })}
-        onOpenWorkspaces={() => setDialog({ kind: 'workspaces' })}
         onShowLogs={(w) => setDialog({ kind: 'logs', worktree: w })}
         onMenu={(w) => setDialog({ kind: 'menu', worktree: w })}
         onOpenNote={(w) => setDialog({ kind: 'note', worktree: w })}
@@ -192,7 +189,6 @@ function AppShell() {
         />
       )}
       {dialog.kind === 'logs' && <LogPanel worktree={dialog.worktree} onClose={close} />}
-      {dialog.kind === 'workspaces' && <WorkspacesPage onClose={close} />}
       {dialog.kind === 'note' && (
         <NoteDialog
           worktree={dialog.worktree}

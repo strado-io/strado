@@ -32,9 +32,6 @@ vi.mock('../api', async (importOriginal) => {
 });
 const { api } = await import('../api');
 
-// RunnersPanel fetches on mount and is not what these tests are about.
-vi.mock('../components/RunnersPanel', () => ({ RunnersPanel: () => null }));
-
 const ROW_H = 40;
 const TOP = 100;
 beforeEach(() => {

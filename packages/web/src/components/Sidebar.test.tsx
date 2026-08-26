@@ -17,6 +17,9 @@ vi.mock('../api', async (importOriginal) => {
       ...actual.api,
       repos: { ...actual.api.repos, list: vi.fn(() => new Promise<never>(() => {})) },
       worktrees: { ...actual.api.worktrees, list: vi.fn(() => new Promise<never>(() => {})) },
+      license: { ...actual.api.license, get: () => Promise.resolve({ required: false, apiUrl: '', license: null }) },
+      profile: { ...actual.api.profile, get: () => Promise.resolve({ fullName: 'Kamlesh Bishnoi', callMe: 'Kamlesh', telemetryOptOut: false }) },
+      org: { ...actual.api.org, get: () => Promise.reject(new Error('not signed in')) },
     },
   };
 });
@@ -72,8 +75,6 @@ const base = {
   onOpenSettings: vi.fn(),
   onOpenOrgSettings: vi.fn(),
   onOpenFeedback: vi.fn(),
-  onOpenWorkspaces: vi.fn(),
-  onOpenWorkspaceSettings: vi.fn(),
   taskCount: 0,
   onCollapse: vi.fn(),
   onAddRepo: vi.fn(),
@@ -197,13 +198,6 @@ describe('Sidebar tree', () => {
   it('has no bottom New worktree button', () => {
     wrap(<Sidebar {...base} expandedRepos={new Set()} />);
     expect(screen.queryByRole('button', { name: /^New worktree$/ })).toBeNull();
-  });
-
-  it('fires onOpenFeedback when the Feedback button is clicked', () => {
-    const onOpenFeedback = vi.fn();
-    wrap(<Sidebar {...base} onOpenFeedback={onOpenFeedback} expandedRepos={new Set()} />);
-    fireEvent.click(screen.getByRole('button', { name: /feedback/i }));
-    expect(onOpenFeedback).toHaveBeenCalled();
   });
 
   describe('large repos (> 7 worktrees)', () => {
@@ -383,21 +377,28 @@ describe('Sidebar tree', () => {
   describe('Sidebar space rail', () => {
     beforeEach(() => { switchTo.mockClear(); });
 
-    it('shows the workspace name as plain text, not a dropdown', () => {
+    it('shows the active workspace in a header picker', () => {
       wrap(<Sidebar {...base} expandedRepos={new Set()} />);
       expect(screen.getByTestId('space-name')).toHaveTextContent('W');
-      // the old switcher was a button whose label was the workspace name
-      expect(screen.queryByRole('button', { name: /^W$/ })).toBeNull();
-      expect(screen.queryByText('Manage workspaces')).toBeNull(); // menu is closed
+      expect(screen.getByRole('button', { name: 'Switch workspace, current: W' })).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
     });
 
-    it('renders a dot per space and opens workspace settings from the menu', () => {
+    it('switches workspaces from the header picker', () => {
+      wrap(<Sidebar {...base} expandedRepos={new Set()} />, [ws, ws2, ws3]);
+      fireEvent.click(screen.getByRole('button', { name: 'Switch workspace, current: W' }));
+      expect(screen.getByRole('menu', { name: 'Workspaces' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Third' }));
+      expect(switchTo).toHaveBeenCalledWith('w3');
+      expect(screen.queryByRole('menu', { name: 'Workspaces' })).toBeNull();
+    });
+
+    it('renders a dot per space without a second settings menu', async () => {
       wrap(<Sidebar {...base} expandedRepos={new Set()} />);
       expect(screen.getByRole('button', { name: 'Switch to W' })).toHaveAttribute('aria-current', 'true');
       expect(screen.getByRole('button', { name: 'Switch to Second' })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Space actions' }));
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace settings' }));
-      expect(base.onOpenWorkspaceSettings).toHaveBeenCalled();
+      expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
+      expect(await screen.findByRole('button', { name: 'Account: Kamlesh' })).toBeInTheDocument();
     });
 
     it('switches workspace when a dot with no pane of its own is clicked', () => {
@@ -537,7 +538,7 @@ describe('Sidebar tree', () => {
       wrap(<Sidebar {...base} expandedRepos={new Set()} />, [ws]);
       expect(screen.getAllByTestId('carousel-pane')).toHaveLength(1);
       expect(screen.queryByRole('button', { name: 'Switch to W' })).toBeNull();
-      expect(screen.getByRole('button', { name: 'Space actions' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
     });
   });
 

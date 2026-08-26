@@ -208,7 +208,6 @@ export function buildDockModel(
 
 export function Dashboard(props: {
   onNewWorktree: (repoId?: string) => void;
-  onOpenWorkspaces?: () => void;
   onShowLogs: (w: Worktree) => void;
   onMenu: (w: Worktree) => void;
   onOpenNote: (w: Worktree) => void;
@@ -715,8 +714,6 @@ export function Dashboard(props: {
           onOpenSettings={() => setSettingsSection('profile')}
           onOpenOrgSettings={() => setSettingsSection('organization')}
           onOpenFeedback={() => setFeedbackOpen(true)}
-          onOpenWorkspaces={props.onOpenWorkspaces!}
-          onOpenWorkspaceSettings={() => setSettingsSection('general')}
           taskCount={state.worktrees.length}
           onCollapse={() => setSidebarCollapsed(true)}
           onAddRepo={() => setShowAddRepo(true)}

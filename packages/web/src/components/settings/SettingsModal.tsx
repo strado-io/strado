@@ -9,10 +9,12 @@ import { OrganizationSection } from './OrganizationSection';
 import { PrivacySection } from './PrivacySection';
 import { ProfileSection } from './ProfileSection';
 import { WorkspaceGeneralSection } from './WorkspaceGeneralSection';
+import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
+import { RunnersPanel } from '../RunnersPanel';
 import { useEntitlements } from '../../hooks/entitlements';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'general' | 'jira' | 'linear' | 'gitlab' | 'github' | 'privacy';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'general' | 'workspaces' | 'runners' | 'jira' | 'linear' | 'gitlab' | 'github' | 'privacy';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -26,14 +28,21 @@ const GROUPS: NavGroup[] = [
       { id: 'appearance', label: 'Appearance' },
     ],
   },
-  { title: 'Workspace', items: [{ id: 'general', label: 'General' }] },
+  {
+    title: 'Workspace',
+    items: [
+      { id: 'general', label: 'General' },
+      { id: 'workspaces', label: 'Manage workspaces' },
+    ],
+  },
+  { title: 'Infrastructure', items: [{ id: 'runners', label: 'Runners' }] },
   { title: 'Connections', items: [{ id: 'jira', label: 'Jira' }, { id: 'linear', label: 'Linear' }, { id: 'gitlab', label: 'GitLab' }, { id: 'github', label: 'GitHub' }] },
   { title: 'System', items: [{ id: 'privacy', label: 'Privacy' }] },
 ];
 
 // Which settings sections are Pro (cloud) features. Jira and Linear run on the
 // local server but are gated to Pro; GitHub/GitLab stay free.
-const SECTION_FEATURE: Partial<Record<SettingsSection, Feature>> = { jira: 'jira', linear: 'linear' };
+const SECTION_FEATURE: Partial<Record<SettingsSection, Feature>> = { runners: 'runners', jira: 'jira', linear: 'linear' };
 
 function ProUpsell({ name }: { name: string }) {
   return (
@@ -81,7 +90,7 @@ export function SettingsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="flex h-[560px] w-full max-w-3xl overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className="flex h-[640px] max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <nav className="w-52 shrink-0 overflow-y-auto border-r border-zinc-900 bg-zinc-950 p-3">
@@ -137,6 +146,8 @@ export function SettingsModal({
             {active === 'organization' && <OrganizationSection />}
             {active === 'appearance' && <AppearanceSection />}
             {active === 'general' && <WorkspaceGeneralSection />}
+            {active === 'workspaces' && <WorkspaceManagementSection />}
+            {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel />)}
             {active === 'jira' && (locked('jira') ? <ProUpsell name="Jira" /> : <JiraSection onConnected={onJiraConnected} />)}
             {active === 'linear' && (locked('linear') ? <ProUpsell name="Linear" /> : <LinearSection />)}
             {active === 'gitlab' && <GitlabSection />}
