@@ -59,6 +59,7 @@ function AppShell() {
   return (
     <>
       <Dashboard
+        modalOpen={dialog.kind !== 'none' || mandatory}
         update={{
           // mandatory updates are handled by the blocking modal below, so the
           // sidebar footer widget stays hidden in that case.

@@ -260,8 +260,10 @@ function groupTabs(
 // Docked DevTools pane. A <webview> cannot host the DevTools frontend
 // (Electron never injects the embedder binding — the UI loads but every
 // panel stays empty on a "stub connection"), so the pane is a main-process
-// WebContentsView overlaid on the window. This placeholder just reserves the
-// space and streams its bounds; unmounting it tears the overlay down.
+// WebContentsView overlaid on the window. This placeholder reserves the space
+// and streams its bounds. Keep it mounted across hub-tab switches so Chromium
+// retains the DevTools frontend state (notably the Network request log);
+// unmounting is reserved for an explicit DevTools/browser close.
 function elementBounds(el: HTMLElement): StradoBounds {
   const r = el.getBoundingClientRect();
   return {
@@ -477,6 +479,7 @@ export function TerminalView({
   runningServers,
   openSeq = 0,
   onActiveChange,
+  modalOpen = false,
 }: {
   worktree: Worktree;
   onClose: () => void;
@@ -503,6 +506,9 @@ export function TerminalView({
   /** Reports this hub's active tab so the session rail / sidebar can highlight
    *  the open session. Fires on every tab switch, including from the top strip. */
   onActiveChange?: (tab: { path: string; mode: string; id: string }) => void;
+  /** A renderer modal outside this hub is open. WebContentsViews always paint
+   *  above renderer HTML, so the preview and DevTools must be detached. */
+  modalOpen?: boolean;
 }) {
   const { workspace } = useWorkspace();
   const localWsId = workspace.id;
@@ -1892,15 +1898,6 @@ export function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSeq]);
 
-  // Dashboard broadcasts when the ⌘K palette opens; native overlays must
-  // detach so it can paint above the browser preview.
-  const [paletteUp, setPaletteUp] = useState(false);
-  useEffect(() => {
-    const onPalette = (e: Event) => setPaletteUp(!!(e as CustomEvent<{ open?: boolean }>).detail?.open);
-    window.addEventListener('strado:palette', onPalette);
-    return () => window.removeEventListener('strado:palette', onPalette);
-  }, []);
-
   // Warn before closing a tab with work in progress: a shell with a running
   // command, or an agent that's actively working. Confirmed close falls
   // through to closeTab.
@@ -2666,7 +2663,7 @@ export function TerminalView({
                 const url = browserUrl[pk] ?? defaultPreviewUrl(g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(dtMenu || bwMenu || addMenu || switcher || paletteUp || showLogs || showDiff || mrReview);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || showLogs || showDiff || mrReview);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -2789,24 +2786,26 @@ export function TerminalView({
                           Browser preview needs the updated desktop shell — quit the app fully (Cmd+Q) and run `npm run desktop` again.
                         </div>
                       )}
-                      {shown && devtoolsMode[pk] && previewIds[pk] !== undefined && (
+                      {devtoolsMode[pk] && previewIds[pk] !== undefined && (
                         <>
-                          <div
-                            role="separator"
-                            aria-label="Resize DevTools"
-                            title="Drag to resize DevTools"
-                            onPointerDown={(e) => startDevtoolsResize(e, devtoolsMode[pk]!, pk)}
-                            className={
-                              devtoolsMode[pk] === 'right'
-                                ? `w-1 shrink-0 cursor-col-resize hover:bg-blue-500 ${resizing ? 'bg-blue-500' : 'bg-zinc-800'}`
-                                : `h-1 shrink-0 cursor-row-resize hover:bg-blue-500 ${resizing ? 'bg-blue-500' : 'bg-zinc-800'}`
-                            }
-                          />
+                          {shown && (
+                            <div
+                              role="separator"
+                              aria-label="Resize DevTools"
+                              title="Drag to resize DevTools"
+                              onPointerDown={(e) => startDevtoolsResize(e, devtoolsMode[pk]!, pk)}
+                              className={
+                                devtoolsMode[pk] === 'right'
+                                  ? `w-1 shrink-0 cursor-col-resize hover:bg-blue-500 ${resizing ? 'bg-blue-500' : 'bg-zinc-800'}`
+                                  : `h-1 shrink-0 cursor-row-resize hover:bg-blue-500 ${resizing ? 'bg-blue-500' : 'bg-zinc-800'}`
+                              }
+                            />
+                          )}
                           <DevtoolsDockPane
                             side={devtoolsMode[pk]!}
                             fraction={devtoolsSize[devtoolsMode[pk]!]}
                             targetId={previewIds[pk]!}
-                            suppressed={overlayUp}
+                            suppressed={!shown || overlayUp}
                             onFail={() => setDevtoolsMode((prev) => ({ ...prev, [pk]: null }))}
                           />
                         </>

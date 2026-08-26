@@ -1,12 +1,16 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // window.strado must exist BEFORE TerminalView is imported: isElectron is a
 // module-level const, and the Browser tab surfaces only inside Electron.
-const previewMock = vi.hoisted(() => {
-  const fn = vi.fn((...args: unknown[]) => Promise.resolve(args[0] === 'open' ? 42 : undefined));
-  (globalThis as unknown as { window: { strado?: unknown } }).window.strado = { preview: fn };
-  return fn;
+const { previewMock, devtoolsMock } = vi.hoisted(() => {
+  const preview = vi.fn((...args: unknown[]) => Promise.resolve(args[0] === 'open' ? 42 : undefined));
+  const devtools = vi.fn((..._args: unknown[]) => Promise.resolve(true));
+  (globalThis as unknown as { window: { strado?: unknown } }).window.strado = {
+    preview,
+    devtools,
+  };
+  return { previewMock: preview, devtoolsMock: devtools };
 });
 
 // --- Mock xterm so jsdom (no canvas) can run ---
@@ -108,6 +112,7 @@ const worktree = {
 beforeEach(() => {
   localStorage.clear();
   previewMock.mockClear();
+  devtoolsMock.mockClear();
   (globalThis as any).WebSocket = FakeWS;
   (globalThis as any).ResizeObserver = class { observe() {} disconnect() {} };
   (Element.prototype as any).scrollTo = vi.fn();
@@ -167,5 +172,67 @@ describe('browser tab close → add', () => {
       expect(open).toBeTruthy();
       expect((open![2] as { url?: string }).url).toBe('http://localhost:3000');
     });
+  });
+});
+
+describe('renderer modal visibility', () => {
+  it('detaches the native preview while a parent modal is open and restores it after close', async () => {
+    const P = worktree.path;
+    localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
+    localStorage.setItem('strado.activeTab', JSON.stringify({ [P]: 'browser:1' }));
+
+    const view = render(<TerminalView worktree={worktree} onClose={() => {}} modalOpen={false} />);
+    await vi.waitFor(() => {
+      expect(previewMock.mock.calls.some((c) => c[0] === 'open' && c[1] === P)).toBe(true);
+    });
+
+    previewMock.mockClear();
+    view.rerender(<TerminalView worktree={worktree} onClose={() => {}} modalOpen />);
+    await vi.waitFor(() => {
+      expect(previewMock.mock.calls.some((c) => c[0] === 'thumb' && c[1] === P)).toBe(true);
+      expect(previewMock.mock.calls.some((c) => c[0] === 'hide' && c[1] === P)).toBe(true);
+    });
+
+    previewMock.mockClear();
+    view.rerender(<TerminalView worktree={worktree} onClose={() => {}} modalOpen={false} />);
+    await vi.waitFor(() => {
+      expect(previewMock.mock.calls.some((c) => c[0] === 'open' && c[1] === P)).toBe(true);
+    });
+  });
+});
+
+describe('docked DevTools tab switching', () => {
+  it('parks and restores the existing frontend instead of recreating it', async () => {
+    const P = worktree.path;
+    const wtWithShell = { ...worktree, hasShellSession: true, shellSessions: ['1'] } as Worktree;
+    localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
+    localStorage.setItem('strado.activeTab', JSON.stringify({ [P]: 'browser:1' }));
+    render(<TerminalView worktree={wtWithShell} onClose={() => {}} />);
+
+    await vi.waitFor(() => {
+      expect(previewMock.mock.calls.some((c) => c[0] === 'open' && c[1] === P)).toBe(true);
+    });
+    // Flush BrowserPreviewPane.onReady -> previewIds before invoking the dock
+    // action, which reads the current target id synchronously from a ref.
+    await act(async () => {});
+    fireEvent.click(screen.getByLabelText('DevTools'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Dock to bottom' }));
+    await vi.waitFor(() => {
+      expect(devtoolsMock.mock.calls.some((c) => c[0] === 'dock' && c[1] === 42)).toBe(true);
+    });
+
+    devtoolsMock.mockClear();
+    fireEvent.click(screen.getByText('Shell'));
+    await vi.waitFor(() => {
+      expect(devtoolsMock.mock.calls.some((c) => c[0] === 'hide' && c[1] === 42)).toBe(true);
+    });
+    expect(devtoolsMock.mock.calls.some((c) => c[0] === 'undock')).toBe(false);
+
+    devtoolsMock.mockClear();
+    fireEvent.click(screen.getByText('Browser'));
+    await vi.waitFor(() => {
+      expect(devtoolsMock.mock.calls.some((c) => c[0] === 'show' && c[1] === 42)).toBe(true);
+    });
+    expect(devtoolsMock.mock.calls.some((c) => c[0] === 'dock')).toBe(false);
   });
 });

@@ -27,8 +27,8 @@ vi.mock('../api', () => ({
 }));
 // Stand in for the hub so the test asserts selection, not terminal internals.
 vi.mock('./TerminalView', () => ({
-  TerminalView: ({ worktree, onClose }: any) => (
-    <div data-testid="inline-hub">
+  TerminalView: ({ worktree, onClose, modalOpen }: any) => (
+    <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}>
       hub:{worktree.path}
       <button onClick={onClose}>‹ Back</button>
     </div>
@@ -79,6 +79,22 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(worktreeRow());
     fireEvent.click(await screen.findByText('‹ Back'));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument());
+  });
+
+  it('tells the hub to detach native previews while the Add repo modal is open', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(repoRow());
+    fireEvent.click(worktreeRow());
+    const hub = await screen.findByTestId('inline-hub');
+    expect(hub).toHaveAttribute('data-modal-open', 'false');
+
+    fireEvent.click(screen.getByLabelText('Add repo'));
+    await screen.findByRole('heading', { name: 'Add repo' });
+    expect(hub).toHaveAttribute('data-modal-open', 'true');
+
+    fireEvent.click(screen.getByLabelText('Close'));
+    await waitFor(() => expect(hub).toHaveAttribute('data-modal-open', 'false'));
   });
 
   it('selecting Tasks clears the hub', async () => {

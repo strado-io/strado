@@ -545,8 +545,10 @@ if (!gotLock) {
       return true;
     }
     if (action === 'undock') {
-      // Placeholder unmounted (tab switch, layout change): tear down the
-      // docked pane only — never touch a native devtools window.
+      // Placeholder unmounted after an explicit dock/browser close or hub
+      // teardown: tear down the docked pane only — never touch a native
+      // devtools window. Ordinary tab switches use hide/show so panel state
+      // and Network history survive.
       const wc = removePane(id);
       if (wc) {
         if (target && !target.isDestroyed()) target.closeDevTools();
