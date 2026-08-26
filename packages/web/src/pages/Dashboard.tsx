@@ -708,15 +708,6 @@ export function Dashboard(props: {
           selected={VIEW}
           onSelect={selectView}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
-          onActionError={(message) => dispatch({ type: 'error', message })}
-          onWorktreeMoved={async () => {
-            try {
-              const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-              commitTree(repos, worktrees);
-            } catch (err) {
-              dispatch({ type: 'error', message: (err as Error).message });
-            }
-          }}
           onOpenSettings={() => setSettingsSection('profile')}
           onOpenOrgSettings={() => setSettingsSection('organization')}
           onOpenFeedback={() => setFeedbackOpen(true)}

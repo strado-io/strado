@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { RemoteWorktree, RunnerStatus, UnmanagedWorktree } from '../../api';
+import type { RemoteWorktree, RunnerStatus } from '../../api';
 import type { RepoConfig, Worktree } from '../../types';
 import type { SidebarView } from '../Sidebar';
 import { PlusIcon } from '../hub/icons';
@@ -24,10 +24,6 @@ export type SidebarBodyProps = {
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
-  /** Worktrees git lists but Strado hides (outside the managed folder). Shown
-   * dimmed under their repo, with one action: move into the managed folder. */
-  unmanaged?: UnmanagedWorktree[];
-  onMoveUnmanaged?: (w: UnmanagedWorktree) => void;
   /** True until the first runner-worktree fetch for this space settles. */
   remoteLoading?: boolean;
 };
@@ -151,7 +147,7 @@ export function SidebarBody({
   repos, worktrees, remoteWorktrees, runnerStatuses, selected, onSelect, taskCount,
   onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
   onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  unmanaged = [], onMoveUnmanaged, remoteLoading = false,
+  remoteLoading = false,
 }: SidebarBodyProps) {
   const runnerOnline = (runnerId: string) =>
     runnerStatuses.find((r) => r.runnerId === runnerId)?.online ?? false;
@@ -330,8 +326,7 @@ export function SidebarBody({
                 // rows span the full sidebar width; indentation lives in padding
                 // so the hover/active background has no dead gap on the left
                 <div className="flex flex-col gap-0.5">
-                  {repoWts.length === 0 && repoRemote.length === 0 &&
-                    !unmanaged.some((u) => u.repoId === repo.id) && (
+                  {repoWts.length === 0 && repoRemote.length === 0 && (
                     <div className="py-1.5 pl-9 pr-2 text-xs text-zinc-600">No worktrees</div>
                   )}
                   {visible.map((w) => {
@@ -387,32 +382,6 @@ export function SidebarBody({
                       Show less
                     </button>
                   )}
-                  {/* Worktrees git lists for this repo OUTSIDE the managed
-                      folder. Dimmed and not openable — Strado won't operate on
-                      them where they are — with one action: pull them in. */}
-                  {!q && (unmanaged.filter((u) => u.repoId === repo.id)).map((u) => (
-                    <div key={u.path} className="group flex items-center gap-1 rounded-md pr-1 hover:bg-zinc-900">
-                      <div
-                        title={`${u.path}\nOutside the managed worktrees folder — move it in to open it here.`}
-                        className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-4 pr-2 text-left text-zinc-500"
-                      >
-                        <span className="flex w-3 shrink-0 items-center justify-center">
-                          <BranchIcon className="text-zinc-700" />
-                        </span>
-                        <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                          {u.branch ?? u.path.split('/').pop()}
-                        </span>
-                        <span className="shrink-0 rounded bg-zinc-900 px-1 font-mono text-[10px] text-zinc-600">
-                          unmanaged
-                        </span>
-                      </div>
-                      {onMoveUnmanaged && (
-                        <Menu label={`${u.branch ?? u.path} actions`} items={[
-                          { text: 'Move to managed folder', onClick: () => onMoveUnmanaged(u) },
-                        ]} />
-                      )}
-                    </div>
-                  ))}
                   {/* Runner worktrees for this repo, after the local ones. An
                       offline runner's rows stay VISIBLE and grey — vanishing
                       rows read as data loss, and the worktree is fine. */}

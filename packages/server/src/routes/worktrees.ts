@@ -16,7 +16,6 @@ import { addSandboxWorktree, bareRepoPath, ensureBareRepo, sandboxReposDir } fro
 import { sandboxSlugFor } from '../services/sandbox/sandboxes.js';
 import { hooksDir } from '../services/claudeHooks.js';
 import { canonicalWorktreesDir, findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
-import { moveClaudeProjectHistory } from '../services/claudeProjects.js';
 import { claudeKey, codexKey, opencodeKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 
 export type WorktreeRow = {
@@ -668,110 +667,6 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
       });
       app.deps.bus.emit('worktrees', { type: 'worktree.updated', data: { path: target } });
       return { path: target, port };
-    },
-  );
-
-  // Worktrees git knows about but Strado will not touch: outside the canonical
-  // root (legacy sibling folders, agent-chosen locations). The sidebar hides
-  // them by design; this is the one place they surface, so the user can pull
-  // them into the managed folder. Prunable rows are skipped — there is no
-  // directory left to move.
-  app.get('/worktrees/unmanaged', async (req) => {
-    const repoList = await req.workspace!.stores.repos.list();
-    const perRepo = await Promise.all(
-      repoList.map(async (repo) => {
-        try {
-          const list = await app.deps.git.list(repo.path);
-          return list
-            .filter((w) => w.path !== repo.path && !w.prunable)
-            .filter((w) => !findOwningRepo([repo], w.path, app.deps.homeStateDir))
-            .map((w) => ({ repoId: repo.id, repoName: repo.name, path: w.path, branch: w.branch }));
-        } catch {
-          return [];
-        }
-      }),
-    );
-    return { worktrees: perRepo.flat() };
-  });
-
-  // Pull an unmanaged worktree into `<home>/worktrees/<repoId>` — the lossless
-  // version of the by-hand dance: git moves the checkout (rewriting its own
-  // pointer files), the state entry is rekeyed so ticket/port/notes follow, and
-  // Claude Code's conversation directory is renamed so `--resume` still finds
-  // the worktree's chat history at the new path.
-  app.post<{ Params: { encodedPath: string } }>(
-    '/worktrees/:encodedPath/move',
-    async (req) => {
-      const { repos, state } = req.workspace!.stores;
-      const target = decodeURIComponent(req.params.encodedPath);
-      const repoList = await repos.list();
-
-      // Ownership by git's registry, NOT by root prefix — the entire point is
-      // that this path lives outside every allowed root. Git's own worktree
-      // list is the proof the path belongs to this repo, which also stops the
-      // route from moving arbitrary directories a client names.
-      let owner: (typeof repoList)[number] | undefined;
-      for (const repo of repoList) {
-        try {
-          const list = await app.deps.git.list(repo.path);
-          const hit = list.find((w) => w.path === target);
-          if (hit) {
-            if (hit.prunable) throw new AppError('NOT_FOUND', `worktree directory is gone: ${target}`);
-            owner = repo;
-            break;
-          }
-        } catch (err) {
-          if (err instanceof AppError) throw err;
-          // unreadable repo — cannot be the owner, keep looking
-        }
-      }
-      if (!owner) throw new AppError('NOT_FOUND', `no repo's git registry lists ${target}`);
-      if (target === owner.path) throw new AppError('VALIDATION', 'cannot move the repo checkout itself');
-      if (findOwningRepo([owner], target, app.deps.homeStateDir)) {
-        throw new AppError('VALIDATION', 'worktree is already in the managed folder');
-      }
-
-      // Session keys and process keys are path strings: moving under a live
-      // session strands it (the pty keeps running against a path no row
-      // matches). Refuse instead of stranding.
-      const liveSessions = app.deps.terminal.liveSessions().filter((s) => s.path === target);
-      if (liveSessions.length > 0) {
-        throw new AppError('WORKTREE_HAS_SESSIONS', 'stop the sessions on this worktree, then move it', {
-          sessions: liveSessions.length,
-        });
-      }
-      const proc = app.deps.proc.status(target) as { status?: string };
-      if (proc?.status === 'running' || proc?.status === 'starting') {
-        throw new AppError('WORKTREE_HAS_SESSIONS', 'stop the dev server on this worktree, then move it');
-      }
-
-      const destDir = canonicalWorktreesDir(app.deps.homeStateDir, owner.id);
-      const dest = path.join(destDir, path.basename(target));
-      assertPathUnder(dest, [destDir]);
-      let destTaken = false;
-      try {
-        await fsp.access(dest);
-        destTaken = true;
-      } catch {
-        // free — proceed
-      }
-      if (destTaken) throw new AppError('VALIDATION', `destination already exists: ${dest}`);
-
-      await fsp.mkdir(destDir, { recursive: true });
-      await app.deps.git.move({ repoPath: owner.path, from: target, to: dest });
-
-      // Everything keyed by the old path follows the move (or is dropped
-      // explicitly). Chat history first-class; the activity clock just resets.
-      const meta = await state.get(target);
-      if (meta) {
-        await state.upsert(dest, meta);
-        await state.remove(target);
-      }
-      app.deps.activity.remove(target);
-      const chatHistory = await moveClaudeProjectHistory(target, dest);
-
-      app.deps.bus.emit('worktrees', { type: 'worktree.updated', data: { path: dest } });
-      return { path: dest, chatHistory };
     },
   );
 

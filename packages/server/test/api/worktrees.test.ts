@@ -63,6 +63,35 @@ describe('GET /api/w/default/worktrees', () => {
     expect(main.tracked).toBe(true);
     expect(main.meta.ticketId).toBe('');
   });
+
+  it('excludes worktrees outside the Strado-managed root', async () => {
+    const managed = path.join(worktreesDir, 'STR-16_managed');
+    const claude = path.join(tmp, '.claude', 'worktrees', 'claude-task');
+    const codex = path.join(tmp, '.codex', 'worktrees', 'codex-task');
+    await fs.mkdir(path.dirname(claude), { recursive: true });
+    await fs.mkdir(path.dirname(codex), { recursive: true });
+    await exec('git', ['-C', repo, 'worktree', 'add', managed, '-b', 'strado-task', 'main']);
+    await exec('git', ['-C', repo, 'worktree', 'add', claude, '-b', 'claude-task', 'main']);
+    await exec('git', ['-C', repo, 'worktree', 'add', codex, '-b', 'codex-task', 'main']);
+
+    const res = await app.inject({ method: 'GET', url: '/api/w/default/worktrees' });
+    expect(res.statusCode).toBe(200);
+    const paths = res.json().worktrees.map((w: { path: string }) => w.path);
+    expect(paths).toContain(repo);
+    expect(paths).toContain(managed);
+    expect(paths).not.toContain(claude);
+    expect(paths).not.toContain(codex);
+  });
+
+  it('does not expose endpoints for discovering or importing external worktrees', async () => {
+    const unmanaged = await app.inject({ method: 'GET', url: '/api/w/default/worktrees/unmanaged' });
+    const move = await app.inject({
+      method: 'POST',
+      url: `/api/w/default/worktrees/${encodeURIComponent(path.join(tmp, 'external'))}/move`,
+    });
+    expect(unmanaged.statusCode).toBe(404);
+    expect(move.statusCode).toBe(404);
+  });
 });
 
 describe('POST /api/w/default/worktrees', () => {

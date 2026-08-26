@@ -28,7 +28,7 @@ vi.mock('../api', () => ({
         return Promise.resolve(repoLists[wsId] ?? []);
       }),
     },
-    worktrees: { unmanaged: vi.fn().mockResolvedValue({ worktrees: [] }), list: vi.fn().mockResolvedValue([]) },
+    worktrees: { list: vi.fn().mockResolvedValue([]) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: {
       providers: vi.fn().mockResolvedValue([]),

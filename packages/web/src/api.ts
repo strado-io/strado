@@ -215,13 +215,6 @@ export const api = {
       request(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     adopt: (wsId: string, p: string, payload: { repoId: string; ticketId: string; title: string; port?: number }) =>
       request(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/adopt`, { method: 'POST', body: JSON.stringify(payload) }),
-    unmanaged: (wsId: string) =>
-      request<{ worktrees: UnmanagedWorktree[] }>(`${wsBase(wsId)}/worktrees/unmanaged`),
-    move: (wsId: string, p: string) =>
-      request<{ path: string; chatHistory: 'moved' | 'none' | 'conflict' }>(
-        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/move`,
-        { method: 'POST' },
-      ),
     link: (wsId: string, p: string, sourceWorktree: string, replace = false) =>
       request<{ warnings: string[] }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/link`,
@@ -661,15 +654,6 @@ export type RunnerStatus = {
   online: boolean;
   /** Online but its API failed — worth showing, because "no worktrees" would be a lie. */
   error: string | null;
-};
-
-/** A worktree git knows about but Strado won't touch — outside the managed
- * folder. Only surfaced so the user can pull it in. */
-export type UnmanagedWorktree = {
-  repoId: string;
-  repoName: string;
-  path: string;
-  branch: string | null;
 };
 
 export type RemoteWorktree = {
