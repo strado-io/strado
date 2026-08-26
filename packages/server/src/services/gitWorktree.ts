@@ -25,9 +25,6 @@ export type GitWorktreeService = {
   list(repoPath: string): Promise<WorktreeListItem[]>;
   create(opts: CreateOptions): Promise<void>;
   remove(opts: RemoveOptions): Promise<void>;
-  /** `git worktree move` — git rewrites its own pointer files; refuses locked
-   * or submodule-bearing worktrees, which surfaces as SHELL_FAILED. */
-  move(opts: { repoPath: string; from: string; to: string }): Promise<void>;
   deleteBranch(repoPath: string, branch: string): Promise<void>;
 };
 
@@ -39,9 +36,6 @@ export function createGitWorktreeService(): GitWorktreeService {
     },
     async create({ repoPath, branch, sourceBranch, targetPath }) {
       await exec('git', ['-C', repoPath, 'worktree', 'add', targetPath, '-b', branch, sourceBranch]);
-    },
-    async move({ repoPath, from, to }) {
-      await exec('git', ['-C', repoPath, 'worktree', 'move', from, to]);
     },
     async remove({ repoPath, targetPath, force }) {
       try {

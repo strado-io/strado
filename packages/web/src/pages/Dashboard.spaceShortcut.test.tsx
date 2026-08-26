@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Workspace } from '../types';
 
@@ -20,7 +20,7 @@ vi.mock('../hooks/useWorkspace', () => ({
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
-    worktrees: { unmanaged: vi.fn().mockResolvedValue({ worktrees: [] }), list: vi.fn().mockResolvedValue([]) },
+    worktrees: { list: vi.fn().mockResolvedValue([]) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: {
       providers: vi.fn().mockResolvedValue([]),
@@ -28,6 +28,9 @@ vi.mock('../api', () => ({
     },
     runners: { remoteWorktrees: vi.fn().mockResolvedValue({ runners: [], worktrees: [] }) },
     org: { get: vi.fn().mockRejectedValue(new Error('no Strado account on this machine')) },
+    license: { get: vi.fn().mockResolvedValue({ license: { name: 'Test User', email: 'test@example.com' } }) },
+    profile: { get: vi.fn().mockResolvedValue({ fullName: 'Test User', callMe: 'Test', telemetryOptOut: false }) },
+    modelCredential: { get: vi.fn().mockResolvedValue({ present: false, last4: null }) },
   },
 }));
 vi.mock('./TerminalView', () => ({ TerminalView: () => <div data-testid="inline-hub" /> }));
@@ -126,5 +129,42 @@ describe('Dashboard sessions shortcut (⌘L)', () => {
     // give any (incorrect) state update a chance to flush
     await new Promise((r) => setTimeout(r, 100));
     expect(screen.queryByText('No open sessions')).toBeNull();
+  });
+});
+
+describe('Dashboard settings shortcut (⌘,)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem('strado:onboarding-welcomed', '1');
+    localStorage.setItem('strado:onboarding-dismissed', '1');
+  });
+
+  it('opens profile settings', async () => {
+    renderDashboard();
+    await waitFor(() => expect(screen.getByTestId('space-carousel')).toBeInTheDocument());
+    fireEvent.keyDown(window, { key: ',', metaKey: true });
+    expect(await screen.findByTestId('settings-pane')).toHaveAttribute('data-section', 'profile');
+  });
+
+  it('opens profile settings with Ctrl+Comma on Linux and Windows', async () => {
+    renderDashboard();
+    await waitFor(() => expect(screen.getByTestId('space-carousel')).toBeInTheDocument());
+    fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+    expect(await screen.findByTestId('settings-pane')).toHaveAttribute('data-section', 'profile');
+  });
+
+  it('responds when the desktop shell forwards the shortcut from an embed', async () => {
+    const handlers: ((combo: string) => void)[] = [];
+    (window as unknown as { strado: unknown }).strado = {
+      onHotkey: (cb: (combo: string) => void) => { handlers.push(cb); return () => {}; },
+    };
+    try {
+      renderDashboard();
+      await waitFor(() => expect(screen.getByTestId('space-carousel')).toBeInTheDocument());
+      act(() => handlers.forEach((handler) => handler('settings')));
+      expect(await screen.findByTestId('settings-pane')).toHaveAttribute('data-section', 'profile');
+    } finally {
+      delete (window as unknown as { strado?: unknown }).strado;
+    }
   });
 });

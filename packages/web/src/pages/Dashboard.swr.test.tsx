@@ -11,7 +11,7 @@ vi.mock('../hooks/useWorkspace', () => ({
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockImplementation(() => new Promise(() => {})) },
-    worktrees: { unmanaged: vi.fn().mockResolvedValue({ worktrees: [] }), list: vi.fn().mockImplementation(() => new Promise(() => {})) },
+    worktrees: { list: vi.fn().mockImplementation(() => new Promise(() => {})) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: {
       providers: vi.fn().mockResolvedValue([]),

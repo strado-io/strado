@@ -17,9 +17,6 @@ export const ErrorCode = {
   // A container with the name we need exists but belongs to another worktree.
   // Never resolved by forcing: removing it would destroy that worktree's work.
   SANDBOX_CONFLICT: 'SANDBOX_CONFLICT',
-  // Moving a worktree under a live terminal/agent session would strand the
-  // session (keys are path strings); stop the sessions, then move.
-  WORKTREE_HAS_SESSIONS: 'WORKTREE_HAS_SESSIONS',
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;
@@ -39,7 +36,6 @@ const httpStatusByCode: Record<ErrorCodeName, number> = {
   FEEDBACK_SEND_FAILED: 502,
   CLOUD_UNREACHABLE: 502,
   SANDBOX_CONFLICT: 409,
-  WORKTREE_HAS_SESSIONS: 409,
 };
 
 export class AppError extends Error {
