@@ -1,7 +1,9 @@
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { defaultShell } from './platform.js';
+import { hooksDir } from './claudeHooks.js';
 
 export type TerminalStatus = 'running' | 'exited';
 export type TerminalInfo = { status: TerminalStatus; pid: number | null; exitCode: number | null };
@@ -101,6 +103,7 @@ const INSTANCE_IDENTITY_KEYS = [
 export function sessionEnv(key: string, cwd: string): Record<string, string> {
   const env = { ...process.env };
   for (const k of INSTANCE_IDENTITY_KEYS) delete env[k];
+  const session = parseSessionKey(key);
   return {
     ...env,
     // STRADO_WORKTREE lets tools inside the session (the per-worktree
@@ -115,7 +118,20 @@ export function sessionEnv(key: string, cwd: string): Record<string, string> {
     // back to :7777 — so an agent under the dev instance would drive the
     // release instance's browser.
     STRADO_SERVER: `http://127.0.0.1:${process.env.PORT ?? 7777}`,
-    STRADO_SESSION_ID: parseSessionKey(key).id,
+    STRADO_SESSION_ID: session.id,
+    // Agent hooks namespace statuses from a generic Shell tab separately from
+    // dedicated agent tabs (both may otherwise be numeric session "1").
+    STRADO_SESSION_MODE: session.mode,
+    // Shell sessions prepend this directory to PATH. The launchers instrument
+    // agents typed manually without changing the user's global configuration.
+    STRADO_AGENT_BIN_DIR: path.join(hooksDir(), 'bin'),
+    // A profile-aware bootstrap re-applies the launcher PATH after interactive
+    // rc files. Without it, nvm/Homebrew entries added by .zshrc or .bashrc can
+    // hide the Codex launcher while Claude's project hook still appears fine.
+    STRADO_SHELL_BOOTSTRAP: path.join(hooksDir(), 'strado-shell-bootstrap'),
+    // The bootstrap starts as a login shell, then execs the user's interactive
+    // shell after applying the scoped PATH. Sandboxes override this to bash.
+    STRADO_INNER_SHELL: defaultShell(),
   } as Record<string, string>;
 }
 

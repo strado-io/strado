@@ -1,0 +1,28 @@
+#!/bin/sh
+# Preserve the user's normal interactive shell setup, then put Strado's
+# Shell-scoped agent launchers first. This must happen after rc files because
+# nvm, Homebrew, pyenv, and similar tools commonly prepend their own paths.
+
+shell=${STRADO_INNER_SHELL:-/bin/sh}
+hooks_root=${STRADO_AGENT_BIN_DIR%/bin}
+
+case "${shell##*/}" in
+  zsh)
+    STRADO_USER_ZDOTDIR=${ZDOTDIR:-${HOME}}
+    export STRADO_USER_ZDOTDIR
+    ZDOTDIR=${hooks_root}/shell/zsh
+    export ZDOTDIR
+    exec "$shell" -i
+    ;;
+  bash)
+    exec "$shell" --rcfile "${hooks_root}/shell/bashrc" -i
+    ;;
+  fish)
+    exec "$shell" -C 'set -gx PATH $STRADO_AGENT_BIN_DIR $PATH' -i
+    ;;
+  *)
+    PATH="${STRADO_AGENT_BIN_DIR}:${PATH}"
+    export PATH
+    exec "$shell" -i
+    ;;
+esac

@@ -24,10 +24,13 @@ const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
  * the generated script exports STRADO_SERVER_SOCKET itself (see below). */
 const FORWARDED = [
   'STRADO_SESSION_ID',
+  'STRADO_SESSION_MODE',
   'STRADO_WORKTREE',
   'STRADO_STATUS_PORT',
   'STRADO_SERVER',
   'STRADO_SERVER_SOCKET',
+  'STRADO_AGENT_BIN_DIR',
+  'STRADO_SHELL_BOOTSTRAP',
   'TERM',
 ];
 
@@ -53,7 +56,7 @@ function containerArgv(spec: SpawnSpec): string[] {
 
 function wrap(rt: SandboxRuntime, slug: string, cwd: string, inner: SpawnSpec): SpawnSpec {
   const ctr = `strado-sbx-${slug}`;
-  const envFlags = FORWARDED.map((k) => `--env ${k}`).join(' ');
+  const envFlags = `${FORWARDED.map((k) => `--env ${k}`).join(' ')} --env STRADO_INNER_SHELL=/bin/bash`;
   const innerCmd = containerArgv(inner).map(shq).join(' ');
   // The socket path is a property of being sandboxed, so the wrapper — not
   // sessionEnv — defines it: an unsandboxed session cannot inherit a var that

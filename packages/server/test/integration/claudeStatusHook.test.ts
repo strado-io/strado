@@ -73,6 +73,22 @@ describe('claude-status-hook', () => {
     expect(received[0]).toEqual({ cwd: '/tmp/wt-a', status: 'working', sessionId: '2' });
   });
 
+  it('namespaces a hook inherited by an agent launched from Shell', async () => {
+    const received: any[] = [];
+    const port: number = await new Promise((resolve) => {
+      server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => { received.push(JSON.parse(body)); res.end('{}'); });
+      });
+      server.listen(0, '127.0.0.1', () => resolve((server!.address() as any).port));
+    });
+    await runHook(['working', String(port)], {
+      CLAUDE_PROJECT_DIR: '/tmp/wt-a', STRADO_SESSION_ID: '3', STRADO_SESSION_MODE: 'shell',
+    });
+    expect(received[0]).toEqual({ cwd: '/tmp/wt-a', status: 'working', sessionId: 'shell:3' });
+  });
+
   it('exits 0 even when no server is listening', async () => {
     // Port 1 is privileged/closed; connection refused → must still exit 0.
     const code = await runHook(['idle', '1'], { CLAUDE_PROJECT_DIR: '/tmp/wt-b' });

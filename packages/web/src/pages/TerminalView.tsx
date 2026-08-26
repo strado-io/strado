@@ -31,6 +31,7 @@ import {
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
+import { agentTabStatus, shellHostedAgent } from '../hooks/agentTabStatus';
 import {
   hasLeaf, leafKeys, pruneLeaves, readPaneLayouts, rememberPaneLayout,
   removeLeaf, replaceLeaf, splitLeaf, withRatio, type PaneNode,
@@ -113,6 +114,9 @@ function extraIds(ids: Iterable<string> | undefined): string[] {
 // Tab icons are the mode identity; their COLOR carries status only
 // (amber = agent working, blue = needs your input, neutral = idle).
 const IDLE_ICON = 'text-zinc-500';
+const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon };
+const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
+
 const AGENT_ICON: Record<string, string> = {
   working: 'text-amber-400 animate-pulse',
   waiting: 'text-blue-400',
@@ -173,7 +177,7 @@ function groupTabs(
   // pointing at the forwarded 127.0.0.1 URL), not by the worktree's server, so
   // it IS available for a remote worktree — gated separately from VS Code.
   browserEmbeds = embeds,
-): { tab: Tab; label: string; icon: React.ReactNode }[] {
+): { tab: Tab; label: string; icon: React.ReactNode; hint?: string }[] {
   // saved drag order applies at the end, so every consumer (strip, switcher,
   // hotkeys) sees the same sequence
   const agentTabs = <M extends 'claude' | 'codex' | 'opencode'>(
@@ -188,7 +192,7 @@ function groupTabs(
   ) => {
     const ids = [...(open ? ['1'] : []), ...sortIds([...server, ...local]).filter((id) => id !== '1')];
     return ids.map((id) => {
-      const status = byId?.[id] ?? (id === '1' ? aggregate : undefined) ?? 'idle';
+      const status = agentTabStatus(id, byId, aggregate) ?? 'idle';
       return {
         tab: { path: g.path, mode, id },
         label: shellNames[sessionNameKey(g.path, mode, id)] ?? (id === '1' ? label : `${label} ${id}`),
@@ -200,11 +204,23 @@ function groupTabs(
     ...agentTabs('claude', g.claudeOpen, g.serverClaudeIds, g.localClaudeIds, 'Claude', g.claudeStatusById, g.claudeStatus, ClaudeIcon),
     ...agentTabs('codex', g.codexOpen, g.serverCodexIds, g.localCodexIds, 'Codex', g.codexStatusById, g.codexStatus, CodexIcon),
     ...agentTabs('opencode', g.opencodeOpen, g.serverOpencodeIds, g.localOpencodeIds, 'OpenCode', g.opencodeStatusById, g.opencodeStatus, OpencodeIcon),
-    ...sortIds([...g.serverShellIds, ...g.localShellIds]).map((id) => ({
-      tab: { path: g.path, mode: 'shell' as const, id },
-      label: shellNames[shellNameKey(g.path, id)] ?? (id === '1' ? 'Shell' : `Shell ${id}`),
-      icon: <ShellIcon className={IDLE_ICON} />,
-    })),
+    ...sortIds([...g.serverShellIds, ...g.localShellIds]).map((id) => {
+      // An agent typed by hand inside a Shell tab takes the tab's icon over
+      // for as long as it runs, so the strip says WHICH tab is busy — the
+      // plain terminal glyph comes back when the agent exits.
+      const hosted = shellHostedAgent(id, {
+        claude: g.claudeStatusById, codex: g.codexStatusById, opencode: g.opencodeStatusById,
+      });
+      const Icon = hosted ? SHELL_HOST_ICON[hosted.mode] : ShellIcon;
+      return {
+        tab: { path: g.path, mode: 'shell' as const, id },
+        label: shellNames[shellNameKey(g.path, id)] ?? (id === '1' ? 'Shell' : `Shell ${id}`),
+        icon: <Icon className={hosted ? AGENT_ICON[hosted.status] : IDLE_ICON} />,
+        // the swapped icon needs a name on hover, or a Codex-hosted shell just
+        // looks like a mislabelled Codex tab
+        hint: hosted ? `${SHELL_HOST_LABEL[hosted.mode]} ${hosted.status}` : undefined,
+      };
+    }),
     ...remoteShells.map((rs) => ({
       // Labelled by machine, not "Cloud": the user picked a specific runner and
       // the tab has to keep saying which one, because where it runs changes what
@@ -2105,7 +2121,7 @@ export function TerminalView({
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-          {tabs.map(({ tab, label: tabLabel, icon }) => {
+          {tabs.map(({ tab, label: tabLabel, icon, hint }) => {
             const isActive =
               sameTab(active, tab);
             const renamable = tab.mode === 'shell' || tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode';
@@ -2169,7 +2185,7 @@ export function TerminalView({
                         ? () => setRenaming({ path: tab.path, mode: tab.mode as NamedSessionMode, id: tab.id, value: tabLabel })
                         : undefined
                     }
-                    title={renamable ? 'Double-click to rename' : undefined}
+                    title={[hint, renamable ? 'Double-click to rename' : null].filter(Boolean).join(' · ') || undefined}
                     className="flex items-center gap-1.5 py-1 pl-2 pr-1"
                   >
                     {icon}

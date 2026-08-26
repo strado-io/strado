@@ -30,6 +30,7 @@ export type ActivityTracker = {
 export function createAgentOutputBeats(opts: {
   touch(worktreePath: string): void;
   agentStatus(mode: 'claude' | 'codex' | 'opencode', worktreePath: string): 'idle' | 'working' | 'waiting' | undefined;
+  shellAgentWorking?: (worktreePath: string, shellSessionId: string) => boolean;
   now?: () => number;
   throttleMs?: number;
 }): (sessionKey: string) => void {
@@ -38,8 +39,9 @@ export function createAgentOutputBeats(opts: {
   const lastBeat = new Map<string, number>();
   return (sessionKey) => {
     const session = parseSessionKey(sessionKey);
-    if (session.mode === 'shell') return;
-    if (opts.agentStatus(session.mode, session.path) !== 'working') return;
+    if (session.mode === 'shell') {
+      if (!opts.shellAgentWorking?.(session.path, session.id)) return;
+    } else if (opts.agentStatus(session.mode, session.path) !== 'working') return;
     const t = now();
     const last = lastBeat.get(session.path);
     if (last !== undefined && t - last < throttleMs) return;

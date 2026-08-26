@@ -132,6 +132,11 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     touch: (p) => activity.touch(p),
     agentStatus: (mode, p) =>
       (mode === 'claude' ? claudeStatus : mode === 'codex' ? codexStatus : opencodeStatus).get(p),
+    shellAgentWorking: (p, id) => {
+      const key = `shell:${id}`;
+      return [claudeStatus, codexStatus, opencodeStatus]
+        .some((store) => store.sessions(p)[key] === 'working');
+    },
   });
   // Idle-parking's own activity clock: every pty data event counts, for
   // every session mode, with no throttle or 'working'-state gate — a plain

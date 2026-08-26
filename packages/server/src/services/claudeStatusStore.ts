@@ -9,8 +9,12 @@ export type ClaudeStatusStore = {
   get(path: string): ClaudeStatus | undefined;
   /** reset one session (sessionId given) or every session of the path */
   clear(path: string, sessionId?: string): void;
+  /** drop one session entirely — a Shell-hosted agent that has exited */
+  remove(path: string, sessionId: string): void;
   /** per-session statuses, for the worktrees listing */
   sessions(path: string): Record<string, ClaudeStatus>;
+  /** True while a namespaced Shell launcher has an agent process open. */
+  active(path: string, sessionId: string): boolean;
 };
 
 // One store per agent kind; `field` names the property carried on
@@ -58,6 +62,17 @@ export function createAgentStatusStore(
     },
     sessions(path) {
       return Object.fromEntries(map.get(path) ?? []);
+    },
+    // Presence, not busyness: the launcher registers the session when it
+    // starts the agent and removes it when the agent exits, so an idle Claude
+    // between turns is still very much open in that Shell tab.
+    active(path, sessionId) {
+      return map.get(path)?.has(sessionId) ?? false;
+    },
+    remove(path, sessionId) {
+      const sessions = map.get(path);
+      if (!sessions?.delete(sessionId)) return;
+      emit(path);
     },
     clear(path, sessionId) {
       const sessions = map.get(path) ?? new Map<string, ClaudeStatus>();

@@ -66,4 +66,12 @@ describe('POST /api/codex/status', () => {
     expect(row.codexStatusById).toEqual({ '2': 'waiting' });
     expect(row.codexSessions).toEqual([]);
   });
+
+  it('accepts a Shell-hosted agent session and drops it on close', async () => {
+    await app.inject({ method: 'POST', url: '/api/codex/status', payload: { cwd: repo, status: 'working', sessionId: 'shell:3' } });
+    expect(app.deps.codexStatus.sessions(repo)['shell:3']).toBe('working');
+    const res = await app.inject({ method: 'POST', url: '/api/codex/status', payload: { cwd: repo, status: 'closed', sessionId: 'shell:3' } });
+    expect(res.statusCode).toBe(200);
+    expect(app.deps.codexStatus.sessions(repo)).not.toHaveProperty('shell:3');
+  });
 });

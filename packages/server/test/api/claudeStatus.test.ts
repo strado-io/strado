@@ -78,6 +78,14 @@ describe('POST /api/claude/status', () => {
     expect(events.at(-1).data.claudeStatusById).toEqual({ '2': 'working', '1': 'waiting' });
   });
 
+  it('accepts a Shell-hosted agent session and drops it on close', async () => {
+    await app.inject({ method: 'POST', url: '/api/claude/status', payload: { cwd: repo, status: 'waiting', sessionId: 'shell:2' } });
+    expect(app.deps.claudeStatus.sessions(repo)['shell:2']).toBe('waiting');
+    const res = await app.inject({ method: 'POST', url: '/api/claude/status', payload: { cwd: repo, status: 'closed', sessionId: 'shell:2' } });
+    expect(res.statusCode).toBe(200);
+    expect(app.deps.claudeStatus.sessions(repo)).not.toHaveProperty('shell:2');
+  });
+
   it('rejects a cwd no repo owns', async () => {
     const res = await app.inject({
       method: 'POST',

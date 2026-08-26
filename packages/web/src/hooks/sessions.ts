@@ -1,4 +1,5 @@
 import type { Worktree } from '../types';
+import { agentTabStatus, shellHostedAgent } from './agentTabStatus';
 
 export type SessionChip = {
   path: string;
@@ -10,6 +11,8 @@ export type SessionChip = {
   claudeStatus?: 'idle' | 'working' | 'waiting';
   codexStatus?: 'idle' | 'working' | 'waiting';
   opencodeStatus?: 'idle' | 'working' | 'waiting';
+  /** For a shell chip: the agent launched by hand inside that tab, if any. */
+  hostedAgent?: 'claude' | 'codex' | 'opencode';
 };
 
 function label(w: Worktree): string {
@@ -45,7 +48,7 @@ export function sessionChips(worktrees: Worktree[], vscodeTabs?: Set<string>, br
         path: w.path, mode: 'claude', sessionId: id,
         modeLabel: id === '1' ? 'claude' : `claude ${id}`,
         label: label(w), title: title(w),
-        claudeStatus: w.claudeStatusById?.[id] ?? w.claudeStatus,
+        claudeStatus: agentTabStatus(id, w.claudeStatusById, w.claudeStatus),
       });
     }
     const codexIds = w.codexSessions?.length ? w.codexSessions : (w.hasCodexSession ? ['1'] : []);
@@ -54,7 +57,7 @@ export function sessionChips(worktrees: Worktree[], vscodeTabs?: Set<string>, br
         path: w.path, mode: 'codex', sessionId: id,
         modeLabel: id === '1' ? 'codex' : `codex ${id}`,
         label: label(w), title: title(w),
-        codexStatus: w.codexStatusById?.[id] ?? w.codexStatus,
+        codexStatus: agentTabStatus(id, w.codexStatusById, w.codexStatus),
       });
     }
     const opencodeIds = w.opencodeSessions?.length ? w.opencodeSessions : (w.hasOpencodeSession ? ['1'] : []);
@@ -63,14 +66,22 @@ export function sessionChips(worktrees: Worktree[], vscodeTabs?: Set<string>, br
         path: w.path, mode: 'opencode', sessionId: id,
         modeLabel: id === '1' ? 'opencode' : `opencode ${id}`,
         label: label(w), title: title(w),
-        opencodeStatus: w.opencodeStatusById?.[id] ?? w.opencodeStatus,
+        opencodeStatus: agentTabStatus(id, w.opencodeStatusById, w.opencodeStatus),
       });
     }
     const shellIds = w.shellSessions ?? (w.hasShellSession ? ['1'] : []);
     for (const id of shellIds) {
+      // A Shell tab carries the status of whatever agent was launched by hand
+      // inside it — never the worktree aggregate, which would light up every
+      // shell of a worktree whose Claude tab is working.
+      const hosted = shellHostedAgent(id, {
+        claude: w.claudeStatusById, codex: w.codexStatusById, opencode: w.opencodeStatusById,
+      });
       chips.push({
         path: w.path, mode: 'shell', sessionId: id, modeLabel: id === '1' ? 'shell' : `shell ${id}`,
-        label: label(w), title: title(w), claudeStatus: w.claudeStatus,
+        label: label(w), title: title(w),
+        hostedAgent: hosted?.mode,
+        ...(hosted ? { [`${hosted.mode}Status`]: hosted.status } : {}),
       });
     }
     if (vscodeTabs?.has(w.path)) {
@@ -99,9 +110,10 @@ export function bySessionPriority(a: Worktree, b: Worktree): number {
 }
 
 export function chipStatus(c: SessionChip): 'idle' | 'working' | 'waiting' | undefined {
-  if (c.mode === 'claude') return c.claudeStatus;
-  if (c.mode === 'codex') return c.codexStatus;
-  if (c.mode === 'opencode') return c.opencodeStatus;
+  const mode = c.mode === 'shell' ? c.hostedAgent : c.mode;
+  if (mode === 'claude') return c.claudeStatus;
+  if (mode === 'codex') return c.codexStatus;
+  if (mode === 'opencode') return c.opencodeStatus;
   return undefined;
 }
 

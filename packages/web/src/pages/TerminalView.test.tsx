@@ -449,6 +449,48 @@ describe('TerminalView', () => {
     expect(screen.getByText('Shell 2')).toBeInTheDocument();
   });
 
+  it('gives a Shell tab hosting a hand-launched agent that agent\'s status, and no other tab', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, hasClaudeSession: true, shellSessions: ['1', '2'] } as Worktree}
+        mode="claude"
+        onClose={vi.fn()}
+      />,
+    );
+    // Claude launched by hand inside Shell 2: the worktree aggregate goes
+    // 'working', but the dedicated Claude tab is not the one that is busy
+    pushSse({
+      path: baseWorktree.path,
+      claudeStatus: 'working',
+      claudeStatusById: { 'shell:2': 'working' },
+    });
+    const shellTab = screen.getByTitle(/^Claude working/);
+    expect(shellTab).toHaveTextContent('Shell 2');
+    expect(shellTab.querySelector('svg')).toHaveClass('animate-pulse');
+    // the dedicated Claude tab is idle — it must not borrow the aggregate
+    const claudeTab = screen.getByText('Claude').closest('button')!;
+    expect(claudeTab).toHaveAttribute('title', 'Double-click to rename');
+    expect(claudeTab.querySelector('svg')).not.toHaveClass('animate-pulse');
+  });
+
+  it('keeps the hosted-agent icon on a Shell tab until the agent exits', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+    pushSse({ path: baseWorktree.path, codexStatus: 'waiting', codexStatusById: { 'shell:1': 'waiting' } });
+    expect(screen.getByTitle(/^Codex waiting/)).toHaveTextContent('Shell');
+    // idle between turns is not an exit — the agent still owns the tab
+    pushSse({ path: baseWorktree.path, codexStatus: 'idle', codexStatusById: { 'shell:1': 'idle' } });
+    expect(screen.getByTitle(/^Codex idle/)).toHaveTextContent('Shell');
+    // the server drops the session when the launcher reports the exit
+    pushSse({ path: baseWorktree.path, codexStatus: 'idle', codexStatusById: {} });
+    expect(screen.queryByTitle(/^Codex/)).not.toBeInTheDocument();
+  });
+
   it('with no explicit mode, restores the worktree\'s last-active tab', () => {
     localStorage.setItem('strado.activeTab', JSON.stringify({ [baseWorktree.path]: 'shell:2' }));
     render(

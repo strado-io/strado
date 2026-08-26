@@ -133,6 +133,7 @@ describe('hooks with STRADO_SERVER_SOCKET set', () => {
     process.env.STRADO_STATUS_PORT = String(port);
     process.env.STRADO_WORKTREE = '/tmp/wt-a';
     process.env.STRADO_SESSION_ID = '4';
+    process.env.STRADO_SESSION_MODE = 'shell';
     process.env.STRADO_SERVER_SOCKET = socketPath;
 
     const { StradoStatus } = await import('../../hooks/strado-opencode-status.js');
@@ -141,8 +142,8 @@ describe('hooks with STRADO_SERVER_SOCKET set', () => {
     await plugin.event({ event: { type: 'session.idle' } });
 
     expect(viaSocket).toEqual([
-      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'working', sessionId: '4' } },
-      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'waiting', sessionId: '4' } },
+      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'working', sessionId: 'shell:4' } },
+      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'waiting', sessionId: 'shell:4' } },
     ]);
     expect(viaPort).toEqual([]);
   });

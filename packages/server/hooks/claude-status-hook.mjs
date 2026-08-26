@@ -67,7 +67,10 @@ async function main() {
   // Injected into the PTY env by the server; identifies WHICH Claude tab of
   // the worktree this hook belongs to. Absent on sessions spawned before
   // multi-session support — the server treats those as session 1.
-  const sessionId = process.env.STRADO_SESSION_ID;
+  const rawSessionId = process.env.STRADO_SESSION_ID;
+  const sessionId = rawSessionId && process.env.STRADO_SESSION_MODE === 'shell'
+    ? `shell:${rawSessionId}`
+    : rawSessionId;
   const body = JSON.stringify(sessionId ? { cwd, status, sessionId } : { cwd, status });
 
   const socketPath = process.env.STRADO_SERVER_SOCKET;

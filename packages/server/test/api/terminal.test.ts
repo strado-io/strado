@@ -115,21 +115,43 @@ describe('GET /ws/terminal', () => {
     ws.close();
   });
 
-  it('shell mode does not install Claude hooks', async () => {
+  it('shell mode installs Claude and OpenCode status integrations', async () => {
     const fsp = await import('node:fs/promises');
     const pathMod = await import('node:path');
     const ws = await openSocket(`ws=default&path=${encodeURIComponent(repo)}&mode=shell`);
-    // End the spawned login shell so it doesn't linger past the test.
-    ws.send(JSON.stringify({ type: 'data', data: 'exit\n' }));
-    // Wait a moment, then confirm no settings.local.json was written.
-    await new Promise((r) => setTimeout(r, 600));
-    let exists = true;
-    try {
-      await fsp.access(pathMod.join(repo, '.claude', 'settings.local.json'));
-    } catch {
-      exists = false;
+    const claudeSettings = pathMod.join(repo, '.claude', 'settings.local.json');
+    const opencodePlugin = pathMod.join(repo, '.opencode', 'plugin', 'strado-opencode-status.js');
+    const start = Date.now();
+    while (Date.now() - start < 5_000) {
+      try {
+        await Promise.all([fsp.access(claudeSettings), fsp.access(opencodePlugin)]);
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 50));
+      }
     }
-    expect(exists).toBe(false);
+    expect(JSON.parse(await fsp.readFile(claudeSettings, 'utf8')).hooks.UserPromptSubmit).toBeTruthy();
+    expect(await fsp.readFile(opencodePlugin, 'utf8')).toContain("'chat.message'");
+    ws.close();
+  });
+
+  it('marks Enter as Codex working only while Codex is registered in that Shell', async () => {
+    const ws = await openSocket(`ws=default&path=${encodeURIComponent(repo)}&mode=shell&session=2`);
+    ws.send(JSON.stringify({ type: 'data', data: '\r' }));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(app.deps.codexStatus.get(repo)).toBeUndefined();
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/codex/status',
+      payload: { cwd: repo, status: 'waiting', sessionId: 'shell:2' },
+    });
+    ws.send(JSON.stringify({ type: 'data', data: '\r' }));
+    const start = Date.now();
+    while (app.deps.codexStatus.get(repo) !== 'working' && Date.now() - start < 5_000) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(app.deps.codexStatus.sessions(repo)['shell:2']).toBe('working');
     ws.close();
   });
 

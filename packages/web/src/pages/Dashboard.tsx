@@ -434,7 +434,7 @@ export function Dashboard(props: {
       notification.onclick = () => {
         window.focus();
         // land on the exact session tab the notification came from
-        if (worktree) openInlineHub(worktree, 'claude', n.sessionId);
+        if (worktree) openInlineHub(worktree, n.mode, n.sessionId);
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

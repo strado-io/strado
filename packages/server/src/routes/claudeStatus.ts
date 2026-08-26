@@ -6,10 +6,10 @@ import { AppError } from '../errors.js';
 
 const Body = z.object({
   cwd: z.string().min(1),
-  status: z.enum(['idle', 'working', 'waiting']),
+  status: z.enum(['idle', 'working', 'waiting', 'closed']),
   // Which Claude tab this status belongs to (multi-session worktrees).
   // Absent for hooks spawned before multi-session — those are session 1.
-  sessionId: z.string().regex(/^\d+$/).optional(),
+  sessionId: z.string().regex(/^(?:\d+|shell:\d+)$/).optional(),
 });
 
 export async function registerClaudeStatusRoutes(app: FastifyInstance) {
@@ -38,10 +38,13 @@ export async function registerClaudeStatusRoutes(app: FastifyInstance) {
     }
     if (!owned) throw new AppError('NOT_FOUND', `no repo owns ${cwd}`);
 
-    app.deps.claudeStatus.set(cwd, status, sessionId ?? '1');
+    // 'closed' means the agent process is gone, which is not the same as an
+    // idle one: the session leaves the map so a Shell tab stops claiming it.
+    if (status === 'closed') app.deps.claudeStatus.remove(cwd, sessionId ?? '1');
+    else app.deps.claudeStatus.set(cwd, status, sessionId ?? '1');
     // Agent turns count as activity even when the user isn't typing: the
     // prompt-submit and turn-complete hooks bracket the working period.
-    app.deps.activity.touch(cwd);
+    if (status !== 'closed') app.deps.activity.touch(cwd);
     return { ok: true };
   });
 }

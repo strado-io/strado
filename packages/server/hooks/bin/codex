@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+import { launchAgent } from '../strado-agent-launcher.mjs';
+
+await launchAgent('codex');

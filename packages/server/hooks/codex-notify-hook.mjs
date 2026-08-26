@@ -45,7 +45,10 @@ async function main() {
 
   // Injected into the PTY env by the server (codex spawns us as a child, so
   // it's inherited); identifies WHICH Codex tab of the worktree this is.
-  const sessionId = process.env.STRADO_SESSION_ID;
+  const rawSessionId = process.env.STRADO_SESSION_ID;
+  const sessionId = rawSessionId && process.env.STRADO_SESSION_MODE === 'shell'
+    ? `shell:${rawSessionId}`
+    : rawSessionId;
   const body = JSON.stringify(
     sessionId ? { cwd, status: 'waiting', sessionId } : { cwd, status: 'waiting' },
   );
