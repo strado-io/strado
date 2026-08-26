@@ -24,9 +24,9 @@ describe('session helpers', () => {
       { path: '/a', mode: 'claude', sessionId: '1', modeLabel: 'claude', label: 'a', title: null, claudeStatus: 'working' },
       { path: '/a', mode: 'codex', sessionId: '1', modeLabel: 'codex', label: 'a', title: null, codexStatus: undefined },
       { path: '/a', mode: 'opencode', sessionId: '1', modeLabel: 'opencode', label: 'a', title: null, opencodeStatus: undefined },
-      { path: '/a', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'a', title: null, claudeStatus: 'working' },
-      { path: '/a', mode: 'shell', sessionId: '3', modeLabel: 'shell 3', label: 'a', title: null, claudeStatus: 'working' },
-      { path: '/b', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'b', title: null, claudeStatus: undefined },
+      { path: '/a', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'a', title: null, hostedAgent: undefined },
+      { path: '/a', mode: 'shell', sessionId: '3', modeLabel: 'shell 3', label: 'a', title: null, hostedAgent: undefined },
+      { path: '/b', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'b', title: null, hostedAgent: undefined },
     ]);
   });
 
@@ -59,8 +59,33 @@ describe('session helpers', () => {
     const chips = sessionChips([wt('/v'), wt('/w', { hasShellSession: true })], tabs);
     expect(chips).toEqual([
       { path: '/v', mode: 'vscode', sessionId: '1', modeLabel: 'vs code', label: 'v', title: null },
-      { path: '/w', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'w', title: null, claudeStatus: undefined },
+      { path: '/w', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'w', title: null, hostedAgent: undefined },
     ]);
+  });
+
+  it('scopes a Shell-hosted agent to its own tab', () => {
+    const chips = sessionChips([
+      wt('/a', {
+        hasClaudeSession: true,
+        claudeSessions: ['1'],
+        hasShellSession: true,
+        shellSessions: ['1', '2'],
+        // Claude launched by hand inside Shell 2 — the worktree aggregate is
+        // 'working', but only that shell may show it
+        claudeStatus: 'working',
+        claudeStatusById: { 'shell:2': 'working' },
+      }),
+    ]);
+    expect(chips).toEqual([
+      { path: '/a', mode: 'claude', sessionId: '1', modeLabel: 'claude', label: 'a', title: null, claudeStatus: undefined },
+      { path: '/a', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'a', title: null, hostedAgent: undefined },
+      {
+        path: '/a', mode: 'shell', sessionId: '2', modeLabel: 'shell 2', label: 'a', title: null,
+        hostedAgent: 'claude', claudeStatus: 'working',
+      },
+    ]);
+    expect(chipStatus(chips[0]!)).toBeUndefined();
+    expect(chipStatus(chips[2]!)).toBe('working');
   });
 
   it('bySessionPriority orders waiting before working before others', () => {

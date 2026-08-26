@@ -2,8 +2,10 @@ import { chipStatus, displayLabel, type SessionChip } from '../hooks/sessions';
 import { ClaudeIcon, CodexIcon, OpencodeIcon, GlobeIcon, ShellIcon, VsCodeIcon } from './hub/icons';
 
 // Icons inherit the chip's text colour (fill/stroke = currentColor) so they
-// brighten with the chip on hover — no fixed colour class here.
-function icon(mode: SessionChip['mode']) {
+// brighten with the chip on hover — no fixed colour class here. A shell that
+// is hosting a hand-launched agent wears that agent's icon.
+function icon(chip: SessionChip) {
+  const mode = chip.mode === 'shell' ? (chip.hostedAgent ?? 'shell') : chip.mode;
   if (mode === 'claude') return <ClaudeIcon />;
   if (mode === 'codex') return <CodexIcon />;
   if (mode === 'opencode') return <OpencodeIcon />;
@@ -48,7 +50,7 @@ export function SessionChipButton({
             : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100'
         }`}
       >
-        {icon(chip.mode)}
+        {icon(chip)}
       </button>
       {dot && (
         <span className={`pointer-events-none absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2 ring-zinc-950 ${dot}`} />
