@@ -212,7 +212,7 @@ function FileHeader({ file }: { file: MergeRequestChange }) {
  * A file list beside the selected file's diff — the reading surface shared by
  * the review's whole diff and any single commit inside it.
  */
-export function ChangedFiles({ files, providerName, onOpenExternal, comments = [], onAddComment, onSelectFile, jumpTo }: {
+export function ChangedFiles({ files, providerName, onOpenExternal, comments = [], onAddComment, onSelectFile, jumpTo, collectionTruncated, totalFiles }: {
   files: MergeRequestChange[];
   providerName: string;
   onOpenExternal: () => void;
@@ -224,6 +224,9 @@ export function ChangedFiles({ files, providerName, onOpenExternal, comments = [
   onSelectFile?: (file: MergeRequestChange) => void;
   /** Opens a file and scrolls to a line — a jump from the conversation. */
   jumpTo?: LineJump;
+  /** True when the provider itself refuses to expose the entire change set. */
+  collectionTruncated?: boolean;
+  totalFiles?: number | null;
 }) {
   const [sel, setSel] = useState<string | null>(files[0]?.path ?? null);
   const selected = files.find((file) => file.path === sel) ?? files[0];
@@ -237,9 +240,16 @@ export function ChangedFiles({ files, providerName, onOpenExternal, comments = [
   for (const comment of comments) {
     if (comment.path) commentCounts.set(comment.path, (commentCounts.get(comment.path) ?? 0) + 1);
   }
-  if (files.length === 0) return <div className="p-4 text-xs text-zinc-600">No file changes.</div>;
+  if (files.length === 0 && !collectionTruncated) return <div className="p-4 text-xs text-zinc-600">No file changes.</div>;
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {collectionTruncated && (
+        <div role="status" className="shrink-0 border-b border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-300">
+          Showing {files.length.toLocaleString()}{totalFiles ? ` of ${totalFiles.toLocaleString()}` : ''} changed files.{' '}
+          <button onClick={onOpenExternal} className="underline hover:text-amber-200">Open in {providerName}</button> to review the complete change set.
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
       <div className="w-64 shrink-0 overflow-auto border-r border-zinc-800 p-1">
         {files.map((file) => (
           <button
@@ -281,6 +291,7 @@ export function ChangedFiles({ files, providerName, onOpenExternal, comments = [
           />
         )}
         </div>
+      </div>
       </div>
     </div>
   );

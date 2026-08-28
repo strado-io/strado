@@ -43,6 +43,27 @@ describe('review conversations', () => {
     ]);
   });
 
+  it('reads GitHub conversation pages beyond the first 100 comments', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/pulls/70')) return json({ body: null, head: { sha: 'head70' } });
+      if (parsed.pathname.endsWith('/issues/70/comments')) {
+        const page = Number(parsed.searchParams.get('page'));
+        const size = page === 1 ? 100 : 1;
+        return json(Array.from({ length: size }, (_, index) => ({
+          id: (page - 1) * 100 + index + 1,
+          body: `comment ${index}`,
+          created_at: '2026-08-01T00:00:00Z',
+        })));
+      }
+      if (parsed.pathname.endsWith('/pulls/70/reviews') || parsed.pathname.endsWith('/pulls/70/comments')) return json([]);
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const discussion = await pullRequestDiscussion('github.com', 'token', 'acme/discussion-paged-github', 70);
+    expect(discussion.comments).toHaveLength(101);
+  });
+
   it('keeps GitLab system notes out of the conversation', async () => {
     const webUrl = 'https://gitlab.example.com/acme/project/-/merge_requests/11';
     const fetchMock = vi.fn(async (url: string | URL) => {
@@ -77,6 +98,26 @@ describe('review conversations', () => {
       kind: 'comment',
       webUrl: `${webUrl}#note_2`,
     }]);
+  });
+
+  it('reads GitLab conversation pages beyond the first 100 notes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/notes')) {
+        const page = Number(parsed.searchParams.get('page'));
+        const size = page === 1 ? 100 : 1;
+        return json(Array.from({ length: size }, (_, index) => ({
+          id: (page - 1) * 100 + index + 1,
+          body: `note ${index}`,
+          created_at: '2026-08-01T00:00:00Z',
+          system: false,
+        })));
+      }
+      return json({ description: null, web_url: 'https://gitlab.example.com/acme/p/-/merge_requests/71' });
+    }));
+
+    const discussion = await mergeRequestDiscussion('gitlab.example.com', 'token', 'acme/discussion-paged-gitlab', 71);
+    expect(discussion.comments).toHaveLength(101);
   });
 
   it('reports an empty description rather than a blank body', async () => {

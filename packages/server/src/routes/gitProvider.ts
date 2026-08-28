@@ -160,9 +160,11 @@ async function resolveProviderTarget(
   return { kind: 'ok', ...resolved, token };
 }
 
-// Scoped under /api/w/:wsId — needs the workspace's repos to resolve a worktree.
-// Providers cap a list request at 100 items, which bounds how deep the merged
-// multi-repository inbox can page while staying correct.
+// GitHub's Search API exposes at most 1,000 results for a query. Open PRs use
+// the regular pulls endpoint and GitLab has no equivalent search-window cap.
+// Twenty rows per provider page therefore gives GitHub search-backed states a
+// deepest exact page of 50; the response advertises that limit when relevant.
+const GITHUB_SEARCH_PAGE_LIMIT = 1_000 / REVIEW_PAGE_SIZE;
 const AGGREGATE_MAX_ITEMS = 100;
 
 export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
@@ -176,14 +178,10 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
     const repoId = z.string().max(200).default('').parse(req.query.repoId).trim();
     const repos = await req.workspace!.stores.repos.list();
     // One repository, or one picked: that repository's own paging is exact, so
-    // ask it for the page directly.
+    // ask it for the page directly. A merged inbox asks every provider for one
+    // growing page-1 window through the requested row. Asking each repository
+    // for only page N loses rows discarded by the earlier global merge forever.
     const scoped = !!repoId || repos.length === 1;
-    // Merging several repositories cannot page by asking each for "page N" —
-    // the items dropped from page 1's merge would never be reachable. Instead
-    // fetch the whole window up to the requested page from every repository
-    // and slice it. Providers cap per_page at 100, so the merged inbox is
-    // exact for the first AGGREGATE_MAX_ITEMS / REVIEW_PAGE_SIZE pages and
-    // says so (`pageLimit`) rather than promising depth it cannot deliver.
     const windowEnd = page * REVIEW_PAGE_SIZE;
     const limit = scoped ? REVIEW_PAGE_SIZE : Math.min(windowEnd, AGGREGATE_MAX_ITEMS);
     const listPage = scoped ? page : 1;
@@ -203,17 +201,22 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
         };
       }
       try {
-        const [reviews, counts] = target.provider === 'gitlab'
-          ? await Promise.all([
-              listed ? mergeRequestsForProject(target.host, target.token, target.projectPath, { state, page: listPage, search, limit }) : [],
-              mergeRequestCountsForProject(target.host, target.token, target.projectPath),
-            ])
-          : await Promise.all([
-              listed ? pullRequestsForProject(target.host, target.token, target.projectPath, { state, page: listPage, search, limit }) : [],
-              pullRequestCountsForProject(target.host, target.token, target.projectPath),
-            ]);
+        const counts = target.provider === 'gitlab'
+          ? await mergeRequestCountsForProject(target.host, target.token, target.projectPath)
+          : await pullRequestCountsForProject(target.host, target.token, target.projectPath);
+        const githubSearchLimited = listed && target.provider === 'github'
+          && (search.length > 0 || state !== 'open')
+          && (search.length > 0 || counts[state] > 1_000);
+        const reviews = !listed ? [] : target.provider === 'gitlab'
+          ? await mergeRequestsForProject(target.host, target.token, target.projectPath, {
+              state, page: listPage, search, limit,
+            })
+          : await pullRequestsForProject(target.host, target.token, target.projectPath, {
+              state, page: listPage, search, limit,
+            });
         return {
           repository: { repoId: repo.id, repoName: repo.name, provider: target.provider, status: 'ok' as const, counts },
+          githubSearchLimited,
           reviews: reviews.map((review) => ({
             ...review,
             provider: target.provider,
@@ -265,7 +268,12 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
           const repoCounts = result.repository.counts;
           return windowEnd < repoCounts[state];
         })
-      : merged.length > windowEnd && windowEnd < AGGREGATE_MAX_ITEMS;
+      : merged.length > windowEnd;
+    const pageLimit = scoped
+      ? results.some((result) => 'githubSearchLimited' in result && result.githubSearchLimited)
+        ? GITHUB_SEARCH_PAGE_LIMIT
+        : null
+      : AGGREGATE_MAX_ITEMS / REVIEW_PAGE_SIZE;
     return {
       reviews,
       repositories: results.map((result) => result.repository),
@@ -273,8 +281,10 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
       page,
       pageSize: REVIEW_PAGE_SIZE,
       hasMore,
-      // null = page freely against `counts`; a number caps what is reachable.
-      pageLimit: scoped ? null : AGGREGATE_MAX_ITEMS / REVIEW_PAGE_SIZE,
+      // A merged inbox deliberately caps its exact combined window at 100;
+      // selecting a repository pages its entire collection directly. GitHub
+      // search-backed states have their own upstream 1,000-result limit.
+      pageLimit,
     };
   });
 
@@ -314,10 +324,10 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
       if (t.kind === 'absent') return reply.code(204).send();
       if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
       try {
-        const files = t.provider === 'gitlab'
+        const changes = t.provider === 'gitlab'
           ? await mergeRequestChanges(t.host, t.token, t.projectPath, iid)
           : await pullRequestChanges(t.host, t.token, t.projectPath, iid);
-        return { files };
+        return changes;
       } catch (err) {
         if (err instanceof AuthError) {
           return { needsAuth: true, provider: t.provider };

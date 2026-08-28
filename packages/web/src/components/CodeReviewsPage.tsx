@@ -287,7 +287,10 @@ export function CodeReviewsPage({
   };
   const previewTarget = selected ? reviewTarget(selected, repos, worktrees) : null;
   const repoOptions = repositories.filter((repo) => repo.status !== 'unsupported');
-  const problemRepos = repositories.filter((repo) => repo.status === 'needsAuth' || repo.status === 'error');
+  const problemRepos = repositories.filter((repo) =>
+    (repoId === 'all' || repo.repoId === repoId)
+    && (repo.status === 'needsAuth' || repo.status === 'error'),
+  );
   const searchActive = committedQuery.length > 0;
   const knownTotal = activeCounts[state];
   // Merging repositories can only page as deep as the provider window allows;
@@ -296,6 +299,11 @@ export function CodeReviewsPage({
     ? Math.max(1, page + (hasMore ? 1 : 0))
     : Math.max(1, Math.ceil(knownTotal / pageSize));
   const totalPages = pageLimit ? Math.min(reachable, pageLimit) : reachable;
+  const providerWindowReached = !!pageLimit && (
+    (!searchActive && knownTotal > pageLimit * pageSize)
+    || (searchActive && page >= pageLimit && hasMore)
+  );
+  const aggregateWindow = repoId === 'all' && pageLimit === 5;
   const firstVisible = filtered.length === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastVisible = filtered.length === 0 ? 0 : Math.min(firstVisible + filtered.length - 1, knownTotal);
   const hasActiveFilters = searchActive || repoId !== 'all';
@@ -413,6 +421,13 @@ export function CodeReviewsPage({
           )}
         </div>
 
+        {!loading && providerWindowReached && (
+          <div className="shrink-0 border-t border-zinc-900 bg-zinc-900/30 px-3 py-2 text-xs text-zinc-500">
+            {aggregateWindow
+              ? <>The combined view shows the newest {(pageLimit! * pageSize).toLocaleString()} reviews. Select a repository to browse its complete history.</>
+              : <>GitHub exposes only the newest {(pageLimit! * pageSize).toLocaleString()} results for this view. Narrow the search or open GitHub to reach older reviews.</>}
+          </div>
+        )}
         {!loading && (reviews.length > 0 || hasMore || page > 1) && (
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-900 px-2.5 py-2 text-xs text-zinc-600">
             <span className="truncate">

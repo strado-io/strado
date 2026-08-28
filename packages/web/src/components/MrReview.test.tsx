@@ -109,6 +109,19 @@ describe('MrReview', () => {
     await waitFor(() => expect(screen.getByText('added line in new')).toBeInTheDocument());
   });
 
+  it('warns when the provider exposes only part of the changed-file collection', async () => {
+    mergeRequestChanges.mockResolvedValue({
+      kind: 'list',
+      files: [{ path: 'src/app.ts', status: 'M', diff: diffA }],
+      truncated: true,
+      total: 150,
+    });
+    render(<MrReview worktree={wt} mr={mr} onClose={vi.fn()} />);
+
+    expect(await screen.findByText(/Showing 1 of 150 changed files/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open in GitLab/ })).toBeInTheDocument();
+  });
+
   it('lets a long code line scroll sideways rather than clipping it', async () => {
     mergeRequestChanges.mockResolvedValue({
       kind: 'list',
@@ -189,6 +202,24 @@ describe('MrReview', () => {
     expect(document.querySelector('script')).toBeNull();
     expect(document.querySelector('img[onerror]')).toBeNull();
     expect((globalThis as Record<string, unknown>).__pwned).toBeUndefined();
+  });
+
+  it('strips application layout classes from untrusted provider HTML', async () => {
+    mergeRequestChanges.mockResolvedValue({ kind: 'list', files: [] });
+    mergeRequestDiscussion.mockResolvedValue({
+      kind: 'discussion',
+      discussion: {
+        description: '<div class="fixed inset-0 z-50 bg-zinc-950">overlay</div>',
+        comments: [],
+      },
+    });
+    render(<MrReview worktree={wt} mr={mr} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Conversation/ }));
+
+    const overlay = await screen.findByText('overlay');
+    expect(overlay).not.toHaveClass('fixed');
+    expect(overlay).not.toHaveClass('inset-0');
+    expect(overlay).not.toHaveClass('z-50');
   });
 
   it('lists the review commits in their own tab, in provider order', async () => {

@@ -292,12 +292,17 @@ export const api = {
       return { kind: 'list' as const, provider, mergeRequests: r.mergeRequests ?? [] };
     },
     mergeRequestChanges: async (wsId: string, p: string, iid: number) => {
-      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; files?: MergeRequestChange[] } | undefined>(
+      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; files?: MergeRequestChange[]; truncated?: boolean; total?: number | null } | undefined>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/merge-requests/${iid}/changes`,
       );
       if (!r) return { kind: 'absent' as const };
       if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
-      return { kind: 'list' as const, files: r.files ?? [] };
+      return {
+        kind: 'list' as const,
+        files: r.files ?? [],
+        truncated: r.truncated ?? false,
+        total: r.total ?? null,
+      };
     },
     mergeRequestDiscussion: async (wsId: string, p: string, iid: number) => {
       const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; discussion?: ReviewDiscussion } | undefined>(

@@ -29,7 +29,6 @@ const SANITIZE_SCHEMA = {
   tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary'],
   attributes: {
     ...defaultSchema.attributes,
-    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'className'],
     details: [...(defaultSchema.attributes?.details ?? []), 'open'],
     td: [...(defaultSchema.attributes?.td ?? []), 'align'],
     th: [...(defaultSchema.attributes?.th ?? []), 'align'],

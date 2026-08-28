@@ -24,7 +24,7 @@ type Probe =
   | { kind: 'loading' }
   | { kind: 'needsAuth' }
   | { kind: 'error' }
-  | { kind: 'list'; files: MergeRequestChange[] };
+  | { kind: 'list'; files: MergeRequestChange[]; truncated?: boolean; total?: number | null };
 
 export function MrReview({ worktree, mr, onClose }: { worktree: Worktree; mr: MergeRequest; onClose: () => void }) {
   const { workspace } = useWorkspace();
@@ -97,7 +97,9 @@ export function MrReview({ worktree, mr, onClose }: { worktree: Worktree; mr: Me
     api.worktrees.mergeRequestChanges(wsId, worktree.path, mr.number)
       .then((r) => {
         if (!alive) return;
-        if (r.kind === 'list') setProbe({ kind: 'list', files: r.files });
+        if (r.kind === 'list') setProbe({
+          kind: 'list', files: r.files, truncated: r.truncated, total: r.total,
+        });
         else if (r.kind === 'needsAuth') setProbe({ kind: 'needsAuth' });
         else setProbe({ kind: 'list', files: [] });
       })
@@ -151,7 +153,7 @@ export function MrReview({ worktree, mr, onClose }: { worktree: Worktree; mr: Me
   );
   const commentCount = discussion.kind === 'ready' ? discussion.discussion.comments.length : null;
   const commitCount = commits.kind === 'list' ? commits.commits.length : null;
-  const fileCount = probe.kind === 'list' ? probe.files.length : null;
+  const fileCount = probe.kind === 'list' ? (probe.total ?? probe.files.length) : null;
 
   const openExternal = () => {
     const bridge = window.strado;
@@ -287,6 +289,8 @@ export function MrReview({ worktree, mr, onClose }: { worktree: Worktree; mr: Me
       ) : (
         <ChangedFiles
           files={probe.files}
+          collectionTruncated={probe.truncated}
+          totalFiles={probe.total}
           providerName={providerName}
           onOpenExternal={openExternal}
           comments={discussion.kind === 'ready' ? discussion.discussion.comments : []}

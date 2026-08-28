@@ -58,6 +58,21 @@ export async function gitlabApiFetch(
   return res;
 }
 
+/** Read every page of a GitLab REST collection instead of silently stopping at 100. */
+async function gitlabCollection<T>(
+  host: string, token: string, pathname: string, what: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; ; page += 1) {
+    const separator = pathname.includes('?') ? '&' : '?';
+    const res = await gitlabApiFetch(host, token, `${pathname}${separator}per_page=100&page=${page}`);
+    if (!res.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${res.status} fetching ${what}`);
+    const batch = (await res.json()) as T[];
+    items.push(...batch);
+    if (batch.length < 100) return items;
+  }
+}
+
 /** A GitLab write refusal, said plainly — usually a read-only token scope. */
 function gitlabForbidden(body: unknown): AppError {
   const reason = gitlabMessage(body, 'GitLab refused the write');
@@ -146,7 +161,8 @@ async function mergeRequests(
   const requestedState = branch ? null : opts?.state ?? null;
   const page = branch ? 1 : opts?.page ?? 1;
   const search = branch ? '' : opts?.search?.trim() ?? '';
-  const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${search}`}`;
+  const limit = branch ? 10 : (opts?.limit ?? REVIEW_PAGE_SIZE);
+  const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${limit}:${search}`}`;
   const hit = cache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.mrs;
 
@@ -156,7 +172,7 @@ async function mergeRequests(
   const searchQuery = search ? `&search=${encodeURIComponent(search)}` : '';
   const listRes = await gitlabApiFetch(
     host, token,
-    `/projects/${proj}/merge_requests?${branchQuery}state=${stateQuery}&order_by=updated_at&sort=desc&per_page=${branch ? 10 : (opts?.limit ?? REVIEW_PAGE_SIZE)}&page=${page}${searchQuery}`,
+    `/projects/${proj}/merge_requests?${branchQuery}state=${stateQuery}&order_by=updated_at&sort=desc&per_page=${limit}&page=${page}${searchQuery}`,
   );
   if (!listRes.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${listRes.status} listing MRs`);
   const raw = (await listRes.json()) as GitlabMr[];
@@ -346,25 +362,32 @@ export type MergeRequestChange = {
   truncated?: boolean;
 };
 
+/** Provider-wide change collection plus an explicit completeness signal. */
+export type ReviewChanges = {
+  files: MergeRequestChange[];
+  truncated: boolean;
+  total: number | null;
+};
+
 type GitlabChange = {
   old_path?: string; new_path?: string;
   new_file?: boolean; deleted_file?: boolean; renamed_file?: boolean;
   diff?: string;
 };
 
-const changesCache = new Map<string, { at: number; files: MergeRequestChange[] }>();
+const changesCache = new Map<string, { at: number; changes: ReviewChanges }>();
 
 export async function mergeRequestChanges(
   host: string, token: string, projectPath: string, iid: number,
-): Promise<MergeRequestChange[]> {
+): Promise<ReviewChanges> {
   const key = `${host}\0${projectPath}\0${iid}`;
   const hit = changesCache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.files;
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.changes;
 
   const proj = encodeURIComponent(projectPath);
   const res = await gitlabApiFetch(host, token, `/projects/${proj}/merge_requests/${iid}/changes`);
   if (!res.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${res.status} fetching MR changes`);
-  const body = (await res.json()) as { changes?: GitlabChange[] };
+  const body = (await res.json()) as { changes?: GitlabChange[]; overflow?: boolean; changes_count?: string | number };
 
   const files: MergeRequestChange[] = (body.changes ?? []).map((c) => {
     const status: MergeRequestChange['status'] =
@@ -379,8 +402,13 @@ export async function mergeRequestChanges(
       truncated: !diff && status !== 'A' ? true : undefined,
     };
   });
-  changesCache.set(key, { at: Date.now(), files });
-  return files;
+  const parsedTotal = typeof body.changes_count === 'number'
+    ? body.changes_count
+    : /^\d+$/.test(body.changes_count ?? '') ? Number.parseInt(body.changes_count!, 10) : Number.NaN;
+  const total = Number.isFinite(parsedTotal) ? parsedTotal : null;
+  const changes = { files, truncated: body.overflow === true || (total !== null && total > files.length), total };
+  changesCache.set(key, { at: Date.now(), changes });
+  return changes;
 }
 
 type GitlabNote = {
@@ -402,18 +430,18 @@ export async function mergeRequestDiscussion(
   if (hit && Date.now() - hit.at < TTL_MS) return hit.discussion;
 
   const proj = encodeURIComponent(projectPath);
-  const [mrRes, notesRes] = await Promise.all([
+  const [mrRes, notes] = await Promise.all([
     gitlabApiFetch(host, token, `/projects/${proj}/merge_requests/${iid}`),
-    gitlabApiFetch(host, token, `/projects/${proj}/merge_requests/${iid}/notes?per_page=100&sort=asc&order_by=created_at`),
+    gitlabCollection<GitlabNote>(
+      host, token, `/projects/${proj}/merge_requests/${iid}/notes?sort=asc&order_by=created_at`, 'MR notes',
+    ),
   ]);
   if (!mrRes.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${mrRes.status} fetching the merge request`);
-  if (!notesRes.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${notesRes.status} fetching MR notes`);
   const mr = (await mrRes.json()) as {
     description?: string | null;
     web_url?: string;
     diff_refs?: { base_sha?: string; head_sha?: string; start_sha?: string } | null;
   };
-  const notes = (await notesRes.json()) as GitlabNote[];
 
   const discussion: ReviewDiscussion = {
     description: mr.description?.trim() ? mr.description : null,
@@ -477,6 +505,9 @@ export async function postMergeRequestReview(
     if (!res.ok) {
       throw new AppError('SHELL_FAILED', gitlabMessage(await res.json().catch(() => null), `GitLab responded ${res.status} approving the MR`));
     }
+    // The approval is already public even if the optional note below fails.
+    // Invalidate immediately so a failed second write cannot leave stale chips.
+    invalidateMrCache(host, projectPath);
   }
   if (input.body.trim()) {
     const res = await post(`/projects/${proj}/merge_requests/${iid}/notes`, { body: input.body });
@@ -503,9 +534,9 @@ export async function mergeRequestCommits(
   if (hit && Date.now() - hit.at < TTL_MS) return hit.commits;
 
   const proj = encodeURIComponent(projectPath);
-  const res = await gitlabApiFetch(host, token, `/projects/${proj}/merge_requests/${iid}/commits?per_page=100`);
-  if (!res.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${res.status} fetching MR commits`);
-  const raw = (await res.json()) as GitlabCommit[];
+  const raw = await gitlabCollection<GitlabCommit>(
+    host, token, `/projects/${proj}/merge_requests/${iid}/commits`, 'MR commits',
+  );
 
   const commits: ReviewCommit[] = raw.map((commit) => ({
     sha: commit.id ?? '',
@@ -530,11 +561,9 @@ export async function commitChanges(
   if (hit && Date.now() - hit.at < TTL_MS) return hit.files;
 
   const proj = encodeURIComponent(projectPath);
-  const res = await gitlabApiFetch(
-    host, token, `/projects/${proj}/repository/commits/${encodeURIComponent(sha)}/diff?per_page=100`,
+  const raw = await gitlabCollection<GitlabChange>(
+    host, token, `/projects/${proj}/repository/commits/${encodeURIComponent(sha)}/diff`, 'the commit diff',
   );
-  if (!res.ok) throw new AppError('SHELL_FAILED', `GitLab responded ${res.status} fetching the commit diff`);
-  const raw = (await res.json()) as GitlabChange[];
 
   const files: MergeRequestChange[] = raw.map((c) => {
     const status: MergeRequestChange['status'] =
@@ -585,10 +614,10 @@ export async function postMergeRequestLineComment(
   discussionCache.delete(`${host}\0${projectPath}\0${iid}`);
 }
 
-export function invalidateMrCache(host: string, projectPath: string, branch: string): void {
+export function invalidateMrCache(host: string, projectPath: string, branch?: string): void {
   const prefix = `${host}\0${projectPath}\0`;
   for (const key of cache.keys()) {
-    if (key === `${prefix}${branch}` || key.startsWith(`${prefix}*:`)) cache.delete(key);
+    if (!branch || key === `${prefix}${branch}` || key.startsWith(`${prefix}*:`)) cache.delete(key);
   }
   countCache.delete(`${host}\0${projectPath}`);
 }

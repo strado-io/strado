@@ -247,6 +247,21 @@ describe('CodeReviewsPage', () => {
     expect(screen.queryByText(/Strado: connect/i)).not.toBeInTheDocument();
   });
 
+  it('does not replace a selected repository empty state with another repository connection error', () => {
+    render(<CodeReviewsPage
+      {...props}
+      repoId="r1"
+      reviews={[]}
+      repositories={[
+        { repoId: 'r1', repoName: 'Strado', provider: 'github', status: 'ok', counts: { open: 0, merged: 0, closed: 0 } },
+        { repoId: 'r2', repoName: 'Other', provider: 'gitlab', status: 'needsAuth' },
+      ]}
+    />);
+
+    expect(screen.getByRole('heading', { name: 'No matching reviews' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Connect GitLab/ })).not.toBeInTheDocument();
+  });
+
   it('shows a centered actionable empty state for a remote search', () => {
     vi.useFakeTimers();
     const onSearchChange = vi.fn();
@@ -289,7 +304,7 @@ describe('CodeReviewsPage', () => {
     expect(paginationItems(1, 1052)).toEqual([1, 2, 3, 4, 5, 'ellipsis', 1052]);
   });
 
-  it('offers only the pages the merged inbox can actually reach', () => {
+  it('offers only a provider-reachable page window and explains the boundary', () => {
     const reviews = Array.from({ length: 20 }, (_, index) => review({ number: index + 1 }));
     render(<CodeReviewsPage
       {...props}
@@ -302,6 +317,7 @@ describe('CodeReviewsPage', () => {
     expect(screen.getByRole('button', { name: 'Page 5' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Page 1052' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Page 6' })).not.toBeInTheDocument();
+    expect(screen.getByText(/combined view shows the newest 100 reviews/i)).toBeInTheDocument();
   });
 
   it('debounces provider-backed search', () => {

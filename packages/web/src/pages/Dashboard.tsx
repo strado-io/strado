@@ -304,8 +304,15 @@ export function Dashboard(props: {
   const { gridTemplate, totalWidth, startResize } = useColumnWidths();
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
-  const [reviewSearch, setReviewSearch] = useState('');
-  const [reviewRepoId, setReviewRepoId] = useState('all');
+  const [reviewSearchFilter, setReviewSearchFilter] = useState({ wsId, value: '' });
+  const [reviewRepoFilter, setReviewRepoFilter] = useState({ wsId, value: 'all' });
+  // Repository ids are workspace-local. Derive the reset synchronously so the
+  // first render after a workspace switch cannot fire a request with the old
+  // workspace's repository id while an effect catches up.
+  const reviewSearch = reviewSearchFilter.wsId === wsId ? reviewSearchFilter.value : '';
+  const reviewRepoId = reviewRepoFilter.wsId === wsId ? reviewRepoFilter.value : 'all';
+  const setReviewSearch = (value: string) => setReviewSearchFilter({ wsId, value });
+  const setReviewRepoId = (value: string) => setReviewRepoFilter({ wsId, value });
   // Top-level destinations close whichever worktree hub is open.
   const selectView = (view: SidebarView) => {
     setActiveView(view);
@@ -786,6 +793,7 @@ export function Dashboard(props: {
           </div>
         ) : activeView.kind === 'reviews' ? (
           <CodeReviewsPage
+            key={wsId}
             reviews={codeReviews.reviews}
             repositories={codeReviews.repositories}
             counts={codeReviews.counts}

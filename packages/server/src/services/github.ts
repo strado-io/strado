@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { AppError, AuthError } from '../errors.js';
 import {
   REVIEW_PAGE_SIZE,
-  type MergeRequest, type MergeRequestChange, type ReviewCounts,
+  type MergeRequest, type MergeRequestChange, type ReviewChanges, type ReviewCounts,
   type ReviewComment, type ReviewDiscussion, type ReviewSubmission, type ReviewCommit,
   type ReviewAnchor, type LineComment,
 } from './gitlab.js';
@@ -82,6 +82,24 @@ export async function githubApiFetch(
   return res;
 }
 
+/** Read every page of a GitHub REST collection instead of silently stopping at 100. */
+async function githubCollection<T>(
+  host: string, token: string, pathname: string, what: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; ; page += 1) {
+    const separator = pathname.includes('?') ? '&' : '?';
+    const res = await githubApiFetch(host, token, `${pathname}${separator}per_page=100&page=${page}`);
+    if (res.status === 404) {
+      throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+    }
+    if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching ${what}`);
+    const batch = (await res.json()) as T[];
+    items.push(...batch);
+    if (batch.length < 100) return items;
+  }
+}
+
 /**
  * Why GitHub refused a write, in words the user can act on: the permission it
  * actually wanted (GitHub names it in a response header), or the rate limit.
@@ -127,6 +145,7 @@ type GithubPr = {
   user?: { login?: string } | null;
   head?: { ref?: string; sha?: string } | null;
   base?: { ref?: string } | null;
+  changed_files?: number;
 };
 type GithubSearchIssue = { number?: number };
 type GithubCheckRun = { status?: string; conclusion?: string | null };
@@ -184,7 +203,8 @@ async function pullRequests(
   const requestedState = branch ? null : opts?.state ?? null;
   const page = branch ? 1 : opts?.page ?? 1;
   const search = branch ? '' : opts?.search?.trim() ?? '';
-  const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${search}`}`;
+  const limit = branch ? 10 : (opts?.limit ?? REVIEW_PAGE_SIZE);
+  const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${limit}:${search}`}`;
   const hit = cache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.mrs;
 
@@ -202,7 +222,7 @@ async function pullRequests(
         : 'is:closed is:unmerged';
     const query = encodeURIComponent(`repo:${projectPath} is:pr ${qualifier}${search ? ` ${search}` : ''}`);
     const searchRes = await githubApiFetch(
-      host, token, `/search/issues?q=${query}&sort=updated&order=desc&per_page=${opts?.limit ?? REVIEW_PAGE_SIZE}&page=${page}`,
+      host, token, `/search/issues?q=${query}&sort=updated&order=desc&per_page=${limit}&page=${page}`,
     );
     if (searchRes.status === 404) {
       throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
@@ -220,7 +240,7 @@ async function pullRequests(
   } else {
     const listRes = await githubApiFetch(
       host, token,
-      `/repos/${projectPath}/pulls?${headQuery}state=${providerState}&sort=updated&direction=desc&per_page=${branch ? 10 : (opts?.limit ?? REVIEW_PAGE_SIZE)}&page=${page}`,
+      `/repos/${projectPath}/pulls?${headQuery}state=${providerState}&sort=updated&direction=desc&per_page=${limit}&page=${page}`,
     );
     if (listRes.status === 404) {
       // GitHub 404s private repos the token can't see — steer to reconnect
@@ -325,10 +345,10 @@ export async function pullRequestCountsForProject(
   return counts;
 }
 
-export function invalidateMrCache(host: string, projectPath: string, branch: string): void {
+export function invalidateMrCache(host: string, projectPath: string, branch?: string): void {
   const prefix = `${host}\0${projectPath}\0`;
   for (const key of cache.keys()) {
-    if (key === `${prefix}${branch}` || key.startsWith(`${prefix}*:`)) cache.delete(key);
+    if (!branch || key === `${prefix}${branch}` || key.startsWith(`${prefix}*:`)) cache.delete(key);
   }
   countCache.delete(`${host}\0${projectPath}`);
 }
@@ -400,9 +420,10 @@ export async function mergePullRequest(
     throw new AppError('VALIDATION', githubMessage(await res.json().catch(() => null), 'GitHub refused the merge (conflicts or required checks)'));
   }
   if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} merging the PR`);
+  invalidateMrCache(host, projectPath);
 }
 
-const changesCache = new Map<string, { at: number; files: MergeRequestChange[] }>();
+const changesCache = new Map<string, { at: number; changes: ReviewChanges }>();
 
 type GithubComment = {
   id?: number; body?: string | null; created_at?: string; html_url?: string;
@@ -435,24 +456,17 @@ export async function pullRequestDiscussion(
   const hit = discussionCache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.discussion;
 
-  const [prRes, issueRes, reviewRes, inlineRes] = await Promise.all([
+  const [prRes, issueComments, reviews, inlineComments] = await Promise.all([
     githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}`),
-    githubApiFetch(host, token, `/repos/${projectPath}/issues/${number}/comments?per_page=100`),
-    githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/reviews?per_page=100`),
-    githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/comments?per_page=100`),
+    githubCollection<GithubComment>(host, token, `/repos/${projectPath}/issues/${number}/comments`, 'PR comments'),
+    githubCollection<GithubReview>(host, token, `/repos/${projectPath}/pulls/${number}/reviews`, 'PR reviews'),
+    githubCollection<GithubComment>(host, token, `/repos/${projectPath}/pulls/${number}/comments`, 'review comments'),
   ]);
   if (prRes.status === 404) {
     throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
   }
-  for (const [res, what] of [[prRes, 'the pull request'], [issueRes, 'PR comments'], [reviewRes, 'PR reviews'], [inlineRes, 'review comments']] as const) {
-    if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching ${what}`);
-  }
-  const [pr, issueComments, reviews, inlineComments] = await Promise.all([
-    prRes.json() as Promise<{ body?: string | null; head?: { sha?: string } | null }>,
-    issueRes.json() as Promise<GithubComment[]>,
-    reviewRes.json() as Promise<GithubReview[]>,
-    inlineRes.json() as Promise<GithubComment[]>,
-  ]);
+  if (!prRes.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${prRes.status} fetching the pull request`);
+  const pr = (await prRes.json()) as { body?: string | null; head?: { sha?: string } | null };
 
   // Issue comments and review comments are independent id sequences, so a bare
   // id can collide across the two lists and duplicate a React key.
@@ -530,6 +544,7 @@ export async function postPullRequestReview(
   }
   if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} posting the review`);
   discussionCache.delete(`${host}\0${projectPath}\0${number}`);
+  invalidateMrCache(host, projectPath);
 }
 
 type GithubCommit = {
@@ -547,12 +562,9 @@ export async function pullRequestCommits(
   const hit = commitsCache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.commits;
 
-  const res = await githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/commits?per_page=100`);
-  if (res.status === 404) {
-    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
-  }
-  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching PR commits`);
-  const raw = (await res.json()) as GithubCommit[];
+  const raw = await githubCollection<GithubCommit>(
+    host, token, `/repos/${projectPath}/pulls/${number}/commits`, 'PR commits',
+  );
 
   const commits: ReviewCommit[] = raw.map((commit) => ({
     sha: commit.sha ?? '',
@@ -577,14 +589,22 @@ export async function commitChanges(
   const hit = commitChangesCache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.files;
 
-  const res = await githubApiFetch(host, token, `/repos/${projectPath}/commits/${encodeURIComponent(sha)}`);
-  if (res.status === 404) {
-    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  const raw: GithubFile[] = [];
+  for (let page = 1; ; page += 1) {
+    const res = await githubApiFetch(
+      host, token, `/repos/${projectPath}/commits/${encodeURIComponent(sha)}?per_page=100&page=${page}`,
+    );
+    if (res.status === 404) {
+      throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+    }
+    if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching the commit diff`);
+    const body = (await res.json()) as { files?: GithubFile[] };
+    const batch = body.files ?? [];
+    raw.push(...batch);
+    if (batch.length < 100) break;
   }
-  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching the commit diff`);
-  const body = (await res.json()) as { files?: GithubFile[] };
 
-  const files: MergeRequestChange[] = (body.files ?? []).map((f) => {
+  const files: MergeRequestChange[] = raw.map((f) => {
     const status: MergeRequestChange['status'] =
       f.status === 'added' ? 'A' : f.status === 'removed' ? 'D' : f.status === 'renamed' ? 'R' : 'M';
     const diff = f.patch ?? '';
@@ -630,20 +650,33 @@ export async function postPullRequestLineComment(
 
 export async function pullRequestChanges(
   host: string, token: string, projectPath: string, number: number,
-): Promise<MergeRequestChange[]> {
+): Promise<ReviewChanges> {
   const key = `${host}\0${projectPath}\0${number}`;
   const hit = changesCache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.files;
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.changes;
 
-  const res = await githubApiFetch(
-    host, token, `/repos/${projectPath}/pulls/${number}/files?per_page=100`,
-  );
-  if (res.status === 404) {
+  const detailRes = await githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}`);
+  if (detailRes.status === 404) {
     // GitHub 404s private repos the token can't see — steer to reconnect
     throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
   }
-  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching PR files`);
-  const raw = (await res.json()) as GithubFile[];
+  if (!detailRes.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${detailRes.status} fetching the PR`);
+  const detail = (await detailRes.json()) as GithubPr;
+  const total = typeof detail.changed_files === 'number' ? detail.changed_files : null;
+  // GitHub exposes at most 3,000 files for one pull request. Fetch every page
+  // it makes available and report the provider limit instead of pretending the
+  // first 100 files are the whole review.
+  const pageCount = Math.max(1, Math.ceil(Math.min(total ?? 3_000, 3_000) / 100));
+  const raw: GithubFile[] = [];
+  for (let page = 1; page <= pageCount; page += 1) {
+    const res = await githubApiFetch(
+      host, token, `/repos/${projectPath}/pulls/${number}/files?per_page=100&page=${page}`,
+    );
+    if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching PR files`);
+    const batch = (await res.json()) as GithubFile[];
+    raw.push(...batch);
+    if (batch.length < 100) break;
+  }
 
   const files: MergeRequestChange[] = raw.map((f) => {
     const status: MergeRequestChange['status'] =
@@ -658,6 +691,11 @@ export async function pullRequestChanges(
       truncated: !diff && status !== 'A' ? true : undefined,
     };
   });
-  changesCache.set(key, { at: Date.now(), files });
-  return files;
+  const changes = {
+    files,
+    truncated: (total !== null && total > files.length) || (total === null && files.length === 3_000),
+    total,
+  };
+  changesCache.set(key, { at: Date.now(), changes });
+  return changes;
 }

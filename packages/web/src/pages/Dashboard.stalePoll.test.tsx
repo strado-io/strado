@@ -1,10 +1,11 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mutable so a test can switch workspaces mid-flight, the way a swipe does.
 const current = {
   workspace: { id: 'ws-a', name: 'A', color: 'zinc', icon: 'A', defaultEditor: 'vscode', defaultPortBase: 3000, logDir: null },
 };
+const reviewList = vi.hoisted(() => vi.fn());
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({ workspace: current.workspace, allWorkspaces: [], switchTo: vi.fn() }),
 }));
@@ -34,6 +35,18 @@ vi.mock('../api', () => ({
       providers: vi.fn().mockResolvedValue([]),
       issues: vi.fn().mockResolvedValue({ issues: {}, missing: [], errors: {} }),
     },
+    reviews: {
+      list: reviewList.mockImplementation((wsId: string) => Promise.resolve({
+        reviews: [],
+        repositories: [{
+          repoId: wsId === 'ws-a' ? 'ra' : 'rb',
+          repoName: wsId === 'ws-a' ? 'Repo A' : 'Repo B',
+          provider: 'github', status: 'ok', counts: { open: 0, merged: 0, closed: 0 },
+        }],
+        counts: { open: 0, merged: 0, closed: 0 },
+        page: 1, pageSize: 20, hasMore: false, pageLimit: null,
+      })),
+    },
     org: { get: vi.fn().mockRejectedValue(new Error('no account')) },
     runners: { remoteWorktrees: vi.fn().mockImplementation(() => new Promise(() => {})) },
   },
@@ -58,6 +71,7 @@ describe('Dashboard poll vs workspace switch', () => {
   beforeEach(() => {
     localStorage.clear();
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
+    reviewList.mockClear();
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   });
   afterEach(() => {
@@ -93,5 +107,28 @@ describe('Dashboard poll vs workspace switch', () => {
     await act(async () => { hungResolve!(repoLists['ws-a']!); });
     expect(screen.queryByText('Repo A')).toBeNull();
     expect(screen.getAllByText('Repo B').length).toBeGreaterThan(0);
+  });
+
+  it('never sends the previous workspace repository filter after switching', async () => {
+    const view = renderDashboard();
+    await act(async () => {});
+    fireEvent.click(screen.getByText('Code reviews'));
+    await waitFor(() => expect(screen.getByLabelText('Filter by repository')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Filter by repository'), { target: { value: 'ra' } });
+    await waitFor(() => expect(reviewList).toHaveBeenCalledWith('ws-a', 'open', 1, '', 'ra'));
+
+    current.workspace = { ...current.workspace, id: 'ws-b', name: 'B' };
+    view.rerender(
+      <Dashboard
+        onNewWorktree={noop} onShowLogs={noop}
+        onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
+        onCloseOverlays={noop} onDeleteWorktree={noop}
+        update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
+      />,
+    );
+
+    await waitFor(() => expect(reviewList).toHaveBeenCalledWith('ws-b', 'open', 1, '', 'all'));
+    expect(reviewList.mock.calls.some((call) => call[0] === 'ws-b' && call[4] === 'ra')).toBe(false);
+    expect(screen.getByLabelText('Filter by repository')).toHaveValue('all');
   });
 });

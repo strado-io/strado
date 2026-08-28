@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { pullRequestCountsForProject, pullRequestsForProject } from './github.js';
-import { mergeRequestCountsForProject, mergeRequestsForProject } from './gitlab.js';
+import { mergePullRequest, pullRequestCountsForProject, pullRequestsForProject } from './github.js';
+import { mergeRequestCountsForProject, mergeRequestsForProject, postMergeRequestReview } from './gitlab.js';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -135,5 +135,113 @@ describe('repository-wide code review lists', () => {
     expect(searchUrl.searchParams.get('per_page')).toBe('20');
     expect(searchUrl.searchParams.get('q')).toContain('remote result');
     expect(reviews[0]).toMatchObject({ number: 71, sourceBranch: 'feature/remote', state: 'merged' });
+  });
+
+  it('does not reuse a shorter GitHub window when aggregate pagination grows', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const size = Number(new URL(url).searchParams.get('per_page'));
+      return Promise.resolve(new Response(JSON.stringify(Array.from({ length: size }, (_, index) => ({
+        number: index + 1,
+        title: `PR ${index + 1}`,
+        state: 'open',
+        updated_at: '2026-08-01T00:00:00Z',
+        head: { ref: `feature/${index + 1}` },
+      }))), { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await pullRequestsForProject('github.com', 'token', 'acme/window-cache-github', {
+      state: 'open', page: 1, limit: 20,
+    });
+    const grown = await pullRequestsForProject('github.com', 'token', 'acme/window-cache-github', {
+      state: 'open', page: 1, limit: 40,
+    });
+
+    expect(first).toHaveLength(20);
+    expect(grown).toHaveLength(40);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse a shorter GitLab window when aggregate pagination grows', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const size = Number(new URL(url).searchParams.get('per_page'));
+      return Promise.resolve(new Response(JSON.stringify(Array.from({ length: size }, (_, index) => ({
+        iid: index + 1,
+        title: `MR ${index + 1}`,
+        state: 'merged',
+        updated_at: '2026-08-01T00:00:00Z',
+        source_branch: `feature/${index + 1}`,
+      }))), { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await mergeRequestsForProject('gitlab.example.com', 'token', 'acme/window-cache-gitlab', {
+      state: 'merged', page: 1, limit: 20,
+    });
+    const grown = await mergeRequestsForProject('gitlab.example.com', 'token', 'acme/window-cache-gitlab', {
+      state: 'merged', page: 1, limit: 40,
+    });
+
+    expect(first).toHaveLength(20);
+    expect(grown).toHaveLength(40);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates the GitHub project inbox immediately after a merge', async () => {
+    let merged = false;
+    let listCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith('/merge') && init?.method === 'PUT') {
+        merged = true;
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      if (url.includes('/pulls?')) {
+        listCalls += 1;
+        return Promise.resolve(new Response(JSON.stringify(merged ? [] : [{
+          number: 1, title: 'Open before merge', state: 'open', updated_at: '2026-08-01T00:00:00Z',
+          head: { ref: 'feature/merge' },
+        }]), { status: 200 }));
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await pullRequestsForProject('github.com', 'token', 'acme/invalidate-merge', { state: 'open' })).toHaveLength(1);
+    await mergePullRequest('github.com', 'token', 'acme/invalidate-merge', 1);
+    expect(await pullRequestsForProject('github.com', 'token', 'acme/invalidate-merge', { state: 'open' })).toHaveLength(0);
+    expect(listCalls).toBe(2);
+  });
+
+  it('invalidates GitLab approval chips immediately after approval', async () => {
+    let approved = false;
+    let listCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith('/approve') && init?.method === 'POST') {
+        approved = true;
+        return Promise.resolve(new Response('{}', { status: 201 }));
+      }
+      if (url.endsWith('/approvals')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          approvals_required: 1, approved_by: approved ? [{}] : [],
+        }), { status: 200 }));
+      }
+      if (url.includes('/merge_requests?')) {
+        listCalls += 1;
+        return Promise.resolve(new Response(JSON.stringify([{
+          iid: 1, title: 'Approve me', state: 'opened', updated_at: '2026-08-01T00:00:00Z',
+          source_branch: 'feature/approve',
+        }]), { status: 200 }));
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const before = await mergeRequestsForProject('gitlab.example.com', 'token', 'acme/invalidate-approve', { state: 'open' });
+    await postMergeRequestReview('gitlab.example.com', 'token', 'acme/invalidate-approve', 1, { body: '', event: 'approve' });
+    const after = await mergeRequestsForProject('gitlab.example.com', 'token', 'acme/invalidate-approve', { state: 'open' });
+
+    expect(before[0]?.approvals?.given).toBe(0);
+    expect(after[0]?.approvals?.given).toBe(1);
+    expect(listCalls).toBe(2);
   });
 });

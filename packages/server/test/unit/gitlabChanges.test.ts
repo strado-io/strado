@@ -23,7 +23,7 @@ describe('mergeRequestChanges', () => {
         change({ renamed_file: true, old_path: 'src/old.ts', new_path: 'src/new.ts' }), // R
       ] }), { status: 200 });
     });
-    const files = await mergeRequestChanges('gitlab.com', 't', 'g/p', 412);
+    const { files } = await mergeRequestChanges('gitlab.com', 't', 'g/p', 412);
     expect(files.map((f) => f.status)).toEqual(['M', 'A', 'D', 'R']);
     expect(files[3]).toMatchObject({ path: 'src/new.ts', oldPath: 'src/old.ts', status: 'R' });
     expect(files[0].diff).toContain('+new');
@@ -31,12 +31,20 @@ describe('mergeRequestChanges', () => {
 
   it('flags truncated when a non-add file has no diff', async () => {
     mockFetch(() => new Response(JSON.stringify({ changes: [change({ diff: '' })] }), { status: 200 }));
-    const files = await mergeRequestChanges('gitlab.com', 't', 'g/p', 1);
+    const { files } = await mergeRequestChanges('gitlab.com', 't', 'g/p', 1);
     expect(files[0].truncated).toBe(true);
   });
 
-  it('returns [] when there are no changes', async () => {
+  it('returns an empty complete collection when there are no changes', async () => {
     mockFetch(() => new Response(JSON.stringify({ changes: [] }), { status: 200 }));
-    expect(await mergeRequestChanges('gitlab.com', 't', 'g/p', 2)).toEqual([]);
+    expect(await mergeRequestChanges('gitlab.com', 't', 'g/p', 2)).toEqual({ files: [], truncated: false, total: null });
+  });
+
+  it('reports GitLab diff overflow instead of presenting a partial list as complete', async () => {
+    mockFetch(() => new Response(JSON.stringify({
+      changes: [change()], overflow: true, changes_count: '14',
+    }), { status: 200 }));
+    const result = await mergeRequestChanges('gitlab.com', 't', 'g/p', 3);
+    expect(result).toMatchObject({ truncated: true, total: 14 });
   });
 });

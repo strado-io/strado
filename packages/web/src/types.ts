@@ -196,3 +196,9 @@ export type MergeRequestChange = {
   diff: string;
   truncated?: boolean;
 };
+
+export type ReviewChanges = {
+  files: MergeRequestChange[];
+  truncated: boolean;
+  total: number | null;
+};
