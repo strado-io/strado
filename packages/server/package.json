@@ -1,6 +1,6 @@
 {
   "name": "@strado/server",
-  "version": "0.1.48",
+  "version": "0.1.49",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
