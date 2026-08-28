@@ -1,11 +1,111 @@
 import { useEffect, useRef, useState } from 'react';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
 import '@xterm/xterm/css/xterm.css';
 import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
+import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
 import { ClaudeIcon, CodexIcon, OpencodeIcon, ShellIcon } from './hub/icons';
+
+const TRUE_BLACK_TERMINAL_THEME: ITheme = {
+  background: '#000000', foreground: '#e5e5e5', cursor: '#f97f1b', cursorAccent: '#000000',
+  selectionBackground: '#333333', selectionInactiveBackground: '#202020',
+  black: '#000000', red: '#ef4444', green: '#22c55e', yellow: '#eab308',
+  blue: '#3b82f6', magenta: '#a855f7', cyan: '#06b6d4', white: '#e5e5e5',
+  brightBlack: '#737373', brightRed: '#f87171', brightGreen: '#4ade80', brightYellow: '#facc15',
+  brightBlue: '#60a5fa', brightMagenta: '#c084fc', brightCyan: '#22d3ee', brightWhite: '#ffffff',
+};
+
+const GRAPHITE_TERMINAL_THEME: ITheme = {
+  background: '#0b0c0f', foreground: '#dde0e6', cursor: '#f97f1b', cursorAccent: '#0b0c0f',
+  selectionBackground: '#4b505c80', selectionInactiveBackground: '#2c303966',
+  black: '#0b0c0f', red: '#f87171', green: '#34d399', yellow: '#fbbf24',
+  blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#dde0e6',
+  brightBlack: '#6b7280', brightRed: '#fca5a5', brightGreen: '#6ee7b7', brightYellow: '#fde68a',
+  brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#f7f8fa',
+};
+
+const AYU_DARK_TERMINAL_THEME: ITheme = {
+  background: '#0f1419', foreground: '#bfbdb6', cursor: '#e6b450', cursorAccent: '#0f1419',
+  selectionBackground: '#253340', selectionInactiveBackground: '#1b273380',
+  black: '#0f1419', red: '#f07178', green: '#aad94c', yellow: '#e6b450',
+  blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#dde0e6',
+  brightBlack: '#6b7280', brightRed: '#fca5a5', brightGreen: '#6ee7b7', brightYellow: '#fde68a',
+  brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#f7f8fa',
+};
+
+const GITHUB_LIGHT_TERMINAL_THEME: ITheme = {
+  background: '#fafafa', foreground: '#27272a', cursor: '#18181b', cursorAccent: '#fafafa',
+  selectionBackground: '#f97f1b40', selectionInactiveBackground: '#a1a1aa40',
+  black: '#18181b', red: '#dc2626', green: '#059669', yellow: '#a16207',
+  blue: '#2563eb', magenta: '#9333ea', cyan: '#0891b2', white: '#f4f4f5',
+  brightBlack: '#71717a', brightRed: '#ef4444', brightGreen: '#10b981', brightYellow: '#ca8a04',
+  brightBlue: '#3b82f6', brightMagenta: '#a855f7', brightCyan: '#06b6d4', brightWhite: '#ffffff',
+};
+
+const DRACULA_TERMINAL_THEME: ITheme = {
+  background: '#191a21', foreground: '#f8f8f2', cursor: '#bd93f9', cursorAccent: '#191a21',
+  selectionBackground: '#44475a', selectionInactiveBackground: '#44475a80',
+  black: '#21222c', red: '#ff5555', green: '#50fa7b', yellow: '#f1fa8c',
+  blue: '#6272a4', magenta: '#ff79c6', cyan: '#8be9fd', white: '#f8f8f2',
+  brightBlack: '#6272a4', brightRed: '#ff6e6e', brightGreen: '#69ff94', brightYellow: '#ffffa5',
+  brightBlue: '#d6acff', brightMagenta: '#ff92df', brightCyan: '#a4ffff', brightWhite: '#ffffff',
+};
+
+const NORD_TERMINAL_THEME: ITheme = {
+  background: '#242933', foreground: '#d8dee9', cursor: '#88c0d0', cursorAccent: '#242933',
+  selectionBackground: '#434c5e', selectionInactiveBackground: '#3b425280',
+  black: '#3b4252', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b',
+  blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0',
+  brightBlack: '#4c566a', brightRed: '#bf616a', brightGreen: '#a3be8c', brightYellow: '#ebcb8b',
+  brightBlue: '#81a1c1', brightMagenta: '#b48ead', brightCyan: '#8fbcbb', brightWhite: '#eceff4',
+};
+
+function activeTerminalTheme(): ITheme {
+  switch (document.documentElement.dataset.appTheme) {
+    case 'true-black': return TRUE_BLACK_TERMINAL_THEME;
+    case 'ayu-dark': return AYU_DARK_TERMINAL_THEME;
+    case 'dracula': return DRACULA_TERMINAL_THEME;
+    case 'nord': return NORD_TERMINAL_THEME;
+    case 'github-light': return GITHUB_LIGHT_TERMINAL_THEME;
+    default: return GRAPHITE_TERMINAL_THEME;
+  }
+}
+
+function terminalUsesLightTheme(): boolean {
+  return document.documentElement.dataset.theme === 'light';
+}
+
+// Claude marks user-message rows with SGR 7 (reverse video). With a light
+// terminal that literally swaps the dark foreground into the background,
+// producing a nearly-black bar. Translate only that semantic highlight to the
+// GitHub Light neutral selection colors; SGR 27 restores the defaults. Other
+// agents and ordinary ANSI colors pass through unchanged.
+export function renderClaudeLight(data: string): string {
+  return data.replace(/\x1b\[([0-9;]*)m/g, (sequence, raw: string) => {
+    const params = (raw || '0').split(';');
+    if (!params.includes('7') && !params.includes('27')) return sequence;
+    const translated = params.flatMap((param) => {
+      if (param === '7') return ['48', '2', '228', '228', '231', '38', '2', '39', '39', '42'];
+      if (param === '27') return ['49', '39'];
+      return [param];
+    });
+    return `\x1b[${translated.join(';')}m`;
+  });
+}
+
+function activeTerminalFont(): string {
+  const setting = document.documentElement.dataset.terminalFont;
+  if (setting === 'jetbrains') {
+    return '"JetBrains Mono Variable", Menlo, Monaco, "Courier New", monospace';
+  }
+  if (setting === 'system-mono') {
+    return 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+  }
+  return '"FiraCode Nerd Font", "Symbols Nerd Font", Menlo, Monaco, "Courier New", ' +
+    '"Kohinoor Devanagari", "Devanagari Sangam MN", "Noto Sans Devanagari", monospace';
+}
 
 /**
  * Where a pane's pty actually lives, when it isn't this machine.
@@ -84,6 +184,7 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
   const [dragOver, setDragOver] = useState(false);
   // "Starting zsh…" while the pty comes up — only when it takes longer than
   // a blink, so switching between live tabs doesn't flash it.
@@ -137,10 +238,8 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
         // plain monospace when it isn't installed. Devanagari/CJK families sit
         // AFTER the Latin monospaces on purpose — they also cover ASCII and would
         // otherwise win Latin glyphs and break the monospace grid.
-        fontFamily:
-          '"FiraCode Nerd Font", "Symbols Nerd Font", Menlo, Monaco, "Courier New", ' +
-          '"Kohinoor Devanagari", "Devanagari Sangam MN", "Noto Sans Devanagari", monospace',
-        theme: { background: '#09090b', foreground: '#e4e4e7' },
+        fontFamily: activeTerminalFont(),
+        theme: activeTerminalTheme(),
         // opencode's opentui probes the terminal's pixel/char size (CSI 14t/16t/
         // 18t) at startup; xterm leaves these window-ops off by default. Report-
         // only, safe to enable.
@@ -148,6 +247,7 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
       });
       termRef.current = term;
       fit = new FitAddon();
+      fitRef.current = fit;
       term.loadAddon(fit);
       // Grapheme clustering (Unicode 15) so Devanagari spacing matras stay in one
       // cell. Guarded: experimental upstream, and a throw here runs inside render.
@@ -300,6 +400,8 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
           if (tab.mode === 'opencode') {
             term.write(renderSizedText(ev.data));
             answerCapabilityProbes(ev.data, ws);
+          } else if (tab.mode === 'claude' && terminalUsesLightTheme()) {
+            term.write(renderClaudeLight(ev.data));
           } else {
             term.write(ev.data);
           }
@@ -388,10 +490,31 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
       }
       wsRef.current = null;
       termRef.current = null;
+      fitRef.current = null;
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId, tab.path, tab.mode, tab.id, tab.remote?.runnerId, tab.remote?.path]);
+
+  // xterm paints into its own canvas, so CSS variables cannot recolor or
+  // remeasure it. Keep mounted panes in sync without reconnecting their PTYs
+  // or losing terminal history.
+  useEffect(() => {
+    const updateAppearance = () => {
+      const term = termRef.current;
+      if (!term) return;
+      term.options.theme = activeTerminalTheme();
+      term.options.fontFamily = activeTerminalFont();
+      requestAnimationFrame(() => {
+        fitRef.current?.fit();
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+      });
+    };
+    window.addEventListener(APPEARANCE_CHANGE_EVENT, updateAppearance);
+    return () => window.removeEventListener(APPEARANCE_CHANGE_EVENT, updateAppearance);
+  }, []);
 
   // Becoming the focused pane moves keyboard focus into this terminal.
   useEffect(() => {
@@ -401,7 +524,7 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
   return (
     <div
       data-testid="pane-leaf"
-      className="relative h-full w-full min-h-0 min-w-0"
+      className="relative h-full w-full min-h-0 min-w-0 bg-zinc-950"
       onPointerDownCapture={onFocus}
       // Drop-to-attach uploads into the LOCAL worktree and types that path, so
       // on a remote pane it would hand the agent a path its machine cannot see.

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // --- Mock xterm so jsdom (no canvas) can run ---
@@ -129,6 +129,7 @@ class FakeWS {
 }
 
 import { TerminalView } from './TerminalView';
+import { renderClaudeLight } from '../components/XtermPane';
 import type { Worktree } from '../types';
 
 const worktree = {
@@ -138,6 +139,14 @@ const worktree = {
   process: { status: 'idle', pid: null, startedAt: null, port: null, detectedUrl: null, exitCode: null },
 } as unknown as Worktree;
 const baseWorktree = worktree;
+
+describe('Claude light terminal rendering', () => {
+  it('translates reverse-video message bars to a light neutral highlight', () => {
+    expect(renderClaudeLight('\x1b[1;7mhey\x1b[27m')).toBe(
+      '\x1b[1;48;2;228;228;231;38;2;39;39;42mhey\x1b[49;39m',
+    );
+  });
+});
 
 function lastWsUrl(): string {
   return FakeWS.instances[FakeWS.instances.length - 1]!.url;
@@ -383,22 +392,54 @@ describe('TerminalView', () => {
 
   it('toggles the Changes rail', async () => {
     render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /changes/i }));
+    expect(screen.queryByRole('button', { name: 'Diff & commit' })).not.toBeInTheDocument();
+    const changes = screen.getByRole('button', { name: 'Changes' });
+    expect(changes).toHaveTextContent('+0 -0');
+    expect(changes).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(changes);
+    expect(changes).toHaveAttribute('aria-pressed', 'true');
     expect(await screen.findByText(/no changes|couldn.t load changes|loading/i)).toBeInTheDocument();
   });
 
-  it('shows a Sessions toggle in the header (with the count) that fires onToggleSessions', () => {
-    const onToggleSessions = vi.fn();
-    render(
-      <TerminalView worktree={worktree} onClose={vi.fn()} sessionsOpen={false} sessionCount={3} onToggleSessions={onToggleSessions} />,
-    );
-    const btn = screen.getByRole('button', { name: 'Toggle sessions' });
-    expect(btn).toHaveTextContent('Sessions (3)');
-    fireEvent.click(btn);
-    expect(onToggleSessions).toHaveBeenCalledTimes(1);
+  it('⌘L toggles the Changes rail', () => {
+    render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
+    const changes = screen.getByRole('button', { name: 'Changes' });
+    expect(changes).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.keyDown(window, { key: 'l', metaKey: true });
+    expect(changes).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(window, { key: 'l', metaKey: true });
+    expect(changes).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('omits the Sessions toggle when Dashboard passes no handler', () => {
+  it('leaves Ctrl+L to the shell (clear screen) and ignores auto-repeat', () => {
+    render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
+    const changes = screen.getByRole('button', { name: 'Changes' });
+    const ctrlL = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(ctrlL);
+    expect(ctrlL.defaultPrevented).toBe(false);
+    expect(changes).toHaveAttribute('aria-pressed', 'false');
+    // a held ⌘L must not flap the rail open/closed
+    fireEvent.keyDown(window, { key: 'l', metaKey: true, repeat: true });
+    expect(changes).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('toggles the Changes rail from the embed hotkey bridge', () => {
+    // Inside the Browser preview / VS Code iframe the chord never reaches the
+    // window listener — main.cjs forwards it as the 'changes' combo instead.
+    const handlers: ((combo: string) => void)[] = [];
+    (window as any).strado = { onHotkey: (cb: (combo: string) => void) => { handlers.push(cb); return () => {}; } };
+    try {
+      render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
+      const changes = screen.getByRole('button', { name: 'Changes' });
+      expect(handlers.length).toBeGreaterThan(0);
+      act(() => { handlers.forEach((cb) => cb('changes')); });
+      expect(changes).toHaveAttribute('aria-pressed', 'true');
+    } finally {
+      delete (window as any).strado;
+    }
+  });
+
+  it('does not render the removed Sessions rail toggle', () => {
     render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Toggle sessions' })).toBeNull();
   });
@@ -817,8 +858,8 @@ describe('TerminalView', () => {
     expect(screen.getByText('Shell')).toBeInTheDocument();
   });
 
-  it('applies a later open request (rail chip) on an already-mounted hub — mount respects a closed tab, a bumped openSeq opens it', () => {
-    // The session rail clicks a chip for a worktree whose hub is ALREADY open.
+  it('applies a later explicit open request on an already-mounted hub — mount respects a closed tab, a bumped openSeq opens it', () => {
+    // A notification targets a session whose worktree hub is ALREADY open.
     // mode/sessionId are read once at mount, so the switch rides on openSeq.
     localStorage.setItem('strado:closed-agents', JSON.stringify({ claude: [baseWorktree.path] }));
     const wt = { ...baseWorktree, hasClaudeSession: true, shellSessions: ['1'] } as Worktree;
@@ -1043,6 +1084,30 @@ describe('TerminalView', () => {
     expect(select).toHaveValue('in_progress');
   });
 
+  it('hides the workflow-status dropdown when disabled in Appearance settings', () => {
+    localStorage.setItem('strado:hub-show-status', 'false');
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText('Workflow status')).not.toBeInTheDocument();
+  });
+
+  it('shows tracked time by default and hides it when disabled in Appearance settings', () => {
+    const timed = { ...baseWorktree, activitySeconds: 3900, shellSessions: ['1'] } as Worktree;
+    const first = render(<TerminalView worktree={timed} mode="shell" sessionId="1" onClose={vi.fn()} />);
+    expect(screen.getByTitle('Active time / original estimate')).toHaveTextContent('1h 5m');
+    first.unmount();
+
+    localStorage.setItem('strado:hub-show-time', 'false');
+    render(<TerminalView worktree={timed} mode="shell" sessionId="1" onClose={vi.fn()} />);
+    expect(screen.queryByTitle('Active time / original estimate')).not.toBeInTheDocument();
+  });
+
   it('hides the workflow-status dropdown for untracked worktrees', () => {
     render(
       <TerminalView
@@ -1232,10 +1297,14 @@ describe('TerminalView', () => {
     expect(screen.queryByText('React | FD-2')).not.toBeInTheDocument();
   });
 
-  it('git button opens the diff for the active worktree and Esc closes only the diff', async () => {
+  it('Review all changes opens the diff for the active worktree and Esc closes only the diff', async () => {
     const onClose = vi.fn();
+    gitChanges.mockResolvedValue({
+      files: [{ path: 'src/app.ts', status: 'M', staged: 'none', untracked: false }],
+    });
     render(<TerminalView worktree={baseWorktree as Worktree} mode="claude" onClose={onClose} />);
-    fireEvent.click(screen.getByLabelText('Diff & commit'));
+    fireEvent.click(screen.getByRole('button', { name: 'Changes' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review all changes' }));
     expect(await screen.findByPlaceholderText('Commit message')).toBeInTheDocument();
     expect(gitChanges).toHaveBeenCalledWith(expect.anything(), baseWorktree.path);
 

@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RemoteWorktree, RunnerStatus } from '../../api';
-import type { RepoConfig, Worktree } from '../../types';
+import type { MergeRequest, RepoConfig, Worktree } from '../../types';
+import { useMrSummaries } from '../../hooks/mrSummaries';
+import { chipStatus, displayLabel, sessionChips, type SessionChip } from '../../hooks/sessions';
+import { useVscodeTabs } from '../../hooks/vscodeTabs';
+import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { SidebarView } from '../Sidebar';
 import { PlusIcon } from '../hub/icons';
+import { SESSION_COLOR, SessionAvatarIcon } from './sessionAvatars';
+import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
+import { worktreeLabel, worktreeTitle } from './labels';
+import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
 
 export type SidebarBodyProps = {
+  wsId: string;
   repos: RepoConfig[];
   worktrees: Worktree[];
   remoteWorktrees: RemoteWorktree[];
@@ -17,7 +26,10 @@ export type SidebarBodyProps = {
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
   onToggleRepo: (repoId: string) => void;
-  onOpenWorktree: (w: Worktree) => void;
+  onOpenWorktree: OpenWorktree;
+  /** Opens the diff & commit modal for a worktree (hover-card quick action). */
+  onOpenDiff?: (w: Worktree) => void;
+  onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   activeWorktreePath: string | null;
   onNewWorktreeForRepo: (repo: RepoConfig) => void;
   onWorktreeSettings: (w: Worktree) => void;
@@ -31,10 +43,6 @@ export type SidebarBodyProps = {
 function isRunning(w: Worktree): boolean {
   return w.process.status === 'running' || w.process.status === 'starting' || !!w.process.external;
 }
-function worktreeLabel(w: Worktree): string {
-  return w.meta?.ticketId?.trim() || w.branch || w.path.split('/').pop() || w.path;
-}
-
 function agentWorking(w: Worktree): boolean {
   return w.claudeStatus === 'working' || w.codexStatus === 'working' || w.opencodeStatus === 'working';
 }
@@ -50,16 +58,6 @@ function BrailleSpinner({ small = false }: { small?: boolean }) {
   );
 }
 
-// The human title stored at create time is a slug (e.g.
-// "update-role-permissions-for-vt"); show it readably.
-function worktreeTitle(w: Worktree): string {
-  const t = w.meta?.title?.trim();
-  if (!t) return '';
-  const pretty = t.replace(/[-_]+/g, ' ').trim();
-  // Don't echo the ticket id back as the title (some worktrees store it there).
-  return pretty && pretty !== w.meta?.ticketId?.trim() ? pretty : '';
-}
-
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
 // branch glyph (hand-tuned SVG, ships pre-flipped upside down) — marks
@@ -67,13 +65,69 @@ const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeL
 function BranchIcon({ className = '' }: { className?: string }) {
   return (
     <svg
-      width="14" height="14" viewBox="0 0 48 48" aria-hidden
+      width="14" height="14" viewBox="0 0 48 48" aria-hidden data-worktree-icon="branch"
       className={`-scale-y-100 ${className}`}
       fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4"
     >
       <path clipRule="evenodd" d="M36 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm-22 0a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm0 32a4 4 0 1 0 0-8a4 4 0 0 0 0 8Z" />
       <path d="M14 12v24v-3c0-8 22-9 22-17v-4" />
     </svg>
+  );
+}
+
+// The row's leading glyph when a branch has an open/merged/closed PR. The
+// detail (title, checks, branches) belongs to the row's hover card — the icon
+// is the state at a glance and a click into the review.
+function MergeRequestBadge({ worktree, mr, onOpen }: {
+  worktree: Worktree;
+  mr: MergeRequest;
+  onOpen?: (w: Worktree, mr: MergeRequest) => void;
+}) {
+  const pipeline = mr.pipeline ? PIPELINE_DETAIL[mr.pipeline] : null;
+  const { kind } = prKind(mr);
+  return (
+    <button
+      type="button"
+      data-testid={`pr-status-${worktree.path}`}
+      aria-label={`Open ${kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen?.(worktree, mr);
+      }}
+      className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm outline-none ring-offset-zinc-950 focus-visible:ring-1 focus-visible:ring-sky-400"
+      style={{ color: MR_STATE_COLOR[mr.state] }}
+    >
+      <PrStateIcon state={mr.state} />
+    </button>
+  );
+}
+
+// Who is open in this worktree, as overlapping faces. Names and live status
+// are the hover card's job.
+function SessionAvatarStack({ chips, testId }: { chips: SessionChip[]; testId: string }) {
+  if (chips.length === 0) return null;
+  const visible = chips.slice(0, 5);
+  return (
+    <span
+      data-testid={testId}
+      role="img"
+      aria-label={`${chips.length} open session${chips.length === 1 ? '' : 's'}: ${chips.map(displayLabel).join(', ')}`}
+      className="flex shrink-0 items-center"
+    >
+      {visible.map((chip, index) => (
+        <span
+          key={`${chip.mode}:${chip.sessionId}`}
+          data-session-avatar
+          aria-hidden
+          className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 ring-1 ring-zinc-950 ${SESSION_COLOR[chip.mode]} ${
+            index > 0 ? '-ml-1' : ''
+          } ${chips.length > 5 && index === 4 ? 'opacity-40' : ''}`}
+          style={{ zIndex: index + 1 }}
+        >
+          <SessionAvatarIcon chip={chip} />
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -91,7 +145,11 @@ function RepoIcon() {
 }
 
 // small kebab (⋯) button + popover; closes on outside-click via a fixed backdrop
-function Menu({ label, items }: { label: string; items: { text: string; danger?: boolean; onClick: () => void }[] }) {
+function Menu({ label, items, alwaysVisible = false }: {
+  label: string;
+  items: { text: string; danger?: boolean; onClick: () => void }[];
+  alwaysVisible?: boolean;
+}) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     if (!pos) return;
@@ -109,10 +167,10 @@ function Menu({ label, items }: { label: string; items: { text: string; danger?:
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           setPos({ x: r.right, y: r.bottom });
         }}
-        className="hidden shrink-0 cursor-pointer rounded p-1 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200 group-hover:inline-flex"
+        className={`${alwaysVisible ? 'inline-flex' : 'invisible pointer-events-none inline-flex group-hover:visible group-hover:pointer-events-auto'} h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded p-[3px] text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200`}
       >
-        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden {...stroke}>
-          <circle cx="8" cy="4" r="0.9" /><circle cx="8" cy="8" r="0.9" /><circle cx="8" cy="12" r="0.9" />
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden fill="currentColor">
+          <circle cx="8" cy="3.5" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="8" cy="12.5" r="1.25" />
         </svg>
       </button>
       {/* portal: the space carousel's transformed track would otherwise become
@@ -143,65 +201,103 @@ function Menu({ label, items }: { label: string; items: { text: string; danger?:
   );
 }
 
+/**
+ * A worktree on a runner. Rendered in the same list as local ones because
+ * that adjacency is the point — but always badged with the machine, because
+ * where it runs decides what it can see.
+ */
+function RemoteRow({ w, reachable, activeRow, onOpenRemoteWorktree, onDeleteRemoteWorktree }: {
+w: RemoteWorktree;
+reachable: boolean;
+activeRow: boolean;
+onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
+onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
+}) {
+  const chips = sessionChips([w as unknown as Worktree]);
+  const hasSessions = chips.length > 0;
+  return (
+    <WorktreeRowItem
+      worktree={w as unknown as Worktree}
+      chips={chips}
+      mr={null}
+      runnerName={w.runnerName}
+      onOpen={() => onOpenRemoteWorktree?.(w)}
+      className={`group relative flex items-center rounded-md pr-1 ${activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
+    >
+      {hasSessions && (
+        <span
+          aria-hidden
+          data-testid={`session-mark-${w.runnerId}:${w.path}`}
+          className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
+        />
+      )}
+      <span className="ml-5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+        <BranchIcon className={activeRow ? 'text-sky-400' : reachable ? 'text-zinc-600' : 'text-zinc-700'} />
+      </span>
+      <button
+        onClick={() => onOpenRemoteWorktree?.(w)}
+        title={`${w.path} on ${w.runnerName}${reachable ? '' : ' (offline — the worktree is safe there)'}`}
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-2 pr-2 text-left ${
+          activeRow ? 'text-zinc-100' : reachable ? 'text-zinc-300' : 'text-zinc-600'
+        }`}
+      >
+        <span className="min-w-0 flex-1 truncate font-mono text-xs">
+          {w.branch ?? w.name}
+        </span>
+      </button>
+      <span className="mr-1 flex shrink-0 items-center gap-1.5">
+        <SessionAvatarStack chips={chips} testId={`session-stack-${w.runnerId}:${w.path}`} />
+        <span
+          data-testid={`runner-icon-${w.runnerId}:${w.path}`}
+          role="img"
+          aria-label={`${w.runnerName}${reachable ? ' runner' : ' runner, offline'}`}
+          title={`${w.runnerName}${reachable ? '' : ' · offline'}`}
+          className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center ${
+            reachable ? 'text-zinc-500' : 'text-red-400/70'
+          }`}
+        >
+          <svg aria-hidden width="14" height="14" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19,2H5A3,3,0,0,0,2,5V15a3,3,0,0,0,3,3H7.64l-.58,1a2,2,0,0,0,0,2,2,2,0,0,0,1.75,1h6.46A2,2,0,0,0,17,21a2,2,0,0,0,0-2l-.59-1H19a3,3,0,0,0,3-3V5A3,3,0,0,0,19,2ZM8.77,20,10,18H14l1.2,2ZM20,15a1,1,0,0,1-1,1H5a1,1,0,0,1-1-1V14H20Zm0-3H4V5A1,1,0,0,1,5,4H19a1,1,0,0,1,1,1Z" />
+          </svg>
+        </span>
+      </span>
+      {/* A repo's main working tree is not removable as a worktree — the
+          delete route refuses it — so no menu rather than a dead action. */}
+      {!w.isRepoRoot && onDeleteRemoteWorktree ? (
+        <Menu
+          label={`${w.branch ?? w.name} on ${w.runnerName} actions`}
+          items={[
+            {
+              text: 'Delete worktree',
+              danger: true,
+              onClick: () => onDeleteRemoteWorktree(w),
+            },
+          ]}
+        />
+      ) : (
+        <span
+          aria-hidden
+          data-testid={`action-slot-${w.runnerId}:${w.path}`}
+          className="h-5 w-5 shrink-0"
+        />
+      )}
+    </WorktreeRowItem>
+  );
+}
+
 export function SidebarBody({
-  repos, worktrees, remoteWorktrees, runnerStatuses, selected, onSelect, taskCount,
+  wsId, repos, worktrees, remoteWorktrees, runnerStatuses, selected, onSelect, taskCount,
   onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
-  onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, onOpenRemoteWorktree, onDeleteRemoteWorktree,
+  onOpenMr, onOpenDiff, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
+  onOpenRemoteWorktree, onDeleteRemoteWorktree,
   remoteLoading = false,
 }: SidebarBodyProps) {
+  const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
+  const vscodeTabs = useVscodeTabs();
+  const browserTabs = useBrowserTabs();
   const runnerOnline = (runnerId: string) =>
     runnerStatuses.find((r) => r.runnerId === runnerId)?.online ?? false;
 
-  /**
-   * A worktree on a runner. Rendered in the same list as local ones because
-   * that adjacency is the point — but always badged with the machine, because
-   * where it runs decides what it can see.
-   */
-  const RemoteRow = ({ w }: { w: RemoteWorktree }) => {
-    const reachable = runnerOnline(w.runnerId);
-    const activeRow = w.path === activeWorktreePath;
-    return (
-      <div
-        className={`group flex items-center gap-1 rounded-md pr-1 ${activeRow ? 'bg-zinc-800 ring-1 ring-inset ring-sky-500/40' : 'hover:bg-zinc-900'}`}
-      >
-        <button
-          onClick={() => onOpenRemoteWorktree?.(w)}
-          title={`${w.path} on ${w.runnerName}${reachable ? '' : ' (offline — the worktree is safe there)'}`}
-          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-4 pr-2 text-left ${
-            activeRow ? 'text-zinc-100' : reachable ? 'text-zinc-300' : 'text-zinc-600'
-          }`}
-        >
-          <span className="flex w-3 shrink-0 items-center justify-center">
-            <BranchIcon className={activeRow ? 'text-sky-400' : reachable ? 'text-zinc-600' : 'text-zinc-700'} />
-          </span>
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">
-            {w.branch ?? w.name}
-          </span>
-          <span
-            className={`shrink-0 rounded px-1 font-mono text-[10px] ${
-              reachable ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-900 text-zinc-600'
-            }`}
-          >
-            {reachable ? w.runnerName : `${w.runnerName} · offline`}
-          </span>
-        </button>
-        {/* A repo's main working tree is not removable as a worktree — the
-            delete route refuses it — so no menu rather than a dead action. */}
-        {!w.isRepoRoot && onDeleteRemoteWorktree && (
-          <Menu
-            label={`${w.branch ?? w.name} on ${w.runnerName} actions`}
-            items={[
-              {
-                text: 'Delete worktree',
-                danger: true,
-                onClick: () => onDeleteRemoteWorktree(w),
-              },
-            ]}
-          />
-        )}
-      </div>
-    );
-  };
   // Uncommitted work on a worktree row: +adds −dels, the same numbers the task
   // table shows. Silent when the tree is clean, so a quiet row stays quiet.
   const diffBadge = (w: Worktree) => {
@@ -218,15 +314,6 @@ export function SidebarBody({
       </span>
     );
   };
-  // One global worktree search at the top of the sidebar; while it has a
-  // query, matching repos are force-expanded and non-matching ones hidden.
-  // The per-repo "show all" toggle caps big repos at WORKTREE_CAP otherwise.
-  const [query, setQuery] = useState('');
-  const [showAllRepos, setShowAllRepos] = useState<Set<string>>(new Set());
-  const WORKTREE_CAP = 7;
-  const q = query.trim().toLowerCase();
-  const matches = (w: Worktree) => `${worktreeLabel(w)} ${worktreeTitle(w)}`.toLowerCase().includes(q);
-
   const TopItem = ({ active, onClick, label, count, icon }: {
     active: boolean; onClick: () => void; label: string; count: number; icon: React.ReactNode;
   }) => (
@@ -248,13 +335,6 @@ export function SidebarBody({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search worktrees…"
-        aria-label="Search worktrees"
-        className="mb-2 h-8 w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 text-xs text-zinc-300 outline-none placeholder:text-zinc-600 focus:border-zinc-700"
-      />
       <div className="flex flex-col gap-0.5">
         <TopItem active={selected.kind === 'tasks'} onClick={() => onSelect({ kind: 'tasks' })}
           label="Tasks" count={taskCount} icon={tasksIcon} />
@@ -273,15 +353,10 @@ export function SidebarBody({
       </div>
 
       <div className="flex flex-col gap-0.5">
-        {q && !worktrees.some(matches) && (
-          <div className="py-1.5 pl-2.5 text-xs text-zinc-600">No matches</div>
-        )}
         {repos.map((repo) => {
           const repoWts = worktrees.filter((w) => w.repoId === repo.id);
           const repoRemote = remoteWorktrees.filter((w) => w.localRepoId === repo.id);
-          const filtered = q ? repoWts.filter(matches) : repoWts;
-          if (q && filtered.length === 0) return null; // searching: hide non-matching repos
-          const open = q ? true : expandedRepos.has(repo.id); // searching: force-expand matches
+          const open = expandedRepos.has(repo.id);
           return (
             <div key={repo.id}>
               <div className="group flex items-center gap-1 rounded-md pr-1 hover:bg-zinc-900">
@@ -299,29 +374,22 @@ export function SidebarBody({
                     </span>
                   </span>
                   <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{repo.name}</span>
-                  {/* count at rest; the hover controls take this space instead.
-                      No rolled-up running dot — it only said "something in here
-                      runs", and the worktree row says which one. */}
-                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600 group-hover:hidden">{q ? filtered.length : repoWts.length}</span>
                 </button>
                 <button
                   type="button"
                   aria-label={`New worktree in ${repo.name}`}
                   title="New worktree"
                   onClick={(e) => { e.stopPropagation(); onNewWorktreeForRepo(repo); }}
-                  className="hidden shrink-0 cursor-pointer rounded p-1 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200 group-hover:inline-flex"
+                  className="inline-flex shrink-0 cursor-pointer rounded p-1 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200"
                 >
                   <PlusIcon size={14} />
                 </button>
-                <Menu label={`${repo.name} actions`} items={[
+                <Menu alwaysVisible label={`${repo.name} actions`} items={[
                   { text: 'New worktree', onClick: () => onNewWorktreeForRepo(repo) },
                   { text: 'Remove repo', danger: true, onClick: () => onDeleteRepo(repo) },
                 ]} />
               </div>
               {open && (() => {
-                const showAll = showAllRepos.has(repo.id);
-                const visible = q || showAll ? filtered : filtered.slice(0, WORKTREE_CAP);
-                const hiddenCount = filtered.length - visible.length;
                 return (
                 // rows span the full sidebar width; indentation lives in padding
                 // so the hover/active background has no dead gap on the left
@@ -329,23 +397,42 @@ export function SidebarBody({
                   {repoWts.length === 0 && repoRemote.length === 0 && (
                     <div className="py-1.5 pl-9 pr-2 text-xs text-zinc-600">No worktrees</div>
                   )}
-                  {visible.map((w) => {
+                  {repoWts.map((w) => {
                     const activeRow = w.path === activeWorktreePath;
+                    const chips = sessionChips([w], vscodeTabs, browserTabs);
+                    const hasSessions = chips.length > 0;
+                    const mr = mrByPath.get(w.path);
                     return (
-                      <div key={w.path}
-                        className={`group flex items-center gap-1 rounded-md pr-1 ${
-                          activeRow ? 'bg-zinc-800 ring-1 ring-inset ring-sky-500/40' : 'hover:bg-zinc-900'}`}>
+                      <WorktreeRowItem
+                        key={w.path}
+                        worktree={w}
+                        chips={chips}
+                        mr={mr}
+                        onOpen={onOpenWorktree}
+                        onOpenMr={onOpenMr}
+                        onOpenDiff={onOpenDiff}
+                        onSettings={onWorktreeSettings}
+                        className={`group relative flex items-center rounded-md pr-1 ${
+                          activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
+                      >
+                        {hasSessions && (
+                          <span
+                            aria-hidden
+                            data-testid={`session-mark-${w.path}`}
+                            className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
+                          />
+                        )}
+                        <span className="ml-5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                          {mr ? (
+                            <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} />
+                          ) : agentWorking(w) ? (
+                            <BrailleSpinner small />
+                          ) : (
+                            <BranchIcon className={activeRow ? 'text-sky-400' : 'text-zinc-600'} />
+                          )}
+                        </span>
                         <button onClick={() => onOpenWorktree(w)}
-                          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-4 pr-2 text-left ${activeRow ? 'text-zinc-100' : 'text-zinc-300'}`}>
-                          {/* branch slot: loader while the agent works, an
-                              upside-down branch glyph otherwise */}
-                          <span className="flex w-3 shrink-0 items-center justify-center">
-                            {agentWorking(w) ? (
-                              <BrailleSpinner small />
-                            ) : (
-                              <BranchIcon className={activeRow ? 'text-sky-400' : 'text-zinc-600'} />
-                            )}
-                          </span>
+                          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-2 pr-2 text-left ${activeRow ? 'text-zinc-100' : 'text-zinc-300'}`}>
                           <span className="min-w-0 flex-1 truncate font-mono text-xs">
                             {worktreeLabel(w)}
                             {worktreeTitle(w) && (
@@ -353,40 +440,39 @@ export function SidebarBody({
                               <span className={activeRow ? 'text-zinc-400' : 'text-zinc-600'}><span className="mx-[3px]">·</span>{worktreeTitle(w)}</span>
                             )}
                           </span>
-                          {diffBadge(w)}
-                          <span
-                            {...(isRunning(w) ? { 'data-testid': `run-dot-${w.path}` } : {})}
-                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${isRunning(w) ? 'bg-emerald-500' : 'bg-transparent'}`}
-                          />
                         </button>
+                        <span className="mr-1 flex shrink-0 items-center gap-1.5">
+                          {diffBadge(w)}
+                          <SessionAvatarStack chips={chips} testId={`session-stack-${w.path}`} />
+                          {isRunning(w) && (
+                            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                              <span
+                                data-testid={`run-dot-${w.path}`}
+                                className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+                              />
+                            </span>
+                          )}
+                        </span>
                         <Menu label={`${worktreeLabel(w)} actions`} items={[
                           { text: 'Settings', onClick: () => onWorktreeSettings(w) },
                           { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
                         ]} />
-                      </div>
+                      </WorktreeRowItem>
                     );
                   })}
-                  {!q && !showAll && hiddenCount > 0 && (
-                    <button
-                      onClick={() => setShowAllRepos((s) => new Set(s).add(repo.id))}
-                      className="rounded-md py-1.5 pl-9 pr-2 text-left text-xs text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300"
-                    >
-                      Show {hiddenCount} more
-                    </button>
-                  )}
-                  {!q && showAll && filtered.length > WORKTREE_CAP && (
-                    <button
-                      onClick={() => setShowAllRepos((s) => { const n = new Set(s); n.delete(repo.id); return n; })}
-                      className="rounded-md py-1.5 pl-9 pr-2 text-left text-xs text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300"
-                    >
-                      Show less
-                    </button>
-                  )}
                   {/* Runner worktrees for this repo, after the local ones. An
                       offline runner's rows stay VISIBLE and grey — vanishing
                       rows read as data loss, and the worktree is fine. */}
-                  {(q ? repoRemote.filter((w) => `${w.branch ?? ''} ${w.name}`.toLowerCase().includes(q)) : repoRemote)
-                    .map((w) => <RemoteRow key={`${w.runnerId}:${w.path}`} w={w} />)}
+                  {repoRemote.map((w) => (
+                    <RemoteRow
+                      key={`${w.runnerId}:${w.path}`}
+                      w={w}
+                      reachable={runnerOnline(w.runnerId)}
+                      activeRow={w.path === activeWorktreePath}
+                      onOpenRemoteWorktree={onOpenRemoteWorktree}
+                      onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+                    />
+                  ))}
                 </div>
                 );
               })()}
@@ -398,7 +484,7 @@ export function SidebarBody({
             repo folders in the same list (named for the remote repo), never a
             separate bottom bucket: rows that move around read as a glitch,
             but hiding work that exists reads as data loss. */}
-        {!q && (() => {
+        {(() => {
           const orphans = remoteWorktrees.filter((w) => !w.localRepoId);
           if (orphans.length === 0) return null;
           const groups = new Map<string, { name: string; rows: RemoteWorktree[] }>();
@@ -416,14 +502,23 @@ export function SidebarBody({
                 <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600">{g.rows.length}</span>
               </div>
               <div className="flex flex-col gap-0.5">
-                {g.rows.map((w) => <RemoteRow key={`${w.runnerId}:${w.path}`} w={w} />)}
+                {g.rows.map((w) => (
+                  <RemoteRow
+                    key={`${w.runnerId}:${w.path}`}
+                    w={w}
+                    reachable={runnerOnline(w.runnerId)}
+                    activeRow={w.path === activeWorktreePath}
+                    onOpenRemoteWorktree={onOpenRemoteWorktree}
+                    onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+                  />
+                ))}
               </div>
             </div>
           ));
         })()}
         {/* First runner fetch still in flight: say so, quietly. Runner rows
             appearing a beat after the local ones otherwise looks like a bug. */}
-        {remoteLoading && !q && (
+        {remoteLoading && (
           <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
             <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
             <span className="animate-pulse">Checking runners…</span>

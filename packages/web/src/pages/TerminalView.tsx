@@ -25,7 +25,7 @@ import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
-  CodexIcon, CopyIcon, ExternalIcon, GitIcon, GlobeIcon, LogsIcon, OpencodeIcon, PlayIcon,
+  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, LogsIcon, OpencodeIcon, PlayIcon,
   PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
@@ -37,6 +37,7 @@ import {
   removeLeaf, replaceLeaf, splitLeaf, withRatio, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
+import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
@@ -489,12 +490,8 @@ export function TerminalView({
   sessionId: sessionIdProp = '1',
   sidebarCollapsed = false,
   onExpandSidebar,
-  sessionsOpen = false,
-  sessionCount = 0,
-  onToggleSessions,
   runningServers,
   openSeq = 0,
-  onActiveChange,
   modalOpen = false,
 }: {
   worktree: Worktree;
@@ -503,30 +500,23 @@ export function TerminalView({
    *  user was on last time; an explicit mode always wins */
   mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb';
   sessionId?: string;
-  /** Bumps on every explicit open request from the parent (a session-rail chip,
-   *  a notification). `mode`/`sessionId` are read once at mount, so this is what
+  /** Bumps on every explicit open request from the parent (for example, a
+   *  notification). `mode`/`sessionId` are read once at mount, so this is what
    *  tells an ALREADY-open hub to switch to the requested tab — including when
    *  the same session is re-selected after manual navigation. */
   openSeq?: number;
   sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
-  /** The cross-machine session rail lives at the Dashboard level; the hub just
-   *  gets a second trigger for it so it's reachable without leaving a worktree. */
-  sessionsOpen?: boolean;
-  sessionCount?: number;
-  onToggleSessions?: () => void;
   /** The board's running-dev-servers chip, handed down so the same control is
    *  reachable from inside a worktree. Owned by the Dashboard, which is where
    *  the live worktree list and the start/stop calls are. */
   runningServers?: React.ReactNode;
-  /** Reports this hub's active tab so the session rail / sidebar can highlight
-   *  the open session. Fires on every tab switch, including from the top strip. */
-  onActiveChange?: (tab: { path: string; mode: string; id: string }) => void;
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
 }) {
   const { workspace } = useWorkspace();
+  const { showTime, showStatus } = useHubDisplayPreferences();
   const localWsId = workspace.id;
   /**
    * Set when this worktree lives on a runner. Everything that reads local state
@@ -611,13 +601,9 @@ export function TerminalView({
   );
   const activeRef = useRef(active);
   activeRef.current = active;
-  const onActiveChangeRef = useRef(onActiveChange);
-  onActiveChangeRef.current = onActiveChange;
   // Remember the selection so the next mount of this worktree's hub (every
-  // sidebar switch remounts it) lands on the same tab, and report it up so the
-  // session rail / sidebar can highlight the open session.
+  // sidebar switch remounts it) lands on the same tab.
   useEffect(() => {
-    onActiveChangeRef.current?.({ path: active.path, mode: active.mode, id: active.id });
     if (active.path === worktree.path) rememberActiveTab(worktree.path, tabKeyOf(active));
   }, [active, worktree.path]);
   // Cmd+W (window keydown OR forwarded from an embed) closes the active tab.
@@ -1500,6 +1486,15 @@ export function TerminalView({
         commit();
         return;
       }
+      // Cmd+L toggles the worktree's Changes rail. Ctrl+L deliberately falls
+      // through so shells keep their clear-screen binding.
+      if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'l') {
+        if (e.repeat) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setChangesOpen((open) => !open);
+        return;
+      }
       // Cmd+W closes the active tab (terminal/shell/agent focus lands here;
       // Browser/VS Code focus arrives via the 'close-tab' IPC combo below).
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'w') {
@@ -1564,6 +1559,10 @@ export function TerminalView({
       }
       if (combo === 'new-shell') {
         addShellRef.current();
+        return;
+      }
+      if (combo === 'changes') {
+        setChangesOpen((open) => !open);
         return;
       }
       const dir = combo === 'tab-next' || combo === 'group-next' ? 1 : combo === 'tab-prev' || combo === 'group-prev' ? -1 : null;
@@ -1895,8 +1894,8 @@ export function TerminalView({
     });
   };
 
-  // Apply an explicit open request from the parent (session-rail chip,
-  // notification) that lands while THIS worktree's hub is already open — the
+  // Apply an explicit open request from the parent (such as a notification)
+  // that lands while THIS worktree's hub is already open — the
   // initial mount is already handled by the seeded `active`/`groups` state,
   // which deliberately respects a user-closed agent (a reload passes mode=…
   // and must NOT resurrect a closed tab). So skip the mount run and only react
@@ -2241,7 +2240,7 @@ export function TerminalView({
             const origEstimate = jiraIssue?.estimate && !/^0[mhd]$/.test(jiraIssue.estimate) ? jiraIssue.estimate : null;
             return (
               <>
-                {(spent || origEstimate) && (
+                {showTime && (spent || origEstimate) && (
                   <span
                     className="ml-3 shrink-0 self-start font-mono text-[11px]"
                     title="Active time / original estimate"
@@ -2252,7 +2251,7 @@ export function TerminalView({
                     )}
                   </span>
                 )}
-                {(row?.meta || jiraIssue) && (
+                {showStatus && (row?.meta || jiraIssue) && (
                   <span className="ml-3 shrink-0 self-start">
                     {jiraIssue ? (
                       <TicketStatusSelect issue={jiraIssue} />
@@ -2343,18 +2342,13 @@ export function TerminalView({
                 <span>Logs</span>
               </button>
               <button
-                className="shrink-0 self-start rounded-md px-2.5 py-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
-                onClick={() => setShowDiff(true)}
-                title="Diff & commit"
-                aria-label="Diff & commit"
-              >
-                <GitIcon />
-              </button>
-              <button
-                className="flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900"
+                className={`flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900 ${
+                  changesOpen ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
+                }`}
                 onClick={() => setChangesOpen((v) => !v)}
-                title="Changes"
+                title="Changes (⌘L)"
                 aria-label="Changes"
+                aria-pressed={changesOpen}
               >
                 <span className="font-mono text-[11px] tabular-nums">
                   <span className="text-emerald-400">+{activeDiff?.additions ?? 0}</span>{' '}
@@ -2374,19 +2368,6 @@ export function TerminalView({
             </span>
           )}
           {runningServers}
-          {/* Cross-machine session rail toggle — mirrors the list-view button so
-              it's reachable from inside any worktree, local or remote (⌘L). */}
-          {onToggleSessions && (
-            <button
-              className={`shrink-0 self-start rounded-md px-2.5 py-1 font-mono text-[11px] tabular-nums hover:bg-zinc-900 ${sessionsOpen ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'}`}
-              onClick={() => onToggleSessions()}
-              title="Sessions (⌘L)"
-              aria-label="Toggle sessions"
-              aria-pressed={sessionsOpen}
-            >
-              Sessions ({sessionCount})
-            </button>
-          )}
         </div>
         {dtMenu && (
           <>
@@ -2871,6 +2852,7 @@ export function TerminalView({
         open={changesOpen}
         onToggle={() => setChangesOpen((v) => false)}
         onOpenFile={() => setShowDiff(true)}
+        onReviewAll={() => setShowDiff(true)}
         onOpenMr={setMrReview}
         refreshKey={changesRefresh}
       />

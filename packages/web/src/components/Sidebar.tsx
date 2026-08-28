@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RemoteWorktree, RunnerStatus } from '../api';
-import type { RepoConfig, Workspace, Worktree } from '../types';
+import type { MergeRequest, RepoConfig, Workspace, Worktree } from '../types';
 import { useResizableWidth } from '../hooks/resizableWidth';
 import { useSpaceNeighbors } from '../hooks/spaceNeighbors';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { SidebarBody } from './sidebar/SidebarBody';
+import type { OpenWorktree } from './sidebar/WorktreeRowItem';
 import { SpaceCarousel, type CarouselPane, type SpaceCarouselHandle } from './sidebar/SpaceCarousel';
 import { SpaceDots } from './sidebar/SpaceDots';
 import { AccountMenu } from './AccountMenu';
@@ -14,7 +15,7 @@ import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 /**
  * One view left. 'active' used to list running dev servers on their own page —
  * dead most of the time, since the signal it carried (a running server, an
- * agent at work) already lives on the worktree rows and the session rail.
+ * agent at work) already lives directly on the worktree rows.
  */
 export type SidebarView = { kind: 'tasks' };
 
@@ -32,7 +33,10 @@ export type Props = {
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
   onToggleRepo: (repoId: string) => void;
-  onOpenWorktree: (w: Worktree) => void;
+  onOpenWorktree: OpenWorktree;
+  onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
+  /** Opens diff & commit for a worktree — the hover card's Changes action. */
+  onOpenDiff?: (w: Worktree) => void;
   activeWorktreePath: string | null;
   onNewWorktreeForRepo: (repo: RepoConfig) => void;
   onWorktreeSettings: (w: Worktree) => void;
@@ -143,6 +147,8 @@ export function Sidebar({
   taskCount, onCollapse, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
+  onOpenMr,
+  onOpenDiff,
   onSwitchError,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
@@ -161,13 +167,14 @@ export function Sidebar({
   // props, a neighbour pane gets its snapshot.
   const bodyProps = {
     selected, onSelect, taskCount, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
-    onOpenWorktree, activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
+    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
   };
   // A neighbour's snapshot is local-only, so it shows no runner rows — those
   // appear when you land on that space.
-  const snapshotPane = (data: { repos: RepoConfig[]; worktrees: Worktree[] } | null) => (
+  const snapshotPane = (wsId: string, data: { repos: RepoConfig[]; worktrees: Worktree[] } | null) => (
     <SidebarBody
       {...bodyProps}
+      wsId={wsId}
       repos={data?.repos ?? []}
       worktrees={data?.worktrees ?? []}
       remoteWorktrees={[]}
@@ -176,13 +183,14 @@ export function Sidebar({
   );
 
   const panes: CarouselPane[] = [];
-  if (prev) panes.push({ id: prev.space.id, content: snapshotPane(prev.data) });
+  if (prev) panes.push({ id: prev.space.id, content: snapshotPane(prev.space.id, prev.data) });
   const centerIndex = panes.length;
   panes.push({
     id: workspace.id,
     content: (
       <SidebarBody
         {...bodyProps}
+        wsId={workspace.id}
         repos={repos}
         worktrees={worktrees}
         remoteWorktrees={remoteWorktrees}
@@ -193,7 +201,7 @@ export function Sidebar({
       />
     ),
   });
-  if (next) panes.push({ id: next.space.id, content: snapshotPane(next.data) });
+  if (next) panes.push({ id: next.space.id, content: snapshotPane(next.space.id, next.data) });
 
   // The carousel has already moved the track by the time this runs, and the
   // pane it left behind is inert — so a switch that fails has to put the track

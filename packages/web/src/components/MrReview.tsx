@@ -16,21 +16,21 @@ function UnifiedDiff({ diff }: { diff: string }) {
   const parsed = parseUnifiedDiff(diff);
   if (parsed.binary) return <div className="p-3 text-xs text-zinc-500">Binary file — not shown.</div>;
   return (
-    <div className="font-mono text-xs">
+    <div className="diff-surface diff-code-font text-xs">
       {parsed.hunks.map((h, hi) => (
-        <div key={hi} className="mb-3 overflow-hidden rounded border border-zinc-800">
-          <div className="bg-zinc-900 px-2 py-1 text-[11px] text-zinc-500">{h.header}</div>
+        <div key={hi} className="diff-hunk mb-3 overflow-hidden rounded border">
+          <div className="diff-hunk-header px-2 py-1 text-[11px]">{h.header}</div>
           {h.lines.map((l, li) => (
             <div
               key={li}
-              className={`grid grid-cols-[3rem_3rem_1fr] whitespace-pre ${
-                l.kind === 'add' ? 'bg-emerald-950/40 text-emerald-200'
-                : l.kind === 'del' ? 'bg-red-950/40 text-red-200'
-                : 'text-zinc-400'
+              className={`diff-line grid grid-cols-[3rem_3rem_1fr] whitespace-pre ${
+                l.kind === 'add' ? 'diff-line-add'
+                : l.kind === 'del' ? 'diff-line-del'
+                : 'diff-line-context'
               }`}
             >
-              <span className="px-2 text-right text-zinc-600">{l.oldNo ?? ''}</span>
-              <span className="px-2 text-right text-zinc-600">{l.newNo ?? ''}</span>
+              <span className="diff-line-number px-2 text-right">{l.oldNo ?? ''}</span>
+              <span className="diff-line-number px-2 text-right">{l.newNo ?? ''}</span>
               <span className="px-2">{l.text}</span>
             </div>
           ))}

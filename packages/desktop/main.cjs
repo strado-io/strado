@@ -355,6 +355,7 @@ if (!gotLock) {
     if (input.key === 'ArrowLeft')
       return input.alt ? 'group-prev' : input.shift ? 'space-prev' : 'tab-prev';
     if (input.key.toLowerCase() === 'k' && !input.alt && !input.shift) return 'palette';
+    if (input.key.toLowerCase() === 'l' && !input.alt && !input.shift) return 'changes';
     // Cmd+W inside a Browser preview: the renderer closes the active tab
     // (mirrors a browser). NOT inside VS Code (editorKeys) — the workbench
     // owns Cmd+W (close editor file); the menu deliberately keeps Close

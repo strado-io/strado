@@ -55,17 +55,23 @@ describe('ChangesRail', () => {
       ],
     });
     const onOpenFile = vi.fn();
-    render(<ChangesRail worktree={wt} open onToggle={vi.fn()} onOpenFile={onOpenFile} />);
+    const onReviewAll = vi.fn();
+    render(<ChangesRail worktree={wt} open onToggle={vi.fn()} onOpenFile={onOpenFile} onReviewAll={onReviewAll} />);
     await waitFor(() => expect(screen.getByText('src/app.ts')).toBeInTheDocument());
     expect(screen.getByText('Changes (2)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review all changes' }));
+    expect(onReviewAll).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText('src/app.ts'));
     expect(onOpenFile).toHaveBeenCalledWith('src/app.ts');
   });
 
   it('shows an empty state when there are no changes', async () => {
     changes.mockResolvedValue({ files: [] });
-    render(<ChangesRail worktree={wt} open onToggle={vi.fn()} onOpenFile={vi.fn()} />);
+    const onReviewAll = vi.fn();
+    render(<ChangesRail worktree={wt} open onToggle={vi.fn()} onOpenFile={vi.fn()} onReviewAll={onReviewAll} />);
     await waitFor(() => expect(screen.getByText(/no changes/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Open Git view' }));
+    expect(onReviewAll).toHaveBeenCalledTimes(1);
   });
 
   it('shows an error state when the fetch fails, without crashing', async () => {

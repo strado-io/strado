@@ -45,7 +45,7 @@ interface Window {
     ) => () => void;
     // app shortcuts intercepted inside embeds, forwarded by the shell
     onHotkey?: (
-      cb: (combo: 'tab-next' | 'tab-prev' | 'group-next' | 'group-prev' | 'space-next' | 'space-prev' | 'palette' | 'settings' | 'meta-up' | 'devtools' | 'close-tab' | 'new-shell') => void,
+      cb: (combo: 'tab-next' | 'tab-prev' | 'group-next' | 'group-prev' | 'space-next' | 'space-prev' | 'palette' | 'settings' | 'meta-up' | 'devtools' | 'close-tab' | 'new-shell' | 'changes') => void,
     ) => () => void;
     // true while the VS Code iframe is the active tab (shell then intercepts
     // the window's own Cmd+Arrow keys)

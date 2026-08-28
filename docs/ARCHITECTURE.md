@@ -199,7 +199,8 @@ runner dashboards. Previews and docked DevTools are `WebContentsView`s — expli
   filters the target registry by `STRADO_WORKTREE`, so an agent can only touch its own
   worktree's tabs.
 - **Hotkeys:** `before-input-event` scoped to embeds — Cmd+←/→ tabs, Cmd+Alt+←/→
-  groups, Cmd+K palette, Cmd+W close-tab (yielded to VS Code), Cmd+T new shell. A tiny
+  groups, Cmd+K palette, Cmd+W close-tab (yielded to VS Code), Cmd+T new shell,
+  Cmd+L Changes rail (Ctrl+L stays the shell's clear-screen). A tiny
   C helper (`cmdwatch.c`) polls `CGEventSourceFlagsState` because macOS never delivers
   the Meta keyup after a consumed Cmd chord — without it, hold-to-switch sticks open.
 - **Self-update:** renderer polls every 15 min. macOS: DMG → sha256 → de-quarantine →

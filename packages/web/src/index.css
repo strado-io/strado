@@ -1,18 +1,205 @@
 @import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/inter';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --font-ui: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sky-50: 255 248 241; --sky-100: 255 238 218; --sky-200: 255 217 176;
+  --sky-300: 255 190 125; --sky-400: 255 157 71; --sky-500: 249 127 27;
+  --sky-600: 226 103 10; --sky-700: 187 79 8; --sky-800: 149 62 12;
+  --sky-900: 120 51 15; --sky-950: 65 24 5;
+  --zinc-50: 247 248 250; --zinc-100: 238 240 243; --zinc-200: 221 224 230;
+  --zinc-300: 194 199 208; --zinc-400: 152 158 171; --zinc-500: 107 114 128;
+  --zinc-600: 75 80 92; --zinc-700: 44 48 57; --zinc-800: 30 33 40;
+  --zinc-900: 20 21 25; --zinc-950: 11 12 15;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --zinc-50: 9 9 11; --zinc-100: 24 24 27; --zinc-200: 39 39 42;
+  --zinc-300: 63 63 70; --zinc-400: 82 82 91; --zinc-500: 113 113 122;
+  --zinc-600: 161 161 170; --zinc-700: 212 212 216; --zinc-800: 228 228 231;
+  --zinc-900: 244 244 245; --zinc-950: 250 250 250;
+}
+
+:root[data-app-theme='true-black'] {
+  --zinc-50: 255 255 255; --zinc-100: 245 245 245; --zinc-200: 224 224 224;
+  --zinc-300: 190 190 190; --zinc-400: 145 145 145; --zinc-500: 100 100 100;
+  --zinc-600: 65 65 65; --zinc-700: 38 38 38; --zinc-800: 17 17 17;
+  --zinc-900: 7 7 7; --zinc-950: 0 0 0;
+}
+
+:root[data-app-theme='ayu-dark'] {
+  --sky-300: 255 209 102; --sky-400: 242 190 76; --sky-500: 230 180 80;
+  --sky-600: 199 145 48; --sky-700: 158 109 32; --sky-800: 112 76 26;
+  --zinc-50: 246 242 234; --zinc-100: 230 225 214; --zinc-200: 191 189 182;
+  --zinc-300: 171 174 174; --zinc-400: 128 139 145; --zinc-500: 92 103 115;
+  --zinc-600: 63 75 86; --zinc-700: 39 49 58; --zinc-800: 31 41 46;
+  --zinc-900: 19 26 33; --zinc-950: 15 20 25;
+}
+
+:root[data-app-theme='dracula'] {
+  --sky-300: 220 184 255; --sky-400: 202 155 255; --sky-500: 189 147 249;
+  --sky-600: 157 116 220; --sky-700: 123 84 181; --sky-800: 88 57 133;
+  --zinc-50: 248 248 242; --zinc-100: 238 238 232; --zinc-200: 216 214 220;
+  --zinc-300: 189 185 198; --zinc-400: 151 145 166; --zinc-500: 98 94 116;
+  --zinc-600: 76 72 94; --zinc-700: 68 71 90; --zinc-800: 40 42 54;
+  --zinc-900: 33 34 44; --zinc-950: 25 26 33;
+}
+
+:root[data-app-theme='nord'] {
+  --sky-300: 180 220 230; --sky-400: 143 203 218; --sky-500: 136 192 208;
+  --sky-600: 94 158 177; --sky-700: 76 128 147; --sky-800: 57 94 111;
+  --zinc-50: 236 239 244; --zinc-100: 229 233 240; --zinc-200: 216 222 233;
+  --zinc-300: 196 204 218; --zinc-400: 150 161 180; --zinc-500: 100 113 133;
+  --zinc-600: 76 86 106; --zinc-700: 67 76 94; --zinc-800: 46 52 64;
+  --zinc-900: 40 45 56; --zinc-950: 36 41 51;
+}
+
+:root[data-app-theme='github-light'] {
+  --sky-300: 84 174 255; --sky-400: 33 139 255; --sky-500: 9 105 218;
+  --sky-600: 5 80 174; --sky-700: 3 61 139; --sky-800: 10 48 105;
+}
+
+:root[data-ui-font='inter'] {
+  --font-ui: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+:root[data-ui-font='system'] {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Diff surfaces have their own palette and code font. The default follows the
+   app, while explicit themes remain stable when the surrounding mode changes. */
+:root {
+  --font-diff: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --diff-surface: #0b0c0f; --diff-header: #141519; --diff-border: #2c3039;
+  --diff-text: #dde0e6; --diff-muted: #6b7280;
+  --diff-add-bg: #14251a; --diff-add-text: #a7f3d0; --diff-add-edge: #34d399;
+  --diff-del-bg: #2c1719; --diff-del-text: #fecaca; --diff-del-edge: #f87171;
+}
+
+:root[data-app-theme='github-light'] {
+  --diff-surface: #ffffff; --diff-header: #f6f8fa; --diff-border: #d0d7de;
+  --diff-text: #24292f; --diff-muted: #6e7781;
+  --diff-add-bg: #dafbe1; --diff-add-text: #116329; --diff-add-edge: #2da44e;
+  --diff-del-bg: #ffebe9; --diff-del-text: #82071e; --diff-del-edge: #cf222e;
+}
+
+:root[data-app-theme='true-black'] {
+  --diff-surface: #000000; --diff-header: #080808; --diff-border: #262626;
+  --diff-text: #e5e5e5; --diff-muted: #737373;
+  --diff-add-bg: #071b0f; --diff-add-text: #86efac; --diff-add-edge: #22c55e;
+  --diff-del-bg: #21090b; --diff-del-text: #fca5a5; --diff-del-edge: #ef4444;
+}
+
+:root[data-app-theme='ayu-dark'] {
+  --diff-surface: #0f1419; --diff-header: #131a21; --diff-border: #27313a;
+  --diff-text: #bfbdb6; --diff-muted: #5c6773;
+  --diff-add-bg: #183527; --diff-add-text: #aad94c; --diff-add-edge: #7fd962;
+  --diff-del-bg: #3a2024; --diff-del-text: #f07178; --diff-del-edge: #ff8f40;
+}
+
+:root[data-app-theme='dracula'] {
+  --diff-surface: #191a21; --diff-header: #21222c; --diff-border: #44475a;
+  --diff-text: #f8f8f2; --diff-muted: #6272a4;
+  --diff-add-bg: #193d2b; --diff-add-text: #50fa7b; --diff-add-edge: #50fa7b;
+  --diff-del-bg: #44252d; --diff-del-text: #ff79c6; --diff-del-edge: #ff5555;
+}
+
+:root[data-app-theme='nord'] {
+  --diff-surface: #242933; --diff-header: #2e3440; --diff-border: #4c566a;
+  --diff-text: #d8dee9; --diff-muted: #7b88a1;
+  --diff-add-bg: #293e36; --diff-add-text: #a3be8c; --diff-add-edge: #8fbcbb;
+  --diff-del-bg: #432f38; --diff-del-text: #bf616a; --diff-del-edge: #bf616a;
+}
+
+:root[data-diff-font='system-mono'] {
+  --font-diff: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.diff-surface { background: var(--diff-surface); color: var(--diff-text); }
+.diff-code-font { font-family: var(--font-diff); }
+.diff-hunk { border-color: var(--diff-border); background: var(--diff-surface); }
+.diff-hunk-header { background: var(--diff-header); color: var(--diff-muted); }
+.diff-line { color: var(--diff-text); }
+.diff-line-number { color: var(--diff-muted); }
+.diff-line-add { background: var(--diff-add-bg); color: var(--diff-add-text); box-shadow: inset 3px 0 var(--diff-add-edge); }
+.diff-line-del { background: var(--diff-del-bg); color: var(--diff-del-text); box-shadow: inset 3px 0 var(--diff-del-edge); }
+.diff-hunk-action { color: var(--diff-muted); }
+.diff-hunk-action:hover { background: var(--diff-border); color: var(--diff-text); }
+.diff-hunk-action-danger:hover { background: var(--diff-del-bg); color: var(--diff-del-text); }
+.diff-expand { border-color: var(--diff-border); background: var(--diff-header); color: var(--diff-muted); }
+.diff-expand:hover { color: var(--diff-text); }
+
+/* Settings preview mirrors the palette and font passed to xterm.js. */
+:root {
+  --terminal-preview-font: "FiraCode Nerd Font", "Symbols Nerd Font", Menlo, Monaco, monospace;
+  --terminal-preview-bg: #0b0c0f; --terminal-preview-fg: #dde0e6;
+  --terminal-preview-accent: #34d399; --terminal-preview-path: #f97f1b;
+  --terminal-preview-muted: #6b7280;
+}
+
+:root[data-app-theme='github-light'] {
+  --terminal-preview-bg: #fafafa; --terminal-preview-fg: #27272a;
+  --terminal-preview-accent: #059669; --terminal-preview-path: #2563eb;
+  --terminal-preview-muted: #71717a;
+}
+
+:root[data-app-theme='true-black'] {
+  --terminal-preview-bg: #000000; --terminal-preview-fg: #e5e5e5;
+  --terminal-preview-accent: #34d399; --terminal-preview-path: #f97f1b;
+  --terminal-preview-muted: #737373;
+}
+
+:root[data-app-theme='ayu-dark'] {
+  --terminal-preview-bg: #0f1419; --terminal-preview-fg: #bfbdb6;
+  --terminal-preview-accent: #aad94c; --terminal-preview-path: #e6b450;
+  --terminal-preview-muted: #5c6773;
+}
+
+:root[data-app-theme='dracula'] {
+  --terminal-preview-bg: #191a21; --terminal-preview-fg: #f8f8f2;
+  --terminal-preview-accent: #50fa7b; --terminal-preview-path: #bd93f9;
+  --terminal-preview-muted: #6272a4;
+}
+
+:root[data-app-theme='nord'] {
+  --terminal-preview-bg: #242933; --terminal-preview-fg: #d8dee9;
+  --terminal-preview-accent: #a3be8c; --terminal-preview-path: #88c0d0;
+  --terminal-preview-muted: #7b88a1;
+}
+
+:root[data-terminal-font='jetbrains'] {
+  --terminal-preview-font: "JetBrains Mono Variable", Menlo, Monaco, monospace;
+}
+
+:root[data-terminal-font='system-mono'] {
+  --terminal-preview-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.terminal-preview {
+  background: var(--terminal-preview-bg);
+  color: var(--terminal-preview-fg);
+  font-family: var(--terminal-preview-font);
+}
+.terminal-preview-prompt { color: var(--terminal-preview-accent); }
+.terminal-preview-path { color: var(--terminal-preview-path); }
+.terminal-preview-muted { color: var(--terminal-preview-muted); }
 
 body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Dark, slim scrollbars to match the graphite theme. */
+/* Slim scrollbars follow the active graphite palette. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2c3039 transparent; /* zinc-700 thumb */
+  scrollbar-color: rgb(var(--zinc-700)) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -25,14 +212,14 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: #2c3039; /* zinc-700 */
+  background-color: rgb(var(--zinc-700));
   border-radius: 9999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: #4b505c; /* zinc-600 */
+  background-color: rgb(var(--zinc-600));
 }
 
 *::-webkit-scrollbar-corner {

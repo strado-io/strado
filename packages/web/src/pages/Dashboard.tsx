@@ -11,9 +11,7 @@ import type { UpdateFooterProps } from '../components/UpdateFooter';
 import { FilterBar } from '../components/FilterBar';
 import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
 import { ImportTicketsDialog } from '../components/ImportTicketsDialog';
-import { SessionDock } from '../components/SessionDock';
 import { RunningServers } from '../components/RunningServers';
-import { sessionChips } from '../hooks/sessions';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
 import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
@@ -171,41 +169,6 @@ export function remoteAsWorktree(w: RemoteWorktree): Worktree {
   } as Worktree;
 }
 
-/**
- * Merge local + every runner's worktrees into one dock-shaped list.
- *
- * Two runners can each build the same ticket, producing an identical
- * container path (e.g. `/w/FD-1`) on both of them. `SessionList`/`sessionChips`
- * group chips by `path` alone, so if two remote entries kept their real path
- * they'd collapse into one group — badged with only the last runner's name,
- * with open/close silently routing to just that one runner.
- *
- * The fix is contained here: each REMOTE worktree gets a composite,
- * collision-proof `path` — `${runnerId} ${realPath}` — so distinct runners'
- * same-ticket worktrees form distinct dock groups. The chip label is derived
- * via `path.split('/').pop()`, and since the composite still ENDS in the real
- * path (which starts with '/'), that still lands on the real basename/ticket.
- * `remoteByKey` maps that same composite key back to the RemoteWorktree with
- * its REAL fields, so onOpen/onClose keep acting on the real runner/path.
- * Local worktrees keep their own (already-unique, always-absolute) paths —
- * they can never collide with a composite key, which always has a
- * non-absolute runnerId prefix before the delimiter.
- */
-export function buildDockModel(
-  localWorktrees: Worktree[],
-  remoteWorktrees: RemoteWorktree[],
-): { dockWorktrees: Worktree[]; machineLabel: (path: string) => string | null; remoteByKey: Map<string, RemoteWorktree> } {
-  const remoteByKey = new Map<string, RemoteWorktree>();
-  const remoteDockWorktrees = remoteWorktrees.map((rw) => {
-    const key = `${rw.runnerId} ${rw.path}`;
-    remoteByKey.set(key, rw);
-    return { ...remoteAsWorktree(rw), path: key };
-  });
-  const dockWorktrees = [...localWorktrees, ...remoteDockWorktrees];
-  const machineLabel = (path: string) => remoteByKey.get(path)?.runnerName ?? null;
-  return { dockWorktrees, machineLabel, remoteByKey };
-}
-
 export function Dashboard(props: {
   /** A renderer modal owned by App is open. Native browser/DevTools views
    *  must be detached because CSS z-index cannot paint above them. */
@@ -264,13 +227,10 @@ export function Dashboard(props: {
   // last-active tab instead of being forced onto one.
   const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | undefined>(undefined);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
-  // Bumped on every explicit open (a session-rail chip, a notification) so the
+  // Bumped on every explicit open (for example, a notification) so the
   // hub switches to the requested tab even when it's already showing this
   // worktree — its mode/sessionId are only read at mount.
   const [openSeq, setOpenSeq] = useState(0);
-  // The open hub's live active tab, so the session rail + sidebar can highlight
-  // the session currently on screen. Null when no hub is open.
-  const [activeTab, setActiveTab] = useState<{ path: string; mode: string; id: string } | null>(null);
   // The workspace the on-screen selection belongs to. Updated only on a
   // deliberate restore/switch, so the persist effect writes under the right
   // workspace and a mid-switch stale selection can't land under the new one.
@@ -323,9 +283,6 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId]);
   const [showPalette, setShowPalette] = useState(false);
-  // Right-edge sessions rail: controlled from the FilterBar toggle, mounted
-  // outside <main> so it stays full-height regardless of which hub is open.
-  const [dockOpen, setDockOpen] = useState(false);
   const [density, setDensity] = useDensity();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(() => {
@@ -470,11 +427,6 @@ export function Dashboard(props: {
       } else if (e.key === ',') {
         e.preventDefault();
         setSettingsSection('profile');
-      } else if (e.metaKey && e.key.toLowerCase() === 'l') {
-        // ⌘L only — NOT Ctrl+L, which is the terminal's clear-screen and must
-        // fall through to xterm untouched.
-        e.preventDefault();
-        setDockOpen((v) => !v);
       }
     };
     // capture phase: xterm stops propagation of keys it handles, so a
@@ -597,21 +549,6 @@ export function Dashboard(props: {
   const selectedWorktree = selectedPath ? state.worktrees.find((w) => w.path === selectedPath) ?? null : null;
 
   // The rail spans machines: local worktrees plus every runner's, mapped to the
-  // same Worktree shape so sessionChips treats them identically. Remote
-  // entries get a runner-qualified path (see buildDockModel) so two runners'
-  // same-ticket worktrees never collapse into one dock group.
-  const { dockWorktrees, machineLabel, remoteByKey } = useMemo(
-    () => buildDockModel(state.worktrees, remote.worktrees),
-    [state.worktrees, remote.worktrees],
-  );
-  const dockCount = sessionChips(dockWorktrees).length;
-  // repoId → name, so the sessions rail can group worktrees under their repo.
-  // Only local repos are known here; remote worktrees fall back to a flat row.
-  const dockRepoNames = useMemo(
-    () => new Map(state.repos.map((r) => [r.id, r.name])),
-    [state.repos],
-  );
-
   const handleStart = async (w: Worktree) => {
     track('dev_server_started');
     try {
@@ -737,7 +674,9 @@ export function Dashboard(props: {
           }}
           expandedRepos={expandedRepos}
           onToggleRepo={toggleRepo}
-          onOpenWorktree={(w) => openInlineHub(w)}
+          onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
+          onOpenMr={props.onOpenMr}
+          onOpenDiff={props.onOpenDiff}
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
           onNewWorktreeForRepo={(repo) => props.onNewWorktree(repo.id)}
           onWorktreeSettings={(w) => props.onMenu(w)}
@@ -772,15 +711,6 @@ export function Dashboard(props: {
                   Import tickets
                 </button>
               )}
-              <button
-                className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-                onClick={() => setDockOpen((v) => !v)}
-                title="Sessions (⌘L)"
-                aria-label="Toggle sessions"
-                aria-pressed={dockOpen}
-              >
-                Sessions ({dockCount})
-              </button>
             </div>
           }
         />
@@ -815,13 +745,9 @@ export function Dashboard(props: {
               mode={selectedMode}
               sessionId={selectedSessionId}
               openSeq={openSeq}
-              onActiveChange={setActiveTab}
-              onClose={() => { setSelectedRemote(null); setActiveTab(null); }}
+              onClose={() => setSelectedRemote(null)}
               sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
-              sessionsOpen={dockOpen}
-              sessionCount={dockCount}
-              onToggleSessions={() => setDockOpen((v) => !v)}
               runningServers={runningServers}
               modalOpen={modalOpen}
             />
@@ -834,13 +760,9 @@ export function Dashboard(props: {
               mode={selectedMode}
               sessionId={selectedSessionId}
               openSeq={openSeq}
-              onActiveChange={setActiveTab}
-              onClose={() => { setSelectedPath(null); setActiveTab(null); }}
+              onClose={() => setSelectedPath(null)}
               sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
-              sessionsOpen={dockOpen}
-              sessionCount={dockCount}
-              onToggleSessions={() => setDockOpen((v) => !v)}
               runningServers={runningServers}
               modalOpen={modalOpen}
             />
@@ -973,47 +895,6 @@ export function Dashboard(props: {
         />
       )}
 
-      <SessionDock
-        wsId={wsId}
-        worktrees={dockWorktrees}
-        open={dockOpen}
-        onToggle={() => setDockOpen(false)}
-        count={dockCount}
-        machineLabel={machineLabel}
-        repoName={dockRepoNames}
-        activeTab={activeTab}
-        onOpen={(path, mode, id) => {
-          const rw = remoteByKey.get(path);
-          if (rw) {
-            setSelectedPath(null);
-            setSelectedMode(mode);
-            setSelectedSessionId(id);
-            setOpenSeq((n) => n + 1);
-            setSelectedRemote(rw);
-          } else {
-            const w = state.worktrees.find((x) => x.path === path);
-            if (w) openInlineHub(w, mode, id);
-          }
-        }}
-        onClose={async (path, mode, id) => {
-          if (mode === 'vscode' || mode === 'browser') return; // client-only chips, never killed server-side
-          const rw = remoteByKey.get(path);
-          try {
-            if (rw) {
-              await api.runners.killRemoteSession(wsId, {
-                runnerId: rw.runnerId, remoteWsId: rw.remoteWsId, path: rw.path, mode, id,
-              });
-              await reloadRemote();
-            } else {
-              await api.worktrees.killSession(wsId, path, mode, id);
-              const worktrees = await api.worktrees.list(wsId);
-              commitTree(state.repos, worktrees);
-            }
-          } catch (err) {
-            dispatch({ type: 'error', message: (err as Error).message });
-          }
-        }}
-      />
     </div>
   );
 }

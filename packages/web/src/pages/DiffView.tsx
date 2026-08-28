@@ -144,20 +144,20 @@ function RemoteMenu({
 // refetched, so staging one hunk doesn't re-render every other hunk's rows.
 const DiffLinesView = memo(function DiffLinesView({ lines }: { lines: DiffLine[] }) {
   return (
-    <div>
+    <div className="diff-surface diff-code-font">
       {lines.map((l, i) => (
         <div
           key={i}
-          className={`grid grid-cols-[3rem_3rem_1fr] whitespace-pre font-mono text-xs ${
+          className={`diff-line grid grid-cols-[3rem_3rem_1fr] whitespace-pre text-xs ${
             l.kind === 'add'
-              ? 'bg-emerald-950/40 text-emerald-200'
+              ? 'diff-line-add'
               : l.kind === 'del'
-                ? 'bg-red-950/40 text-red-300'
-                : 'text-zinc-300'
+                ? 'diff-line-del'
+                : 'diff-line-context'
           }`}
         >
-          <span className="px-2 text-right text-zinc-600">{l.oldNo ?? ''}</span>
-          <span className="px-2 text-right text-zinc-600">{l.newNo ?? ''}</span>
+          <span className="diff-line-number px-2 text-right">{l.oldNo ?? ''}</span>
+          <span className="diff-line-number px-2 text-right">{l.newNo ?? ''}</span>
           <span className="px-2">{l.text}</span>
         </div>
       ))}
@@ -195,15 +195,15 @@ const HunkBlock = memo(
     return (
       // content-visibility lets the browser skip layout/paint for offscreen
       // hunks — the main cost of large diffs is DOM volume, not git.
-      <div className="mb-3 overflow-hidden rounded border border-zinc-800 [contain-intrinsic-size:auto_240px] [content-visibility:auto]">
-        <div className="flex items-center justify-between gap-2 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-500">
+      <div className="diff-hunk mb-3 overflow-hidden rounded border [contain-intrinsic-size:auto_240px] [content-visibility:auto]">
+        <div className="diff-hunk-header diff-code-font flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
           <span className="min-w-0 truncate font-mono">{hunk.header}</span>
           <span className="flex shrink-0 items-center gap-1">
             {showButton && discardLabel && onDiscard && (
               <button
                 onClick={() => onDiscard(diff, hunk)}
                 disabled={disabled}
-                className="rounded px-2 py-0.5 text-[11px] text-zinc-500 hover:bg-red-950/60 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+                className="diff-hunk-action diff-hunk-action-danger rounded px-2 py-0.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {discardLabel}
               </button>
@@ -212,7 +212,7 @@ const HunkBlock = memo(
               <button
                 onClick={() => onApply(diff, hunk)}
                 disabled={disabled}
-                className="rounded px-2 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                className="diff-hunk-action rounded px-2 py-0.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {buttonLabel}
               </button>
@@ -223,7 +223,7 @@ const HunkBlock = memo(
         {oversized && !expanded && (
           <button
             onClick={() => setExpanded(true)}
-            className="block w-full border-t border-zinc-800 bg-zinc-900/60 px-2 py-1 text-center text-[11px] text-zinc-400 hover:text-zinc-200"
+            className="diff-expand block w-full border-t px-2 py-1 text-center text-[11px]"
           >
             Show all {hunk.lines.length} lines ({hunk.lines.length - COLLAPSED_PREVIEW} hidden)
           </button>
@@ -689,7 +689,7 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="relative flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className="diff-view relative flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {createMr && (

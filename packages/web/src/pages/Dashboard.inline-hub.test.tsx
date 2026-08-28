@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({
@@ -13,7 +13,8 @@ vi.mock('../api', () => ({
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
     worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
-        process: { status: 'idle' }, tracked: true },
+        process: { status: 'idle' }, tracked: true,
+        hasClaudeSession: true, claudeSessions: ['1', '2'] },
     ]) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: {
@@ -27,8 +28,9 @@ vi.mock('../api', () => ({
 }));
 // Stand in for the hub so the test asserts selection, not terminal internals.
 vi.mock('./TerminalView', () => ({
-  TerminalView: ({ worktree, onClose, modalOpen }: any) => (
-    <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}>
+  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId }: any) => (
+    <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}
+      data-mode={mode ?? ''} data-session={sessionId ?? ''}>
       hub:{worktree.path}
       <button onClick={onClose}>‹ Back</button>
     </div>
@@ -135,5 +137,40 @@ describe('Dashboard inline hub', () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard sidebar hover card', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('opens the hub on the exact session picked in the card', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(repoRow());
+
+    const row = worktreeRow().closest('.group')!;
+    fireEvent.pointerEnter(row);
+    act(() => { vi.advanceTimersByTime(250); });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Claude 2/ }));
+
+    const hub = await screen.findByTestId('inline-hub');
+    expect(hub).toHaveTextContent('hub:/wt/FD-9');
+    expect(hub).toHaveAttribute('data-mode', 'claude');
+    expect(hub).toHaveAttribute('data-session', '2');
+  });
+
+  it('opens diff & commit from the card', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(repoRow());
+
+    fireEvent.pointerEnter(worktreeRow().closest('.group')!);
+    act(() => { vi.advanceTimersByTime(250); });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Changes' }));
+    expect(noop).toHaveBeenCalledWith(expect.objectContaining({ path: '/wt/FD-9' }));
   });
 });

@@ -281,17 +281,17 @@ export function GitTreePanel({ worktreePath }: { worktreePath: string }) {
               <div className="mt-3">
                 {diff.binary && <div className="text-xs text-zinc-500">Binary file</div>}
                 {diff.hunks.map((h, i) => (
-                  <div key={i} className="mb-3 overflow-x-auto rounded border border-zinc-800">
-                    <div className="bg-zinc-900 px-2 py-1 font-mono text-[11px] text-zinc-500">{h.header}</div>
+                  <div key={i} className="diff-hunk diff-surface diff-code-font mb-3 overflow-x-auto rounded border">
+                    <div className="diff-hunk-header px-2 py-1 text-[11px]">{h.header}</div>
                     {h.lines.map((l, j) => (
                       <div
                         key={j}
-                        className={`whitespace-pre px-2 font-mono text-[11px] leading-5 ${
+                        className={`diff-line whitespace-pre px-2 text-[11px] leading-5 ${
                           l.kind === 'add'
-                            ? 'bg-emerald-950/40 text-emerald-200'
+                            ? 'diff-line-add'
                             : l.kind === 'del'
-                              ? 'bg-red-950/40 text-red-200'
-                              : 'text-zinc-400'
+                              ? 'diff-line-del'
+                              : 'diff-line-context'
                         }`}
                       >
                         {(l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' ') + l.text}

@@ -35,12 +35,13 @@ const PIPE_GLYPH: Record<NonNullable<MergeRequest['pipeline']>, string> = {
 // a diff implementation — clicking a file opens the full DiffView, clicking an
 // MR opens the MrReview overlay.
 export function ChangesRail({
-  worktree, open, onToggle, onOpenFile, onOpenMr, refreshKey,
+  worktree, open, onToggle, onOpenFile, onReviewAll, onOpenMr, refreshKey,
 }: {
   worktree: Worktree;
   open: boolean;
   onToggle: () => void;
   onOpenFile: (file: string) => void;
+  onReviewAll?: () => void;
   onOpenMr?: (mr: MergeRequest) => void;
   refreshKey?: number;
 }) {
@@ -127,14 +128,41 @@ export function ChangesRail({
         {active === 'changes' ? (
           error ? <div className="px-2 py-2 text-xs text-red-300">Couldn't load changes.</div>
           : files === null ? <div className="px-2 py-2 text-xs text-zinc-600">Loading…</div>
-          : files.length === 0 ? <div className="px-2 py-2 text-xs text-zinc-600">No changes</div>
-          : files.map((f) => (
-              <button key={f.path} onClick={() => onOpenFile(f.path)} title={f.path}
-                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-900">
-                <span className={`w-3 shrink-0 font-mono ${TONE[f.status]}`}>{GLYPH[f.status]}</span>
-                <span className="min-w-0 flex-1 truncate">{f.path}</span>
-              </button>
-            ))
+          : files.length === 0 ? (
+            <div className="px-2 py-3 text-xs text-zinc-600">
+              <div>No changes</div>
+              {onReviewAll && (
+                <button
+                  type="button"
+                  onClick={onReviewAll}
+                  className="mt-2 rounded-md border border-zinc-800 px-2 py-1.5 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-100"
+                >
+                  Open Git view
+                </button>
+              )}
+            </div>
+          )
+          : (
+            <>
+              {onReviewAll && (
+                <button
+                  type="button"
+                  onClick={onReviewAll}
+                  className="mb-1 flex w-full items-center justify-between rounded-md border border-zinc-800 px-2 py-1.5 text-left text-xs text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-100"
+                >
+                  <span>Review all changes</span>
+                  <span aria-hidden className="text-zinc-600">→</span>
+                </button>
+              )}
+              {files.map((f) => (
+                <button key={f.path} onClick={() => onOpenFile(f.path)} title={f.path}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-900">
+                  <span className={`w-3 shrink-0 font-mono ${TONE[f.status]}`}>{GLYPH[f.status]}</span>
+                  <span className="min-w-0 flex-1 truncate">{f.path}</span>
+                </button>
+              ))}
+            </>
+          )
         ) : (
           mr.kind === 'loading' ? <div className="px-2 py-2 text-xs text-zinc-600">Loading…</div>
           : mr.kind === 'needsAuth' ? (

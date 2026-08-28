@@ -104,30 +104,23 @@ describe('Dashboard space shortcut', () => {
   });
 });
 
-describe('Dashboard sessions shortcut (⌘L)', () => {
+describe('removed Dashboard sessions shortcut', () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('strado:onboarding-welcomed', '1');
     localStorage.setItem('strado:onboarding-dismissed', '1');
   });
 
-  it('toggles the session rail open and closed', async () => {
+  it('leaves ⌘L and Ctrl+L available to the active surface', async () => {
     renderDashboard();
     await waitFor(() => expect(screen.getByTestId('space-carousel')).toBeInTheDocument());
-    // The dock renders nothing until opened; its empty state is the tell.
-    expect(screen.queryByText('No open sessions')).toBeNull();
-    fireEvent.keyDown(window, { key: 'l', metaKey: true });
-    await waitFor(() => expect(screen.getByText('No open sessions')).toBeInTheDocument());
-    fireEvent.keyDown(window, { key: 'l', metaKey: true });
-    await waitFor(() => expect(screen.queryByText('No open sessions')).toBeNull());
-  });
-
-  it('ignores Ctrl+L so the terminal keeps its clear-screen binding', async () => {
-    renderDashboard();
-    await waitFor(() => expect(screen.getByTestId('space-carousel')).toBeInTheDocument());
-    fireEvent.keyDown(window, { key: 'l', ctrlKey: true });
-    // give any (incorrect) state update a chance to flush
-    await new Promise((r) => setTimeout(r, 100));
+    const commandL = new KeyboardEvent('keydown', { key: 'l', metaKey: true, bubbles: true, cancelable: true });
+    const controlL = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(commandL);
+    window.dispatchEvent(controlL);
+    expect(commandL.defaultPrevented).toBe(false);
+    expect(controlL.defaultPrevented).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Toggle sessions' })).toBeNull();
     expect(screen.queryByText('No open sessions')).toBeNull();
   });
 });

@@ -5,8 +5,8 @@ import { isRunning } from '../hooks/filters';
 /**
  * Every dev server serving right now, across every worktree, in one place.
  *
- * The worktree rows and the sessions rail each say whether THAT worktree is
- * serving; nothing answered "what is up, on which port" without hunting. The
+ * Worktree rows say whether THAT worktree is serving; nothing answered
+ * "what is up, on which port" without hunting. The
  * chip hides itself at zero, so it never becomes another empty surface.
  */
 export function RunningServers({
