@@ -141,6 +141,54 @@ export type MergeRequest = {
   provider?: 'gitlab' | 'github';
 };
 
+/** A provider review enriched with the workspace repository it belongs to. */
+export type CodeReview = MergeRequest & {
+  repoId: string;
+  repoName: string;
+};
+
+export type CodeReviewCounts = { open: number; merged: number; closed: number };
+
+export type CodeReviewRepository = {
+  repoId: string;
+  repoName: string;
+  provider?: 'gitlab' | 'github';
+  status: 'ok' | 'needsAuth' | 'unsupported' | 'error';
+  error?: string;
+  counts?: CodeReviewCounts;
+};
+
+/** A review conversation: the description plus every human comment on it. */
+export type ReviewComment = {
+  id: string;
+  author: string | null;
+  body: string;
+  createdAt: string;
+  path: string | null;
+  line: number | null;
+  /** Which side of the diff `line` counts on — a deletion anchors on 'old'. */
+  side: 'new' | 'old';
+  kind: 'comment' | 'approved' | 'changes-requested';
+  webUrl: string | null;
+};
+
+export type ReviewDiscussion = {
+  description: string | null;
+  comments: ReviewComment[];
+  /** Present when the review still has a diff to pin new comments to. */
+  anchor: { headSha: string; baseSha: string | null; startSha: string | null } | null;
+};
+
+/** One commit on a review, subject only. */
+export type ReviewCommit = {
+  sha: string;
+  shortSha: string;
+  title: string;
+  author: string | null;
+  createdAt: string;
+  webUrl: string | null;
+};
+
 export type MergeRequestChange = {
   path: string;
   oldPath?: string;

@@ -13,7 +13,7 @@ export type Props = {
 // tab row in TerminalView).
 export function FilterBar({ leading, trailing }: Props) {
   return (
-    <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-zinc-900 px-4 py-1.5">
+    <div data-filter-bar className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-zinc-900 px-4 py-1.5">
       <div className="flex flex-1 items-center gap-3">
         {leading}
       </div>

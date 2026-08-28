@@ -31,7 +31,8 @@ function storedAppearance() {
     preset: isPreset(savedPreset)
       ? savedPreset
       : localStorage.getItem(LEGACY_THEME_KEY) === 'light' ? 'github-light' as const : 'graphite' as const,
-    font: isFont(savedFont) ? savedFont : 'jetbrains' as const,
+    // Inter unless the user picked something in Appearance; their choice wins.
+    font: isFont(savedFont) ? savedFont : 'inter' as const,
     diffFont: isDiffFont(savedDiffFont) ? savedDiffFont : 'jetbrains' as const,
     terminalFont: isTerminalFont(savedTerminalFont) ? savedTerminalFont : 'nerd' as const,
   };

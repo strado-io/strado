@@ -59,6 +59,11 @@ vi.mock('../api', async () => {
         git: gitMocks,
         createMergeRequest: worktreeMocks.createMergeRequest,
         mergeRequestChanges: worktreeMocks.mergeRequestChanges,
+        mergeRequestDiscussion: () => Promise.resolve({
+          kind: 'discussion' as const, discussion: { description: null, comments: [] },
+        }),
+        mergeRequestCommits: () => Promise.resolve({ kind: 'list' as const, commits: [] }),
+        commitChanges: () => Promise.resolve({ kind: 'list' as const, files: [] }),
       },
     },
   };

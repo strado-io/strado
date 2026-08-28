@@ -572,6 +572,7 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
         setNotice(`Created ${res.mergeRequest.provider === 'github' ? '#' : '!'}${res.mergeRequest.number} → ${target}`);
         setCreatedMr(res.mergeRequest);
         invalidateMrPath(worktree.path);
+        window.dispatchEvent(new Event('strado:code-reviews-changed'));
       } else if (res.kind === 'needsAuth') {
         setMrNeedsAuth(res.provider);
         setMrError(`Connect ${res.provider === 'github' ? 'GitHub' : 'GitLab'} first`);

@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AppearanceSection } from './AppearanceSection';
+import { applyStoredAppearance } from '../../hooks/useAppearance';
 
 beforeEach(() => {
   localStorage.clear();
@@ -70,5 +71,15 @@ describe('AppearanceSection', () => {
     expect(time.firstElementChild).toHaveClass('left-0.5', 'translate-x-0');
     expect(localStorage.getItem('strado:hub-show-time')).toBe('false');
     expect(localStorage.getItem('strado:hub-show-status')).toBe('false');
+  });
+
+  it('defaults the interface font to Inter until the user picks one', () => {
+    localStorage.removeItem('strado:ui-font');
+    applyStoredAppearance();
+    expect(document.documentElement.dataset.uiFont).toBe('inter');
+
+    localStorage.setItem('strado:ui-font', 'jetbrains');
+    applyStoredAppearance();
+    expect(document.documentElement.dataset.uiFont).toBe('jetbrains');
   });
 });

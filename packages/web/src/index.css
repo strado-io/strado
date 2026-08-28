@@ -7,7 +7,10 @@
 
 :root {
   color-scheme: dark;
-  --font-ui: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-ui: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+  /* Genuinely monospaced, whatever the UI font is: shas, branches, line
+     numbers and counts have to line up. */
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
   --sky-50: 255 248 241; --sky-100: 255 238 218; --sky-200: 255 217 176;
   --sky-300: 255 190 125; --sky-400: 255 157 71; --sky-500: 249 127 27;
   --sky-600: 226 103 10; --sky-700: 187 79 8; --sky-800: 149 62 12;
@@ -63,6 +66,10 @@
 :root[data-app-theme='github-light'] {
   --sky-300: 84 174 255; --sky-400: 33 139 255; --sky-500: 9 105 218;
   --sky-600: 5 80 174; --sky-700: 3 61 139; --sky-800: 10 48 105;
+}
+
+:root[data-ui-font='jetbrains'] {
+  --font-ui: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 :root[data-ui-font='inter'] {
@@ -134,6 +141,13 @@
 .diff-hunk-action:hover { background: var(--diff-border); color: var(--diff-text); }
 .diff-hunk-action-danger:hover { background: var(--diff-del-bg); color: var(--diff-del-text); }
 .diff-expand { border-color: var(--diff-border); background: var(--diff-header); color: var(--diff-muted); }
+/* Jumping from a comment to its line: say where you landed, then get out of
+   the way. Overrides the add/del tint only while it plays. */
+@keyframes diff-line-flash {
+  0%, 45% { background-color: rgb(56 189 248 / 0.22); }
+  100% { background-color: transparent; }
+}
+.diff-line-flash { animation: diff-line-flash 1.6s ease-out 1; }
 .diff-expand:hover { color: var(--diff-text); }
 
 /* Settings preview mirrors the palette and font passed to xterm.js. */
@@ -250,6 +264,11 @@ body {
 .kb-markdown th { @apply border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-left font-medium text-zinc-200; }
 .kb-markdown td { @apply border border-zinc-800 px-2 py-1 align-top; }
 .kb-markdown hr { @apply my-6 border-zinc-800; }
+/* Review bodies lean on <details> walkthroughs; without this the disclosure
+   reads as loose text with a stray triangle. */
+.kb-markdown details { @apply my-3 rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2; }
+.kb-markdown summary { @apply cursor-pointer font-medium text-zinc-200; }
+.kb-markdown details > *:last-child { @apply mb-0; }
 .kb-markdown .hljs-keyword, .kb-markdown .hljs-title { @apply text-sky-300; }
 .kb-markdown .hljs-string { @apply text-emerald-300; }
 .kb-markdown .hljs-comment { @apply text-zinc-500; }

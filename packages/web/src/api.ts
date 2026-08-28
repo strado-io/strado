@@ -1,4 +1,4 @@
-import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange } from './types';
+import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository } from './types';
 
 export class ApiClientError extends Error {
   code: string;
@@ -184,6 +184,22 @@ export const api = {
     remove: (wsId: string, id: string) =>
       request<void>(`${wsBase(wsId)}/repos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
+  reviews: {
+    list: (wsId: string, state: MergeRequest['state'] = 'open', page = 1, search = '', repoId = '') => {
+      const query = new URLSearchParams({ state, page: String(page) });
+      if (search.trim()) query.set('search', search.trim());
+      if (repoId && repoId !== 'all') query.set('repoId', repoId);
+      return request<{
+        reviews: CodeReview[];
+        repositories: CodeReviewRepository[];
+        counts: CodeReviewCounts;
+        page: number;
+        pageSize: number;
+        hasMore: boolean;
+        pageLimit: number | null;
+      }>(`${wsBase(wsId)}/merge-requests?${query}`);
+    },
+  },
   worktrees: {
     list: (wsId: string) =>
       request<{ worktrees: Worktree[] }>(`${wsBase(wsId)}/worktrees`).then((b) => b.worktrees),
@@ -282,6 +298,61 @@ export const api = {
       if (!r) return { kind: 'absent' as const };
       if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
       return { kind: 'list' as const, files: r.files ?? [] };
+    },
+    mergeRequestDiscussion: async (wsId: string, p: string, iid: number) => {
+      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; discussion?: ReviewDiscussion } | undefined>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/merge-requests/${iid}/discussion`,
+      );
+      if (!r) return { kind: 'absent' as const };
+      if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
+      return {
+        kind: 'discussion' as const,
+        discussion: r.discussion ?? { description: null, comments: [], anchor: null },
+      };
+    },
+    commitChanges: async (wsId: string, p: string, sha: string) => {
+      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; files?: MergeRequestChange[] } | undefined>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/commits/${encodeURIComponent(sha)}/changes`,
+      );
+      if (!r) return { kind: 'absent' as const };
+      if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
+      return { kind: 'list' as const, files: r.files ?? [] };
+    },
+    mergeRequestCommits: async (wsId: string, p: string, iid: number) => {
+      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; commits?: ReviewCommit[] } | undefined>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/merge-requests/${iid}/commits`,
+      );
+      if (!r) return { kind: 'absent' as const };
+      if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
+      return { kind: 'list' as const, commits: r.commits ?? [] };
+    },
+    postMergeRequestLineComment: async (
+      wsId: string,
+      p: string,
+      iid: number,
+      input: { body: string; path: string; oldPath?: string; line: number; side: 'new' | 'old' },
+    ) => {
+      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; posted?: boolean } | undefined>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/merge-requests/${iid}/line-comment`,
+        { method: 'POST', body: JSON.stringify(input) },
+      );
+      if (!r) return { kind: 'absent' as const };
+      if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
+      return { kind: 'posted' as const };
+    },
+    postMergeRequestReview: async (
+      wsId: string,
+      p: string,
+      iid: number,
+      input: { body: string; event: 'comment' | 'approve' | 'request-changes' },
+    ) => {
+      const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; posted?: boolean } | undefined>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/merge-requests/${iid}/review`,
+        { method: 'POST', body: JSON.stringify(input) },
+      );
+      if (!r) return { kind: 'absent' as const };
+      if (r.needsAuth) return { kind: 'needsAuth' as const, provider: r.provider ?? ('gitlab' as const) };
+      return { kind: 'posted' as const };
     },
     createMergeRequest: async (wsId: string, p: string, body: { target: string; title: string; description?: string }) => {
       const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; mergeRequest?: MergeRequest } | undefined>(

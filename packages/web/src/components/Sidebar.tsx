@@ -17,7 +17,7 @@ import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
  * dead most of the time, since the signal it carried (a running server, an
  * agent at work) already lives directly on the worktree rows.
  */
-export type SidebarView = { kind: 'tasks' };
+export type SidebarView = { kind: 'tasks' } | { kind: 'reviews' };
 
 export type Props = {
   repos: RepoConfig[];
@@ -28,6 +28,9 @@ export type Props = {
   onOpenOrgSettings: (section: 'organization') => void;
   onOpenFeedback: () => void;
   taskCount: number;
+  reviewCount?: number;
+  /** True until the first workspace-wide code-review fetch settles. */
+  reviewLoading?: boolean;
   onCollapse: () => void;
   onAddRepo: () => void;
   onDeleteRepo: (repo: RepoConfig) => void;
@@ -150,6 +153,8 @@ export function Sidebar({
   onOpenMr,
   onOpenDiff,
   onSwitchError,
+  reviewCount = 0,
+  reviewLoading = false,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
 
@@ -166,7 +171,7 @@ export function Sidebar({
   // Everything the body needs except the data: the active pane gets the live
   // props, a neighbour pane gets its snapshot.
   const bodyProps = {
-    selected, onSelect, taskCount, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
+    selected, onSelect, taskCount, reviewCount, reviewLoading, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
     onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
   };
   // A neighbour's snapshot is local-only, so it shows no runner rows — those
@@ -177,6 +182,9 @@ export function Sidebar({
       wsId={wsId}
       repos={data?.repos ?? []}
       worktrees={data?.worktrees ?? []}
+      taskCount={data?.worktrees.length ?? 0}
+      reviewCount={0}
+      reviewLoading={false}
       remoteWorktrees={[]}
       runnerStatuses={[]}
     />

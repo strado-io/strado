@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { AppError, AuthError } from '../errors.js';
-import type { MergeRequest, MergeRequestChange } from './gitlab.js';
+import {
+  REVIEW_PAGE_SIZE,
+  type MergeRequest, type MergeRequestChange, type ReviewCounts,
+  type ReviewComment, type ReviewDiscussion, type ReviewSubmission, type ReviewCommit,
+  type ReviewAnchor, type LineComment,
+} from './gitlab.js';
 
 // GitHub provider service. Mirrors gitlab.ts: same config-file pattern, same
 // provider-neutral wire types (MergeRequest/MergeRequestChange — GitHub PRs
@@ -46,6 +51,10 @@ export async function githubApiFetch(
   token: string,
   pathname: string,
   init?: RequestInit,
+  // Reads treat 403 as "reconnect" because it also covers rate-limit
+  // exhaustion. Writes opt out: there, 403 is almost always a read-only token,
+  // and the caller can say so precisely instead.
+  opts?: { allowForbidden?: boolean },
 ): Promise<Response> {
   let res: Response;
   try {
@@ -65,12 +74,32 @@ export async function githubApiFetch(
     }
     throw err;
   }
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401 || (res.status === 403 && !opts?.allowForbidden)) {
     // 403 also covers rate-limit exhaustion; both read as "reconnect" in the
     // UI, which is acceptable at our 60s-cached request volume.
     throw new AuthError('GitHub rejected the token — check its repo access and expiry');
   }
   return res;
+}
+
+/**
+ * Why GitHub refused a write, in words the user can act on: the permission it
+ * actually wanted (GitHub names it in a response header), or the rate limit.
+ */
+function githubForbidden(res: Response, body: unknown): AppError {
+  if (res.headers.get('x-ratelimit-remaining') === '0') {
+    const reset = Number(res.headers.get('x-ratelimit-reset'));
+    const minutes = Number.isFinite(reset) ? Math.max(1, Math.ceil((reset * 1000 - Date.now()) / 60_000)) : null;
+    return new AppError('VALIDATION', `GitHub rate limit reached${minutes ? ` — try again in about ${minutes} min` : ''}`);
+  }
+  const needed = res.headers.get('x-accepted-github-permissions');
+  const reason = githubMessage(body, 'GitHub refused the write');
+  return new AppError(
+    'VALIDATION',
+    needed
+      ? `${reason} — this token needs "${needed}". Update its permissions on GitHub and save it again.`
+      : `${reason} — the saved token looks read-only for this repository. Give it pull request write access and save it again.`,
+  );
 }
 
 export async function writeGithubHost(host: string, token: string, owner?: string): Promise<{ username: string }> {
@@ -99,6 +128,7 @@ type GithubPr = {
   head?: { ref?: string; sha?: string } | null;
   base?: { ref?: string } | null;
 };
+type GithubSearchIssue = { number?: number };
 type GithubCheckRun = { status?: string; conclusion?: string | null };
 type GithubFile = {
   filename?: string; previous_filename?: string; status?: string; patch?: string;
@@ -130,34 +160,80 @@ function mapPrState(pr: GithubPr): MergeRequest['state'] {
 const cache = new Map<string, { at: number; mrs: MergeRequest[] }>();
 const TTL_MS = 60_000;
 
-export async function pullRequestsForBranch(
+async function mapConcurrent<T, R>(items: T[], worker: (item: T) => Promise<R>): Promise<R[]> {
+  const output = new Array<R>(items.length);
+  let cursor = 0;
+  const run = async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      output[index] = await worker(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, items.length) }, run));
+  return output;
+}
+
+async function pullRequests(
   host: string,
   token: string,
   projectPath: string,
-  branch: string,
-  opts?: { force?: boolean },
+  branch: string | null,
+  opts?: { force?: boolean; state?: MergeRequest['state']; page?: number; search?: string; limit?: number },
 ): Promise<MergeRequest[]> {
-  const key = `${host}\0${projectPath}\0${branch}`;
+  const requestedState = branch ? null : opts?.state ?? null;
+  const page = branch ? 1 : opts?.page ?? 1;
+  const search = branch ? '' : opts?.search?.trim() ?? '';
+  const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${search}`}`;
   const hit = cache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.mrs;
 
   // Worktree branches are pushed to origin, so the head owner is the repo
   // owner (first projectPath segment). Fork PRs are out of scope.
   const owner = projectPath.split('/')[0] ?? '';
-  const head = encodeURIComponent(`${owner}:${branch}`);
-  const listRes = await githubApiFetch(
-    host, token,
-    `/repos/${projectPath}/pulls?head=${head}&state=all&sort=updated&direction=desc&per_page=10`,
-  );
-  if (listRes.status === 404) {
-    // GitHub 404s private repos the token can't see — steer to reconnect
-    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  const headQuery = branch ? `head=${encodeURIComponent(`${owner}:${branch}`)}&` : '';
+  const providerState = requestedState === 'open' ? 'open' : requestedState ? 'closed' : 'all';
+  let listed: GithubPr[];
+  if (!branch && (search || requestedState === 'merged' || requestedState === 'closed')) {
+    const qualifier = requestedState === 'open'
+      ? 'is:open'
+      : requestedState === 'merged'
+        ? 'is:merged'
+        : 'is:closed is:unmerged';
+    const query = encodeURIComponent(`repo:${projectPath} is:pr ${qualifier}${search ? ` ${search}` : ''}`);
+    const searchRes = await githubApiFetch(
+      host, token, `/search/issues?q=${query}&sort=updated&order=desc&per_page=${opts?.limit ?? REVIEW_PAGE_SIZE}&page=${page}`,
+    );
+    if (searchRes.status === 404) {
+      throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+    }
+    if (!searchRes.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${searchRes.status} searching PRs`);
+    const body = (await searchRes.json()) as { items?: GithubSearchIssue[] };
+    listed = await mapConcurrent(
+      (body.items ?? []).flatMap((item) => item.number ? [item.number] : []),
+      async (number) => {
+        const detail = await githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}`);
+        if (!detail.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${detail.status} reading PR ${number}`);
+        return (await detail.json()) as GithubPr;
+      },
+    );
+  } else {
+    const listRes = await githubApiFetch(
+      host, token,
+      `/repos/${projectPath}/pulls?${headQuery}state=${providerState}&sort=updated&direction=desc&per_page=${branch ? 10 : (opts?.limit ?? REVIEW_PAGE_SIZE)}&page=${page}`,
+    );
+    if (listRes.status === 404) {
+      // GitHub 404s private repos the token can't see — steer to reconnect
+      throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+    }
+    if (!listRes.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${listRes.status} listing PRs`);
+    listed = (await listRes.json()) as GithubPr[];
   }
-  if (!listRes.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${listRes.status} listing PRs`);
-  const raw = (await listRes.json()) as GithubPr[];
+  const raw = requestedState && requestedState !== 'open'
+    ? listed.filter((pr) => mapPrState(pr) === requestedState)
+    : listed;
 
-  const mrs: MergeRequest[] = [];
-  for (const pr of raw) {
+  const mrs = await mapConcurrent(raw, async (pr): Promise<MergeRequest> => {
     const state = mapPrState(pr);
     let pipeline: MergeRequest['pipeline'] = null;
     if (state === 'open' && pr.head?.sha) {
@@ -173,7 +249,7 @@ export async function pullRequestsForBranch(
         pipeline = null; // checks unavailable (token scope, GHE without Actions)
       }
     }
-    mrs.push({
+    return {
       number: pr.number,
       title: pr.title ?? '',
       state,
@@ -182,14 +258,14 @@ export async function pullRequestsForBranch(
       // Required-approval counts live in branch protection, unreadable by
       // most tokens — omit rather than mislead. The UI hides a null chip.
       approvals: null,
-      sourceBranch: pr.head?.ref ?? branch,
+      sourceBranch: pr.head?.ref ?? branch ?? '',
       targetBranch: pr.base?.ref ?? null,
       updatedAt: pr.updated_at ?? '',
       author: pr.user?.login ?? null,
       createdAt: pr.created_at ?? null,
       mergedAt: pr.merged_at ?? null,
-    });
-  }
+    };
+  });
   mrs.sort((a, b) =>
     (a.state === 'open' ? 0 : 1) - (b.state === 'open' ? 0 : 1) ||
     b.updatedAt.localeCompare(a.updatedAt),
@@ -198,8 +274,63 @@ export async function pullRequestsForBranch(
   return mrs;
 }
 
+export function pullRequestsForBranch(
+  host: string,
+  token: string,
+  projectPath: string,
+  branch: string,
+  opts?: { force?: boolean },
+): Promise<MergeRequest[]> {
+  return pullRequests(host, token, projectPath, branch, opts);
+}
+
+/** The most recently updated PRs for a repository, including fork branches. */
+export function pullRequestsForProject(
+  host: string,
+  token: string,
+  projectPath: string,
+  opts?: { force?: boolean; state?: MergeRequest['state']; page?: number; search?: string; limit?: number },
+): Promise<MergeRequest[]> {
+  return pullRequests(host, token, projectPath, null, opts);
+}
+
+const countCache = new Map<string, { at: number; counts: ReviewCounts }>();
+
+/** Exact state totals via GitHub's search index; avoids walking every PR page. */
+export async function pullRequestCountsForProject(
+  host: string,
+  token: string,
+  projectPath: string,
+  opts?: { force?: boolean },
+): Promise<ReviewCounts> {
+  const key = `${host}\0${projectPath}`;
+  const hit = countCache.get(key);
+  if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.counts;
+  const entries = await Promise.all(([
+    ['open', 'is:open'],
+    ['merged', 'is:merged'],
+    ['closed', 'is:closed is:unmerged'],
+  ] as const).map(async ([keyName, qualifier]) => {
+    const query = encodeURIComponent(`repo:${projectPath} is:pr ${qualifier}`);
+    const res = await githubApiFetch(host, token, `/search/issues?q=${query}&per_page=1`);
+    if (res.status === 404) {
+      throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+    }
+    if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} counting PRs`);
+    const body = (await res.json()) as { total_count?: number };
+    return [keyName, typeof body.total_count === 'number' ? body.total_count : 0] as const;
+  }));
+  const counts = Object.fromEntries(entries) as ReviewCounts;
+  countCache.set(key, { at: Date.now(), counts });
+  return counts;
+}
+
 export function invalidateMrCache(host: string, projectPath: string, branch: string): void {
-  cache.delete(`${host}\0${projectPath}\0${branch}`);
+  const prefix = `${host}\0${projectPath}\0`;
+  for (const key of cache.keys()) {
+    if (key === `${prefix}${branch}` || key.startsWith(`${prefix}*:`)) cache.delete(key);
+  }
+  countCache.delete(`${host}\0${projectPath}`);
 }
 
 // GitHub error bodies carry `message` plus, on 422, an `errors[]` array whose
@@ -260,7 +391,8 @@ export async function mergePullRequest(
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({}),
-  });
+  }, { allowForbidden: true });
+  if (res.status === 403) throw githubForbidden(res, await res.json().catch(() => null));
   if (res.status === 404) {
     throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
   }
@@ -271,6 +403,230 @@ export async function mergePullRequest(
 }
 
 const changesCache = new Map<string, { at: number; files: MergeRequestChange[] }>();
+
+type GithubComment = {
+  id?: number; body?: string | null; created_at?: string; html_url?: string;
+  user?: { login?: string } | null;
+  path?: string | null; line?: number | null; original_line?: number | null; side?: string | null;
+};
+type GithubReview = {
+  id?: number; body?: string | null; state?: string; submitted_at?: string | null; html_url?: string;
+  user?: { login?: string } | null;
+};
+
+const discussionCache = new Map<string, { at: number; discussion: ReviewDiscussion }>();
+
+function reviewKind(state: string | undefined): ReviewComment['kind'] {
+  if (state === 'APPROVED') return 'approved';
+  if (state === 'CHANGES_REQUESTED') return 'changes-requested';
+  return 'comment';
+}
+
+/**
+ * GitHub splits one conversation across three endpoints: issue comments (the
+ * discussion tab), review submissions (approve / request changes, with their
+ * summary body), and review comments (anchored to a diff line). They are
+ * fetched together and merged back into one time-ordered thread.
+ */
+export async function pullRequestDiscussion(
+  host: string, token: string, projectPath: string, number: number,
+): Promise<ReviewDiscussion> {
+  const key = `${host}\0${projectPath}\0${number}`;
+  const hit = discussionCache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.discussion;
+
+  const [prRes, issueRes, reviewRes, inlineRes] = await Promise.all([
+    githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}`),
+    githubApiFetch(host, token, `/repos/${projectPath}/issues/${number}/comments?per_page=100`),
+    githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/reviews?per_page=100`),
+    githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/comments?per_page=100`),
+  ]);
+  if (prRes.status === 404) {
+    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  }
+  for (const [res, what] of [[prRes, 'the pull request'], [issueRes, 'PR comments'], [reviewRes, 'PR reviews'], [inlineRes, 'review comments']] as const) {
+    if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching ${what}`);
+  }
+  const [pr, issueComments, reviews, inlineComments] = await Promise.all([
+    prRes.json() as Promise<{ body?: string | null; head?: { sha?: string } | null }>,
+    issueRes.json() as Promise<GithubComment[]>,
+    reviewRes.json() as Promise<GithubReview[]>,
+    inlineRes.json() as Promise<GithubComment[]>,
+  ]);
+
+  // Issue comments and review comments are independent id sequences, so a bare
+  // id can collide across the two lists and duplicate a React key.
+  const fromComment = (c: GithubComment, path: string | null, line: number | null): ReviewComment => ({
+    id: `${path === null ? 'issue' : 'inline'}-${c.id ?? ''}`,
+    author: c.user?.login ?? null,
+    body: c.body ?? '',
+    createdAt: c.created_at ?? '',
+    path,
+    line,
+    side: c.side === 'LEFT' ? 'old' : 'new',
+    kind: 'comment',
+    webUrl: c.html_url ?? null,
+  });
+
+  const comments: ReviewComment[] = [
+    ...issueComments.filter((c) => c.body?.trim()).map((c) => fromComment(c, null, null)),
+    ...inlineComments.filter((c) => c.body?.trim())
+      .map((c) => fromComment(c, c.path ?? null, c.line ?? c.original_line ?? null)),
+    // A COMMENTED review with no body is just the envelope around inline
+    // comments already listed above — only approvals/change requests are
+    // worth a bodiless row, because the verdict itself is the content.
+    ...reviews
+      .filter((r) => r.state !== 'PENDING' && (r.body?.trim() || reviewKind(r.state) !== 'comment'))
+      .map((r) => ({
+        id: `review-${r.id ?? ''}`,
+        author: r.user?.login ?? null,
+        body: r.body ?? '',
+        createdAt: r.submitted_at ?? '',
+        path: null,
+        line: null,
+        side: 'new' as const,
+        kind: reviewKind(r.state),
+        webUrl: r.html_url ?? null,
+      })),
+  ].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  const discussion: ReviewDiscussion = {
+    description: pr.body?.trim() ? pr.body : null,
+    comments,
+    // The head sha every new line comment has to be pinned to.
+    anchor: pr.head?.sha ? { headSha: pr.head.sha, baseSha: null, startSha: null } : null,
+  };
+  discussionCache.set(key, { at: Date.now(), discussion });
+  return discussion;
+}
+
+/**
+ * Post to a pull request. A plain comment goes to the issue-comments endpoint
+ * (a review with no verdict would show up as an empty review); approve and
+ * request-changes go through the reviews endpoint as real verdicts.
+ */
+export async function postPullRequestReview(
+  host: string, token: string, projectPath: string, number: number, input: ReviewSubmission,
+): Promise<void> {
+  const [pathname, payload] = input.event === 'comment'
+    ? [`/repos/${projectPath}/issues/${number}/comments`, { body: input.body }]
+    : [
+        `/repos/${projectPath}/pulls/${number}/reviews`,
+        { body: input.body, event: input.event === 'approve' ? 'APPROVE' : 'REQUEST_CHANGES' },
+      ];
+  const res = await githubApiFetch(host, token, pathname, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, { allowForbidden: true });
+  if (res.status === 403) throw githubForbidden(res, await res.json().catch(() => null));
+  if (res.status === 404) {
+    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  }
+  // 422 is the everyday refusal: approving your own PR, an empty
+  // request-changes body, a PR that no longer accepts reviews.
+  if (res.status === 422) {
+    throw new AppError('VALIDATION', githubMessage(await res.json().catch(() => null), 'GitHub refused the review'));
+  }
+  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} posting the review`);
+  discussionCache.delete(`${host}\0${projectPath}\0${number}`);
+}
+
+type GithubCommit = {
+  sha?: string; html_url?: string;
+  commit?: { message?: string; author?: { name?: string; date?: string } | null } | null;
+  author?: { login?: string } | null;
+};
+
+const commitsCache = new Map<string, { at: number; commits: ReviewCommit[] }>();
+
+export async function pullRequestCommits(
+  host: string, token: string, projectPath: string, number: number,
+): Promise<ReviewCommit[]> {
+  const key = `${host}\0${projectPath}\0${number}`;
+  const hit = commitsCache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.commits;
+
+  const res = await githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/commits?per_page=100`);
+  if (res.status === 404) {
+    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  }
+  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching PR commits`);
+  const raw = (await res.json()) as GithubCommit[];
+
+  const commits: ReviewCommit[] = raw.map((commit) => ({
+    sha: commit.sha ?? '',
+    shortSha: (commit.sha ?? '').slice(0, 8),
+    // GitHub returns the whole message; the review list wants the subject.
+    title: (commit.commit?.message ?? '').split('\n')[0] || '(no message)',
+    author: commit.author?.login ?? commit.commit?.author?.name ?? null,
+    createdAt: commit.commit?.author?.date ?? '',
+    webUrl: commit.html_url ?? null,
+  }));
+  commitsCache.set(key, { at: Date.now(), commits });
+  return commits;
+}
+
+const commitChangesCache = new Map<string, { at: number; files: MergeRequestChange[] }>();
+
+/** One commit's own diff — the same shape the PR-wide files endpoint returns. */
+export async function commitChanges(
+  host: string, token: string, projectPath: string, sha: string,
+): Promise<MergeRequestChange[]> {
+  const key = `${host}\0${projectPath}\0${sha}`;
+  const hit = commitChangesCache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.files;
+
+  const res = await githubApiFetch(host, token, `/repos/${projectPath}/commits/${encodeURIComponent(sha)}`);
+  if (res.status === 404) {
+    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  }
+  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} fetching the commit diff`);
+  const body = (await res.json()) as { files?: GithubFile[] };
+
+  const files: MergeRequestChange[] = (body.files ?? []).map((f) => {
+    const status: MergeRequestChange['status'] =
+      f.status === 'added' ? 'A' : f.status === 'removed' ? 'D' : f.status === 'renamed' ? 'R' : 'M';
+    const diff = f.patch ?? '';
+    return {
+      path: f.filename ?? '',
+      oldPath: f.status === 'renamed' ? f.previous_filename : undefined,
+      status,
+      diff,
+      truncated: !diff && status !== 'A' ? true : undefined,
+    };
+  });
+  commitChangesCache.set(key, { at: Date.now(), files });
+  return files;
+}
+
+/** A comment pinned to a diff line, against the PR's current head commit. */
+export async function postPullRequestLineComment(
+  host: string, token: string, projectPath: string, number: number,
+  input: LineComment, anchor: ReviewAnchor,
+): Promise<void> {
+  const res = await githubApiFetch(host, token, `/repos/${projectPath}/pulls/${number}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      body: input.body,
+      commit_id: anchor.headSha,
+      path: input.path,
+      line: input.line,
+      side: input.side === 'old' ? 'LEFT' : 'RIGHT',
+    }),
+  }, { allowForbidden: true });
+  if (res.status === 403) throw githubForbidden(res, await res.json().catch(() => null));
+  if (res.status === 404) {
+    throw new AuthError('GitHub returned 404 — the saved token cannot see this repository; add a token for its owner');
+  }
+  if (res.status === 422) {
+    // Most often: the line is not part of this diff, or the head moved.
+    throw new AppError('VALIDATION', githubMessage(await res.json().catch(() => null), 'GitHub could not pin a comment to that line'));
+  }
+  if (!res.ok) throw new AppError('SHELL_FAILED', `GitHub responded ${res.status} posting the line comment`);
+  discussionCache.delete(`${host}\0${projectPath}\0${number}`);
+}
 
 export async function pullRequestChanges(
   host: string, token: string, projectPath: string, number: number,

@@ -4,11 +4,11 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        // Appearance settings swap this variable at runtime. Keep both aliases
-        // on it because the existing interface deliberately uses mono classes
-        // for labels as well as the default sans stack.
+        // Appearance settings swap --font-ui at runtime. `mono` deliberately
+        // does NOT follow it: shas, branches and line numbers must stay
+        // monospaced even when the interface font is proportional.
         sans: ['var(--font-ui)'],
-        mono: ['var(--font-ui)'],
+        mono: ['var(--font-mono)'],
       },
       colors: {
         // The whole app is written in zinc-* classes; remapping the scale

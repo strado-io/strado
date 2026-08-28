@@ -7,11 +7,16 @@ import { assertPathUnder } from '../paths.js';
 import { parseRemoteUrl, isGitlabHost, isGithubHost, resolveSshAlias } from '../services/gitProviders.js';
 import {
   readGitlabConfig, writeGitlabHost, removeGitlabHost, gitlabHostToken, mergeRequestsForBranch,
-  mergeRequestChanges, createMergeRequest, mergeMergeRequest,
+  mergeRequestsForProject, mergeRequestCountsForProject, mergeRequestChanges, mergeRequestDiscussion,
+  mergeRequestCommits, commitChanges as gitlabCommitChanges,
+  postMergeRequestReview, postMergeRequestLineComment, createMergeRequest, mergeMergeRequest,
+  REVIEW_PAGE_SIZE, type ReviewCounts,
 } from '../services/gitlab.js';
 import {
   readGithubConfig, writeGithubHost, removeGithubHost, githubTokenFor, pullRequestsForBranch,
-  pullRequestChanges, createPullRequest, mergePullRequest,
+  pullRequestsForProject, pullRequestCountsForProject, pullRequestChanges, pullRequestDiscussion,
+  pullRequestCommits, commitChanges as githubCommitChanges,
+  postPullRequestReview, postPullRequestLineComment, createPullRequest, mergePullRequest,
 } from '../services/github.js';
 
 async function originUrl(repoPath: string): Promise<string | null> {
@@ -156,7 +161,123 @@ async function resolveProviderTarget(
 }
 
 // Scoped under /api/w/:wsId — needs the workspace's repos to resolve a worktree.
+// Providers cap a list request at 100 items, which bounds how deep the merged
+// multi-repository inbox can page while staying correct.
+const AGGREGATE_MAX_ITEMS = 100;
+
 export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
+  // Workspace-wide review inbox. Unlike the branch endpoint below, this starts
+  // from every registered repository, so it includes fork PRs and branches
+  // whose local worktree has already been removed.
+  app.get<{ Querystring: { state?: string; page?: string; search?: string; repoId?: string } }>('/merge-requests', async (req) => {
+    const state = z.enum(['open', 'merged', 'closed']).default('open').parse(req.query.state);
+    const page = z.coerce.number().int().min(1).max(10_000).default(1).parse(req.query.page);
+    const search = z.string().max(200).default('').parse(req.query.search).trim();
+    const repoId = z.string().max(200).default('').parse(req.query.repoId).trim();
+    const repos = await req.workspace!.stores.repos.list();
+    // One repository, or one picked: that repository's own paging is exact, so
+    // ask it for the page directly.
+    const scoped = !!repoId || repos.length === 1;
+    // Merging several repositories cannot page by asking each for "page N" —
+    // the items dropped from page 1's merge would never be reachable. Instead
+    // fetch the whole window up to the requested page from every repository
+    // and slice it. Providers cap per_page at 100, so the merged inbox is
+    // exact for the first AGGREGATE_MAX_ITEMS / REVIEW_PAGE_SIZE pages and
+    // says so (`pageLimit`) rather than promising depth it cannot deliver.
+    const windowEnd = page * REVIEW_PAGE_SIZE;
+    const limit = scoped ? REVIEW_PAGE_SIZE : Math.min(windowEnd, AGGREGATE_MAX_ITEMS);
+    const listPage = scoped ? page : 1;
+    const results = await Promise.all(repos.map(async (repo) => {
+      // Every repository still reports its counts — they fill the state tabs
+      // and the picker — but only the picked one is paged through, so its
+      // page numbers line up with its own totals instead of the merged list.
+      const listed = !repoId || repo.id === repoId;
+      const target = await resolveProviderTarget(req, repo.path);
+      if (target.kind === 'absent') {
+        return { repository: { repoId: repo.id, repoName: repo.name, status: 'unsupported' as const }, reviews: [] };
+      }
+      if (target.kind === 'needsAuth') {
+        return {
+          repository: { repoId: repo.id, repoName: repo.name, provider: target.provider, status: 'needsAuth' as const },
+          reviews: [],
+        };
+      }
+      try {
+        const [reviews, counts] = target.provider === 'gitlab'
+          ? await Promise.all([
+              listed ? mergeRequestsForProject(target.host, target.token, target.projectPath, { state, page: listPage, search, limit }) : [],
+              mergeRequestCountsForProject(target.host, target.token, target.projectPath),
+            ])
+          : await Promise.all([
+              listed ? pullRequestsForProject(target.host, target.token, target.projectPath, { state, page: listPage, search, limit }) : [],
+              pullRequestCountsForProject(target.host, target.token, target.projectPath),
+            ]);
+        return {
+          repository: { repoId: repo.id, repoName: repo.name, provider: target.provider, status: 'ok' as const, counts },
+          reviews: reviews.map((review) => ({
+            ...review,
+            provider: target.provider,
+            repoId: repo.id,
+            repoName: repo.name,
+          })),
+        };
+      } catch (err) {
+        if (err instanceof AuthError) {
+          return {
+            repository: { repoId: repo.id, repoName: repo.name, provider: target.provider, status: 'needsAuth' as const },
+            reviews: [],
+          };
+        }
+        return {
+          repository: {
+            repoId: repo.id,
+            repoName: repo.name,
+            provider: target.provider,
+            status: 'error' as const,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          reviews: [],
+        };
+      }
+    }));
+
+    const merged = results.flatMap((result) => result.reviews).sort((a, b) =>
+      (a.state === 'open' ? 0 : 1) - (b.state === 'open' ? 0 : 1) ||
+      b.updatedAt.localeCompare(a.updatedAt),
+    );
+    const reviews = scoped
+      ? merged.slice(0, REVIEW_PAGE_SIZE)
+      : merged.slice(windowEnd - REVIEW_PAGE_SIZE, windowEnd);
+    const counts = results.reduce<ReviewCounts>((total, result) => {
+      const repoCounts = 'counts' in result.repository ? result.repository.counts : undefined;
+      if (repoCounts) {
+        total.open += repoCounts.open;
+        total.merged += repoCounts.merged;
+        total.closed += repoCounts.closed;
+      }
+      return total;
+    }, { open: 0, merged: 0, closed: 0 });
+    const hasMore = scoped
+      ? results.some((result) => {
+          if (repoId && result.repository.repoId !== repoId) return false;
+          if (!('counts' in result.repository) || !result.repository.counts) return false;
+          if (search) return result.reviews.length === REVIEW_PAGE_SIZE;
+          const repoCounts = result.repository.counts;
+          return windowEnd < repoCounts[state];
+        })
+      : merged.length > windowEnd && windowEnd < AGGREGATE_MAX_ITEMS;
+    return {
+      reviews,
+      repositories: results.map((result) => result.repository),
+      counts,
+      page,
+      pageSize: REVIEW_PAGE_SIZE,
+      hasMore,
+      // null = page freely against `counts`; a number caps what is reachable.
+      pageLimit: scoped ? null : AGGREGATE_MAX_ITEMS / REVIEW_PAGE_SIZE,
+    };
+  });
+
   app.get<{ Params: { encodedPath: string } }>(
     '/worktrees/:encodedPath/merge-requests',
     async (req, reply) => {
@@ -197,6 +318,139 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
           ? await mergeRequestChanges(t.host, t.token, t.projectPath, iid)
           : await pullRequestChanges(t.host, t.token, t.projectPath, iid);
         return { files };
+      } catch (err) {
+        if (err instanceof AuthError) {
+          return { needsAuth: true, provider: t.provider };
+        }
+        throw err;
+      }
+    },
+  );
+
+  // The conversation half of a review: description plus every human comment.
+  // Separate from /changes so a slow diff never delays it (and vice versa).
+  app.get<{ Params: { encodedPath: string; iid: string } }>(
+    '/worktrees/:encodedPath/merge-requests/:iid/discussion',
+    async (req, reply) => {
+      const target = decodeURIComponent(req.params.encodedPath);
+      const iid = z.coerce.number().int().positive().parse(req.params.iid);
+      const t = await resolveProviderTarget(req, target);
+      if (t.kind === 'absent') return reply.code(204).send();
+      if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
+      try {
+        const discussion = t.provider === 'gitlab'
+          ? await mergeRequestDiscussion(t.host, t.token, t.projectPath, iid)
+          : await pullRequestDiscussion(t.host, t.token, t.projectPath, iid);
+        return { discussion };
+      } catch (err) {
+        if (err instanceof AuthError) {
+          return { needsAuth: true, provider: t.provider };
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.get<{ Params: { encodedPath: string; iid: string } }>(
+    '/worktrees/:encodedPath/merge-requests/:iid/commits',
+    async (req, reply) => {
+      const target = decodeURIComponent(req.params.encodedPath);
+      const iid = z.coerce.number().int().positive().parse(req.params.iid);
+      const t = await resolveProviderTarget(req, target);
+      if (t.kind === 'absent') return reply.code(204).send();
+      if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
+      try {
+        const commits = t.provider === 'gitlab'
+          ? await mergeRequestCommits(t.host, t.token, t.projectPath, iid)
+          : await pullRequestCommits(t.host, t.token, t.projectPath, iid);
+        return { commits };
+      } catch (err) {
+        if (err instanceof AuthError) {
+          return { needsAuth: true, provider: t.provider };
+        }
+        throw err;
+      }
+    },
+  );
+
+  // A single commit's diff, so a review can be read commit by commit without
+  // leaving the pane. Repo-scoped rather than review-scoped: the sha is enough.
+  app.get<{ Params: { encodedPath: string; sha: string } }>(
+    '/worktrees/:encodedPath/commits/:sha/changes',
+    async (req, reply) => {
+      const target = decodeURIComponent(req.params.encodedPath);
+      const sha = z.string().regex(/^[0-9a-f]{7,64}$/i, 'invalid commit sha').parse(req.params.sha);
+      const t = await resolveProviderTarget(req, target);
+      if (t.kind === 'absent') return reply.code(204).send();
+      if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
+      try {
+        const files = t.provider === 'gitlab'
+          ? await gitlabCommitChanges(t.host, t.token, t.projectPath, sha)
+          : await githubCommitChanges(t.host, t.token, t.projectPath, sha);
+        return { files };
+      } catch (err) {
+        if (err instanceof AuthError) {
+          return { needsAuth: true, provider: t.provider };
+        }
+        throw err;
+      }
+    },
+  );
+
+  const ReviewBody = z.object({
+    body: z.string().max(65_536).default(''),
+    event: z.enum(['comment', 'approve', 'request-changes']),
+  }).refine((input) => input.event !== 'comment' || input.body.trim().length > 0, {
+    message: 'a comment needs a body',
+  });
+  app.post<{ Params: { encodedPath: string; iid: string } }>(
+    '/worktrees/:encodedPath/merge-requests/:iid/review',
+    async (req, reply) => {
+      const target = decodeURIComponent(req.params.encodedPath);
+      const iid = z.coerce.number().int().positive().parse(req.params.iid);
+      const input = ReviewBody.parse(req.body);
+      const t = await resolveProviderTarget(req, target);
+      if (t.kind === 'absent') return reply.code(204).send();
+      if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
+      try {
+        if (t.provider === 'gitlab') await postMergeRequestReview(t.host, t.token, t.projectPath, iid, input);
+        else await postPullRequestReview(t.host, t.token, t.projectPath, iid, input);
+        return { posted: true };
+      } catch (err) {
+        if (err instanceof AuthError) {
+          return { needsAuth: true, provider: t.provider };
+        }
+        throw err;
+      }
+    },
+  );
+
+  const LineCommentBody = z.object({
+    body: z.string().min(1).max(65_536),
+    path: z.string().min(1).max(4096),
+    oldPath: z.string().max(4096).optional(),
+    line: z.number().int().positive().max(10_000_000),
+    side: z.enum(['new', 'old']).default('new'),
+  });
+  app.post<{ Params: { encodedPath: string; iid: string } }>(
+    '/worktrees/:encodedPath/merge-requests/:iid/line-comment',
+    async (req, reply) => {
+      const target = decodeURIComponent(req.params.encodedPath);
+      const iid = z.coerce.number().int().positive().parse(req.params.iid);
+      const input = LineCommentBody.parse(req.body);
+      const t = await resolveProviderTarget(req, target);
+      if (t.kind === 'absent') return reply.code(204).send();
+      if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
+      try {
+        // The position shas come from the provider, never the client — the
+        // discussion fetch is cached, so this is usually free.
+        const { anchor } = t.provider === 'gitlab'
+          ? await mergeRequestDiscussion(t.host, t.token, t.projectPath, iid)
+          : await pullRequestDiscussion(t.host, t.token, t.projectPath, iid);
+        if (!anchor) throw new AppError('VALIDATION', 'This review has no diff to pin a comment to');
+        if (t.provider === 'gitlab') await postMergeRequestLineComment(t.host, t.token, t.projectPath, iid, input, anchor);
+        else await postPullRequestLineComment(t.host, t.token, t.projectPath, iid, input, anchor);
+        return { posted: true };
       } catch (err) {
         if (err instanceof AuthError) {
           return { needsAuth: true, provider: t.provider };

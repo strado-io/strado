@@ -22,6 +22,9 @@ export type SidebarBodyProps = {
   selected: SidebarView;
   onSelect: (view: SidebarView) => void;
   taskCount: number;
+  reviewCount?: number;
+  /** True until the first workspace-wide code-review fetch settles. */
+  reviewLoading?: boolean;
   onAddRepo: () => void;
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
@@ -104,9 +107,14 @@ function MergeRequestBadge({ worktree, mr, onOpen }: {
 
 // Who is open in this worktree, as overlapping faces. Names and live status
 // are the hover card's job.
+// Three is what a narrow rail can carry without crowding out the name; the
+// rest become a count, and the hover card still lists every session.
+const MAX_AVATARS = 3;
+
 function SessionAvatarStack({ chips, testId }: { chips: SessionChip[]; testId: string }) {
   if (chips.length === 0) return null;
-  const visible = chips.slice(0, 5);
+  const visible = chips.slice(0, MAX_AVATARS);
+  const overflow = chips.length - visible.length;
   return (
     <span
       data-testid={testId}
@@ -121,12 +129,20 @@ function SessionAvatarStack({ chips, testId }: { chips: SessionChip[]; testId: s
           aria-hidden
           className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 ring-1 ring-zinc-950 ${SESSION_COLOR[chip.mode]} ${
             index > 0 ? '-ml-1' : ''
-          } ${chips.length > 5 && index === 4 ? 'opacity-40' : ''}`}
+          }`}
           style={{ zIndex: index + 1 }}
         >
           <SessionAvatarIcon chip={chip} />
         </span>
       ))}
+      {overflow > 0 && (
+        <span
+          data-session-overflow
+          aria-hidden
+          className="relative -ml-1 flex h-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 px-1 font-mono text-[9px] leading-none text-zinc-400 ring-1 ring-zinc-950"
+          style={{ zIndex: visible.length + 1 }}
+        >+{overflow}</span>
+      )}
     </span>
   );
 }
@@ -286,11 +302,11 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 }
 
 export function SidebarBody({
-  wsId, repos, worktrees, remoteWorktrees, runnerStatuses, selected, onSelect, taskCount,
+  wsId, repos, worktrees, remoteWorktrees, runnerStatuses, selected, onSelect, taskCount, reviewCount = 0,
   onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false,
+  remoteLoading = false, reviewLoading = false,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const vscodeTabs = useVscodeTabs();
@@ -314,8 +330,8 @@ export function SidebarBody({
       </span>
     );
   };
-  const TopItem = ({ active, onClick, label, count, icon }: {
-    active: boolean; onClick: () => void; label: string; count: number; icon: React.ReactNode;
+  const TopItem = ({ active, onClick, label, count, loading = false, icon }: {
+    active: boolean; onClick: () => void; label: string; count: number; loading?: boolean; icon: React.ReactNode;
   }) => (
     <button
       onClick={onClick}
@@ -324,11 +340,20 @@ export function SidebarBody({
     >
       <span className={`shrink-0 ${active ? 'text-zinc-300' : 'text-zinc-600 group-hover:text-zinc-400'}`}>{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className={`shrink-0 font-mono text-[11px] tabular-nums ${active ? 'text-zinc-400' : 'text-zinc-600'}`}>{count}</span>
+      <span className={`flex h-4 min-w-4 shrink-0 items-center justify-center font-mono text-[11px] tabular-nums ${active ? 'text-zinc-400' : 'text-zinc-600'}`}>
+        {loading ? (
+          <span role="status" aria-label={`Loading ${label.toLowerCase()}`} className="braille-spinner text-[12px] leading-none" />
+        ) : count}
+      </span>
     </button>
   );
 
   const tasksIcon = (<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden {...stroke}><circle cx="8" cy="8" r="6" /><circle cx="8" cy="8" r="2.5" /></svg>);
+  const reviewsIcon = (
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden fill="currentColor">
+      <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354Z" />
+    </svg>
+  );
   const chevron = (open: boolean) => (
     <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden {...stroke} className={`transition-transform ${open ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
   );
@@ -338,6 +363,8 @@ export function SidebarBody({
       <div className="flex flex-col gap-0.5">
         <TopItem active={selected.kind === 'tasks'} onClick={() => onSelect({ kind: 'tasks' })}
           label="Tasks" count={taskCount} icon={tasksIcon} />
+        <TopItem active={selected.kind === 'reviews'} onClick={() => onSelect({ kind: 'reviews' })}
+          label="Code reviews" count={reviewCount} loading={reviewLoading} icon={reviewsIcon} />
       </div>
 
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
@@ -435,9 +462,9 @@ export function SidebarBody({
                           className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-2 pr-2 text-left ${activeRow ? 'text-zinc-100' : 'text-zinc-300'}`}>
                           <span className="min-w-0 flex-1 truncate font-mono text-xs">
                             {worktreeLabel(w)}
-                            {worktreeTitle(w) && (
+                            {worktreeTitle(w, repo.name) && (
                               // mono spaces around the · are full-width — use margins instead
-                              <span className={activeRow ? 'text-zinc-400' : 'text-zinc-600'}><span className="mx-[3px]">·</span>{worktreeTitle(w)}</span>
+                              <span className={activeRow ? 'text-zinc-400' : 'text-zinc-600'}><span className="mx-[3px]">·</span>{worktreeTitle(w, repo.name)}</span>
                             )}
                           </span>
                         </button>

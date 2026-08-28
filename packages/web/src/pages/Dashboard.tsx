@@ -27,6 +27,8 @@ import { bumpWorktreeOpened } from '../lib/worktreeLru';
 import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
+import { CodeReviewsPage } from '../components/CodeReviewsPage';
+import { useCodeReviews } from '../hooks/codeReviews';
 
 type State = {
   repos: RepoConfig[];
@@ -74,9 +76,10 @@ function reducer(state: State, action: Action): State {
 
 const STORE_SIDEBAR = 'strado:sidebar-collapsed';
 
-// Tasks is the only view now — 'active' (a page of running dev servers) and the
-// older 'sprints' are gone, so nothing is read back from `strado:view`.
-const VIEW: SidebarView = { kind: 'tasks' };
+// Tasks remains the initial destination; code reviews is the second
+// workspace-level view. We intentionally do not restore the old retired view
+// values from `strado:view`.
+const INITIAL_VIEW: SidebarView = { kind: 'tasks' };
 function readSidebarCollapsed(): boolean {
   return localStorage.getItem(STORE_SIDEBAR) === '1';
 }
@@ -299,8 +302,17 @@ export function Dashboard(props: {
       return next;
     });
   const { gridTemplate, totalWidth, startResize } = useColumnWidths();
-  // Clicking Tasks closes whatever hub is open and lands on the board.
-  const selectView = () => { setSelectedPath(null); setSelectedRemote(null); };
+  const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
+  const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [reviewRepoId, setReviewRepoId] = useState('all');
+  // Top-level destinations close whichever worktree hub is open.
+  const selectView = (view: SidebarView) => {
+    setActiveView(view);
+    setSelectedPath(null);
+    setSelectedRemote(null);
+  };
+  const codeReviews = useCodeReviews(wsId, reviewState, reviewSearch, reviewRepoId);
 
   // Tickets: resolve configured providers once, then poll live ticket
   // statuses for all rows every 60s and publish to the shared store (rows
@@ -653,13 +665,15 @@ export function Dashboard(props: {
             setSelectedRemote(w);
             props.onOpenRemoteWorktree?.(w);
           }}
-          selected={VIEW}
+          selected={activeView}
           onSelect={selectView}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
           onOpenOrgSettings={() => setSettingsSection('organization')}
           onOpenFeedback={() => setFeedbackOpen(true)}
           taskCount={state.worktrees.length}
+          reviewCount={codeReviews.counts.open}
+          reviewLoading={codeReviews.loading && codeReviews.repositories.length === 0}
           onCollapse={() => setSidebarCollapsed(true)}
           onAddRepo={() => setShowAddRepo(true)}
           onDeleteRepo={async (repo) => {
@@ -686,7 +700,10 @@ export function Dashboard(props: {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote && (
+        {/* Code reviews carries the sidebar toggle and running-servers chip in
+            its own toolbar, so the shared row would only be an empty strip. */}
+        {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote
+          && activeView.kind !== 'reviews' && (
         <FilterBar
           leading={
             sidebarCollapsed ? (
@@ -703,7 +720,7 @@ export function Dashboard(props: {
           trailing={
             <div className="flex items-center gap-2">
               {runningServers}
-              {!selectedWorktree && ticketsOn && (
+              {!selectedWorktree && activeView.kind === 'tasks' && ticketsOn && (
                 <button
                   className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
                   onClick={() => setShowImportTickets(true)}
@@ -720,7 +737,7 @@ export function Dashboard(props: {
           <div className="mx-4 mt-3 rounded bg-red-900/40 px-3 py-2 text-sm text-red-200">{state.error}</div>
         )}
 
-        {!state.loading && state.repos.length > 0 && !checklistDismissed && (
+        {activeView.kind === 'tasks' && !state.loading && state.repos.length > 0 && !checklistDismissed && (
           <OnboardingChecklist
             repos={state.repos}
             worktrees={state.worktrees}
@@ -767,6 +784,31 @@ export function Dashboard(props: {
               modalOpen={modalOpen}
             />
           </div>
+        ) : activeView.kind === 'reviews' ? (
+          <CodeReviewsPage
+            reviews={codeReviews.reviews}
+            repositories={codeReviews.repositories}
+            counts={codeReviews.counts}
+            state={reviewState}
+            repoId={reviewRepoId}
+            repos={state.repos}
+            worktrees={state.worktrees}
+            loading={codeReviews.loading}
+            refreshing={codeReviews.refreshing}
+            page={codeReviews.page}
+            pageSize={codeReviews.pageSize}
+            hasMore={codeReviews.hasMore}
+            pageLimit={codeReviews.pageLimit}
+            error={codeReviews.error}
+            onRefresh={codeReviews.refresh}
+            onStateChange={setReviewState}
+            onRepoChange={setReviewRepoId}
+            onSearchChange={setReviewSearch}
+            onPageChange={codeReviews.goToPage}
+            sidebarCollapsed={sidebarCollapsed}
+            onExpandSidebar={() => setSidebarCollapsed(false)}
+            runningServers={runningServers}
+          />
         ) : (
         <div className="flex-1 overflow-auto">
           {state.loading ? (
@@ -862,7 +904,7 @@ export function Dashboard(props: {
       <FeedbackDialog
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
-        context={VIEW.kind}
+        context={activeView.kind}
       />
 
       {showAddRepo && (

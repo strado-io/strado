@@ -109,6 +109,17 @@ describe('Dashboard inline hub', () => {
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument());
   });
 
+  it('opens the workspace-level code reviews page from the sidebar', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    expect(document.querySelector('[data-filter-bar]')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Code reviews'));
+    expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();
+    // The page has its own toolbar — the shared bar would just be a blank strip.
+    expect(document.querySelector('[data-filter-bar]')).not.toBeInTheDocument();
+  });
+
   it('jumping to a repo via the command palette clears the hub', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());

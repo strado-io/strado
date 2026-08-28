@@ -99,6 +99,20 @@ const base = {
 };
 
 describe('Sidebar tree', () => {
+  it('shows Code reviews beneath Tasks with its open count', () => {
+    wrap(<Sidebar {...base} reviewCount={6} expandedRepos={new Set()} />);
+    expect(activePane().getByText('Code reviews')).toBeInTheDocument();
+    expect(activePane().getByText('6')).toBeInTheDocument();
+  });
+
+  it('shows a spinner instead of zero while code reviews are first loading', () => {
+    wrap(<Sidebar {...base} reviewCount={0} reviewLoading expandedRepos={new Set()} />);
+    const reviewRow = activePane().getByText('Code reviews').closest('button');
+    expect(reviewRow).not.toBeNull();
+    expect(reviewRow && within(reviewRow).getByRole('status', { name: 'Loading code reviews' })).toBeInTheDocument();
+    expect(reviewRow).not.toHaveTextContent('0');
+  });
+
   it('shows the agent-working loader on the specific worktree row, not the repo row', () => {
     const working = { ...wt('/r1/FD-1', 'FD-1'), claudeStatus: 'working' as const };
     wrap(<Sidebar {...base} worktrees={[working, wt('/r1/FD-2', 'FD-2')]} expandedRepos={new Set(['r1'])} />);
@@ -225,7 +239,7 @@ describe('Sidebar tree', () => {
     expect(icon?.parentElement).toHaveClass('ml-5');
   });
 
-  it('shows at most five overlapping session avatars after changes and lists every session on hover', () => {
+  it('shows at most three overlapping session avatars plus a count, and lists every session on hover', () => {
     const busy = {
       ...wt('/r1/FD-1', 'FD-1', 'idle', { additions: 4, deletions: 1, files: 2 }),
       claudeSessions: ['1', '2'],
@@ -235,9 +249,10 @@ describe('Sidebar tree', () => {
     wrap(<Sidebar {...base} worktrees={[busy]} expandedRepos={new Set(['r1'])} />);
 
     const stack = screen.getByTestId(`session-stack-${busy.path}`);
-    expect(stack.querySelectorAll('[data-session-avatar]')).toHaveLength(5);
+    // Three faces plus "+3": the name keeps the width the other faces took.
+    expect(stack.querySelectorAll('[data-session-avatar]')).toHaveLength(3);
     expect(stack.querySelectorAll('[data-session-avatar]')[1]).toHaveClass('-ml-1', 'h-4', 'w-4', 'ring-1');
-    expect(stack.querySelectorAll('[data-session-avatar]')[4]).toHaveClass('opacity-40');
+    expect(stack.querySelector('[data-session-overflow]')).toHaveTextContent('+3');
     expect(stack).toHaveAccessibleName('6 open sessions: Claude, Claude 2, Codex, Shell, Shell 2, Shell 3');
     const diff = screen.getByTestId(`diff-${busy.path}`);
     expect(diff.compareDocumentPosition(stack) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
