@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 // its URL survive panel reopen; broadcast so the sessions dock stays live.
 const KEY = 'strado:browser-tabs';
 const URL_KEY = 'strado:browser-urls';
+const CLEAN_START_MIGRATION_KEY = 'strado:browser-clean-start-v1';
 const EVENT = 'strado:browser-tabs';
 
 export function readBrowserTabs(): Set<string> {
@@ -106,6 +107,24 @@ export function readBrowserUrls(): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Older builds guessed localhost:3000 for every new Browser tab. Remove those
+ * generated defaults once so existing users reach the clean start page; URLs
+ * entered after this migration (including localhost:3000) remain untouched.
+ */
+export function migrateGuessedBrowserUrls(): Record<string, string> {
+  const urls = readBrowserUrls();
+  try {
+    if (localStorage.getItem(CLEAN_START_MIGRATION_KEY) === '1') return urls;
+    for (const [key, url] of Object.entries(urls)) {
+      if (/^http:\/\/(?:localhost|127\.0\.0\.1):3000\/?$/.test(url)) delete urls[key];
+    }
+    localStorage.setItem(URL_KEY, JSON.stringify(urls));
+    localStorage.setItem(CLEAN_START_MIGRATION_KEY, '1');
+  } catch { /* storage unavailable — use the in-memory cleaned map */ }
+  return urls;
 }
 
 /** null forgets the key (tab closed) — ids are reused, so a leftover URL

@@ -811,6 +811,11 @@ if (!gotLock) {
         wc.on('page-title-updated', (_ev, title) => send({ type: 'title', title }));
         wc.on('page-favicon-updated', (_ev, favicons) =>
           send({ type: 'favicon', favicon: favicons?.[0] ?? null }));
+        // Native Browser panes sit above the renderer, so clicks inside their
+        // page do not bubble to React. Forward focus to keep the split's active
+        // tab highlight and keyboard actions pointed at the pane the user
+        // actually clicked.
+        wc.on('focus', () => send({ type: 'focus' }));
         // Scripted popups (window.open with features — OAuth/Google Sign-In)
         // must be REAL child windows: the popup delivers its result through
         // window.opener/postMessage and closes itself. Navigating the preview

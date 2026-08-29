@@ -44,6 +44,24 @@ describe('browser url persistence', () => {
     rememberBrowserUrl('/wt/a\0browser:2', null);
     expect(readBrowserUrls()).toEqual({ '/wt/a': 'http://localhost:3000' });
   });
+
+  it('removes the old generated port-3000 fallback once without blocking later user URLs', async () => {
+    const { migrateGuessedBrowserUrls, readBrowserUrls, rememberBrowserUrl } = await import('./browserTabs');
+    localStorage.removeItem('strado:browser-urls');
+    localStorage.removeItem('strado:browser-clean-start-v1');
+    rememberBrowserUrl('/wt/legacy', 'http://localhost:3000/');
+    rememberBrowserUrl('/wt/custom', 'http://localhost:5555/app');
+
+    expect(migrateGuessedBrowserUrls()).toEqual({ '/wt/custom': 'http://localhost:5555/app' });
+
+    // The migration is one-shot: users can explicitly enter port 3000 later.
+    rememberBrowserUrl('/wt/user', 'http://localhost:3000');
+    expect(migrateGuessedBrowserUrls()).toEqual({
+      '/wt/custom': 'http://localhost:5555/app',
+      '/wt/user': 'http://localhost:3000',
+    });
+    expect(readBrowserUrls()).toHaveProperty('/wt/user');
+  });
 });
 
 describe('browserTabLabel', () => {

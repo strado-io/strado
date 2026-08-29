@@ -1,6 +1,7 @@
 // Persisted per-worktree tab order for the hub's tab strip (drag-to-reorder).
-// Keys are `${mode}:${id}`. Tabs missing from the saved order keep their
-// structural position after the saved ones.
+// Keys are `${mode}:${id}` locally and `${mode}@${runnerId}:${id}` remotely.
+// Tabs missing from the saved order keep their structural position after the
+// saved ones.
 const STORE = 'strado.tabOrder';
 
 type OrderMap = Record<string, string[]>;

@@ -10,7 +10,8 @@ type StradoPreviewEvent =
   | { key: string; type: 'error'; error: string }
   | { key: string; type: 'url'; url: string; canBack?: boolean; canForward?: boolean }
   | { key: string; type: 'title'; title: string }
-  | { key: string; type: 'favicon'; favicon: string | null };
+  | { key: string; type: 'favicon'; favicon: string | null }
+  | { key: string; type: 'focus' };
 
 interface Window {
   strado?: {

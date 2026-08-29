@@ -360,6 +360,9 @@ describe('TerminalView', () => {
       // Promise.resolve() would do the same but act() also silences the
       // "not wrapped in act" warning for the resulting state update).
       await act(async () => {});
+      // Dock-capable embed surfaces align to their pane-tree leaf on the next
+      // animation frame; fake timers must advance that frame explicitly.
+      await vi.advanceTimersByTimeAsync(20);
 
       // The tab strip renders labels as plain text (no role="tab" in this app —
       // see the existing 'Shell 2' assertions at TerminalView.test.tsx:262), and
@@ -370,9 +373,10 @@ describe('TerminalView', () => {
 
       // The tab label alone doesn't prove the panel mounted — assert the panel
       // itself is there (its filter input renders unconditionally) and is the
-      // visible pane, with the xterm pane hidden underneath it.
+      // visible surface. The pane-tree layer stays mounted underneath because
+      // it now supplies the geometry used by docked KB and Browser surfaces.
       expect(screen.getByPlaceholderText('Filter files…')).toBeInTheDocument();
-      expect(screen.getByTestId('xterm-pane')).toHaveClass('hidden');
+      expect(screen.getByTestId('xterm-pane')).not.toHaveClass('hidden');
       expect(screen.getByTestId(`kb-pane-${worktree.path}`)).not.toHaveClass('hidden');
       expect(kbFiles).toHaveBeenCalledTimes(1); // active fetched its listing
 
@@ -599,6 +603,31 @@ describe('TerminalView', () => {
     expect(lastWsUrl()).toContain('mode=shell');
   });
 
+  it('keeps visited terminal panes mounted and connected across tab switches', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1', '2'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(FakeWS.instances).toHaveLength(1);
+    const shell1Socket = FakeWS.instances[0]!;
+
+    fireEvent.click(screen.getByText('Shell 2'));
+    expect(FakeWS.instances).toHaveLength(2);
+    const shell2Socket = FakeWS.instances[1]!;
+    expect(shell1Socket.close).not.toHaveBeenCalled();
+    expect(screen.getByTestId('terminal-surface-shell:1')).toHaveClass('hidden');
+
+    fireEvent.click(screen.getByText('Shell'));
+    expect(FakeWS.instances).toHaveLength(2);
+    expect(shell1Socket.close).not.toHaveBeenCalled();
+    expect(shell2Socket.close).not.toHaveBeenCalled();
+    expect(screen.getByTestId('terminal-surface-shell:2')).toHaveClass('hidden');
+  });
+
   it('an explicit mode overrides the saved tab', () => {
     localStorage.setItem('strado.activeTab', JSON.stringify({ [baseWorktree.path]: 'shell:2' }));
     render(
@@ -755,9 +784,9 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getAllByTestId('pane-leaf')).toHaveLength(1);
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
     fireEvent.keyDown(window, { key: 'd', metaKey: true });
-    expect(screen.getAllByTestId('pane-leaf')).toHaveLength(2);
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
     // the new pane is a second claude session with its own pty connection
     expect(lastWsUrl()).toContain('mode=claude');
@@ -776,7 +805,7 @@ describe('TerminalView', () => {
       />,
     );
     fireEvent.keyDown(window, { key: 'd', metaKey: true, shiftKey: true });
-    expect(screen.getAllByTestId('pane-leaf')).toHaveLength(2);
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'col');
     expect(lastWsUrl()).toContain('mode=shell');
     expect(lastWsUrl()).toContain('session=2');
@@ -791,14 +820,242 @@ describe('TerminalView', () => {
       />,
     );
     fireEvent.keyDown(window, { key: 'd', metaKey: true });
-    expect(screen.getAllByTestId('pane-leaf')).toHaveLength(2);
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
     // Cmd+W closes the focused (new) pane's session
     fireEvent.keyDown(window, { key: 'w', metaKey: true });
     await vi.waitFor(() =>
       expect(killSession).toHaveBeenCalledWith(expect.anything(), baseWorktree.path, 'shell', '2'),
     );
-    expect(screen.getAllByTestId('pane-leaf')).toHaveLength(1);
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
     expect(screen.queryByTestId('pane-split')).not.toBeInTheDocument();
+  });
+
+  it('drags an existing tab to a pane edge, then returns it to a full tab', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1', '2'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+
+    const shell1 = screen.getByText('Shell').closest('span')!;
+    const shell2 = screen.getByText('Shell 2').closest('span')!;
+    const pane = screen.getByTestId('pane-host');
+    vi.spyOn(shell1, 'getBoundingClientRect').mockReturnValue({
+      x: 10, y: 0, left: 10, top: 0, right: 70, bottom: 30, width: 60, height: 30,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(shell2, 'getBoundingClientRect').mockReturnValue({
+      x: 72, y: 0, left: 72, top: 0, right: 142, bottom: 30, width: 70, height: 30,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 40, left: 0, top: 40, right: 800, bottom: 640, width: 800, height: 600,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(shell2, { button: 0, pointerId: 1, clientX: 100, clientY: 15 });
+    fireEvent.pointerMove(shell2, { pointerId: 1, clientX: 790, clientY: 320 });
+    expect(screen.getByTestId('pane-drop-preview')).toHaveAttribute('data-dock-side', 'right');
+    fireEvent.pointerUp(shell2, { pointerId: 1, clientX: 790, clientY: 320 });
+
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
+    expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
+    expect(localStorage.getItem('strado.paneLayout')).toContain('shell:2');
+    expect(shell1).toHaveAttribute('data-in-split', 'true');
+    expect(shell2).toHaveAttribute('data-in-split', 'true');
+    expect(shell1).toHaveAttribute('data-split-group', '0');
+    expect(shell2).toHaveAttribute('data-split-group', '0');
+    expect(shell1).toHaveClass('border-sky-500/15', 'bg-sky-500/5');
+    expect(shell2).toHaveClass('border-sky-500/40', 'bg-sky-500/15');
+    expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Shell 2 as full tab' }));
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
+    expect(screen.queryByTestId('pane-split')).not.toBeInTheDocument();
+    expect(localStorage.getItem('strado.paneLayout')).not.toContain(baseWorktree.path);
+  });
+
+  it('creates and switches between multiple split groups in one worktree', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1', '2', '3', '4'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+
+    const mockTabRect = (el: Element, left: number) => {
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: left, y: 0, left, top: 0, right: left + 70, bottom: 30, width: 70, height: 30,
+        toJSON: () => ({}),
+      });
+    };
+    const mockPaneRect = (el: Element) => {
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: 0, y: 40, left: 0, top: 40, right: 800, bottom: 640, width: 800, height: 600,
+        toJSON: () => ({}),
+      });
+    };
+
+    // First group: Shell + Shell 2.
+    let shell1 = screen.getByText('Shell').closest('span')!;
+    let shell2 = screen.getByText('Shell 2').closest('span')!;
+    mockTabRect(shell1, 10);
+    mockTabRect(shell2, 82);
+    mockPaneRect(screen.getByTestId('pane-host'));
+    fireEvent.pointerDown(shell2, { button: 0, pointerId: 11, clientX: 100, clientY: 15 });
+    fireEvent.pointerMove(shell2, { pointerId: 11, clientX: 790, clientY: 320 });
+    fireEvent.pointerUp(shell2, { pointerId: 11, clientX: 790, clientY: 320 });
+    fireEvent.click(shell2); // browser emits this click after pointerup; drag guard consumes it
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
+
+    // Leave that group intact, open Shell 3 full-size, then make a second
+    // independent group by docking Shell 4 beside it.
+    fireEvent.click(screen.getByText('Shell 3'));
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
+    const shell3 = screen.getByText('Shell 3').closest('span')!;
+    const shell4 = screen.getByText('Shell 4').closest('span')!;
+    mockTabRect(shell3, 154);
+    mockTabRect(shell4, 226);
+    mockPaneRect(screen.getByTestId('pane-host'));
+    fireEvent.pointerDown(shell4, { button: 0, pointerId: 12, clientX: 250, clientY: 15 });
+    fireEvent.pointerMove(shell4, { pointerId: 12, clientX: 790, clientY: 320 });
+    fireEvent.pointerUp(shell4, { pointerId: 12, clientX: 790, clientY: 320 });
+    fireEvent.click(shell4);
+
+    const saved = JSON.parse(localStorage.getItem('strado.paneLayout') ?? '{}');
+    expect(saved[baseWorktree.path]).toHaveLength(2);
+
+    shell1 = screen.getByText('Shell').closest('span')!;
+    shell2 = screen.getByText('Shell 2').closest('span')!;
+    expect(shell1).toHaveAttribute('data-in-split', 'true');
+    expect(shell2).toHaveAttribute('data-in-split', 'true');
+    expect(shell3).toHaveAttribute('data-in-split', 'true');
+    expect(shell4).toHaveAttribute('data-in-split', 'true');
+    expect(shell1).toHaveAttribute('data-split-group', '0');
+    expect(shell2).toHaveAttribute('data-split-group', '0');
+    expect(shell3).toHaveAttribute('data-split-group', '1');
+    expect(shell4).toHaveAttribute('data-split-group', '1');
+    expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
+    expect(FakeWS.instances).toHaveLength(4);
+    const groupSockets = [...FakeWS.instances];
+
+    fireEvent.click(screen.getByText('Shell'));
+    expect(screen.getAllByTestId('pane-host').map((el) => el.getAttribute('data-pane-key'))).toEqual([
+      'shell:1', 'shell:2',
+    ]);
+    fireEvent.click(screen.getByText('Shell 3'));
+    expect(screen.getAllByTestId('pane-host').map((el) => el.getAttribute('data-pane-key'))).toEqual([
+      'shell:3', 'shell:4',
+    ]);
+    expect(FakeWS.instances).toHaveLength(4);
+    expect(groupSockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('docks Knowledge Base beside a shell and marks both tabs as tiled', async () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('New session'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Knowledge Base' }));
+    fireEvent.click(screen.getByText('Shell'));
+
+    const shell = screen.getByText('Shell').closest('span')!;
+    const kb = screen.getByText('Knowledge Base').closest('span')!;
+    const pane = screen.getByTestId('pane-host');
+    vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({
+      x: 10, y: 0, left: 10, top: 0, right: 70, bottom: 30, width: 60, height: 30,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(kb, 'getBoundingClientRect').mockReturnValue({
+      x: 72, y: 0, left: 72, top: 0, right: 172, bottom: 30, width: 100, height: 30,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 40, left: 0, top: 40, right: 800, bottom: 640, width: 800, height: 600,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(kb, { button: 0, pointerId: 2, clientX: 110, clientY: 15 });
+    fireEvent.pointerMove(kb, { pointerId: 2, clientX: 790, clientY: 320 });
+    fireEvent.pointerUp(kb, { pointerId: 2, clientX: 790, clientY: 320 });
+
+    expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
+    expect(shell).toHaveAttribute('data-split-group', '0');
+    expect(kb).toHaveAttribute('data-split-group', '0');
+    expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(screen.getByTestId(`kb-pane-${baseWorktree.path}`)).not.toHaveClass('hidden'),
+    );
+    expect(screen.getByRole('button', { name: 'Open Knowledge Base as full tab' })).toBeInTheDocument();
+  });
+
+  it('opens multiple independently selected documents in one worktree', async () => {
+    kbFiles.mockResolvedValue({
+      files: [
+        { path: 'README.md', size: 10, mtimeMs: 1 },
+        { path: 'docs/DEPLOYING.md', size: 20, mtimeMs: 2 },
+      ],
+      truncated: false,
+      cap: 100,
+    });
+    render(<TerminalView worktree={baseWorktree} mode="shell" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByLabelText('New session'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Knowledge Base' }));
+    const openNew = await screen.findByRole('button', { name: 'Open in new tab' });
+    await vi.waitFor(() => expect(document.querySelector('[data-tab-key="kb:1"]')).toHaveTextContent('README.md'));
+    fireEvent.click(openNew);
+
+    const secondPane = await screen.findByTestId(`kb-pane-${baseWorktree.path}-2`);
+    await vi.waitFor(() => expect(secondPane).not.toHaveClass('hidden'));
+    fireEvent.click(within(secondPane).getByText('DEPLOYING.md'));
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-tab-key="kb:1"]')).toHaveTextContent('README.md');
+      expect(document.querySelector('[data-tab-key="kb:2"]')).toHaveTextContent('DEPLOYING.md');
+    });
+    expect(localStorage.getItem(`strado:kb-selected:${baseWorktree.path}`)).toBe('README.md');
+    expect(localStorage.getItem(`strado:kb-selected:${baseWorktree.path}\0kb:2`)).toBe('docs/DEPLOYING.md');
+    expect(JSON.parse(localStorage.getItem('strado:kb-tab-ids') ?? '{}')[baseWorktree.path]).toEqual(['2']);
+  });
+
+  it('opening one pane as a full tab preserves the rest of a larger layout', () => {
+    localStorage.setItem('strado.paneLayout', JSON.stringify({
+      [baseWorktree.path]: {
+        kind: 'split', dir: 'row', ratio: 0.5,
+        a: { kind: 'leaf', key: 'shell:1' },
+        b: {
+          kind: 'split', dir: 'col', ratio: 0.5,
+          a: { kind: 'leaf', key: 'shell:2' },
+          b: { kind: 'leaf', key: 'shell:3' },
+        },
+      },
+    }));
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1', '2', '3'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Shell as full tab' }));
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Open Shell as full tab' })).not.toBeInTheDocument();
+
+    // The other two panes remain persisted and return when either tiled tab is
+    // selected; only the popped-out tab is full-size.
+    fireEvent.click(screen.getByText('Shell 2'));
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
+    expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'col');
+    expect(localStorage.getItem('strado.paneLayout')).not.toContain('shell:1');
   });
 
   it('connects with the session id when opened on a shell tab', () => {
@@ -1007,6 +1264,7 @@ describe('TerminalView', () => {
         onClose={onClose}
       />,
     );
+    const claudeSocket = FakeWS.instances[0]!;
     // Open a second shell tab locally and switch to it.
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Shell' }));
@@ -1020,7 +1278,8 @@ describe('TerminalView', () => {
     // Server later reports shell 2 gone -> active tab must switch away.
     pushSse({ path: baseWorktree.path, shellSessions: ['1'] });
     expect(screen.queryByText('Shell 2')).not.toBeInTheDocument();
-    expect(lastWsUrl()).toContain('mode=claude');
+    expect(JSON.parse(localStorage.getItem('strado.activeTab') ?? '{}')[baseWorktree.path]).toBe('claude:1');
+    expect(claudeSocket.close).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
 

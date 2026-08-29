@@ -173,11 +173,13 @@ function answerCapabilityProbes(data: string, ws: WebSocket | null) {
 // reconnect, fit, drop-to-attach and the "Starting…" overlay. Extracted from
 // TerminalView so a split layout can mount several at once — each pane owns
 // its session for the pane's lifetime.
-export function XtermPane({ wsId, tab, focused, onFocus, handoffId }: {
+export function XtermPane({ wsId, tab, focused, visible = true, onFocus, handoffId }: {
   wsId: string;
   tab: PtyTab;
   /** the focused pane receives keyboard focus when it (re)connects */
   focused: boolean;
+  /** hidden cached panes stay connected but must not fit against a 0x0 box */
+  visible?: boolean;
   /** pointer went down inside this pane — make it the active one */
   onFocus?: () => void;
   /** A ready server-side handoff whose packet becomes this fresh session's initial prompt. */
@@ -318,7 +320,7 @@ export function XtermPane({ wsId, tab, focused, onFocus, handoffId }: {
     };
 
     buildTerm();
-    fit.fit();
+    if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit();
     // no lone blinking cursor while the pty starts; settled() shows it again
     term.write('\x1b[?25l');
 
@@ -524,9 +526,26 @@ export function XtermPane({ wsId, tab, focused, onFocus, handoffId }: {
     if (focused) termRef.current?.focus();
   }, [focused]);
 
+  // A cached terminal may become visible at a different size from the pane it
+  // last occupied. Refit after layout has painted without reconnecting its PTY.
+  useEffect(() => {
+    if (!visible) return;
+    const raf = requestAnimationFrame(() => {
+      const container = containerRef.current;
+      const term = termRef.current;
+      if (!container || !term || container.clientWidth === 0 || container.clientHeight === 0) return;
+      fitRef.current?.fit();
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+      if (focused) term.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [visible, focused]);
+
   return (
     <div
-      data-testid="pane-leaf"
+      data-testid={visible ? 'pane-leaf' : undefined}
       className="relative h-full w-full min-h-0 min-w-0 bg-zinc-950"
       onPointerDownCapture={onFocus}
       // Drop-to-attach uploads into the LOCAL worktree and types that path, so

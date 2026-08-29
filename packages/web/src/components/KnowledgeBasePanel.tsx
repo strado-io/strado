@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClientError, api, type KbFile } from '../api';
 import { formatBytes } from '../lib/formatBytes';
 import { MarkdownView } from './MarkdownView';
+import { kbInstancePath, readKbSelection, rememberKbSelection } from '../hooks/kbTabs';
 
 const POLL_MS = 10_000;
 
-const selKey = (p: string) => `strado:kb-selected:${p}`;
 const collapsedKey = (p: string) => `strado:kb-collapsed:${p}`;
 
 function dirOf(rel: string): string {
@@ -53,28 +53,34 @@ function loadCollapsed(worktreePath: string): Set<string> {
   }
 }
 
-// Assumes one KnowledgeBasePanel instance per worktreePath (Task 7 mounts a
-// keyed instance per worktree). `selected`/`collapsed` are lazily read from
-// localStorage once at mount and never re-synced if worktreePath changed
-// under an existing instance instead of a remount.
+// Each worktree/document tab gets a keyed panel instance. `selected` and
+// `collapsed` are lazily read from localStorage at mount; changing the key
+// remounts the panel with the state belonging to that document tab.
 export function KnowledgeBasePanel({
   wsId,
   worktreePath,
+  instanceId = '1',
   active,
   onOpenInVsCode,
+  onOpenInNewTab,
+  onSelectedPath,
 }: {
   wsId: string;
   worktreePath: string;
+  instanceId?: string;
   active: boolean;
   onOpenInVsCode: (relPath: string) => void;
+  onOpenInNewTab?: (relPath: string) => void;
+  onSelectedPath?: (relPath: string | null) => void;
 }) {
+  const instancePath = kbInstancePath(worktreePath, instanceId);
   const [files, setFiles] = useState<KbFile[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [cap, setCap] = useState(0);
   const [filesLoaded, setFilesLoaded] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(
-    () => localStorage.getItem(selKey(worktreePath)),
+    () => readKbSelection(worktreePath, instanceId),
   );
   // Mirrors `selected` for a synchronous read in refreshList (below) without
   // adding `selected` to its own dependency list — that would recreate
@@ -88,7 +94,14 @@ export function KnowledgeBasePanel({
   // against a file that's simply too large, so offering it is misleading.
   const [errorRetryable, setErrorRetryable] = useState(true);
   const [filter, setFilter] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed(worktreePath));
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed(instancePath));
+
+  useEffect(() => {
+    onSelectedPath?.(selected);
+    // The owning tab is stable for this component's lifetime; selection is
+    // the event that should update its label.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   // Which path `content` currently holds — `content` is single-valued but
   // mtimeRef records a visit per path, so without this a mtime-match alone
@@ -192,11 +205,10 @@ export function KnowledgeBasePanel({
         // A null fallback (no files left at all) still needs the key
         // cleared, not skipped — otherwise it keeps naming a dead file
         // forever, and the next mount wastes a load on it and flashes Retry.
-        if (fallback) localStorage.setItem(selKey(worktreePath), fallback);
-        else localStorage.removeItem(selKey(worktreePath));
+        rememberKbSelection(worktreePath, instanceId, fallback);
       }
     }
-  }, [wsId, worktreePath]);
+  }, [wsId, worktreePath, instanceId]);
 
   // Loads the listing and, only if nothing was already selected, fills in a
   // selection from it. Shared by the poll loop and the listing Retry button
@@ -208,11 +220,10 @@ export function KnowledgeBasePanel({
       const first = next[0]?.path ?? null;
       setSelected(first);
       selectedRef.current = first;
-      if (first) localStorage.setItem(selKey(worktreePath), first);
-      else localStorage.removeItem(selKey(worktreePath));
+      rememberKbSelection(worktreePath, instanceId, first);
     }
     return next;
-  }, [loadList, worktreePath]);
+  }, [loadList, worktreePath, instanceId]);
 
   // First load + polling, gated on `active` (an inactive panel does
   // nothing). The recurring poll is additionally gated on the document
@@ -278,8 +289,8 @@ export function KnowledgeBasePanel({
   const selectFile = useCallback((path: string) => {
     setSelected(path);
     selectedRef.current = path;
-    localStorage.setItem(selKey(worktreePath), path);
-  }, [worktreePath]);
+    rememberKbSelection(worktreePath, instanceId, path);
+  }, [worktreePath, instanceId]);
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -297,7 +308,7 @@ export function KnowledgeBasePanel({
     if (next.has(dir)) next.delete(dir);
     else next.add(dir);
     setCollapsed(next);
-    localStorage.setItem(collapsedKey(worktreePath), JSON.stringify([...next]));
+    localStorage.setItem(collapsedKey(instancePath), JSON.stringify([...next]));
   };
 
   // Stable identity required by MarkdownView, which memoizes its component
@@ -383,6 +394,14 @@ export function KnowledgeBasePanel({
             >
               Copy path
             </button>
+            {onOpenInNewTab && (
+              <button
+                onClick={() => onOpenInNewTab(selected)}
+                className="shrink-0 text-xs text-zinc-500 hover:text-zinc-200"
+              >
+                Open in new tab
+              </button>
+            )}
             <button
               onClick={() => onOpenInVsCode(selected)}
               className="shrink-0 text-xs text-sky-400 hover:underline"
