@@ -1,0 +1,118 @@
+name: release
+
+# Signed, notarized artifacts for a tagged release.
+# ci.yml already tests + builds unsigned on every push; this runs only on tags
+# and is the ONLY workflow holding secrets — keep it separate from anything
+# triggered by pull_request, which fork PRs can influence.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write        # required to create the release and upload assets
+
+jobs:
+  create-release:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      # The tag and package.json must agree, or the release would advertise a
+      # version the artifacts don't carry (0.1.48 shipped that way by hand).
+      - name: Check tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="${{ steps.v.outputs.version }}"
+          [ "$TAG" = "$PKG" ] || { echo "tag v$TAG != package.json $PKG"; exit 1; }
+      - name: Create draft release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft \
+            --title "Strado ${{ steps.v.outputs.version }}" --generate-notes \
+            -R "$GITHUB_REPOSITORY"
+
+  mac:
+    needs: create-release
+    runs-on: macos-14           # arm64, matches the DMG we ship
+    # Optional: create a "release" environment with yourself as required
+    # reviewer, so a pushed tag cannot mint a signed build without a click.
+    # environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+
+      - name: Import signing identity
+        env:
+          P12: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          P12_PASS: ${{ secrets.MAC_CERT_P12_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain"
+          KC_PASS="$(openssl rand -hex 20)"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          echo "$P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASS" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without this codesign blocks on an interactive prompt and the job hangs.
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KC"
+          security list-keychains -d user -s "$KC" login.keychain
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$KC"
+
+      - name: Build signed + notarized DMG
+        env:
+          STRADO_MAC_SIGNING_IDENTITY: ${{ secrets.MAC_SIGNING_IDENTITY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          # package-mac.mjs wants a PATH to the .p8, not its contents.
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          export APPLE_API_KEY="$RUNNER_TEMP/AuthKey.p8"
+          # All four vars set => signed, notarized, stapled, and the script
+          # fails the build unless codesign/spctl/stapler all pass.
+          node scripts/package-mac.mjs
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Upload DMG
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            "release/Strado-${{ needs.create-release.outputs.version }}-arm64.dmg" \
+            --clobber -R "$GITHUB_REPOSITORY"
+
+  linux:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      # Native node-pty and the pinned Node runtime can't be cross-compiled from
+      # macOS — but this runner IS linux x64, so no separate build box is needed.
+      - run: node scripts/package-linux.mjs
+      - name: Upload AppImage + deb
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          V="${{ needs.create-release.outputs.version }}"
+          gh release upload "$GITHUB_REF_NAME" \
+            "release/Strado-$V.AppImage" \
+            "release/strado_${V}_amd64.deb" \
+            --clobber -R "$GITHUB_REPOSITORY"
+
+  publish:
+    # Only flips the release out of draft once BOTH platforms uploaded, so a
+    # half-built release is never visible. A mac-only feed bump sent pre-0.1.41
+    # AppImage installs into an update loop; same rule applies to the download page.
+    needs: [create-release, mac, linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest -R "$GITHUB_REPOSITORY"
