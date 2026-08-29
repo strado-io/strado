@@ -43,6 +43,7 @@ export type Deps = {
   claudeStatus: ClaudeStatusStore;
   codexStatus: ClaudeStatusStore;
   opencodeStatus: ClaudeStatusStore;
+  piStatus: ClaudeStatusStore;
   gitChanges: GitChangesService;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
@@ -119,6 +120,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const claudeStatus = createAgentStatusStore(bus, 'claudeStatus');
   const codexStatus = createAgentStatusStore(bus, 'codexStatus');
   const opencodeStatus = createAgentStatusStore(bus, 'opencodeStatus');
+  const piStatus = createAgentStatusStore(bus, 'piStatus');
   const activity = createActivityTracker(path.join(homeStateDir, 'activity.json'));
   const debugLog = createDebugLog(process.env.STRADO_LOG_DIR || path.join(homeStateDir, 'logs'));
   // Declared ahead of the callbacks below: onTerminalExit closes over
@@ -131,10 +133,13 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const onTerminalData = createAgentOutputBeats({
     touch: (p) => activity.touch(p),
     agentStatus: (mode, p) =>
-      (mode === 'claude' ? claudeStatus : mode === 'codex' ? codexStatus : opencodeStatus).get(p),
+      (mode === 'claude' ? claudeStatus
+      : mode === 'codex' ? codexStatus
+      : mode === 'opencode' ? opencodeStatus
+      : piStatus).get(p),
     shellAgentWorking: (p, id) => {
       const key = `shell:${id}`;
-      return [claudeStatus, codexStatus, opencodeStatus]
+      return [claudeStatus, codexStatus, opencodeStatus, piStatus]
         .some((store) => store.sessions(p)[key] === 'working');
     },
   });
@@ -237,6 +242,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     claudeStatus,
     codexStatus,
     opencodeStatus,
+    piStatus,
     gitChanges: createGitChangesService(),
     activity,
     // File saves (any editor) beat the activity clock; worktree paths are
@@ -382,6 +388,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerCodexStatusRoutes(app);
   const { registerOpencodeStatusRoutes } = await import('./routes/opencodeStatus.js');
   await registerOpencodeStatusRoutes(app);
+  const { registerPiStatusRoutes } = await import('./routes/piStatus.js');
+  await registerPiStatusRoutes(app);
   const { registerPreviewTargetRoutes } = await import('./routes/previewTargets.js');
   await registerPreviewTargetRoutes(app);
   const { registerLicenseRoutes } = await import('./routes/license.js');

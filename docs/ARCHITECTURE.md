@@ -34,7 +34,7 @@ flowchart LR
         web["React SPA<br/>(packages/web)"]
         server["Local server<br/>(packages/server)<br/>127.0.0.1:7777"]
         ptyd["ptyd daemon<br/>(packages/ptyd)"]
-        agents["Agent PTYs<br/>claude / codex / opencode / shell"]
+        agents["Agent PTYs<br/>claude / codex / opencode / pi / shell"]
         vscode["code serve-web"]
         preview["Preview browser<br/>WebContentsView + CDP :9222"]
 
@@ -77,7 +77,7 @@ Key boundaries:
 | Feature | What it does | Where it lives |
 |---|---|---|
 | **Worktree dashboard** | Create / adopt / delete worktrees across repos and workspaces; each row shows branch, uncommitted changes, env profile, dev-server status, agent status, tracked time — live via SSE. | `web/pages/Dashboard.tsx`, `server/routes/worktrees.ts` |
-| **Agent & terminal hub** | Persistent Claude Code / Codex / OpenCode / shell sessions per worktree; multiple Claude sessions (`Claude N` tabs); sessions survive tab close, server restart and app upgrade. Split panes, drag-reorder tabs, hold-Cmd Arc-style switcher with live previews. | `web/pages/TerminalView.tsx`, `server/routes/terminal.ts`, `packages/ptyd` |
+| **Agent & terminal hub** | Persistent Claude Code / Codex / OpenCode / Pi / shell sessions per worktree; multiple Claude sessions (`Claude N` tabs); sessions survive tab close, server restart and app upgrade. Split panes, drag-reorder tabs, hold-Cmd Arc-style switcher with live previews. | `web/pages/TerminalView.tsx`, `server/routes/terminal.ts`, `packages/ptyd` |
 | **Embedded VS Code** | `code serve-web` per folder in a cross-origin iframe, kept mounted across tab switches; Cmd+W reaches the editor (Close Window is Shift+Cmd+W). | `server/services/vscodeWeb.ts`, desktop hotkey wiring |
 | **Preview browser + agent verification** | Multi-tab in-app browser (WebContentsView) with toolbar and dockable DevTools. Exposed to agents via the `strado-preview` MCP (screenshot, click, fill, eval, console, network) — scoped so each session only sees **its own worktree's** tabs. | `desktop/main.cjs`, `desktop/preview-mcp.cjs`, `server/routes/previewTargets.ts` |
 | **Diff & commit** | Staged/unstaged hunks, per-hunk stage/discard, commit, push/pull, branch diff, commit graph, in-app MR/PR review and creation. | `web/pages/DiffView.tsx`, `server/routes/gitChanges.ts` |
@@ -104,7 +104,7 @@ any other import, then builds the dependency graph (`workspaces`, `registry`, ev
 **API surface (abridged):**
 
 - Root: `/api/health`, `/api/capabilities`, `/api/workspaces*`, `/api/runners*`,
-  `/api/terminal/peek`, `WS /ws/terminal`, `/api/{claude,codex,opencode}/status`,
+  `/api/terminal/peek`, `WS /ws/terminal`, `/api/{claude,codex,opencode,pi}/status`,
   `/api/activity/beat`, `/api/vscode`, `/api/jira/*`, `/api/{gitlab,github}/config`,
   `/api/license*`, `/api/auth/{start,poll,signout}`, `/api/update-check`,
   `/api/preview-targets`, `/api/feedback`, `/api/profile`, `/api/env-check`.
@@ -160,7 +160,7 @@ board, fed by SSE + a 15s re-sync poll), `TerminalView` (the hub, rendered inlin
 switching worktrees remounts it), `DiffView` (full-screen overlay), settings and
 workspace modals.
 
-The hub's tab modes: `shell` / `claude` / `codex` / `opencode` (pty over WS), `vscode`
+The hub's tab modes: `shell` / `claude` / `codex` / `opencode` / `pi` (pty over WS), `vscode`
 (iframe, kept mounted-but-hidden), `browser` (Electron WebContentsView overlay,
 multi-tab, DevTools dock bottom/right/window), `kb`. Tab icon = identity, tab **color =
 status**. Drag-reorder is pointer-based with DOM transforms (HTML5 DnD rejected).
@@ -304,7 +304,7 @@ and worktree are bind-mounted at identical paths in and out (since `.git` is a p
 file with absolute paths). ptyd stays on the host and execs into the container, so
 terminal sessions survive daemon restarts and server upgrades; a container stop ends
 live sessions and the next attach restarts it. Agent CLIs (`claude`, `codex`,
-`opencode`) live in a base image built locally from the repo's declared dependencies
+`opencode`, `pi`) live in a base image built locally from the repo's declared dependencies
 (`.nvmrc`, `engines`). The user's credentials (model key, git identity) are injected
 at container start via a 0600 env file — never baked into the image. Hook status
 reaches the host over a bind-mounted socket allowlisted to status routes only. Sandboxes
@@ -312,7 +312,7 @@ park (stop) after 2h idle and resume on next attach.
 
 **Operational notes:**
 - A container carries the hooks-dir mount and credentials it was created with; changing those requires recreating the worktree, not just restarting.
-- The hook socket allowlist pins the three status routes by prefix; a NEW route added under `/api/codex/` or `/api/opencode/` would become reachable from inside sandboxes — add such routes deliberately.
+- The hook socket allowlist pins the four status routes by prefix; a NEW route added under `/api/codex/`, `/api/opencode/` or `/api/pi/` would become reachable from inside sandboxes — add such routes deliberately.
 
 ### 4.6 `strado-api` — the hosted Strado Cloud service (deploy-only)
 
@@ -342,14 +342,16 @@ suite exercises both. Refuses to boot if the migration head doesn't match.
 
 ```mermaid
 flowchart LR
-    hook["Agent hook<br/>(claude-status-hook.mjs /<br/>codex notify / opencode plugin)"]
+    hook["Agent hook<br/>(claude-status-hook.mjs / codex notify /<br/>opencode plugin / pi extension)"]
     -->|"POST /api/&lt;agent&gt;/status<br/>{cwd, status, sessionId}"| store["Status store"]
     --> bus["event bus"] --> sse["SSE /events/worktrees"]
     --> ui["Dashboard chip + tab color<br/>+ notification on 'waiting'"]
 ```
 
 Hooks are installed per worktree by the server (Claude: `.claude/settings.local.json`;
-OpenCode: `.opencode/plugin/`), POST with ~1 s timeout, swallow errors, always exit 0 —
+OpenCode: `.opencode/plugin/`) or passed on the launch command (Codex: `-c notify=…`;
+Pi: `-e <hooks>/strado-pi-status.ts`, which keeps `.pi/` out of the worktree and
+avoids pi's project-trust prompt). They POST with ~1 s timeout, swallow errors, always exit 0 —
 they must never block the agent. `sessionEnv()` injects `STRADO_SESSION_ID` per pty so
 status is per-session, then **strips the instance-identity vars** (`STRADO_HOME`,
 `PORT`, `STRADO_PROFILE`, …) so a Strado-inside-Strado session doesn't inherit the

@@ -41,6 +41,10 @@ describe('shellHostedAgent', () => {
     expect(shellHostedAgent('2', { claude: { '2': 'working', 'shell:3': 'working' } })).toBeNull();
   });
 
+  it('names Pi when it is the agent running inside the Shell tab', () => {
+    expect(shellHostedAgent('2', { pi: { [key]: 'working' } })).toEqual({ mode: 'pi', status: 'working' });
+  });
+
   it('prefers the busiest agent when a tab has hosted several', () => {
     expect(shellHostedAgent('2', { claude: { [key]: 'waiting' }, codex: { [key]: 'working' } }))
       .toEqual({ mode: 'codex', status: 'working' });

@@ -1,8 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
-import { installClaudeHooks, installOpencodePlugin, codexNotifyScriptPath } from '../services/claudeHooks.js';
-import { claudeKey, codexKey, opencodeKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
+import { installClaudeHooks, installOpencodePlugin, codexNotifyScriptPath, piExtensionPath } from '../services/claudeHooks.js';
+import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { defaultShell } from '../services/platform.js';
 
 type ClientMsg =
@@ -40,6 +40,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         req.query.mode === 'shell' ? 'shell'
         : req.query.mode === 'codex' ? 'codex'
         : req.query.mode === 'opencode' ? 'opencode'
+        : req.query.mode === 'pi' ? 'pi'
         : 'claude';
       const sessionId = /^\d+$/.test(req.query.session ?? '') ? req.query.session! : '1';
       const stores = await app.deps.registry.get(wsId);
@@ -56,6 +57,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         mode === 'shell' ? shellKey(target, sessionId)
         : mode === 'codex' ? codexKey(target, sessionId)
         : mode === 'opencode' ? opencodeKey(target, sessionId)
+        : mode === 'pi' ? piKey(target, sessionId)
         : claudeKey(target, sessionId);
       try {
         return { lines: peekLines(app.deps.terminal.snapshot(sessionKey), 24) };
@@ -75,6 +77,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         req.query.mode === 'shell' ? 'shell'
         : req.query.mode === 'codex' ? 'codex'
         : req.query.mode === 'opencode' ? 'opencode'
+        : req.query.mode === 'pi' ? 'pi'
         : 'claude';
       const sessionId = /^\d+$/.test(req.query.session ?? '') ? req.query.session! : '1';
       // Spawn-time size: resize messages sent while this handler is still in
@@ -126,11 +129,13 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // a login shell under `<path>\0shell[:id]`. Codex runs the codex CLI
       // under `<path>\0codex` — resume the most recent conversation for this
       // directory, or start fresh. OpenCode runs under `<path>\0opencode` —
-      // continue the last session, or start fresh.
+      // continue the last session, or start fresh. Pi runs under `<path>\0pi`
+      // on the same rule.
       const sessionKey =
         mode === 'shell' ? shellKey(target, sessionId)
         : mode === 'codex' ? codexKey(target, sessionId)
         : mode === 'opencode' ? opencodeKey(target, sessionId)
+        : mode === 'pi' ? piKey(target, sessionId)
         : claudeKey(target, sessionId);
       // Codex has no hooks API; its `notify` config calls our hook script on
       // agent-turn-complete so we can show a "waiting for input" status.
@@ -146,6 +151,13 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // Same rule as codex: only the primary session continues the last
       // conversation; extra tabs start fresh.
       const opencodeCmd = sessionId === '1' ? `opencode --continue || opencode` : `opencode`;
+      // Pi has no ambient hook config to write — its status extension is loaded
+      // by path, so every launch carries `-e`. Same primary-session rule again.
+      const piExtension = piExtensionPath();
+      const piCmd =
+        sessionId === '1'
+          ? `pi -c -e "${piExtension}" || pi -e "${piExtension}"`
+          : `pi -e "${piExtension}"`;
       // Start a login shell first, then let the bootstrap load the interactive
       // profile and prepend Strado's launchers AFTER it. User rc files commonly
       // prepend nvm/Homebrew paths, which otherwise hide the Codex launcher.
@@ -158,7 +170,9 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
             ? { file: defaultShell(), args: ['-l', '-c', codexCmd] }
             : mode === 'opencode'
               ? { file: defaultShell(), args: ['-l', '-c', opencodeCmd] }
-              : undefined;
+              : mode === 'pi'
+                ? { file: defaultShell(), args: ['-l', '-c', piCmd] }
+                : undefined;
 
       if (mode === 'claude' || mode === 'shell') {
         try {
@@ -208,12 +222,14 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         if (mode === 'claude') app.deps.claudeStatus.clear(target, sessionId);
         if (mode === 'codex') app.deps.codexStatus.clear(target, sessionId);
         if (mode === 'opencode') app.deps.opencodeStatus.clear(target, sessionId);
+        if (mode === 'pi') app.deps.piStatus.clear(target, sessionId);
         if (mode === 'shell') {
           // the tab is gone, so any agent it hosted is gone with it
           const shellAgentId = `shell:${sessionId}`;
           app.deps.claudeStatus.remove(target, shellAgentId);
           app.deps.codexStatus.remove(target, shellAgentId);
           app.deps.opencodeStatus.remove(target, shellAgentId);
+          app.deps.piStatus.remove(target, shellAgentId);
         }
         emitSessions();
         if (socket.readyState === socket.OPEN) {

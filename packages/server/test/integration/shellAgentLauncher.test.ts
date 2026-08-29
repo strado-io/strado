@@ -30,7 +30,7 @@ async function listen(hits: any[]): Promise<number> {
   return (server.address() as { port: number }).port;
 }
 
-async function run(agent: 'claude' | 'codex' | 'opencode') {
+async function run(agent: 'claude' | 'codex' | 'opencode' | 'pi') {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'shell-agent-'));
   const fakeBin = path.join(tmp, 'bin');
   const capture = path.join(tmp, 'capture.json');
@@ -68,6 +68,19 @@ describe('Shell agent launchers', () => {
       { url: `/api/${agent}/status`, body: { cwd: '/tmp/wt-a', status: 'closed', sessionId: 'shell:2' } },
     ]);
     expect(result.capture.argv).toEqual(['--flag', 'value']);
+    expect(result.capture.path.split(path.delimiter)).not.toContain(path.join(HOOKS, 'bin'));
+  });
+
+  it('injects the status extension when Pi is launched from Shell', async () => {
+    const result = await run('pi');
+    expect(result.code).toBe(0);
+    expect(result.hits).toEqual([
+      { url: '/api/pi/status', body: { cwd: '/tmp/wt-a', status: 'waiting', sessionId: 'shell:2' } },
+      { url: '/api/pi/status', body: { cwd: '/tmp/wt-a', status: 'closed', sessionId: 'shell:2' } },
+    ]);
+    expect(result.capture.argv[0]).toBe('-e');
+    expect(result.capture.argv[1]).toContain('strado-pi-status.ts');
+    expect(result.capture.argv.slice(2)).toEqual(['--flag', 'value']);
     expect(result.capture.path.split(path.delimiter)).not.toContain(path.join(HOOKS, 'bin'));
   });
 

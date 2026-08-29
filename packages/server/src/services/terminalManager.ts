@@ -16,7 +16,7 @@ export type BuildSpec = (cwd: string) => SpawnSpec;
 // spec spawns exactly as it always has.
 export type SpecWrapper = (cwd: string, spec: SpawnSpec) => SpawnSpec;
 
-export type LiveSession = { path: string; mode: 'claude' | 'shell' | 'codex' | 'opencode'; id: string };
+export type LiveSession = { path: string; mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi'; id: string };
 
 // Shell 1 keeps the historical un-suffixed key so sessions that were live
 // before this change survive without migration.
@@ -39,14 +39,21 @@ export function opencodeKey(path: string, id: string): string {
   return id === '1' ? `${path}\0opencode` : `${path}\0opencode:${id}`;
 }
 
+// Pi 1 keeps the historical suffix-only key for the same reason.
+export function piKey(path: string, id: string): string {
+  return id === '1' ? `${path}\0pi` : `${path}\0pi:${id}`;
+}
+
 export function parseSessionKey(key: string): LiveSession {
   const [path, suffix] = key.split('\0');
   if (!suffix) return { path: path!, mode: 'claude', id: '1' };
   if (suffix === 'codex') return { path: path!, mode: 'codex', id: '1' };
   if (suffix === 'opencode') return { path: path!, mode: 'opencode', id: '1' };
+  if (suffix === 'pi') return { path: path!, mode: 'pi', id: '1' };
   if (suffix.startsWith('claude:')) return { path: path!, mode: 'claude', id: suffix.slice('claude:'.length) };
   if (suffix.startsWith('codex:')) return { path: path!, mode: 'codex', id: suffix.slice('codex:'.length) };
   if (suffix.startsWith('opencode:')) return { path: path!, mode: 'opencode', id: suffix.slice('opencode:'.length) };
+  if (suffix.startsWith('pi:')) return { path: path!, mode: 'pi', id: suffix.slice('pi:'.length) };
   const id = suffix === 'shell' ? '1' : suffix.slice('shell:'.length);
   return { path: path!, mode: 'shell', id };
 }
@@ -61,15 +68,18 @@ export function sessionsPayload(live: LiveSession[]) {
   const claudeSessions = ids('claude');
   const codexSessions = ids('codex');
   const opencodeSessions = ids('opencode');
+  const piSessions = ids('pi');
   return {
     hasClaudeSession: claudeSessions.length > 0,
     hasCodexSession: codexSessions.length > 0,
     hasOpencodeSession: opencodeSessions.length > 0,
+    hasPiSession: piSessions.length > 0,
     hasShellSession: shellSessions.length > 0,
     shellSessions,
     claudeSessions,
     codexSessions,
     opencodeSessions,
+    piSessions,
   };
 }
 

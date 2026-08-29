@@ -11,12 +11,13 @@ describe('session helpers', () => {
     expect(hasSession(wt('/a', { hasClaudeSession: true }))).toBe(true);
     expect(hasSession(wt('/b', { hasCodexSession: true }))).toBe(true);
     expect(hasSession(wt('/c', { hasShellSession: true }))).toBe(true);
+    expect(hasSession(wt('/e', { hasPiSession: true }))).toBe(true);
     expect(hasSession(wt('/d'))).toBe(false);
   });
 
-  it('sessionChips emits one chip per live session, claude then codex then opencode then shells, one per shell id', () => {
+  it('sessionChips emits one chip per live session, claude then codex then opencode then pi then shells, one per shell id', () => {
     const chips = sessionChips([
-      wt('/a', { hasClaudeSession: true, hasCodexSession: true, hasOpencodeSession: true, hasShellSession: true, shellSessions: ['1', '3'], claudeStatus: 'working' }),
+      wt('/a', { hasClaudeSession: true, hasCodexSession: true, hasOpencodeSession: true, hasPiSession: true, hasShellSession: true, shellSessions: ['1', '3'], claudeStatus: 'working' }),
       wt('/b', { hasShellSession: true }),
       wt('/c'),
     ]);
@@ -24,6 +25,7 @@ describe('session helpers', () => {
       { path: '/a', mode: 'claude', sessionId: '1', modeLabel: 'claude', label: 'a', title: null, claudeStatus: 'working' },
       { path: '/a', mode: 'codex', sessionId: '1', modeLabel: 'codex', label: 'a', title: null, codexStatus: undefined },
       { path: '/a', mode: 'opencode', sessionId: '1', modeLabel: 'opencode', label: 'a', title: null, opencodeStatus: undefined },
+      { path: '/a', mode: 'pi', sessionId: '1', modeLabel: 'pi', label: 'a', title: null, piStatus: undefined },
       { path: '/a', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'a', title: null, hostedAgent: undefined },
       { path: '/a', mode: 'shell', sessionId: '3', modeLabel: 'shell 3', label: 'a', title: null, hostedAgent: undefined },
       { path: '/b', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'b', title: null, hostedAgent: undefined },
@@ -101,6 +103,7 @@ describe('chipStatus', () => {
     expect(chipStatus({ ...base, mode: 'claude', claudeStatus: 'working' })).toBe('working');
     expect(chipStatus({ ...base, mode: 'codex', codexStatus: 'waiting' })).toBe('waiting');
     expect(chipStatus({ ...base, mode: 'opencode', opencodeStatus: 'idle' })).toBe('idle');
+    expect(chipStatus({ ...base, mode: 'pi', piStatus: 'working' })).toBe('working');
     expect(chipStatus({ ...base, mode: 'shell' })).toBeUndefined();
     expect(chipStatus({ ...base, mode: 'vscode' })).toBeUndefined();
   });

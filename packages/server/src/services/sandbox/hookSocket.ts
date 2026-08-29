@@ -24,6 +24,7 @@ export const ALLOW: { method: string; path: string; prefix: boolean }[] = [
   { method: 'POST', path: '/api/claude/status', prefix: false },
   { method: 'POST', path: '/api/codex/', prefix: true },
   { method: 'POST', path: '/api/opencode/', prefix: true },
+  { method: 'POST', path: '/api/pi/', prefix: true },
   // The plan also named POST /api/events. No route answers it — the SSE
   // streams are GETs under /events/ — so allowing it would only pre-open a
   // path for whatever gets mounted there later. test/api/hookAllowlist.test.ts

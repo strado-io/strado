@@ -34,6 +34,8 @@ export function pickSessionFields(w: {
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; codexSessions?: string[];
   hasOpencodeSession?: boolean; opencodeStatus?: 'idle' | 'working' | 'waiting';
   opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; opencodeSessions?: string[];
+  hasPiSession?: boolean; piStatus?: 'idle' | 'working' | 'waiting';
+  piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; piSessions?: string[];
   hasShellSession?: boolean; shellSessions?: string[];
 }) {
   return {
@@ -43,6 +45,8 @@ export function pickSessionFields(w: {
     codexStatusById: w.codexStatusById, codexSessions: w.codexSessions,
     hasOpencodeSession: w.hasOpencodeSession, opencodeStatus: w.opencodeStatus,
     opencodeStatusById: w.opencodeStatusById, opencodeSessions: w.opencodeSessions,
+    hasPiSession: w.hasPiSession, piStatus: w.piStatus,
+    piStatusById: w.piStatusById, piSessions: w.piSessions,
     hasShellSession: w.hasShellSession, shellSessions: w.shellSessions,
   };
 }
@@ -55,7 +59,7 @@ export function pickSessionFields(w: {
  * session" from a specific one among several.
  */
 export function runnerSessionPath(o: {
-  remoteWsId: string; path: string; mode: 'claude' | 'shell' | 'codex' | 'opencode'; id?: string;
+  remoteWsId: string; path: string; mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi'; id?: string;
 }): string {
   const base = `/api/w/${encodeURIComponent(o.remoteWsId)}/worktrees/${encodeURIComponent(o.path)}/sessions/${o.mode}`;
   return o.id && o.id !== '1' ? `${base}?id=${encodeURIComponent(o.id)}` : base;
@@ -333,6 +337,8 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
               codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; codexSessions?: string[];
               hasOpencodeSession?: boolean; opencodeStatus?: 'idle' | 'working' | 'waiting';
               opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; opencodeSessions?: string[];
+              hasPiSession?: boolean; piStatus?: 'idle' | 'working' | 'waiting';
+              piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; piSessions?: string[];
               hasShellSession?: boolean; shellSessions?: string[];
             }> }>(
               r.runnerId,
@@ -445,7 +451,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
     runnerId: z.string().min(1).max(64),
     remoteWsId: z.string().min(1),
     path: z.string().min(1),
-    mode: z.enum(['claude', 'shell', 'codex', 'opencode']),
+    mode: z.enum(['claude', 'shell', 'codex', 'opencode', 'pi']),
     id: z.string().min(1).optional(),
   });
 

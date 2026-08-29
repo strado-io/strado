@@ -10,9 +10,14 @@ describe('imageTag', () => {
 });
 
 describe('Dockerfile', () => {
-  it('installs all three agents and takes NODE_MAJOR', async () => {
+  it('installs all four agents and takes NODE_MAJOR', async () => {
     const df = await fsp.readFile(dockerfilePath(), 'utf8');
-    for (const pkg of ['@anthropic-ai/claude-code', '@openai/codex', 'opencode-ai']) expect(df).toContain(pkg);
+    for (const pkg of [
+      '@anthropic-ai/claude-code',
+      '@openai/codex',
+      'opencode-ai',
+      '@earendil-works/pi-coding-agent',
+    ]) expect(df).toContain(pkg);
     expect(df).toContain('ARG NODE_MAJOR');
   });
 

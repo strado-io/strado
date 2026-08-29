@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
-import { ClaudeIcon, CodexIcon, OpencodeIcon, ShellIcon } from './hub/icons';
+import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, ShellIcon } from './hub/icons';
 
 const TRUE_BLACK_TERMINAL_THEME: ITheme = {
   background: '#000000', foreground: '#e5e5e5', cursor: '#f97f1b', cursorAccent: '#000000',
@@ -126,7 +126,7 @@ export type RemoteTarget = {
 
 export type PtyTab = {
   path: string;
-  mode: 'claude' | 'codex' | 'opencode' | 'shell';
+  mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
   id: string;
   remote?: RemoteTarget | null;
 };
@@ -554,12 +554,14 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
             {connecting === 'claude' ? <ClaudeIcon size={36} />
             : connecting === 'codex' ? <CodexIcon size={36} />
             : connecting === 'opencode' ? <OpencodeIcon size={36} />
+            : connecting === 'pi' ? <PiIcon size={36} />
             : <ShellIcon size={36} />}
           </span>
           <span className="text-sm text-zinc-500">
             {connecting === 'claude' ? 'Starting Claude…'
             : connecting === 'codex' ? 'Starting Codex…'
             : connecting === 'opencode' ? 'Starting OpenCode…'
+            : connecting === 'pi' ? 'Starting Pi…'
             : 'Starting zsh…'}
           </span>
         </div>

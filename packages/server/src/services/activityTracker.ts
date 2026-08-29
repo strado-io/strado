@@ -29,7 +29,7 @@ export type ActivityTracker = {
 // streaming turn beats once per interval, not per output chunk.
 export function createAgentOutputBeats(opts: {
   touch(worktreePath: string): void;
-  agentStatus(mode: 'claude' | 'codex' | 'opencode', worktreePath: string): 'idle' | 'working' | 'waiting' | undefined;
+  agentStatus(mode: 'claude' | 'codex' | 'opencode' | 'pi', worktreePath: string): 'idle' | 'working' | 'waiting' | undefined;
   shellAgentWorking?: (worktreePath: string, shellSessionId: string) => boolean;
   now?: () => number;
   throttleMs?: number;

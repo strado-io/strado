@@ -252,12 +252,12 @@ export const api = {
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/env-profile`,
         { method: 'POST', body: JSON.stringify({ profile }) },
       ),
-    killSession: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode', id?: string) =>
+    killSession: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi', id?: string) =>
       request<void>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/sessions/${mode}${id && id !== '1' ? `?id=${encodeURIComponent(id)}` : ''}`,
         { method: 'DELETE' },
       ),
-    sessionBusy: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode', id?: string) =>
+    sessionBusy: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi', id?: string) =>
       request<{ busy: boolean }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/sessions/${mode}/busy${id && id !== '1' ? `?id=${encodeURIComponent(id)}` : ''}`,
       ),
@@ -581,7 +581,7 @@ export const api = {
     /** Kill a session that lives on a runner. */
     killRemoteSession: (wsId: string, payload: {
       runnerId: string; remoteWsId: string; path: string;
-      mode: 'claude' | 'shell' | 'codex' | 'opencode'; id?: string;
+      mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi'; id?: string;
     }) =>
       request<{ ok: true }>(
         `${wsBase(wsId)}/remote-worktrees/kill-session`,
@@ -759,5 +759,7 @@ export type RemoteWorktree = {
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; codexSessions?: string[];
   hasOpencodeSession?: boolean; opencodeStatus?: 'idle' | 'working' | 'waiting';
   opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; opencodeSessions?: string[];
+  hasPiSession?: boolean; piStatus?: 'idle' | 'working' | 'waiting';
+  piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; piSessions?: string[];
   hasShellSession?: boolean; shellSessions?: string[];
 };

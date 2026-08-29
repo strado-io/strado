@@ -16,7 +16,7 @@ import { addSandboxWorktree, bareRepoPath, ensureBareRepo, sandboxReposDir } fro
 import { sandboxSlugFor } from '../services/sandbox/sandboxes.js';
 import { hooksDir } from '../services/claudeHooks.js';
 import { canonicalWorktreesDir, findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
-import { claudeKey, codexKey, opencodeKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
+import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 
 export type WorktreeRow = {
   path: string;
@@ -34,14 +34,18 @@ export type WorktreeRow = {
   codexStatusById: Record<string, 'idle' | 'working' | 'waiting'>;
   opencodeStatus: 'idle' | 'working' | 'waiting' | undefined;
   opencodeStatusById: Record<string, 'idle' | 'working' | 'waiting'>;
+  piStatus: 'idle' | 'working' | 'waiting' | undefined;
+  piStatusById: Record<string, 'idle' | 'working' | 'waiting'>;
   hasClaudeSession: boolean;
   hasCodexSession: boolean;
   hasOpencodeSession: boolean;
+  hasPiSession: boolean;
   hasShellSession: boolean;
   shellSessions: string[];
   claudeSessions: string[];
   codexSessions: string[];
   opencodeSessions: string[];
+  piSessions: string[];
   diffStats: { additions: number; deletions: number; files: number } | null;
   activitySeconds: number;
 };
@@ -195,6 +199,8 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           codexStatusById: app.deps.codexStatus.sessions(w.path),
           opencodeStatus: app.deps.opencodeStatus.get(w.path),
           opencodeStatusById: app.deps.opencodeStatus.sessions(w.path),
+          piStatus: app.deps.piStatus.get(w.path),
+          piStatusById: app.deps.piStatus.sessions(w.path),
           ...sessionsOf(w.path),
           diffStats,
           activitySeconds: app.deps.activity.get(w.path),
@@ -530,6 +536,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         req.params.mode === 'shell' ? 'shell'
         : req.params.mode === 'codex' ? 'codex'
         : req.params.mode === 'opencode' ? 'opencode'
+        : req.params.mode === 'pi' ? 'pi'
         : 'claude';
       const id = /^\d+$/.test(req.query.id ?? '') ? req.query.id! : '1';
       const allRepos = await repos.list();
@@ -540,6 +547,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         mode === 'shell' ? shellKey(target, id)
         : mode === 'codex' ? codexKey(target, id)
         : mode === 'opencode' ? opencodeKey(target, id)
+        : mode === 'pi' ? piKey(target, id)
         : claudeKey(target, id);
       const info = app.deps.terminal.status(key);
       const busy =
@@ -557,6 +565,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         req.params.mode === 'shell' ? 'shell'
         : req.params.mode === 'codex' ? 'codex'
         : req.params.mode === 'opencode' ? 'opencode'
+        : req.params.mode === 'pi' ? 'pi'
         : 'claude';
       const id = /^\d+$/.test(req.query.id ?? '') ? req.query.id! : '1';
       const allRepos = await repos.list();
@@ -568,11 +577,13 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         mode === 'shell' ? shellKey(target, id)
         : mode === 'codex' ? codexKey(target, id)
         : mode === 'opencode' ? opencodeKey(target, id)
+        : mode === 'pi' ? piKey(target, id)
         : claudeKey(target, id),
       );
       if (mode === 'claude') app.deps.claudeStatus.clear(target, id);
       if (mode === 'codex') app.deps.codexStatus.clear(target, id);
       if (mode === 'opencode') app.deps.opencodeStatus.clear(target, id);
+      if (mode === 'pi') app.deps.piStatus.clear(target, id);
 
       // pty death is async; report the killed session as gone immediately.
       const live = app.deps.terminal

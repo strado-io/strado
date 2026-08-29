@@ -83,6 +83,7 @@ export type Worktree = {
   codexStatus?: 'idle' | 'working' | 'waiting';
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
+  piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   hasClaudeSession?: boolean;
   hasCodexSession?: boolean;
   hasShellSession?: boolean;
@@ -92,6 +93,9 @@ export type Worktree = {
   opencodeSessions?: string[];
   opencodeStatus?: 'idle' | 'working' | 'waiting';
   hasOpencodeSession?: boolean;
+  piSessions?: string[];
+  piStatus?: 'idle' | 'working' | 'waiting';
+  hasPiSession?: boolean;
   diffStats?: { additions: number; deletions: number; files: number } | null;
   activitySeconds?: number;
 };

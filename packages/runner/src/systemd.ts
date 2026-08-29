@@ -2,7 +2,7 @@
 //
 // A USER unit (plus linger) rather than a system service, because the runner
 // must be able to do everything the human could: read their SSH keys and git
-// config, and exec claude/codex/opencode with their credentials.
+// config, and exec claude/codex/opencode/pi with their credentials.
 //
 // THE PATH TRAP: systemd user services get a minimal environment — no
 // ~/.zshrc, no nvm, no ~/.local/bin — which is exactly where the agent CLIs
@@ -64,7 +64,7 @@ After=network-online.target
 Type=simple
 ExecStart=${opts.execStart}
 # Captured from the user's login shell at install time so agent CLIs (claude,
-# codex, opencode) resolve; re-run 'strado-runner env' after installing a new one.
+# codex, opencode, pi) resolve; re-run 'strado-runner env' after installing a new one.
 Environment=PATH=${opts.pathValue}
 EnvironmentFile=-${opts.envFile}
 Restart=always

@@ -120,6 +120,37 @@ describe('hooks with STRADO_SERVER_SOCKET set', () => {
     ).toBe(0);
   });
 
+  it('the pi extension posts over the socket, not the port', async () => {
+    const viaSocket: Hit[] = [];
+    const viaPort: Hit[] = [];
+    const socketPath = await listenOnSocket(viaSocket);
+    const port = await listenOnPort(viaPort);
+
+    const before = { ...process.env };
+    cleanups.push(() => {
+      process.env = before;
+    });
+    process.env.STRADO_WORKTREE = '/tmp/wt-a';
+    process.env.STRADO_STATUS_PORT = String(port);
+    process.env.STRADO_SESSION_ID = '4';
+    process.env.STRADO_SESSION_MODE = 'shell';
+    process.env.STRADO_SERVER_SOCKET = socketPath;
+
+    const { default: stradoStatus } = await import('../../hooks/strado-pi-status');
+    const handlers: Record<string, () => Promise<void>> = {};
+    stradoStatus({ on: (name: string, fn: () => Promise<void>) => { handlers[name] = fn; } });
+    await handlers.before_agent_start!();
+    await handlers.agent_settled!();
+    await handlers.session_shutdown!();
+
+    expect(viaSocket).toEqual([
+      { url: '/api/pi/status', body: { cwd: '/tmp/wt-a', status: 'working', sessionId: 'shell:4' } },
+      { url: '/api/pi/status', body: { cwd: '/tmp/wt-a', status: 'waiting', sessionId: 'shell:4' } },
+      { url: '/api/pi/status', body: { cwd: '/tmp/wt-a', status: 'closed', sessionId: 'shell:4' } },
+    ]);
+    expect(viaPort).toEqual([]);
+  });
+
   it('the opencode plugin posts over the socket, not the port', async () => {
     const viaSocket: Hit[] = [];
     const viaPort: Hit[] = [];

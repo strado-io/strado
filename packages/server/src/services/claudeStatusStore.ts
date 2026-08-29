@@ -18,12 +18,13 @@ export type ClaudeStatusStore = {
 };
 
 // One store per agent kind; `field` names the property carried on
-// worktree.updated events ('claudeStatus', 'codexStatus', or 'opencodeStatus').
+// worktree.updated events ('claudeStatus', 'codexStatus', 'opencodeStatus', or
+// 'piStatus').
 // Each event also carries `${field}ById` — the per-session map — so the
 // renderer can show a chip per tab while the sidebar keeps the aggregate.
 export function createAgentStatusStore(
   bus: EventBus,
-  field: 'claudeStatus' | 'codexStatus' | 'opencodeStatus',
+  field: 'claudeStatus' | 'codexStatus' | 'opencodeStatus' | 'piStatus',
 ): ClaudeStatusStore {
   const map = new Map<string, Map<string, ClaudeStatus>>();
 

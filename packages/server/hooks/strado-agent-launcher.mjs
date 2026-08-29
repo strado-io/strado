@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Shell-scoped launcher for agents typed inside a Strado Shell tab.
 // It keeps the user's global config untouched, registers a namespaced status
-// while the process is alive, and injects Codex's completion notifier.
+// while the process is alive, and injects Codex's completion notifier and Pi's
+// status extension.
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -72,7 +73,7 @@ function realPathEnv() {
 }
 
 export async function launchAgent(agent) {
-  if (!['claude', 'codex', 'opencode'].includes(agent)) {
+  if (!['claude', 'codex', 'opencode', 'pi'].includes(agent)) {
     throw new Error(`unsupported agent launcher: ${agent}`);
   }
 
@@ -92,6 +93,11 @@ export async function launchAgent(agent) {
       cwd,
     ])}`;
     argv.unshift('-c', notify);
+  }
+  // Pi has no ambient hook config to write: an extension is loaded by path, so
+  // point this run at ours the same way a dedicated Pi tab does.
+  if (agent === 'pi') {
+    argv.unshift('-e', path.join(hooksRoot, 'strado-pi-status.ts'));
   }
 
   const child = spawn(agent, argv, { env, stdio: 'inherit' });

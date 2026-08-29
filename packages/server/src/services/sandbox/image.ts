@@ -27,7 +27,7 @@ export async function ensureBaseImage(
   const args = ['build', '-t', tag, '-f', dockerfilePath()];
   if (opts.node) args.push('--build-arg', `NODE_MAJOR=${opts.node}`);
   args.push(path.dirname(dockerfilePath()));
-  // 20 min: a first build pulls node:<major>-bookworm and `npm i -g` three
+  // 20 min: a first build pulls node:<major>-bookworm and `npm i -g` four
   // agent CLIs. The default 10s exec budget kills it (verified on a real
   // runner — the container never appears and the worktree degrades silently).
   const build = await exec(rt.bin, args, 20 * 60_000);

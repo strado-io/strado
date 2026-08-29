@@ -25,8 +25,8 @@ import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
-  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, LogsIcon, OpencodeIcon, PlayIcon,
-  PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
+  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, LogsIcon, OpencodeIcon, PiIcon,
+  PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { useTickets, ticketRef } from '../hooks/tickets';
@@ -44,7 +44,7 @@ import { useActivityBeacon } from '../hooks/useActivityBeacon';
 
 type Tab = {
   path: string;
-  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb';
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb';
   id: string;
   /** Set when this session's pty lives on a runner rather than this machine. */
   remote?: RemoteTarget | null;
@@ -74,6 +74,7 @@ type Group = {
   claudeOpen: boolean;
   codexOpen: boolean;
   opencodeOpen: boolean;
+  piOpen: boolean;
   // Purely client-side: VS Code web is an iframe, not a pty session, so the
   // server never reports it — the tab lives and dies with this panel.
   vscodeOpen: boolean;
@@ -92,6 +93,8 @@ type Group = {
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   opencodeStatus?: 'idle' | 'working' | 'waiting';
   opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
+  piStatus?: 'idle' | 'working' | 'waiting';
+  piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   serverShellIds: string[];
   // Tabs the user opened locally that the server may not report live yet.
   localShellIds: string[];
@@ -103,6 +106,8 @@ type Group = {
   localCodexIds: string[];
   serverOpencodeIds: string[];
   localOpencodeIds: string[];
+  serverPiIds: string[];
+  localPiIds: string[];
   /** Set when this group's sessions live on a runner. */
   remote?: RemoteTarget | null;
 };
@@ -115,8 +120,8 @@ function extraIds(ids: Iterable<string> | undefined): string[] {
 // Tab icons are the mode identity; their COLOR carries status only
 // (amber = agent working, blue = needs your input, neutral = idle).
 const IDLE_ICON = 'text-zinc-500';
-const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon };
-const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
+const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon, pi: PiIcon };
+const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
 
 const AGENT_ICON: Record<string, string> = {
   working: 'text-amber-400 animate-pulse',
@@ -181,7 +186,7 @@ function groupTabs(
 ): { tab: Tab; label: string; icon: React.ReactNode; hint?: string }[] {
   // saved drag order applies at the end, so every consumer (strip, switcher,
   // hotkeys) sees the same sequence
-  const agentTabs = <M extends 'claude' | 'codex' | 'opencode'>(
+  const agentTabs = <M extends 'claude' | 'codex' | 'opencode' | 'pi'>(
     mode: M,
     open: boolean,
     server: string[],
@@ -205,12 +210,14 @@ function groupTabs(
     ...agentTabs('claude', g.claudeOpen, g.serverClaudeIds, g.localClaudeIds, 'Claude', g.claudeStatusById, g.claudeStatus, ClaudeIcon),
     ...agentTabs('codex', g.codexOpen, g.serverCodexIds, g.localCodexIds, 'Codex', g.codexStatusById, g.codexStatus, CodexIcon),
     ...agentTabs('opencode', g.opencodeOpen, g.serverOpencodeIds, g.localOpencodeIds, 'OpenCode', g.opencodeStatusById, g.opencodeStatus, OpencodeIcon),
+    ...agentTabs('pi', g.piOpen, g.serverPiIds, g.localPiIds, 'Pi', g.piStatusById, g.piStatus, PiIcon),
     ...sortIds([...g.serverShellIds, ...g.localShellIds]).map((id) => {
       // An agent typed by hand inside a Shell tab takes the tab's icon over
       // for as long as it runs, so the strip says WHICH tab is busy — the
       // plain terminal glyph comes back when the agent exits.
       const hosted = shellHostedAgent(id, {
-        claude: g.claudeStatusById, codex: g.codexStatusById, opencode: g.opencodeStatusById,
+        claude: g.claudeStatusById, codex: g.codexStatusById,
+        opencode: g.opencodeStatusById, pi: g.piStatusById,
       });
       const Icon = hosted ? SHELL_HOST_ICON[hosted.mode] : ShellIcon;
       return {
@@ -498,7 +505,7 @@ export function TerminalView({
   onClose: () => void;
   /** undefined = a generic open (sidebar row, palette) — restore the tab the
    *  user was on last time; an explicit mode always wins */
-  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb';
+  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb';
   sessionId?: string;
   /** Bumps on every explicit open request from the parent (for example, a
    *  notification). `mode`/`sessionId` are read once at mount, so this is what
@@ -555,6 +562,7 @@ export function TerminalView({
     if (t.mode === 'claude') return (t.id === '1' ? !!w.hasClaudeSession : (w.claudeSessions ?? []).includes(t.id)) && !closed.claude.has(w.path);
     if (t.mode === 'codex') return (t.id === '1' ? !!w.hasCodexSession : (w.codexSessions ?? []).includes(t.id)) && !closed.codex.has(w.path);
     if (t.mode === 'opencode') return (t.id === '1' ? !!w.hasOpencodeSession : (w.opencodeSessions ?? []).includes(t.id)) && !closed.opencode.has(w.path);
+    if (t.mode === 'pi') return (t.id === '1' ? !!w.hasPiSession : (w.piSessions ?? []).includes(t.id)) && !closed.pi.has(w.path);
     if (t.mode === 'shell') return t.id === '1' || (w.shellSessions ?? []).includes(t.id);
     if (t.mode === 'vscode') return readVscodeTabs().has(w.path);
     if (t.mode === 'kb') return readKbTabs().has(w.path);
@@ -619,7 +627,7 @@ export function TerminalView({
   // written through to) localStorage so the close survives a reload; cleared
   // when the user opens the agent again (openMode / openInlineHub). Declared
   // before `groups` so the initial-state seed below can read it.
-  const closedAgentsRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string> } | null>(null);
+  const closedAgentsRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string>; pi: Set<string> } | null>(null);
   if (!closedAgentsRef.current) closedAgentsRef.current = readClosedAgents();
   // Remote sessions the user closed from THIS hub. A remote hub has no SSE —
   // its session lists come from a 5s poll whose merge is additive — so a
@@ -644,6 +652,7 @@ export function TerminalView({
     claudeOpen: (mode === 'claude' || !!worktree.hasClaudeSession) && !closedAgentsRef.current!.claude.has(worktree.path),
     codexOpen: (mode === 'codex' || !!worktree.hasCodexSession) && !closedAgentsRef.current!.codex.has(worktree.path),
     opencodeOpen: (mode === 'opencode' || !!worktree.hasOpencodeSession) && !closedAgentsRef.current!.opencode.has(worktree.path),
+    piOpen: (mode === 'pi' || !!worktree.hasPiSession) && !closedAgentsRef.current!.pi.has(worktree.path),
     vscodeOpen: mode === 'vscode' || readVscodeTabs().has(worktree.path),
     browserOpen: isElectron && readBrowserTabs().has(worktree.path),
     browserIds: isElectron ? readBrowserTabIds()[worktree.path] ?? [] : [],
@@ -654,6 +663,8 @@ export function TerminalView({
     codexStatusById: worktree.codexStatusById,
     opencodeStatus: worktree.opencodeStatus,
     opencodeStatusById: worktree.opencodeStatusById,
+    piStatus: worktree.piStatus,
+    piStatusById: worktree.piStatusById,
     serverShellIds: worktree.shellSessions ?? (worktree.hasShellSession ? ['1'] : []),
     localShellIds: mode === 'shell' ? [sessionId] : [],
     serverClaudeIds: extraIds(worktree.claudeSessions),
@@ -662,21 +673,24 @@ export function TerminalView({
     localCodexIds: mode === 'codex' && sessionId !== '1' ? [sessionId] : [],
     serverOpencodeIds: extraIds(worktree.opencodeSessions),
     localOpencodeIds: mode === 'opencode' && sessionId !== '1' ? [sessionId] : [],
+    serverPiIds: extraIds(worktree.piSessions),
+    localPiIds: mode === 'pi' && sessionId !== '1' ? [sessionId] : [],
   }]);
 
   // Agent sessions the server has confirmed live at least once. A
-  // hasClaudeSession/hasCodexSession/hasOpencodeSession:false SSE event only closes a tab that
+  // hasClaudeSession/hasCodexSession/hasOpencodeSession/hasPiSession:false SSE event only closes a tab that
   // was previously confirmed — a false that lands before a just-spawned pty
   // registers (common when a brand-new worktree is opened straight into
   // Claude) is a pre-spawn snapshot, not a real close. Honoring it would wipe
   // the only tab and close the hub, which for new users looked like the panel
   // flashing open then falling back to the empty board.
-  const confirmedRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string> } | null>(null);
+  const confirmedRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string>; pi: Set<string> } | null>(null);
   if (!confirmedRef.current) {
     confirmedRef.current = {
       claude: new Set(worktree.hasClaudeSession ? [worktree.path] : []),
       codex: new Set(worktree.hasCodexSession ? [worktree.path] : []),
       opencode: new Set(worktree.hasOpencodeSession ? [worktree.path] : []),
+      pi: new Set(worktree.hasPiSession ? [worktree.path] : []),
     };
   }
 
@@ -947,15 +961,24 @@ export function TerminalView({
   // for this worktree so a commit/checkout elsewhere updates the file list.
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesRefresh, setChangesRefresh] = useState(0);
-  // OpenCode is the only add-menu row gated on the binary actually being
-  // installed — the server's tool-check reports it, so the menu can grey it
+  // OpenCode and Pi are the add-menu rows gated on the binary actually being
+  // installed — the server's tool-check reports them, so the menu can grey them
   // out with a hint instead of spawning a session that just fails.
   const [opencodeInstalled, setOpencodeInstalled] = useState<boolean | null>(null);
+  const [piInstalled, setPiInstalled] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     api.envCheck()
-      .then((tools) => { if (live) setOpencodeInstalled(!!tools.find((t) => t.id === 'opencode')?.found); })
-      .catch(() => { if (live) setOpencodeInstalled(false); });
+      .then((tools) => {
+        if (!live) return;
+        setOpencodeInstalled(!!tools.find((t) => t.id === 'opencode')?.found);
+        setPiInstalled(!!tools.find((t) => t.id === 'pi')?.found);
+      })
+      .catch(() => {
+        if (!live) return;
+        setOpencodeInstalled(false);
+        setPiInstalled(false);
+      });
     return () => { live = false; };
   }, []);
 
@@ -996,6 +1019,7 @@ export function TerminalView({
           if (row.hasClaudeSession) confirmedRef.current!.claude.add(row.path);
           if (row.hasCodexSession) confirmedRef.current!.codex.add(row.path);
           if (row.hasOpencodeSession) confirmedRef.current!.opencode.add(row.path);
+          if (row.hasPiSession) confirmedRef.current!.pi.add(row.path);
         }
         setProcs((prev) => {
           const next = { ...prev };
@@ -1027,6 +1051,7 @@ export function TerminalView({
                   claudeSessions: surviving('claude', rawRow.claudeSessions),
                   codexSessions: surviving('codex', rawRow.codexSessions),
                   opencodeSessions: surviving('opencode', rawRow.opencodeSessions),
+                  piSessions: surviving('pi', rawRow.piSessions),
                 }
               : rawRow;
             const idx = next.findIndex((g) => g.path === row.path);
@@ -1037,12 +1062,15 @@ export function TerminalView({
                 claudeOpen: (g.claudeOpen || !!row.hasClaudeSession) && !closedAgentsRef.current!.claude.has(row.path),
                 codexOpen: (g.codexOpen || !!row.hasCodexSession) && !closedAgentsRef.current!.codex.has(row.path),
                 opencodeOpen: (g.opencodeOpen || !!row.hasOpencodeSession) && !closedAgentsRef.current!.opencode.has(row.path),
+                piOpen: (g.piOpen || !!row.hasPiSession) && !closedAgentsRef.current!.pi.has(row.path),
                 claudeStatus: row.claudeStatus ?? g.claudeStatus,
                 claudeStatusById: row.claudeStatusById ?? g.claudeStatusById,
                 codexStatus: row.codexStatus ?? g.codexStatus,
                 codexStatusById: row.codexStatusById ?? g.codexStatusById,
                 opencodeStatus: row.opencodeStatus ?? g.opencodeStatus,
                 opencodeStatusById: row.opencodeStatusById ?? g.opencodeStatusById,
+                piStatus: row.piStatus ?? g.piStatus,
+                piStatusById: row.piStatusById ?? g.piStatusById,
                 // Merge additively: this response may be a snapshot taken
                 // before the pty we just spawned existed, and it can land
                 // after the SSE event that confirmed the session. Replacing
@@ -1052,6 +1080,7 @@ export function TerminalView({
                 serverClaudeIds: sortIds([...extraIds(row.claudeSessions), ...g.serverClaudeIds]),
                 serverCodexIds: sortIds([...extraIds(row.codexSessions), ...g.serverCodexIds]),
                 serverOpencodeIds: sortIds([...extraIds(row.opencodeSessions), ...g.serverOpencodeIds]),
+                serverPiIds: sortIds([...extraIds(row.piSessions), ...g.serverPiIds]),
               };
               continue;
             }
@@ -1059,7 +1088,8 @@ export function TerminalView({
             const storedBrowser = isElectron && readBrowserTabs().has(row.path);
             const storedKb = readKbTabs().has(row.path);
             const live =
-              row.hasClaudeSession || row.hasCodexSession || row.hasOpencodeSession || storedVscode || storedBrowser ||
+              row.hasClaudeSession || row.hasCodexSession || row.hasOpencodeSession || row.hasPiSession ||
+              storedVscode || storedBrowser ||
               storedKb || (row.shellSessions?.length ?? 0) > 0;
             if (!live) continue;
             const meta = rowMetaRef.current.get(row.path)!;
@@ -1072,6 +1102,7 @@ export function TerminalView({
               claudeOpen: !!row.hasClaudeSession && !closedAgentsRef.current!.claude.has(row.path),
               codexOpen: !!row.hasCodexSession && !closedAgentsRef.current!.codex.has(row.path),
               opencodeOpen: !!row.hasOpencodeSession && !closedAgentsRef.current!.opencode.has(row.path),
+              piOpen: !!row.hasPiSession && !closedAgentsRef.current!.pi.has(row.path),
               vscodeOpen: storedVscode,
               browserOpen: storedBrowser,
               browserIds: isElectron ? readBrowserTabIds()[row.path] ?? [] : [],
@@ -1082,6 +1113,8 @@ export function TerminalView({
               codexStatusById: row.codexStatusById,
               opencodeStatus: row.opencodeStatus,
               opencodeStatusById: row.opencodeStatusById,
+              piStatus: row.piStatus,
+              piStatusById: row.piStatusById,
               serverShellIds: row.shellSessions ?? [],
               localShellIds: [],
               serverClaudeIds: extraIds(row.claudeSessions),
@@ -1090,6 +1123,8 @@ export function TerminalView({
               localCodexIds: [],
               serverOpencodeIds: extraIds(row.opencodeSessions),
               localOpencodeIds: [],
+              serverPiIds: extraIds(row.piSessions),
+              localPiIds: [],
             });
           }
           return next;
@@ -1124,12 +1159,13 @@ export function TerminalView({
       const claudeSessions = Array.isArray(evt.data.claudeSessions) ? (evt.data.claudeSessions as string[]) : null;
       const codexSessions = Array.isArray(evt.data.codexSessions) ? (evt.data.codexSessions as string[]) : null;
       const opencodeSessions = Array.isArray(evt.data.opencodeSessions) ? (evt.data.opencodeSessions as string[]) : null;
+      const piSessions = Array.isArray(evt.data.piSessions) ? (evt.data.piSessions as string[]) : null;
       setGroups((prev) => {
         const idx = prev.findIndex((g) => g.path === path);
         if (idx === -1) {
           const gained =
             evt.data.hasClaudeSession || evt.data.hasCodexSession || evt.data.hasOpencodeSession ||
-            (shellSessions?.length ?? 0) > 0;
+            evt.data.hasPiSession || (shellSessions?.length ?? 0) > 0;
           if (!gained) return prev;
           const meta = rowMetaRef.current.get(path) ?? {
             repoName: '',
@@ -1141,6 +1177,7 @@ export function TerminalView({
             claudeOpen: !!evt.data.hasClaudeSession && !closedAgentsRef.current!.claude.has(path),
             codexOpen: !!evt.data.hasCodexSession && !closedAgentsRef.current!.codex.has(path),
             opencodeOpen: !!evt.data.hasOpencodeSession && !closedAgentsRef.current!.opencode.has(path),
+            piOpen: !!evt.data.hasPiSession && !closedAgentsRef.current!.pi.has(path),
             vscodeOpen: false,
             browserOpen: false,
             browserIds: [],
@@ -1151,6 +1188,8 @@ export function TerminalView({
             codexStatusById: evt.data.codexStatusById,
             opencodeStatus: evt.data.opencodeStatus,
             opencodeStatusById: evt.data.opencodeStatusById,
+            piStatus: evt.data.piStatus,
+            piStatusById: evt.data.piStatusById,
             serverShellIds: shellSessions ?? [],
             localShellIds: [],
             serverClaudeIds: extraIds(claudeSessions ?? []),
@@ -1159,6 +1198,8 @@ export function TerminalView({
             localCodexIds: [],
             serverOpencodeIds: extraIds(opencodeSessions ?? []),
             localOpencodeIds: [],
+            serverPiIds: extraIds(piSessions ?? []),
+            localPiIds: [],
           }];
         }
         const g = prev[idx]!;
@@ -1184,6 +1225,10 @@ export function TerminalView({
           ng.serverOpencodeIds = extraIds(opencodeSessions);
           ng.localOpencodeIds = g.localOpencodeIds.filter((id) => !opencodeSessions.includes(id));
         }
+        if (piSessions) {
+          ng.serverPiIds = extraIds(piSessions);
+          ng.localPiIds = g.localPiIds.filter((id) => !piSessions.includes(id));
+        }
         if (evt.data.claudeStatusById !== undefined) {
           ng.claudeStatusById = evt.data.claudeStatusById as Group['claudeStatusById'];
         }
@@ -1193,9 +1238,13 @@ export function TerminalView({
         if (evt.data.opencodeStatusById !== undefined) {
           ng.opencodeStatusById = evt.data.opencodeStatusById as Group['opencodeStatusById'];
         }
+        if (evt.data.piStatusById !== undefined) {
+          ng.piStatusById = evt.data.piStatusById as Group['piStatusById'];
+        }
         if (evt.data.claudeStatus !== undefined) ng.claudeStatus = evt.data.claudeStatus;
         if (evt.data.codexStatus !== undefined) ng.codexStatus = evt.data.codexStatus;
         if (evt.data.opencodeStatus !== undefined) ng.opencodeStatus = evt.data.opencodeStatus;
+        if (evt.data.piStatus !== undefined) ng.piStatus = evt.data.piStatus;
         // Only a session confirmed live at least once may be closed by a
         // false — otherwise a pre-spawn snapshot would wipe a tab the user
         // just opened (see confirmedRef).
@@ -1219,6 +1268,13 @@ export function TerminalView({
         } else if (evt.data.hasOpencodeSession === false && confirmedRef.current!.opencode.has(path)) {
           confirmedRef.current!.opencode.delete(path);
           ng.opencodeOpen = false;
+        }
+        if (evt.data.hasPiSession) {
+          confirmedRef.current!.pi.add(path);
+          if (!closedAgentsRef.current!.pi.has(path)) ng.piOpen = true;
+        } else if (evt.data.hasPiSession === false && confirmedRef.current!.pi.has(path)) {
+          confirmedRef.current!.pi.delete(path);
+          ng.piOpen = false;
         }
         const next = [...prev];
         next[idx] = ng;
@@ -1311,7 +1367,7 @@ export function TerminalView({
       // render a pane that can never connect.
       if (!remote) return null;
     }
-    if (m !== 'shell' && m !== 'claude' && m !== 'codex' && m !== 'opencode') return null;
+    if (m !== 'shell' && m !== 'claude' && m !== 'codex' && m !== 'opencode' && m !== 'pi') return null;
     return { path, mode: m, id, remote: remote ?? (hubRemote ? { ...hubRemote, path } : null) };
   };
   const layout = paneLayouts[worktree.path] ?? null;
@@ -1765,20 +1821,25 @@ export function TerminalView({
   // Allocate the lowest unused session id of a mode and register it as a
   // local (not yet server-confirmed) tab. Returns the new tab; the caller
   // decides where it appears (active tab, or a fresh split pane).
-  const allocSession = (m: 'shell' | 'claude' | 'codex' | 'opencode'): Tab | null => {
+  const allocSession = (m: 'shell' | 'claude' | 'codex' | 'opencode' | 'pi'): Tab | null => {
     const g = activeGroup;
     if (!g) return null;
     const serverIds =
       m === 'shell' ? g.serverShellIds
       : m === 'claude' ? g.serverClaudeIds
-      : m === 'codex' ? g.serverCodexIds : g.serverOpencodeIds;
+      : m === 'codex' ? g.serverCodexIds
+      : m === 'opencode' ? g.serverOpencodeIds : g.serverPiIds;
     const localKey =
       m === 'shell' ? ('localShellIds' as const)
       : m === 'claude' ? ('localClaudeIds' as const)
       : m === 'codex' ? ('localCodexIds' as const)
-      : ('localOpencodeIds' as const);
+      : m === 'opencode' ? ('localOpencodeIds' as const)
+      : ('localPiIds' as const);
     // For agents, id 1 lives on the *Open flag rather than the lists.
-    const agentOpen = m === 'claude' ? g.claudeOpen : m === 'codex' ? g.codexOpen : g.opencodeOpen;
+    const agentOpen =
+      m === 'claude' ? g.claudeOpen
+      : m === 'codex' ? g.codexOpen
+      : m === 'opencode' ? g.opencodeOpen : g.piOpen;
     const ids = [
       ...(m !== 'shell' && agentOpen ? ['1'] : []),
       ...sortIds([...serverIds, ...g[localKey]]),
@@ -1829,10 +1890,13 @@ export function TerminalView({
 
   // An agent in the new-session menu: open the primary session if it isn't
   // open, otherwise spawn the lowest unused id — same scheme as shells.
-  const addAgent = (m: 'claude' | 'codex' | 'opencode') => {
+  const addAgent = (m: 'claude' | 'codex' | 'opencode' | 'pi') => {
     const g = activeGroup;
     if (!g) return;
-    const open = m === 'claude' ? g.claudeOpen : m === 'codex' ? g.codexOpen : g.opencodeOpen;
+    const open =
+      m === 'claude' ? g.claudeOpen
+      : m === 'codex' ? g.codexOpen
+      : m === 'opencode' ? g.opencodeOpen : g.piOpen;
     if (!open) {
       openMode(m);
       return;
@@ -1845,7 +1909,7 @@ export function TerminalView({
   // ACTIVE worktree without leaving the panel. Marking the group open and
   // activating the tab is enough — the terminal WS spawns the pty on connect.
   const openMode = (
-    m: 'claude' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb',
+    m: 'claude' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb',
     opts?: { path?: string; id?: string },
   ) => {
     const path = opts?.path ?? active.path;
@@ -1853,7 +1917,7 @@ export function TerminalView({
     const id = m === 'vscode' || m === 'browser' || m === 'kb' ? '1' : opts?.id ?? '1';
     // Re-opening an agent lifts the user-closed suppression so SSE session
     // detection can drive the tab again.
-    if (m === 'claude' || m === 'codex' || m === 'opencode') {
+    if (m === 'claude' || m === 'codex' || m === 'opencode' || m === 'pi') {
       closedAgentsRef.current![m].delete(path);
       rememberClosedAgent(m, path, false);
       killedRemoteRef.current.delete(remoteKillKey(path, m, id));
@@ -1877,6 +1941,7 @@ export function TerminalView({
               claudeOpen: g.claudeOpen || m === 'claude',
               codexOpen: g.codexOpen || m === 'codex',
               opencodeOpen: g.opencodeOpen || m === 'opencode',
+              piOpen: g.piOpen || m === 'pi',
               vscodeOpen: g.vscodeOpen || m === 'vscode',
               browserOpen: g.browserOpen || m === 'browser',
               kbOpen: g.kbOpen || m === 'kb',
@@ -1925,16 +1990,18 @@ export function TerminalView({
         busy = false; // don't block closing if the check fails
       }
       if (busy && !confirm('A command is still running in this shell. Close it anyway?')) return;
-    } else if (tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode') {
+    } else if (tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode' || tab.mode === 'pi') {
       const g = groups.find((x) => x.path === tab.path);
       const byId =
         tab.mode === 'claude' ? g?.claudeStatusById
-        : tab.mode === 'codex' ? g?.codexStatusById : g?.opencodeStatusById;
+        : tab.mode === 'codex' ? g?.codexStatusById
+        : tab.mode === 'opencode' ? g?.opencodeStatusById : g?.piStatusById;
       const aggregate =
         tab.mode === 'claude' ? g?.claudeStatus
-        : tab.mode === 'codex' ? g?.codexStatus : g?.opencodeStatus;
+        : tab.mode === 'codex' ? g?.codexStatus
+        : tab.mode === 'opencode' ? g?.opencodeStatus : g?.piStatus;
       const status = byId?.[tab.id] ?? (tab.id === '1' ? aggregate : undefined);
-      const label = tab.mode === 'claude' ? 'Claude' : tab.mode === 'codex' ? 'Codex' : 'OpenCode';
+      const label = SHELL_HOST_LABEL[tab.mode];
       if (status === 'working' && !confirm(`${label} is still working. Close it anyway?`)) return;
     }
     closeTab(tab);
@@ -1999,7 +2066,7 @@ export function TerminalView({
     // re-open them (cleared when the user opens the agent again via openMode).
     // Only the PRIMARY session carries the suppression — extra ids are
     // list-driven like shells, so a close just drops them from the lists.
-    if ((tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode') && tab.id === '1') {
+    if ((tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode' || tab.mode === 'pi') && tab.id === '1') {
       closedAgentsRef.current![tab.mode].add(tab.path);
       rememberClosedAgent(tab.mode, tab.path, true);
     }
@@ -2057,6 +2124,16 @@ export function TerminalView({
             };
           }
           return { ...g, opencodeOpen: false };
+        }
+        if (tab.mode === 'pi') {
+          if (tab.id !== '1') {
+            return {
+              ...g,
+              serverPiIds: g.serverPiIds.filter((i) => i !== tab.id),
+              localPiIds: g.localPiIds.filter((i) => i !== tab.id),
+            };
+          }
+          return { ...g, piOpen: false };
         }
         if (tab.mode === 'vscode') {
           closeVscodeTab(tab.path);
@@ -2123,7 +2200,9 @@ export function TerminalView({
           {tabs.map(({ tab, label: tabLabel, icon, hint }) => {
             const isActive =
               sameTab(active, tab);
-            const renamable = tab.mode === 'shell' || tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode';
+            const renamable =
+              tab.mode === 'shell' || tab.mode === 'claude' || tab.mode === 'codex'
+              || tab.mode === 'opencode' || tab.mode === 'pi';
             const isRenaming =
               renamable && renaming?.path === tab.path && renaming?.mode === tab.mode && renaming?.id === tab.id;
             const commitRename = () => {
@@ -2576,6 +2655,13 @@ export function TerminalView({
                   run: () => addAgent('opencode'),
                   disabled: opencodeInstalled === false,
                   hint: 'OpenCode needs to be installed to use',
+                },
+                {
+                  label: 'Pi',
+                  icon: <PiIcon className="text-zinc-500" />,
+                  run: () => addAgent('pi'),
+                  disabled: piInstalled === false,
+                  hint: 'Pi needs to be installed to use',
                 },
                 { label: 'Shell', icon: <ShellIcon className="text-zinc-500" />, run: addShell },
                 ...(caps.embeds

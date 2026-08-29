@@ -3,12 +3,13 @@ import { api, type ToolStatus } from '../api';
 import { subscribeEnvInstall } from '../eventStream';
 import { FirstRunCard, ghostButtonClass, primaryButtonClass } from './FirstRunCard';
 
-// OpenCode is intentionally excluded from the onboarding environment gate: it's
-// an optional agent that many machines (and every fresh Linux box) won't have,
-// and the "every tool must be present" gate below would otherwise trap the user
-// on the welcome screen. The server still probes it (see toolCheck) so the
-// OpenCode terminal tab lights up whenever it IS installed.
-const dropOpencode = (tools: ToolStatus[]) => tools.filter((t) => t.id !== 'opencode');
+// OpenCode and Pi are intentionally excluded from the onboarding environment
+// gate: they're optional agents that many machines (and every fresh Linux box)
+// won't have, and the "every tool must be present" gate below would otherwise
+// trap the user on the welcome screen. The server still probes them (see
+// toolCheck) so their terminal tabs light up whenever they ARE installed.
+const OPTIONAL_AGENTS = new Set(['opencode', 'pi']);
+const dropOptionalAgents = (tools: ToolStatus[]) => tools.filter((t) => !OPTIONAL_AGENTS.has(t.id));
 
 // Only the last few lines are kept per row: this is a progress signal inside a
 // card, not a terminal, and npm emits thousands of lines on a cold cache.
@@ -27,7 +28,7 @@ export function OnboardingWelcome({ onContinue }: { onContinue: () => void }) {
   const [installs, setInstalls] = useState<Record<string, Install>>({});
 
   useEffect(() => {
-    api.envCheck().then((list) => setTools(dropOpencode(list))).catch(() => setTools([]));
+    api.envCheck().then((list) => setTools(dropOptionalAgents(list))).catch(() => setTools([]));
     // greet by the profile name if set, falling back to the name on their invite
     Promise.all([api.profile.get().catch(() => null), api.license.get().catch(() => null)]).then(
       ([profile, lic]) => {
@@ -64,7 +65,7 @@ export function OnboardingWelcome({ onContinue }: { onContinue: () => void }) {
   const recheck = () => {
     setChecking(true);
     api.envCheck(true)
-      .then((list) => setTools(dropOpencode(list)))
+      .then((list) => setTools(dropOptionalAgents(list)))
       .catch(() => undefined)
       .finally(() => setChecking(false));
   };
