@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
-import { ClaudeIcon, CodexIcon, OpencodeIcon, ShellIcon } from './hub/icons';
+import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, ShellIcon } from './hub/icons';
 
 const TRUE_BLACK_TERMINAL_THEME: ITheme = {
   background: '#000000', foreground: '#e5e5e5', cursor: '#f97f1b', cursorAccent: '#000000',
@@ -126,7 +126,7 @@ export type RemoteTarget = {
 
 export type PtyTab = {
   path: string;
-  mode: 'claude' | 'codex' | 'opencode' | 'shell';
+  mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
   id: string;
   remote?: RemoteTarget | null;
 };
@@ -173,13 +173,17 @@ function answerCapabilityProbes(data: string, ws: WebSocket | null) {
 // reconnect, fit, drop-to-attach and the "Starting…" overlay. Extracted from
 // TerminalView so a split layout can mount several at once — each pane owns
 // its session for the pane's lifetime.
-export function XtermPane({ wsId, tab, focused, onFocus }: {
+export function XtermPane({ wsId, tab, focused, visible = true, onFocus, handoffId }: {
   wsId: string;
   tab: PtyTab;
   /** the focused pane receives keyboard focus when it (re)connects */
   focused: boolean;
+  /** hidden cached panes stay connected but must not fit against a 0x0 box */
+  visible?: boolean;
   /** pointer went down inside this pane — make it the active one */
   onFocus?: () => void;
+  /** A ready server-side handoff whose packet becomes this fresh session's initial prompt. */
+  handoffId?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -316,7 +320,7 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
     };
 
     buildTerm();
-    fit.fit();
+    if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit();
     // no lone blinking cursor while the pty starts; settled() shows it again
     term.write('\x1b[?25l');
 
@@ -332,7 +336,8 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
       const target = remote ? { wsId: remote.wsId, path: remote.path } : { wsId, path: tab.path };
       const query =
         `ws=${encodeURIComponent(target.wsId)}&path=${encodeURIComponent(target.path)}` +
-        `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}`;
+        `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}` +
+        (handoffId ? `&handoff=${encodeURIComponent(handoffId)}` : '');
       return remote
         ? `${remote.wsBase}/ws/terminal?${query}&ticket=${encodeURIComponent(ticket ?? '')}`
         : `${proto}://${location.host}/ws/terminal?${query}`;
@@ -494,7 +499,7 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsId, tab.path, tab.mode, tab.id, tab.remote?.runnerId, tab.remote?.path]);
+  }, [wsId, tab.path, tab.mode, tab.id, tab.remote?.runnerId, tab.remote?.path, handoffId]);
 
   // xterm paints into its own canvas, so CSS variables cannot recolor or
   // remeasure it. Keep mounted panes in sync without reconnecting their PTYs
@@ -521,9 +526,26 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
     if (focused) termRef.current?.focus();
   }, [focused]);
 
+  // A cached terminal may become visible at a different size from the pane it
+  // last occupied. Refit after layout has painted without reconnecting its PTY.
+  useEffect(() => {
+    if (!visible) return;
+    const raf = requestAnimationFrame(() => {
+      const container = containerRef.current;
+      const term = termRef.current;
+      if (!container || !term || container.clientWidth === 0 || container.clientHeight === 0) return;
+      fitRef.current?.fit();
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+      if (focused) term.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [visible, focused]);
+
   return (
     <div
-      data-testid="pane-leaf"
+      data-testid={visible ? 'pane-leaf' : undefined}
       className="relative h-full w-full min-h-0 min-w-0 bg-zinc-950"
       onPointerDownCapture={onFocus}
       // Drop-to-attach uploads into the LOCAL worktree and types that path, so
@@ -554,12 +576,14 @@ export function XtermPane({ wsId, tab, focused, onFocus }: {
             {connecting === 'claude' ? <ClaudeIcon size={36} />
             : connecting === 'codex' ? <CodexIcon size={36} />
             : connecting === 'opencode' ? <OpencodeIcon size={36} />
+            : connecting === 'pi' ? <PiIcon size={36} />
             : <ShellIcon size={36} />}
           </span>
           <span className="text-sm text-zinc-500">
             {connecting === 'claude' ? 'Starting Claude…'
             : connecting === 'codex' ? 'Starting Codex…'
             : connecting === 'opencode' ? 'Starting OpenCode…'
+            : connecting === 'pi' ? 'Starting Pi…'
             : 'Starting zsh…'}
           </span>
         </div>

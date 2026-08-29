@@ -40,6 +40,14 @@ afterEach(async () => {
 });
 
 describe('POST /api/opencode/status', () => {
+  it('maps a Strado tab to its OpenCode session', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/opencode/status',
+      payload: { cwd: repo, status: 'waiting', sessionId: '2', providerSessionId: 'opencode-id' },
+    });
+    expect(await app.deps.agentSessions.get('opencode', repo, '2')).toMatchObject({ providerSessionId: 'opencode-id' });
+  });
+
   it('keys status by sessionId and aggregates across sessions', async () => {
     await app.inject({
       method: 'POST',

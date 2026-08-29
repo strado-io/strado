@@ -1,11 +1,12 @@
 {
   "name": "@strado/desktop",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "private": true,
   "description": "Electron shell for Strado",
   "main": "main.cjs",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test *.test.cjs"
   },
   "devDependencies": {
     "electron": "^33.0.0"

@@ -1,16 +1,17 @@
 import { FastifyInstance } from 'fastify';
 import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
-import { installClaudeHooks, installOpencodePlugin, codexNotifyScriptPath } from '../services/claudeHooks.js';
-import { claudeKey, codexKey, opencodeKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
+import { installClaudeHooks, installOpencodePlugin, codexNotifyScriptPath, piExtensionPath } from '../services/claudeHooks.js';
+import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { defaultShell } from '../services/platform.js';
+import { handoffPrompt, type HandoffRecord } from '../services/handoffStore.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
   | { type: 'resize'; cols: number; rows: number };
 
-// Best-effort plain-text view of a pty buffer for hover previews: strip ANSI
-// escapes and control characters, keep the last non-empty lines.
+// Best-effort plain-text view of a pty buffer for hover previews only. This
+// rendered output is deliberately never used by agent handoffs.
 function peekLines(buffer: string, max: number): string[] {
   const text = buffer
     // OSC sequences (titles, hyperlinks), then CSI/other escapes
@@ -23,10 +24,46 @@ function peekLines(buffer: string, max: number): string[] {
     .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
   return text
     .split('\n')
-    .map((l) => l.trimEnd())
-    .filter((l) => l.trim().length > 0)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
     .slice(-max)
-    .map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l));
+    .map((line) => (line.length > 200 ? `${line.slice(0, 200)}…` : line));
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function agentCommand(
+  mode: 'claude' | 'codex' | 'opencode' | 'pi',
+  sessionId: string,
+  codexNotify: string,
+  handoff?: HandoffRecord,
+): string {
+  if (handoff) {
+    const prompt = shellQuote(handoffPrompt(handoff));
+    if (mode === 'claude') return `claude -- ${prompt}`;
+    if (mode === 'codex') return `codex -c '${codexNotify}' -- ${prompt}`;
+    if (mode === 'opencode') return `opencode --prompt ${prompt}`;
+    // `--` ends option parsing, so the prompt reaches pi as a first message.
+    // No `-c`: a handoff target is always a fresh conversation.
+    return `pi -e "${piExtensionPath()}" -- ${prompt}`;
+  }
+  if (mode === 'codex') {
+    return sessionId === '1'
+      ? `codex -c '${codexNotify}' resume --last || codex -c '${codexNotify}'`
+      : `codex -c '${codexNotify}'`;
+  }
+  if (mode === 'opencode') return sessionId === '1' ? 'opencode --continue || opencode' : 'opencode';
+  if (mode === 'pi') {
+    // Pi has no ambient hook config to write — its status extension is loaded
+    // by path, so every launch carries `-e`. Same primary-session rule.
+    const piExtension = piExtensionPath();
+    return sessionId === '1'
+      ? `pi -c -e "${piExtension}" || pi -e "${piExtension}"`
+      : `pi -e "${piExtension}"`;
+  }
+  return 'claude';
 }
 
 export async function registerTerminalRoutes(app: FastifyInstance) {
@@ -40,6 +77,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         req.query.mode === 'shell' ? 'shell'
         : req.query.mode === 'codex' ? 'codex'
         : req.query.mode === 'opencode' ? 'opencode'
+        : req.query.mode === 'pi' ? 'pi'
         : 'claude';
       const sessionId = /^\d+$/.test(req.query.session ?? '') ? req.query.session! : '1';
       const stores = await app.deps.registry.get(wsId);
@@ -56,6 +94,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         mode === 'shell' ? shellKey(target, sessionId)
         : mode === 'codex' ? codexKey(target, sessionId)
         : mode === 'opencode' ? opencodeKey(target, sessionId)
+        : mode === 'pi' ? piKey(target, sessionId)
         : claudeKey(target, sessionId);
       try {
         return { lines: peekLines(app.deps.terminal.snapshot(sessionKey), 24) };
@@ -64,7 +103,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       }
     },
   );
-  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; cols?: string; rows?: string } }>(
+  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; handoff?: string; cols?: string; rows?: string } }>(
     '/ws/terminal',
     { websocket: true },
     async (connection, req) => {
@@ -75,6 +114,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         req.query.mode === 'shell' ? 'shell'
         : req.query.mode === 'codex' ? 'codex'
         : req.query.mode === 'opencode' ? 'opencode'
+        : req.query.mode === 'pi' ? 'pi'
         : 'claude';
       const sessionId = /^\d+$/.test(req.query.session ?? '') ? req.query.session! : '1';
       // Spawn-time size: resize messages sent while this handler is still in
@@ -118,6 +158,21 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         return fail('invalid path');
       }
 
+      let handoff: HandoffRecord | undefined;
+      if (req.query.handoff) {
+        const found = await stores.handoffs.get(req.query.handoff);
+        if (!found || found.workspaceId !== wsId || found.worktreePath !== target) {
+          return fail('handoff not found');
+        }
+        if (found.target.mode !== mode || found.target.sessionId !== sessionId) {
+          return fail('handoff target does not match this session');
+        }
+        // An accepted handoff on a reconnect is an ordinary reattach: its
+        // initial prompt was already supplied when this pty was spawned.
+        if (found.status === 'ready') handoff = found;
+        else if (found.status !== 'accepted') return fail(`handoff is ${found.status}`);
+      }
+
       // Setup is complete — remove the buffer handler and wire up the real one.
       socket.off('message', bufferHandler);
 
@@ -126,11 +181,13 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // a login shell under `<path>\0shell[:id]`. Codex runs the codex CLI
       // under `<path>\0codex` — resume the most recent conversation for this
       // directory, or start fresh. OpenCode runs under `<path>\0opencode` —
-      // continue the last session, or start fresh.
+      // continue the last session, or start fresh. Pi runs under `<path>\0pi`
+      // on the same rule.
       const sessionKey =
         mode === 'shell' ? shellKey(target, sessionId)
         : mode === 'codex' ? codexKey(target, sessionId)
         : mode === 'opencode' ? opencodeKey(target, sessionId)
+        : mode === 'pi' ? piKey(target, sessionId)
         : claudeKey(target, sessionId);
       // Codex has no hooks API; its `notify` config calls our hook script on
       // agent-turn-complete so we can show a "waiting for input" status.
@@ -139,13 +196,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // Only the primary session resumes the directory's last conversation —
       // a second tab resuming the SAME conversation as the first would have
       // both sessions fighting over one thread, so extras start fresh.
-      const codexCmd =
-        sessionId === '1'
-          ? `codex -c '${codexNotify}' resume --last || codex -c '${codexNotify}'`
-          : `codex -c '${codexNotify}'`;
-      // Same rule as codex: only the primary session continues the last
-      // conversation; extra tabs start fresh.
-      const opencodeCmd = sessionId === '1' ? `opencode --continue || opencode` : `opencode`;
+      const agentCmd = mode === 'shell' ? '' : agentCommand(mode, sessionId, codexNotify, handoff);
       // Start a login shell first, then let the bootstrap load the interactive
       // profile and prepend Strado's launchers AFTER it. User rc files commonly
       // prepend nvm/Homebrew paths, which otherwise hide the Codex launcher.
@@ -155,10 +206,12 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         mode === 'shell'
           ? { file: defaultShell(), args: ['-l', '-c', shellCmd] }
           : mode === 'codex'
-            ? { file: defaultShell(), args: ['-l', '-c', codexCmd] }
+            ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
             : mode === 'opencode'
-              ? { file: defaultShell(), args: ['-l', '-c', opencodeCmd] }
-              : undefined;
+              ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
+              : mode === 'pi' || handoff
+                ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
+                : undefined;
 
       if (mode === 'claude' || mode === 'shell') {
         try {
@@ -184,7 +237,11 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       };
 
       try {
+        if (handoff && app.deps.terminal.status(sessionKey).status === 'running') {
+          return fail('handoff target session is already running');
+        }
         await app.deps.terminal.ensure(sessionKey, target, spec, size);
+        if (handoff) await stores.handoffs.accept(handoff.id);
       } catch (err) {
         return fail(`could not start session: ${(err as Error).message}`);
       }
@@ -208,12 +265,14 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         if (mode === 'claude') app.deps.claudeStatus.clear(target, sessionId);
         if (mode === 'codex') app.deps.codexStatus.clear(target, sessionId);
         if (mode === 'opencode') app.deps.opencodeStatus.clear(target, sessionId);
+        if (mode === 'pi') app.deps.piStatus.clear(target, sessionId);
         if (mode === 'shell') {
           // the tab is gone, so any agent it hosted is gone with it
           const shellAgentId = `shell:${sessionId}`;
           app.deps.claudeStatus.remove(target, shellAgentId);
           app.deps.codexStatus.remove(target, shellAgentId);
           app.deps.opencodeStatus.remove(target, shellAgentId);
+          app.deps.piStatus.remove(target, shellAgentId);
         }
         emitSessions();
         if (socket.readyState === socket.OPEN) {

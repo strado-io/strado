@@ -163,15 +163,76 @@ describe('browser tab close → add', () => {
       expect(JSON.parse(localStorage.getItem('strado:browser-urls') ?? '{}')).not.toHaveProperty(PK2);
     });
 
-    // Add a NEW browser tab: the lowest unused id is 2 again, and the pane
-    // must open on the worktree default URL — not the closed tab's page.
+    // Add a NEW browser tab: the lowest unused id is 2 again. With no running
+    // dev server it must show Strado's clean start state, not the closed page
+    // and not a guessed localhost:3000 error.
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Browser' }));
-    await vi.waitFor(() => {
-      const open = previewMock.mock.calls.find((c) => c[0] === 'open' && c[1] === PK2);
-      expect(open).toBeTruthy();
-      expect((open![2] as { url?: string }).url).toBe('http://localhost:3000');
+    const start = await screen.findByTestId('browser-start-2');
+    expect(start).toHaveTextContent('Open a preview');
+    expect(screen.getByTestId('browser-pane-2').querySelector('input')).toHaveValue('');
+    expect(previewMock.mock.calls.find((c) => c[0] === 'open' && c[1] === PK2)).toBeUndefined();
+  });
+});
+
+describe('browser start page', () => {
+  it('does not guess localhost:3000 when the worktree has no running server', async () => {
+    // Also migrate the exact fallback persisted by older Strado builds.
+    localStorage.setItem('strado:browser-urls', JSON.stringify({ [worktree.path]: 'http://localhost:3000/' }));
+    render(<TerminalView worktree={worktree} mode="shell" onClose={() => {}} />);
+    fireEvent.click(screen.getByLabelText('New session'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Browser' }));
+
+    expect(await screen.findByTestId('browser-start-1')).toHaveTextContent("start this worktree's dev server");
+    expect(previewMock.mock.calls.find((c) => c[0] === 'open' && c[1] === worktree.path)).toBeUndefined();
+  });
+});
+
+describe('browser split panes', () => {
+  it('docks Browser beside a shell and exposes the split marker and full-tab action', async () => {
+    const P = worktree.path;
+    localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
+    render(
+      <TerminalView
+        worktree={{
+          ...worktree,
+          hasShellSession: true,
+          shellSessions: ['1'],
+          process: { status: 'running', pid: 12, startedAt: null, port: 3000, detectedUrl: 'http://localhost:3000', exitCode: null },
+        } as Worktree}
+        mode="shell"
+        onClose={() => {}}
+      />,
+    );
+
+    const shell = screen.getByText('Shell').closest('span')!;
+    const browser = screen.getByText('Browser').closest('span')!;
+    const pane = screen.getByTestId('pane-host');
+    vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({
+      x: 10, y: 0, left: 10, top: 0, right: 70, bottom: 30, width: 60, height: 30,
+      toJSON: () => ({}),
     });
+    vi.spyOn(browser, 'getBoundingClientRect').mockReturnValue({
+      x: 72, y: 0, left: 72, top: 0, right: 152, bottom: 30, width: 80, height: 30,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 40, left: 0, top: 40, right: 800, bottom: 640, width: 800, height: 600,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(browser, { button: 0, pointerId: 3, clientX: 110, clientY: 15 });
+    fireEvent.pointerMove(browser, { pointerId: 3, clientX: 790, clientY: 320 });
+    fireEvent.pointerUp(browser, { pointerId: 3, clientX: 790, clientY: 320 });
+
+    expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
+    expect(shell).toHaveAttribute('data-split-group', '0');
+    expect(browser).toHaveAttribute('data-split-group', '0');
+    expect(browser).toHaveClass('border-sky-500/40', 'bg-sky-500/15');
+    expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.getByTestId('browser-pane-1')).not.toHaveClass('hidden'));
+    expect(screen.getByRole('button', { name: 'Open Browser as full tab' })).toBeInTheDocument();
+    expect(previewMock.mock.calls.some((call) => call[0] === 'open' && call[1] === P)).toBe(true);
   });
 });
 
@@ -179,6 +240,7 @@ describe('renderer modal visibility', () => {
   it('detaches the native preview while a parent modal is open and restores it after close', async () => {
     const P = worktree.path;
     localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
+    localStorage.setItem('strado:browser-urls', JSON.stringify({ [P]: 'https://example.test' }));
     localStorage.setItem('strado.activeTab', JSON.stringify({ [P]: 'browser:1' }));
 
     const view = render(<TerminalView worktree={worktree} onClose={() => {}} modalOpen={false} />);
@@ -206,6 +268,7 @@ describe('docked DevTools tab switching', () => {
     const P = worktree.path;
     const wtWithShell = { ...worktree, hasShellSession: true, shellSessions: ['1'] } as Worktree;
     localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
+    localStorage.setItem('strado:browser-urls', JSON.stringify({ [P]: 'https://example.test' }));
     localStorage.setItem('strado.activeTab', JSON.stringify({ [P]: 'browser:1' }));
     render(<TerminalView worktree={wtWithShell} onClose={() => {}} />);
 

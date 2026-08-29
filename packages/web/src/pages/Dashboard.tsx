@@ -168,6 +168,8 @@ export function remoteAsWorktree(w: RemoteWorktree): Worktree {
     codexStatusById: w.codexStatusById, codexSessions: w.codexSessions,
     hasOpencodeSession: w.hasOpencodeSession, opencodeStatus: w.opencodeStatus,
     opencodeStatusById: w.opencodeStatusById, opencodeSessions: w.opencodeSessions,
+    hasPiSession: w.hasPiSession, piStatus: w.piStatus,
+    piStatusById: w.piStatusById, piSessions: w.piSessions,
     hasShellSession: w.hasShellSession, shellSessions: w.shellSessions,
   } as Worktree;
 }
@@ -228,7 +230,7 @@ export function Dashboard(props: {
   const [selectedRemote, setSelectedRemote] = useState<RemoteWorktree | null>(null);
   // undefined = a generic open — TerminalView restores the worktree's
   // last-active tab instead of being forced onto one.
-  const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | undefined>(undefined);
+  const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | undefined>(undefined);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   // Bumped on every explicit open (for example, a notification) so the
   // hub switches to the requested tab even when it's already showing this
@@ -261,7 +263,7 @@ export function Dashboard(props: {
     bumpWorktreeOpened(w.path);
     // Explicitly opening an agent lifts any persisted "closed" flag so the hub
     // shows the tab even after a prior close (reload restores mode='claude').
-    if (mode === 'claude' || mode === 'codex' || mode === 'opencode') rememberClosedAgent(mode, w.path, false);
+    if (mode === 'claude' || mode === 'codex' || mode === 'opencode' || mode === 'pi') rememberClosedAgent(mode, w.path, false);
     setSelectedMode(mode);
     setSelectedSessionId(sessionId);
     // Bump the open sequence so an already-open hub applies this request (its

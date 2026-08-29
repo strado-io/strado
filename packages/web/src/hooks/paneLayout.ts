@@ -1,10 +1,12 @@
-// Split-pane layout for the hub's terminal area: a binary tree per worktree
-// whose leaves are pty session tab keys (`mode:id`). Client-side only, like
-// tab order — persisted so splits survive panel reopen and reload.
+// Split-pane layouts for the hub's terminal area: each worktree can own
+// multiple binary trees whose leaves are dockable tab keys (`mode:id`).
+// Client-side only, like tab order — persisted so splits survive reload.
 
 export type PaneNode =
   | { kind: 'leaf'; key: string }
   | { kind: 'split'; dir: 'row' | 'col'; ratio: number; a: PaneNode; b: PaneNode };
+
+export type PaneDockSide = 'left' | 'right' | 'top' | 'bottom';
 
 const STORE = 'strado.paneLayout';
 
@@ -24,6 +26,44 @@ export function splitLeaf(node: PaneNode, targetKey: string, newKey: string, dir
     return { kind: 'split', dir, ratio: 0.5, a: node, b: { kind: 'leaf', key: newKey } };
   }
   return { ...node, a: splitLeaf(node.a, targetKey, newKey, dir), b: splitLeaf(node.b, targetKey, newKey, dir) };
+}
+
+/**
+ * Move an existing tab (or add a normal tab) beside a target pane.
+ *
+ * Removing the dragged leaf first makes this useful for rearranging an
+ * existing tiled layout as well as adding a tab from the strip. The target is
+ * identified by key rather than tree address because collapsing the dragged
+ * leaf can change every address below its old parent.
+ */
+export function dockLeaf(
+  node: PaneNode,
+  draggedKey: string,
+  targetKey: string,
+  side: PaneDockSide,
+): PaneNode {
+  if (draggedKey === targetKey) return node;
+  const withoutDragged = removeLeaf(node, draggedKey);
+  if (!withoutDragged || !hasLeaf(withoutDragged, targetKey)) return node;
+  const dir = side === 'left' || side === 'right' ? 'row' : 'col';
+  const before = side === 'left' || side === 'top';
+
+  const insert = (current: PaneNode): PaneNode => {
+    if (current.kind === 'leaf') {
+      if (current.key !== targetKey) return current;
+      const dragged: PaneNode = { kind: 'leaf', key: draggedKey };
+      return {
+        kind: 'split',
+        dir,
+        ratio: 0.5,
+        a: before ? dragged : current,
+        b: before ? current : dragged,
+      };
+    }
+    return { ...current, a: insert(current.a), b: insert(current.b) };
+  };
+
+  return insert(withoutDragged);
 }
 
 /** swap one leaf's key for another (re-target a pane) */
@@ -76,22 +116,29 @@ function sane(node: unknown): node is PaneNode {
   return false;
 }
 
-export function readPaneLayouts(): Record<string, PaneNode> {
+export function readPaneLayouts(): Record<string, PaneNode[]> {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE) ?? '{}') as Record<string, unknown>;
-    const out: Record<string, PaneNode> = {};
-    for (const [path, node] of Object.entries(raw)) if (sane(node)) out[path] = node;
+    const out: Record<string, PaneNode[]> = {};
+    for (const [path, value] of Object.entries(raw)) {
+      // Backwards compatibility: versions before multi-group support stored
+      // one PaneNode directly at each worktree path.
+      const nodes = Array.isArray(value) ? value.filter(sane) : sane(value) ? [value] : [];
+      const splits = nodes.filter((node) => node.kind === 'split');
+      if (splits.length > 0) out[path] = splits;
+    }
     return out;
   } catch {
     return {};
   }
 }
 
-export function rememberPaneLayout(path: string, node: PaneNode | null): void {
+export function rememberPaneLayouts(path: string, nodes: PaneNode[]): void {
   try {
     const all = readPaneLayouts();
-    if (node && node.kind === 'split') all[path] = node;
-    else delete all[path]; // a single pane needs no layout entry
+    const splits = nodes.filter((node) => node.kind === 'split');
+    if (splits.length > 0) all[path] = splits;
+    else delete all[path]; // single panes need no persisted group
     localStorage.setItem(STORE, JSON.stringify(all));
   } catch { /* storage full/blocked — splits just won't persist */ }
 }

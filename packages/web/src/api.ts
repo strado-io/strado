@@ -71,6 +71,23 @@ export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
 
+export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
+export type Handoff = {
+  id: string;
+  workspaceId: string;
+  worktreePath: string;
+  taskLabel: string;
+  source: { mode: AgentMode; sessionId: string };
+  target: { mode: AgentMode; sessionId: string };
+  status: 'ready' | 'accepted' | 'cancelled';
+  notes: string;
+  conversation: Array<{ role: 'user' | 'assistant'; content: string }>;
+  contextSource: 'claude-history' | 'codex-history' | 'opencode-history' | 'none';
+  repository: { branch: string; head: string; status: string[]; diffStat: string };
+  createdAt: string;
+  acceptedAt: string | null;
+};
+
 export const api = {
   terminal: {
     peek: (ws: string, path: string, mode: string, session = '1') =>
@@ -252,12 +269,12 @@ export const api = {
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/env-profile`,
         { method: 'POST', body: JSON.stringify({ profile }) },
       ),
-    killSession: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode', id?: string) =>
+    killSession: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi', id?: string) =>
       request<void>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/sessions/${mode}${id && id !== '1' ? `?id=${encodeURIComponent(id)}` : ''}`,
         { method: 'DELETE' },
       ),
-    sessionBusy: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode', id?: string) =>
+    sessionBusy: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi', id?: string) =>
       request<{ busy: boolean }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/sessions/${mode}/busy${id && id !== '1' ? `?id=${encodeURIComponent(id)}` : ''}`,
       ),
@@ -277,6 +294,28 @@ export const api = {
       request<{ branch: string; dirty: boolean; ahead: number; behind: number }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/refresh-git`,
         { method: 'POST' },
+      ),
+    createHandoff: (
+      wsId: string,
+      p: string,
+      payload: {
+        source: { mode: AgentMode; sessionId: string };
+        target: { mode: AgentMode; sessionId: string };
+        notes: string;
+      },
+    ) =>
+      request<{ handoff: Handoff; prompt: string }>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      ),
+    handoffs: (wsId: string, p: string) =>
+      request<{ handoffs: Handoff[] }>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs`,
+      ).then((body) => body.handoffs),
+    cancelHandoff: (wsId: string, p: string, id: string) =>
+      request<void>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs/${encodeURIComponent(id)}`,
+        { method: 'DELETE' },
       ),
     upload: (wsId: string, p: string, file: { name: string; dataBase64: string }) =>
       request<{ path: string }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/upload`, {
@@ -581,7 +620,7 @@ export const api = {
     /** Kill a session that lives on a runner. */
     killRemoteSession: (wsId: string, payload: {
       runnerId: string; remoteWsId: string; path: string;
-      mode: 'claude' | 'shell' | 'codex' | 'opencode'; id?: string;
+      mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi'; id?: string;
     }) =>
       request<{ ok: true }>(
         `${wsBase(wsId)}/remote-worktrees/kill-session`,
@@ -759,5 +798,7 @@ export type RemoteWorktree = {
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; codexSessions?: string[];
   hasOpencodeSession?: boolean; opencodeStatus?: 'idle' | 'working' | 'waiting';
   opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; opencodeSessions?: string[];
+  hasPiSession?: boolean; piStatus?: 'idle' | 'working' | 'waiting';
+  piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; piSessions?: string[];
   hasShellSession?: boolean; shellSessions?: string[];
 };

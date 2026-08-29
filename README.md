@@ -9,7 +9,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/strado-io/strado?style=flat&logo=github)](https://github.com/strado-io/strado/stargazers)
 [![X](https://img.shields.io/badge/@strado__io-555?logo=x)](https://x.com/strado_io)
 
-Run Claude Code, Codex, and opencode in parallel — each in its own git worktree.<br />
+Run Claude Code, Codex, opencode, and Pi in parallel — each in its own git worktree.<br />
 Debug in the built-in browser, edit in the built-in IDE, and verify every change while you steer.
 
 [**Download**](https://strado.io) &nbsp;&bull;&nbsp; [Build from source](BUILDING.md) &nbsp;&bull;&nbsp; [Contributing](CONTRIBUTING.md)
@@ -27,6 +27,7 @@ trusting the summary.
 - **Verify while you steer** — the built-in browser is scoped per worktree; agents prove their work in it
 - **Edit where agents work** — built-in IDE and terminals live next to every session
 - **Sessions survive everything** — closing the tab, restarting the app, even app updates
+- **Continue past agent limits** — hand work to a fresh Claude, Codex, OpenCode, or Pi session with clean conversation and Git context intact
 - **Review fast** — per-hunk stage/discard, commit graph, push/pull, MR creation
 - **Time tracking that doesn't lie** — hands-on time from real signals, no timers to start
 
@@ -55,9 +56,11 @@ branch, uncommitted changes, env profile, and run status live.
 
 ### Agent & terminal hub
 
-Persistent Claude Code, Codex, opencode, and shell sessions per worktree —
-they survive closing the tab and app updates. One hub window with a super-tab
-per worktree, plus the embedded IDE.
+Persistent Claude Code, Codex, opencode, Pi, and shell sessions per worktree —
+they survive closing the tab and app updates. When an agent reaches a limit,
+handoff starts a fresh agent with clean provider conversation messages and
+repository state — never a replay of terminal screen output.
+One hub window with a super-tab per worktree, plus the embedded IDE.
 
 </td>
 <td width="50%">
@@ -188,7 +191,7 @@ run `npm run build -w packages/web` and reload.
 
 ### Terminal daemon
 
-Terminal sessions (Claude/Codex/OpenCode/shell PTYs) are owned by a small
+Terminal sessions (Claude/Codex/OpenCode/Pi/shell PTYs) are owned by a small
 standalone daemon, `strado-ptyd` (`packages/ptyd`), reached over a Unix
 socket at `~/.strado/ptyd/ptyd.sock`. The daemon runs from `~/.strado/ptyd/bin/` (installed at boot from the app bundle), with logs at `~/.strado/ptyd/ptyd.log`. The server is just a client — restarting
 or updating the server (or the whole app) leaves sessions running, and the

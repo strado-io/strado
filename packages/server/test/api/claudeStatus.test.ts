@@ -41,6 +41,19 @@ afterEach(async () => {
 });
 
 describe('POST /api/claude/status', () => {
+  it('maps a Strado tab to Claude session metadata', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/claude/status',
+      payload: {
+        cwd: repo, status: 'waiting', sessionId: '2', providerSessionId: 'claude-id',
+        transcriptPath: '/tmp/claude-id.jsonl',
+      },
+    });
+    expect(await app.deps.agentSessions.get('claude', repo, '2')).toMatchObject({
+      providerSessionId: 'claude-id', transcriptPath: '/tmp/claude-id.jsonl',
+    });
+  });
+
   it('accepts a known worktree cwd, stores status, emits on the bus', async () => {
     const events: any[] = [];
     app.deps.bus.on('worktrees', (e) => events.push(e));

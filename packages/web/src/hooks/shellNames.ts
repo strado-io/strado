@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react';
 
 // Custom display names for pty session tabs. Shells keep the legacy
 // `path::sessionId` key (saved names survive); agent tabs (claude/codex/
-// opencode) key by `path::mode::sessionId`. Client-side only (like vscode
+// opencode/pi) key by `path::mode::sessionId`. Client-side only (like vscode
 // tabs): the server tracks sessions by numeric id and doesn't need to know
 // what a human calls them. Persisted so names survive panel reopen and
 // reload; broadcast so every open view updates live.
 const KEY = 'strado:shell-names';
 const EVENT = 'strado:shell-names';
 
-export type NamedSessionMode = 'shell' | 'claude' | 'codex' | 'opencode';
+export type NamedSessionMode = 'shell' | 'claude' | 'codex' | 'opencode' | 'pi';
 
 export function shellNameKey(path: string, id: string): string {
   return `${path}::${id}`;

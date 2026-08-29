@@ -2,17 +2,20 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { MergeRequest, RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { track } from '../telemetry';
-import { api } from '../api';
+import { api, type AgentMode } from '../api';
 import { subscribeWorktrees } from '../eventStream';
 import { useCapabilities } from '../hooks/capabilities';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
 import { readVscodeTabs, rememberVscodeTab } from '../hooks/vscodeTabs';
-import { readKbTabs, rememberKbTab } from '../hooks/kbTabs';
+import {
+  forgetKbTabState, readKbTabIds, readKbTabs, rememberKbSelection,
+  rememberKbTab, rememberKbTabIds,
+} from '../hooks/kbTabs';
 import { renameSession, sessionNameKey, shellNameKey, useShellNames, type NamedSessionMode } from '../hooks/shellNames';
 import { closeVscodeTab } from './vscodeTabClose';
 import {
   browserTabLabel, previewKey, readBrowserMeta, readBrowserTabIds, readBrowserTabs,
-  readBrowserUrls, rememberBrowserMeta, rememberBrowserTab, rememberBrowserTabIds,
+  migrateGuessedBrowserUrls, rememberBrowserMeta, rememberBrowserTab, rememberBrowserTabIds,
   rememberBrowserUrl,
 } from '../hooks/browserTabs';
 import { DiffView } from './DiffView';
@@ -25,26 +28,27 @@ import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
-  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, LogsIcon, OpencodeIcon, PlayIcon,
-  PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
+  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, LogsIcon, OpencodeIcon, PiIcon,
+  PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
 import { agentTabStatus, shellHostedAgent } from '../hooks/agentTabStatus';
 import {
-  hasLeaf, leafKeys, pruneLeaves, readPaneLayouts, rememberPaneLayout,
-  removeLeaf, replaceLeaf, splitLeaf, withRatio, type PaneNode,
+  dockLeaf, hasLeaf, leafKeys, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
+  removeLeaf, splitLeaf, withRatio, type PaneDockSide, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
+import { HandoffDialog } from '../components/HandoffDialog';
 
 type Tab = {
   path: string;
-  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb';
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb';
   id: string;
   /** Set when this session's pty lives on a runner rather than this machine. */
   remote?: RemoteTarget | null;
@@ -74,6 +78,7 @@ type Group = {
   claudeOpen: boolean;
   codexOpen: boolean;
   opencodeOpen: boolean;
+  piOpen: boolean;
   // Purely client-side: VS Code web is an iframe, not a pty session, so the
   // server never reports it — the tab lives and dies with this panel.
   vscodeOpen: boolean;
@@ -84,6 +89,8 @@ type Group = {
   // Client-side, like vscodeOpen: the Knowledge Base tab has no server
   // session — it just renders the worktree's markdown files.
   kbOpen: boolean;
+  // Extra independently stateful document tabs beyond Knowledge Base 1.
+  kbIds: string[];
   claudeStatus?: 'idle' | 'working' | 'waiting';
   // Per-session status for multi-session worktrees; id '1' falls back to the
   // aggregate field when absent (older servers).
@@ -92,6 +99,8 @@ type Group = {
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   opencodeStatus?: 'idle' | 'working' | 'waiting';
   opencodeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
+  piStatus?: 'idle' | 'working' | 'waiting';
+  piStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   serverShellIds: string[];
   // Tabs the user opened locally that the server may not report live yet.
   localShellIds: string[];
@@ -103,6 +112,8 @@ type Group = {
   localCodexIds: string[];
   serverOpencodeIds: string[];
   localOpencodeIds: string[];
+  serverPiIds: string[];
+  localPiIds: string[];
   /** Set when this group's sessions live on a runner. */
   remote?: RemoteTarget | null;
 };
@@ -115,8 +126,8 @@ function extraIds(ids: Iterable<string> | undefined): string[] {
 // Tab icons are the mode identity; their COLOR carries status only
 // (amber = agent working, blue = needs your input, neutral = idle).
 const IDLE_ICON = 'text-zinc-500';
-const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon };
-const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
+const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon, pi: PiIcon };
+const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
 
 const AGENT_ICON: Record<string, string> = {
   working: 'text-amber-400 animate-pulse',
@@ -167,6 +178,7 @@ function groupTabs(
   g: Group,
   shellNames: Record<string, string> = {},
   browserMeta: Record<string, { title?: string; favicon?: string | null }> = {},
+  kbTitles: Record<string, string> = {},
   // VS Code is served by the worktree's OWN machine, so on a self-hosted runner
   // its tab must be ABSENT (a runner has no vscode-web) — this flag is false for
   // a remote worktree.
@@ -181,7 +193,7 @@ function groupTabs(
 ): { tab: Tab; label: string; icon: React.ReactNode; hint?: string }[] {
   // saved drag order applies at the end, so every consumer (strip, switcher,
   // hotkeys) sees the same sequence
-  const agentTabs = <M extends 'claude' | 'codex' | 'opencode'>(
+  const agentTabs = <M extends 'claude' | 'codex' | 'opencode' | 'pi'>(
     mode: M,
     open: boolean,
     server: string[],
@@ -205,12 +217,14 @@ function groupTabs(
     ...agentTabs('claude', g.claudeOpen, g.serverClaudeIds, g.localClaudeIds, 'Claude', g.claudeStatusById, g.claudeStatus, ClaudeIcon),
     ...agentTabs('codex', g.codexOpen, g.serverCodexIds, g.localCodexIds, 'Codex', g.codexStatusById, g.codexStatus, CodexIcon),
     ...agentTabs('opencode', g.opencodeOpen, g.serverOpencodeIds, g.localOpencodeIds, 'OpenCode', g.opencodeStatusById, g.opencodeStatus, OpencodeIcon),
+    ...agentTabs('pi', g.piOpen, g.serverPiIds, g.localPiIds, 'Pi', g.piStatusById, g.piStatus, PiIcon),
     ...sortIds([...g.serverShellIds, ...g.localShellIds]).map((id) => {
       // An agent typed by hand inside a Shell tab takes the tab's icon over
       // for as long as it runs, so the strip says WHICH tab is busy — the
       // plain terminal glyph comes back when the agent exits.
       const hosted = shellHostedAgent(id, {
-        claude: g.claudeStatusById, codex: g.codexStatusById, opencode: g.opencodeStatusById,
+        claude: g.claudeStatusById, codex: g.codexStatusById,
+        opencode: g.opencodeStatusById, pi: g.piStatusById,
       });
       const Icon = hosted ? SHELL_HOST_ICON[hosted.mode] : ShellIcon;
       return {
@@ -252,13 +266,14 @@ function groupTabs(
         ),
       };
     }),
-    ...(g.kbOpen
-      ? [{
-          tab: { path: g.path, mode: 'kb' as const, id: '1' },
-          label: 'Knowledge Base',
+    ...[...(g.kbOpen ? ['1'] : []), ...g.kbIds.filter((id) => id !== '1')].map((id) => {
+      const key = `${g.path}\0kb:${id}`;
+      return {
+          tab: { path: g.path, mode: 'kb' as const, id },
+          label: kbTitles[key] ?? (id === '1' ? 'Knowledge Base' : `Knowledge Base ${id}`),
           icon: <BookIcon className={IDLE_ICON} />,
-        }]
-      : []),
+        };
+    }),
   ];
   // A remote group's pty tabs all target the runner. The Browser tab is a LOCAL
   // desktop surface (it renders the forwarded 127.0.0.1 URL), and VS Code/KB are
@@ -409,11 +424,14 @@ function BrowserPreviewPane({
   path,
   initialUrl,
   suppressed,
+  immediateSuppress = false,
   onReady,
 }: {
   path: string;
   initialUrl: string;
   suppressed: boolean;
+  /** Tab drags must park the native view before the pointer crosses it. */
+  immediateSuppress?: boolean;
   onReady: (wcId: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -440,6 +458,10 @@ function BrowserPreviewPane({
     if (!el || !bridge?.preview) return;
     let stale = false;
     if (suppressed) {
+      if (immediateSuppress) {
+        void bridge.preview('hide', path);
+        return () => { stale = true; };
+      }
       // capture BEFORE hiding — the two calls used to race, and a hidden
       // view captures black, leaving the placeholder dark instead of frozen.
       // If the overlay closed while capturing, the hide must not fire: it
@@ -460,7 +482,7 @@ function BrowserPreviewPane({
     return () => {
       stale = true;
     };
-  }, [suppressed, path]);
+  }, [suppressed, immediateSuppress, path]);
   // self-healing: whatever detaches the view without our knowledge, the
   // heartbeat re-asserts attachment (idempotent in main) within ~2s
   useEffect(() => {
@@ -498,7 +520,7 @@ export function TerminalView({
   onClose: () => void;
   /** undefined = a generic open (sidebar row, palette) — restore the tab the
    *  user was on last time; an explicit mode always wins */
-  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb';
+  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb';
   sessionId?: string;
   /** Bumps on every explicit open request from the parent (for example, a
    *  notification). `mode`/`sessionId` are read once at mount, so this is what
@@ -555,9 +577,14 @@ export function TerminalView({
     if (t.mode === 'claude') return (t.id === '1' ? !!w.hasClaudeSession : (w.claudeSessions ?? []).includes(t.id)) && !closed.claude.has(w.path);
     if (t.mode === 'codex') return (t.id === '1' ? !!w.hasCodexSession : (w.codexSessions ?? []).includes(t.id)) && !closed.codex.has(w.path);
     if (t.mode === 'opencode') return (t.id === '1' ? !!w.hasOpencodeSession : (w.opencodeSessions ?? []).includes(t.id)) && !closed.opencode.has(w.path);
+    if (t.mode === 'pi') return (t.id === '1' ? !!w.hasPiSession : (w.piSessions ?? []).includes(t.id)) && !closed.pi.has(w.path);
     if (t.mode === 'shell') return t.id === '1' || (w.shellSessions ?? []).includes(t.id);
     if (t.mode === 'vscode') return readVscodeTabs().has(w.path);
-    if (t.mode === 'kb') return readKbTabs().has(w.path);
+    if (t.mode === 'kb') {
+      return t.id === '1'
+        ? readKbTabs().has(w.path)
+        : (readKbTabIds()[w.path] ?? []).includes(t.id);
+    }
     if (t.mode === 'browser') return isElectron && readBrowserTabs().has(w.path);
     return false;
   };
@@ -568,23 +595,26 @@ export function TerminalView({
     // Default entry tab: a shell — never silently spawn an agent.
     return { mode: 'shell' as const, sessionId: '1' };
   });
-  // Split-pane layout per worktree (only stored while an actual split
-  // exists; a single pane implicitly follows the active tab).
-  const [paneLayouts, setPaneLayouts] = useState<Record<string, PaneNode>>(readPaneLayouts);
-  const setLayout = (path: string, node: PaneNode | null) => {
+  // A worktree can contain multiple independent split groups. Only actual
+  // split trees are stored; a normal full-size tab remains implicit.
+  const [paneLayouts, setPaneLayouts] = useState<Record<string, PaneNode[]>>(readPaneLayouts);
+  const paneLayoutsRef = useRef(paneLayouts);
+  paneLayoutsRef.current = paneLayouts;
+  const setLayouts = (path: string, nodes: PaneNode[]) => {
+    const splits = nodes.filter((node) => node.kind === 'split');
     setPaneLayouts((prev) => {
       const next = { ...prev };
-      if (node && node.kind === 'split') next[path] = node;
+      if (splits.length > 0) next[path] = splits;
       else delete next[path];
       return next;
     });
-    rememberPaneLayout(path, node);
+    rememberPaneLayouts(path, splits);
   };
 
   useEffect(() => {
     if (mode === 'vscode') rememberVscodeTab(worktree.path, true);
-    if (mode === 'kb') rememberKbTab(worktree.path, true);
-  }, [mode, worktree.path]);
+    if (mode === 'kb' && sessionId === '1') rememberKbTab(worktree.path, true);
+  }, [mode, sessionId, worktree.path]);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -596,7 +626,7 @@ export function TerminalView({
   const remoteFor = (path: string) => (remote ? { ...remote, path } : null);
   const [active, setActive] = useState<Tab>(
     mode === 'vscode' || mode === 'browser' || mode === 'kb'
-      ? { path: worktree.path, mode, id: '1' }
+      ? { path: worktree.path, mode, id: mode === 'vscode' ? '1' : sessionId }
       : { path: worktree.path, mode, id: sessionId, remote: remoteFor(worktree.path) },
   );
   const activeRef = useRef(active);
@@ -619,7 +649,7 @@ export function TerminalView({
   // written through to) localStorage so the close survives a reload; cleared
   // when the user opens the agent again (openMode / openInlineHub). Declared
   // before `groups` so the initial-state seed below can read it.
-  const closedAgentsRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string> } | null>(null);
+  const closedAgentsRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string>; pi: Set<string> } | null>(null);
   if (!closedAgentsRef.current) closedAgentsRef.current = readClosedAgents();
   // Remote sessions the user closed from THIS hub. A remote hub has no SSE —
   // its session lists come from a 5s poll whose merge is additive — so a
@@ -644,16 +674,23 @@ export function TerminalView({
     claudeOpen: (mode === 'claude' || !!worktree.hasClaudeSession) && !closedAgentsRef.current!.claude.has(worktree.path),
     codexOpen: (mode === 'codex' || !!worktree.hasCodexSession) && !closedAgentsRef.current!.codex.has(worktree.path),
     opencodeOpen: (mode === 'opencode' || !!worktree.hasOpencodeSession) && !closedAgentsRef.current!.opencode.has(worktree.path),
+    piOpen: (mode === 'pi' || !!worktree.hasPiSession) && !closedAgentsRef.current!.pi.has(worktree.path),
     vscodeOpen: mode === 'vscode' || readVscodeTabs().has(worktree.path),
     browserOpen: isElectron && readBrowserTabs().has(worktree.path),
     browserIds: isElectron ? readBrowserTabIds()[worktree.path] ?? [] : [],
-    kbOpen: mode === 'kb' || readKbTabs().has(worktree.path),
+    kbOpen: (mode === 'kb' && sessionId === '1') || readKbTabs().has(worktree.path),
+    kbIds: sortIds([
+      ...(readKbTabIds()[worktree.path] ?? []),
+      ...(mode === 'kb' && sessionId !== '1' ? [sessionId] : []),
+    ]),
     claudeStatus: worktree.claudeStatus,
     claudeStatusById: worktree.claudeStatusById,
     codexStatus: worktree.codexStatus,
     codexStatusById: worktree.codexStatusById,
     opencodeStatus: worktree.opencodeStatus,
     opencodeStatusById: worktree.opencodeStatusById,
+    piStatus: worktree.piStatus,
+    piStatusById: worktree.piStatusById,
     serverShellIds: worktree.shellSessions ?? (worktree.hasShellSession ? ['1'] : []),
     localShellIds: mode === 'shell' ? [sessionId] : [],
     serverClaudeIds: extraIds(worktree.claudeSessions),
@@ -662,21 +699,24 @@ export function TerminalView({
     localCodexIds: mode === 'codex' && sessionId !== '1' ? [sessionId] : [],
     serverOpencodeIds: extraIds(worktree.opencodeSessions),
     localOpencodeIds: mode === 'opencode' && sessionId !== '1' ? [sessionId] : [],
+    serverPiIds: extraIds(worktree.piSessions),
+    localPiIds: mode === 'pi' && sessionId !== '1' ? [sessionId] : [],
   }]);
 
   // Agent sessions the server has confirmed live at least once. A
-  // hasClaudeSession/hasCodexSession/hasOpencodeSession:false SSE event only closes a tab that
+  // hasClaudeSession/hasCodexSession/hasOpencodeSession/hasPiSession:false SSE event only closes a tab that
   // was previously confirmed — a false that lands before a just-spawned pty
   // registers (common when a brand-new worktree is opened straight into
   // Claude) is a pre-spawn snapshot, not a real close. Honoring it would wipe
   // the only tab and close the hub, which for new users looked like the panel
   // flashing open then falling back to the empty board.
-  const confirmedRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string> } | null>(null);
+  const confirmedRef = useRef<{ claude: Set<string>; codex: Set<string>; opencode: Set<string>; pi: Set<string> } | null>(null);
   if (!confirmedRef.current) {
     confirmedRef.current = {
       claude: new Set(worktree.hasClaudeSession ? [worktree.path] : []),
       codex: new Set(worktree.hasCodexSession ? [worktree.path] : []),
       opencode: new Set(worktree.hasOpencodeSession ? [worktree.path] : []),
+      pi: new Set(worktree.hasPiSession ? [worktree.path] : []),
     };
   }
 
@@ -717,7 +757,7 @@ export function TerminalView({
   // Full rows so the in-modal diff can target any group's worktree.
   const rowsRef = useRef(new Map<string, Worktree>());
   // Preview URL per worktree; seeded from the running dev server when opened.
-  const [browserUrl, setBrowserUrl] = useState<Record<string, string>>(() => readBrowserUrls());
+  const [browserUrl, setBrowserUrl] = useState<Record<string, string>>(migrateGuessedBrowserUrls);
   const [browserDraft, setBrowserDraft] = useState<Record<string, string>>({});
   // webContents id per preview (resolved when its WebContentsView opens);
   // this is the devtools target and the CDP identity of the page.
@@ -733,6 +773,7 @@ export function TerminalView({
   // from the persisted copy so labels survive an app restart (the live page
   // overwrites as soon as its tab is visited).
   const [browserMeta, setBrowserMeta] = useState<Record<string, { title?: string; favicon?: string | null }>>(readBrowserMeta);
+  const [kbTitles, setKbTitles] = useState<Record<string, string>>({});
   const [bwMenu, setBwMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   // transient toolbar feedback ("URL copied", "Saved to Downloads…")
   const [bwNote, setBwNote] = useState<Record<string, string>>({});
@@ -789,6 +830,12 @@ export function TerminalView({
           return next;
         });
         rememberBrowserUrl(ev.key, ev.url);
+      } else if (ev.type === 'focus') {
+        const marker = '\0browser:';
+        const i = ev.key.lastIndexOf(marker);
+        const path = i === -1 ? ev.key : ev.key.slice(0, i);
+        const id = i === -1 ? '1' : ev.key.slice(i + marker.length);
+        if (path === worktree.path) setActive({ path, mode: 'browser', id });
       }
     });
     return off;
@@ -889,38 +936,46 @@ export function TerminalView({
   };
   const defaultPreviewUrl = (path: string) => {
     const row = rowsRef.current.get(path) ?? (path === worktree.path ? worktree : undefined);
-    // explicit per-worktree override beats anything detected
-    const proc = row?.process as { detectedUrl?: string | null; port?: number | null } | undefined;
-    const port = proc?.port ?? row?.meta?.port;
-    const raw =
-      row?.meta?.previewUrl ?? proc?.detectedUrl ?? (port ? `http://localhost:${port}` : 'http://localhost:3000');
+    // An explicit override is always intentional. Otherwise only navigate
+    // automatically when Strado knows a dev server is running; guessing port
+    // 3000 (or a configured-but-idle port) produces a hostile error page.
+    const proc = path === worktree.path
+      ? procs[path]
+      : row?.process as { status?: string; detectedUrl?: string | null; port?: number | null } | undefined;
+    const livePort = proc?.status === 'running' ? (proc.port ?? row?.meta?.port) : null;
+    const raw = row?.meta?.previewUrl ?? proc?.detectedUrl ?? (livePort ? `http://localhost:${livePort}` : '');
+    if (!raw) return '';
     if (!remote) return raw;
     // Everything above names a port on the RUNNER's loopback. Pointing a browser
     // at it here would open whatever is on that port on THIS machine. Resolve
     // through the forward or show nothing.
-    return localizeRemoteUrl(raw, remoteForward.forward) ?? 'about:blank';
+    return localizeRemoteUrl(raw, remoteForward.forward) ?? '';
   };
-  // A remote Browser tab opened before the forward was up seeded (and even
-  // persisted) 'about:blank' — deliberately, since the runner's localhost URL
-  // would render whatever runs on THIS machine. Once the forward exists, heal
-  // every still-blank Browser tab of this worktree: state, persistence, and
-  // the already-open view.
+  const resolvedBrowserUrl = (key: string, path: string) => {
+    const saved = browserUrl[key];
+    const fallback = defaultPreviewUrl(path);
+    if (!saved || saved === 'about:blank') return fallback;
+    return saved;
+  };
+  // A Browser tab can open before a local dev server or remote forward exists.
+  // Once a real default becomes available, heal every untouched blank tab.
+  // Historical builds persisted `about:blank`, so treat that as blank too.
   useEffect(() => {
-    if (!remote || !remoteForward.forward) return;
     const g = groups.find((x) => x.path === worktree.path);
     if (!g) return;
     const url = defaultPreviewUrl(worktree.path);
-    if (url === 'about:blank') return;
+    if (!url) return;
     for (const id of [...(g.browserOpen ? ['1'] : []), ...g.browserIds.filter((i) => i !== '1')]) {
       const pk = previewKey(worktree.path, id);
       const cur = browserUrl[pk];
       if (cur && cur !== 'about:blank') continue;
+      if (cur === url) continue;
       setBrowserUrl((p) => ({ ...p, [pk]: url }));
       rememberBrowserUrl(pk, url);
       void window.strado?.preview?.('navigate', pk, { url });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, remoteForward.forward, groups, browserUrl]);
+  }, [remote, remoteForward.forward, groups, browserUrl, procs[worktree.path]?.status, procs[worktree.path]?.port, procs[worktree.path]?.detectedUrl]);
   const [showDiff, setShowDiff] = useState(false);
   const showDiffRef = useRef(false);
   showDiffRef.current = showDiff;
@@ -938,6 +993,15 @@ export function TerminalView({
   // finds the sessions still running on the runner.
   const [remoteShells, setRemoteShells] = useState<Record<string, RemoteShell[]>>(() => readRemoteShells());
   const [renaming, setRenaming] = useState<{ path: string; mode: NamedSessionMode; id: string; value: string } | null>(null);
+  const [handoffDialog, setHandoffDialog] = useState<{
+    source: { path: string; mode: AgentMode; sessionId: string };
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
+  // A ready handoff is attached to exactly one freshly allocated target tab.
+  // The server consumes it atomically on the first socket connection, so a
+  // later reconnect cannot inject the kickoff prompt twice.
+  const [pendingHandoffs, setPendingHandoffs] = useState<Record<string, string>>({});
   // "+" on the session-tab row: pick which session type to open.
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const addMenuRef = useRef(false);
@@ -947,15 +1011,24 @@ export function TerminalView({
   // for this worktree so a commit/checkout elsewhere updates the file list.
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesRefresh, setChangesRefresh] = useState(0);
-  // OpenCode is the only add-menu row gated on the binary actually being
-  // installed — the server's tool-check reports it, so the menu can grey it
+  // OpenCode and Pi are the add-menu rows gated on the binary actually being
+  // installed — the server's tool-check reports them, so the menu can grey them
   // out with a hint instead of spawning a session that just fails.
   const [opencodeInstalled, setOpencodeInstalled] = useState<boolean | null>(null);
+  const [piInstalled, setPiInstalled] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     api.envCheck()
-      .then((tools) => { if (live) setOpencodeInstalled(!!tools.find((t) => t.id === 'opencode')?.found); })
-      .catch(() => { if (live) setOpencodeInstalled(false); });
+      .then((tools) => {
+        if (!live) return;
+        setOpencodeInstalled(!!tools.find((t) => t.id === 'opencode')?.found);
+        setPiInstalled(!!tools.find((t) => t.id === 'pi')?.found);
+      })
+      .catch(() => {
+        if (!live) return;
+        setOpencodeInstalled(false);
+        setPiInstalled(false);
+      });
     return () => { live = false; };
   }, []);
 
@@ -996,6 +1069,7 @@ export function TerminalView({
           if (row.hasClaudeSession) confirmedRef.current!.claude.add(row.path);
           if (row.hasCodexSession) confirmedRef.current!.codex.add(row.path);
           if (row.hasOpencodeSession) confirmedRef.current!.opencode.add(row.path);
+          if (row.hasPiSession) confirmedRef.current!.pi.add(row.path);
         }
         setProcs((prev) => {
           const next = { ...prev };
@@ -1027,6 +1101,7 @@ export function TerminalView({
                   claudeSessions: surviving('claude', rawRow.claudeSessions),
                   codexSessions: surviving('codex', rawRow.codexSessions),
                   opencodeSessions: surviving('opencode', rawRow.opencodeSessions),
+                  piSessions: surviving('pi', rawRow.piSessions),
                 }
               : rawRow;
             const idx = next.findIndex((g) => g.path === row.path);
@@ -1037,12 +1112,15 @@ export function TerminalView({
                 claudeOpen: (g.claudeOpen || !!row.hasClaudeSession) && !closedAgentsRef.current!.claude.has(row.path),
                 codexOpen: (g.codexOpen || !!row.hasCodexSession) && !closedAgentsRef.current!.codex.has(row.path),
                 opencodeOpen: (g.opencodeOpen || !!row.hasOpencodeSession) && !closedAgentsRef.current!.opencode.has(row.path),
+                piOpen: (g.piOpen || !!row.hasPiSession) && !closedAgentsRef.current!.pi.has(row.path),
                 claudeStatus: row.claudeStatus ?? g.claudeStatus,
                 claudeStatusById: row.claudeStatusById ?? g.claudeStatusById,
                 codexStatus: row.codexStatus ?? g.codexStatus,
                 codexStatusById: row.codexStatusById ?? g.codexStatusById,
                 opencodeStatus: row.opencodeStatus ?? g.opencodeStatus,
                 opencodeStatusById: row.opencodeStatusById ?? g.opencodeStatusById,
+                piStatus: row.piStatus ?? g.piStatus,
+                piStatusById: row.piStatusById ?? g.piStatusById,
                 // Merge additively: this response may be a snapshot taken
                 // before the pty we just spawned existed, and it can land
                 // after the SSE event that confirmed the session. Replacing
@@ -1052,15 +1130,18 @@ export function TerminalView({
                 serverClaudeIds: sortIds([...extraIds(row.claudeSessions), ...g.serverClaudeIds]),
                 serverCodexIds: sortIds([...extraIds(row.codexSessions), ...g.serverCodexIds]),
                 serverOpencodeIds: sortIds([...extraIds(row.opencodeSessions), ...g.serverOpencodeIds]),
+                serverPiIds: sortIds([...extraIds(row.piSessions), ...g.serverPiIds]),
               };
               continue;
             }
             const storedVscode = readVscodeTabs().has(row.path);
             const storedBrowser = isElectron && readBrowserTabs().has(row.path);
             const storedKb = readKbTabs().has(row.path);
+            const storedKbIds = readKbTabIds()[row.path] ?? [];
             const live =
-              row.hasClaudeSession || row.hasCodexSession || row.hasOpencodeSession || storedVscode || storedBrowser ||
-              storedKb || (row.shellSessions?.length ?? 0) > 0;
+              row.hasClaudeSession || row.hasCodexSession || row.hasOpencodeSession || row.hasPiSession ||
+              storedVscode || storedBrowser ||
+              storedKb || storedKbIds.length > 0 || (row.shellSessions?.length ?? 0) > 0;
             if (!live) continue;
             const meta = rowMetaRef.current.get(row.path)!;
             next.push({
@@ -1072,16 +1153,20 @@ export function TerminalView({
               claudeOpen: !!row.hasClaudeSession && !closedAgentsRef.current!.claude.has(row.path),
               codexOpen: !!row.hasCodexSession && !closedAgentsRef.current!.codex.has(row.path),
               opencodeOpen: !!row.hasOpencodeSession && !closedAgentsRef.current!.opencode.has(row.path),
+              piOpen: !!row.hasPiSession && !closedAgentsRef.current!.pi.has(row.path),
               vscodeOpen: storedVscode,
               browserOpen: storedBrowser,
               browserIds: isElectron ? readBrowserTabIds()[row.path] ?? [] : [],
               kbOpen: storedKb,
+              kbIds: storedKbIds,
               claudeStatus: row.claudeStatus,
               claudeStatusById: row.claudeStatusById,
               codexStatus: row.codexStatus,
               codexStatusById: row.codexStatusById,
               opencodeStatus: row.opencodeStatus,
               opencodeStatusById: row.opencodeStatusById,
+              piStatus: row.piStatus,
+              piStatusById: row.piStatusById,
               serverShellIds: row.shellSessions ?? [],
               localShellIds: [],
               serverClaudeIds: extraIds(row.claudeSessions),
@@ -1090,6 +1175,8 @@ export function TerminalView({
               localCodexIds: [],
               serverOpencodeIds: extraIds(row.opencodeSessions),
               localOpencodeIds: [],
+              serverPiIds: extraIds(row.piSessions),
+              localPiIds: [],
             });
           }
           return next;
@@ -1124,12 +1211,13 @@ export function TerminalView({
       const claudeSessions = Array.isArray(evt.data.claudeSessions) ? (evt.data.claudeSessions as string[]) : null;
       const codexSessions = Array.isArray(evt.data.codexSessions) ? (evt.data.codexSessions as string[]) : null;
       const opencodeSessions = Array.isArray(evt.data.opencodeSessions) ? (evt.data.opencodeSessions as string[]) : null;
+      const piSessions = Array.isArray(evt.data.piSessions) ? (evt.data.piSessions as string[]) : null;
       setGroups((prev) => {
         const idx = prev.findIndex((g) => g.path === path);
         if (idx === -1) {
           const gained =
             evt.data.hasClaudeSession || evt.data.hasCodexSession || evt.data.hasOpencodeSession ||
-            (shellSessions?.length ?? 0) > 0;
+            evt.data.hasPiSession || (shellSessions?.length ?? 0) > 0;
           if (!gained) return prev;
           const meta = rowMetaRef.current.get(path) ?? {
             repoName: '',
@@ -1141,16 +1229,20 @@ export function TerminalView({
             claudeOpen: !!evt.data.hasClaudeSession && !closedAgentsRef.current!.claude.has(path),
             codexOpen: !!evt.data.hasCodexSession && !closedAgentsRef.current!.codex.has(path),
             opencodeOpen: !!evt.data.hasOpencodeSession && !closedAgentsRef.current!.opencode.has(path),
+            piOpen: !!evt.data.hasPiSession && !closedAgentsRef.current!.pi.has(path),
             vscodeOpen: false,
             browserOpen: false,
             browserIds: [],
             kbOpen: false,
+            kbIds: [],
             claudeStatus: evt.data.claudeStatus,
             claudeStatusById: evt.data.claudeStatusById,
             codexStatus: evt.data.codexStatus,
             codexStatusById: evt.data.codexStatusById,
             opencodeStatus: evt.data.opencodeStatus,
             opencodeStatusById: evt.data.opencodeStatusById,
+            piStatus: evt.data.piStatus,
+            piStatusById: evt.data.piStatusById,
             serverShellIds: shellSessions ?? [],
             localShellIds: [],
             serverClaudeIds: extraIds(claudeSessions ?? []),
@@ -1159,6 +1251,8 @@ export function TerminalView({
             localCodexIds: [],
             serverOpencodeIds: extraIds(opencodeSessions ?? []),
             localOpencodeIds: [],
+            serverPiIds: extraIds(piSessions ?? []),
+            localPiIds: [],
           }];
         }
         const g = prev[idx]!;
@@ -1184,6 +1278,10 @@ export function TerminalView({
           ng.serverOpencodeIds = extraIds(opencodeSessions);
           ng.localOpencodeIds = g.localOpencodeIds.filter((id) => !opencodeSessions.includes(id));
         }
+        if (piSessions) {
+          ng.serverPiIds = extraIds(piSessions);
+          ng.localPiIds = g.localPiIds.filter((id) => !piSessions.includes(id));
+        }
         if (evt.data.claudeStatusById !== undefined) {
           ng.claudeStatusById = evt.data.claudeStatusById as Group['claudeStatusById'];
         }
@@ -1193,9 +1291,13 @@ export function TerminalView({
         if (evt.data.opencodeStatusById !== undefined) {
           ng.opencodeStatusById = evt.data.opencodeStatusById as Group['opencodeStatusById'];
         }
+        if (evt.data.piStatusById !== undefined) {
+          ng.piStatusById = evt.data.piStatusById as Group['piStatusById'];
+        }
         if (evt.data.claudeStatus !== undefined) ng.claudeStatus = evt.data.claudeStatus;
         if (evt.data.codexStatus !== undefined) ng.codexStatus = evt.data.codexStatus;
         if (evt.data.opencodeStatus !== undefined) ng.opencodeStatus = evt.data.opencodeStatus;
+        if (evt.data.piStatus !== undefined) ng.piStatus = evt.data.piStatus;
         // Only a session confirmed live at least once may be closed by a
         // false — otherwise a pre-spawn snapshot would wipe a tab the user
         // just opened (see confirmedRef).
@@ -1219,6 +1321,13 @@ export function TerminalView({
         } else if (evt.data.hasOpencodeSession === false && confirmedRef.current!.opencode.has(path)) {
           confirmedRef.current!.opencode.delete(path);
           ng.opencodeOpen = false;
+        }
+        if (evt.data.hasPiSession) {
+          confirmedRef.current!.pi.add(path);
+          if (!closedAgentsRef.current!.pi.has(path)) ng.piOpen = true;
+        } else if (evt.data.hasPiSession === false && confirmedRef.current!.pi.has(path)) {
+          confirmedRef.current!.pi.delete(path);
+          ng.piOpen = false;
         }
         const next = [...prev];
         next[idx] = ng;
@@ -1261,9 +1370,28 @@ export function TerminalView({
     const attempt = () => {
       api.vscode
         .open(path)
-        .then((r) => {
+        .then(async (r) => {
           if (!alive) return;
           if (r.ready === false) { timer = setTimeout(attempt, 3000); return; }
+          // VS Code 1.136+ sends SAMEORIGIN/frame-ancestors headers. Electron
+          // relaxes them only after this exact loopback origin is registered;
+          // await the IPC so the first iframe navigation cannot race it.
+          if (window.strado?.vscodeOrigin) {
+            let allowed = false;
+            try {
+              allowed = await window.strado.vscodeOrigin(r.url);
+            } catch (error) {
+              // During local development Vite can reload the new preload/web
+              // bundle while Electron main is still the previous build, which
+              // has no IPC handler yet. Make the required restart actionable.
+              if (/No handler registered for 'strado:vscode-origin'/i.test(String(error))) {
+                throw new Error('Restart Strado Dev to finish enabling the VS Code embed');
+              }
+              throw error;
+            }
+            if (!allowed) throw new Error('VS Code returned an unsupported embed URL');
+          }
+          if (!alive) return;
           setVscodeUrls((m) => ({ ...m, [path]: r.url }));
         })
         .catch((e) => alive && setVscodeError(e instanceof Error ? e.message : String(e)));
@@ -1285,53 +1413,80 @@ export function TerminalView({
   }, [groups, worktree.path]);
 
   const activeGroup = ordered.find((g) => g.path === active.path) ?? null;
+  const tabs = activeGroup ? groupTabs(activeGroup, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[activeGroup.path] ?? [], browserEmbeds) : [];
 
   // ---------- split panes (Cmd+D / Cmd+Shift+D) ----------
   const isPtyMode = (m: Tab['mode']): m is PtyTab['mode'] =>
     m !== 'vscode' && m !== 'browser' && m !== 'kb';
-  const hubRemote = remote;
-  const keyToTab = (path: string, key: string): PtyTab | null => {
-    const i = key.indexOf(':');
-    if (i === -1) return null;
-    let m = key.slice(0, i);
-    const id = key.slice(i + 1);
-    // `shell@<runnerId>:<id>` — a remote pane. The target has to come back from
-    // the registry, because a pane's whole identity is its key string.
-    let remote: RemoteTarget | null = null;
-    const at = m.indexOf('@');
-    if (at !== -1) {
-      const runnerId = m.slice(at + 1);
-      m = m.slice(0, at);
-      remote =
-        (remoteShells[path] ?? []).find((s) => s.runnerId === runnerId && s.id === id) ??
-        // A remote hub's own target: its groups are all on one runner.
-        (hubRemote && hubRemote.runnerId === runnerId ? { ...hubRemote, path } : null);
-      // The runner was unlinked (or storage cleared) while a split layout still
-      // referenced it: no target means no socket, so drop the leaf rather than
-      // render a pane that can never connect.
-      if (!remote) return null;
-    }
-    if (m !== 'shell' && m !== 'claude' && m !== 'codex' && m !== 'opencode') return null;
-    return { path, mode: m, id, remote: remote ?? (hubRemote ? { ...hubRemote, path } : null) };
-  };
-  const layout = paneLayouts[worktree.path] ?? null;
-  const paneLayoutsRef = useRef(paneLayouts);
-  paneLayoutsRef.current = paneLayouts;
-  // The rendered tree: an explicit split layout, or the active pty tab as an
-  // implicit single pane. Embed tabs render outside this tree; while one is
-  // active an existing split stays mounted (hidden) so its sessions live on.
+  const isDockMode = (m: Tab['mode']) => m !== 'vscode';
+  // Resolve against the actual strip rather than reparsing the key. Besides
+  // keeping remote runner identity exact, this lets Browser and Knowledge Base
+  // leaves participate in the same layout tree as PTY sessions.
+  const keyToTab = (path: string, key: string): Tab | null =>
+    path === worktree.path
+      ? tabs.find((entry) => tabKeyOf(entry.tab) === key)?.tab ?? null
+      : null;
+  const layouts = paneLayouts[worktree.path] ?? [];
+  const splitGroups = layouts.map((node, layoutIndex) => ({
+    node,
+    layoutIndex,
+    tabs: tabs.filter((entry) => hasLeaf(node, tabKeyOf(entry.tab))),
+  }));
+  const splitTabKeys = new Set(splitGroups.flatMap((group) => group.tabs.map((entry) => tabKeyOf(entry.tab))));
+  // Each layout is one conceptual tab group. Keep every group's members
+  // contiguous, then show normal full-size tabs after the grouped segments.
+  const displayedTabs = layouts.length > 0
+    ? [
+        ...splitGroups.flatMap((group) => group.tabs),
+        ...tabs.filter((entry) => !splitTabKeys.has(tabKeyOf(entry.tab))),
+      ]
+    : tabs;
+  // The rendered tree: an explicit split layout when its tab group is active,
+  // or the active dockable tab as an implicit single pane. A tab removed from a
+  // split is deliberately outside `layout`, so selecting it gives it the full
+  // surface while the remaining tiled layout stays available from its tabs.
+  const activePaneKey = isDockMode(active.mode) ? tabKeyOf(active) : null;
+  const activeLayoutIndex = activePaneKey
+    ? layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey))
+    : -1;
+  const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]! : null;
   const paneTree: PaneNode | null =
-    layout ?? (isPtyMode(active.mode) ? { kind: 'leaf', key: tabKeyOf(active) } : null);
-
-  // Route a pty tab into the pane tree: focus its pane when it has one, else
-  // re-target the focused pane. Embed tabs bypass the tree entirely.
-  const activateTab = (tab: Tab) => {
-    if (layout && isPtyMode(tab.mode) && isPtyMode(active.mode)) {
-      const key = tabKeyOf(tab);
-      if (!hasLeaf(layout, key)) {
-        setLayout(worktree.path, replaceLeaf(layout, tabKeyOf(active), key));
-      }
+    layout
+      ? layout
+      : activePaneKey
+        ? { kind: 'leaf', key: activePaneKey }
+        : null;
+  // Mount a PTY surface the first time its tab/group is shown, then retain it
+  // until the tab closes. The flat persistent layer below prevents switching
+  // groups from tearing down xterm and reconnecting its WebSocket.
+  const mountedPtyKeysRef = useRef(new Set<string>());
+  const livePtyKeys = new Set(
+    tabs.filter(({ tab }) => isPtyMode(tab.mode)).map(({ tab }) => tabKeyOf(tab)),
+  );
+  for (const key of mountedPtyKeysRef.current) {
+    if (!livePtyKeys.has(key)) mountedPtyKeysRef.current.delete(key);
+  }
+  if (paneTree) {
+    for (const key of leafKeys(paneTree)) {
+      const tab = keyToTab(worktree.path, key);
+      if (tab && isPtyMode(tab.mode)) mountedPtyKeysRef.current.add(key);
     }
+  }
+
+  const commitLayoutAt = (layoutIndex: number, node: PaneNode | null) => {
+    const next = [...(paneLayoutsRef.current[worktree.path] ?? [])];
+    if (layoutIndex >= 0) {
+      if (node?.kind === 'split') next[layoutIndex] = node;
+      else next.splice(layoutIndex, 1);
+    } else if (node?.kind === 'split') {
+      next.push(node);
+    }
+    setLayouts(worktree.path, next);
+  };
+
+  // A tab already in the tiled layout restores that layout and focuses its
+  // pane. A normal/undocked tab opens full-size without destroying the layout.
+  const activateTab = (tab: Tab) => {
     setActive(tab);
   };
 
@@ -1342,7 +1497,7 @@ export function TerminalView({
     const newTab = allocSession(active.mode);
     if (!newTab) return;
     const base: PaneNode = paneTree ?? { kind: 'leaf', key: tabKeyOf(active) };
-    setLayout(worktree.path, splitLeaf(base, tabKeyOf(active), tabKeyOf(newTab), dir));
+    commitLayoutAt(activeLayoutIndex, splitLeaf(base, tabKeyOf(active), tabKeyOf(newTab), dir));
     setActive(newTab);
   };
   const splitPaneRef = useRef(splitPane);
@@ -1363,19 +1518,40 @@ export function TerminalView({
         : (ev.clientY - rect.top) / rect.height;
       const ratio = Math.min(0.85, Math.max(0.15, frac));
       setPaneLayouts((prev) => {
-        const cur = prev[worktree.path];
-        if (!cur) return prev;
-        return { ...prev, [worktree.path]: withRatio(cur, addr, ratio) };
+        const current = prev[worktree.path];
+        const cur = current?.[activeLayoutIndex];
+        if (!current || !cur) return prev;
+        const next = [...current];
+        next[activeLayoutIndex] = withRatio(cur, addr, ratio);
+        return { ...prev, [worktree.path]: next };
       });
     };
     const up = () => {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
       // ratios changed live in state; persist the final tree once
-      rememberPaneLayout(worktree.path, paneLayoutsRef.current[worktree.path] ?? null);
+      rememberPaneLayouts(worktree.path, paneLayoutsRef.current[worktree.path] ?? []);
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+  };
+
+  const paneLeafElsRef = useRef(new Map<string, HTMLDivElement>());
+  const paneSurfaceRef = useRef<HTMLDivElement>(null);
+  const [paneRects, setPaneRects] = useState<Record<string, {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }>>({});
+
+  const openPaneAsFullTab = (tab: Tab) => {
+    const current = paneLayoutsRef.current[worktree.path] ?? [];
+    const index = current.findIndex((candidate) => hasLeaf(candidate, tabKeyOf(tab)));
+    if (index >= 0) {
+      commitLayoutAt(index, removeLeaf(current[index]!, tabKeyOf(tab)));
+    }
+    setActive(tab);
   };
 
   const renderPane = (node: PaneNode, addr: number[]): React.ReactNode => {
@@ -1383,14 +1559,36 @@ export function TerminalView({
       const tab = keyToTab(worktree.path, node.key);
       if (!tab) return null;
       const isFocused = sameTab(active, tab);
+      const isDocked = !!layout && hasLeaf(layout, node.key);
+      const label = tabs.find((entry) => tabKeyOf(entry.tab) === node.key)?.label ?? node.key;
       return (
-        <XtermPane
+        <div
           key={node.key}
-          wsId={wsId}
-          tab={tab}
-          focused={isFocused}
-          onFocus={() => { if (!isFocused) setActive(tab); }}
-        />
+          ref={(el) => {
+            if (el) paneLeafElsRef.current.set(node.key, el);
+            else paneLeafElsRef.current.delete(node.key);
+          }}
+          data-testid="pane-host"
+          data-pane-key={node.key}
+          className={`group relative h-full w-full min-h-0 min-w-0 overflow-hidden ${
+            isDocked && isFocused ? 'ring-1 ring-inset ring-sky-500/40' : ''
+          }`}
+        >
+          {isDocked && tab.mode !== 'browser' && (
+            <button
+              type="button"
+              aria-label={`Open ${label} as full tab`}
+              title="Remove from split and open as full tab"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => openPaneAsFullTab(tab)}
+              className={`absolute right-2 top-2 z-20 rounded border border-zinc-700 bg-zinc-950/90 px-1.5 py-0.5 text-[10px] text-zinc-400 shadow-lg backdrop-blur hover:border-zinc-500 hover:text-zinc-100 ${
+                isFocused ? 'opacity-70' : 'opacity-0'
+              } transition-opacity group-hover:opacity-100 focus:opacity-100`}
+            >
+              Full tab
+            </button>
+          )}
+        </div>
       );
     }
     return (
@@ -1417,6 +1615,72 @@ export function TerminalView({
       </div>
     );
   };
+
+  // Browser and Knowledge Base stay mounted in their existing persistent
+  // layer, then align over their tree leaf. This is essential for Browser's
+  // native WebContentsView bounds and prevents the KB's selected document,
+  // filter and scroll state from resetting whenever layout focus changes.
+  const paneTreeSignature = paneTree ? JSON.stringify(paneTree) : '';
+  useEffect(() => {
+    const surface = paneSurfaceRef.current;
+    if (!surface || !paneTree) {
+      setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+    let raf = 0;
+    const sync = () => {
+      window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(() => {
+        const outer = surface.getBoundingClientRect();
+        const next: typeof paneRects = {};
+        for (const key of leafKeys(paneTree)) {
+          const el = paneLeafElsRef.current.get(key);
+          if (!el) continue;
+          const rect = el.getBoundingClientRect();
+          next[key] = {
+            left: rect.left - outer.left,
+            top: rect.top - outer.top,
+            width: rect.width,
+            height: rect.height,
+          };
+        }
+        setPaneRects((prev) => {
+          const keys = Object.keys(next);
+          if (
+            keys.length === Object.keys(prev).length &&
+            keys.every((key) => {
+              const a = prev[key];
+              const b = next[key]!;
+              return !!a && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
+            })
+          ) return prev;
+          return next;
+        });
+      });
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(surface);
+    for (const key of leafKeys(paneTree)) {
+      const el = paneLeafElsRef.current.get(key);
+      if (el) ro.observe(el);
+    }
+    window.addEventListener('resize', sync);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', sync);
+    };
+    // paneTreeSignature captures leaf membership, nesting and live ratios.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneTreeSignature]);
+
+  const dockedSurfaceStyle = (key: string): React.CSSProperties | undefined => {
+    const rect = paneRects[key];
+    return rect
+      ? { position: 'absolute', left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+      : undefined;
+  };
   // Diffstat for the active worktree, shown on the Changes toggle. The hub is
   // scoped to one worktree, so the active tab is normally this worktree — read
   // the `worktree` prop, which Dashboard keeps fresh (its 15s poll of the
@@ -1441,7 +1705,7 @@ export function TerminalView({
     tabMruRef.current[active.path] = [k, ...list.filter((x) => x !== k)].slice(0, 24);
   }, [active]);
   const switcherTabs = (g: Group) => {
-    const base = groupTabs(g, shellNames, browserMeta, caps.embeds, remoteShells[g.path] ?? [], browserEmbeds);
+    const base = groupTabs(g, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[g.path] ?? [], browserEmbeds);
     const mru = tabMruRef.current[g.path] ?? [];
     return base
       .map((t, i) => {
@@ -1601,7 +1865,7 @@ export function TerminalView({
       if (!t) return;
       if (t.mode === 'browser') {
         const pk = previewKey(path, t.id);
-        const url = browserUrl[pk] ?? defaultPreviewUrl(path);
+        const url = resolvedBrowserUrl(pk, path);
         setSwitchCards((p) => ({ ...p, [cardKey]: { url } }));
         void window.strado?.preview?.('thumb', pk).then((r) => {
           if (alive && typeof r === 'string' && r.startsWith('data:')) {
@@ -1622,7 +1886,7 @@ export function TerminalView({
       }
     };
     if (activeGroup) {
-      for (const t of groupTabs(activeGroup, shellNames, browserMeta, caps.embeds, remoteShells[activeGroup.path] ?? [], browserEmbeds)) {
+      for (const t of groupTabs(activeGroup, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[activeGroup.path] ?? [], browserEmbeds)) {
         loadFor(`${t.tab.mode}:${t.tab.id}`, t.tab, activeGroup.path);
       }
     }
@@ -1637,25 +1901,26 @@ export function TerminalView({
   // loops), and release settles the tab into its slot before committing.
   // No React re-renders during the drag: pure DOM transforms via refs.
   const [, bumpTabOrder] = useReducer((n: number) => n + 1, 0);
-  const tabs = activeGroup ? groupTabs(activeGroup, shellNames, browserMeta, caps.embeds, remoteShells[activeGroup.path] ?? [], browserEmbeds) : [];
-
   // Sessions die from anywhere (✕, kill, server exit): drop their panes; a
   // tree collapsing to a single leaf clears the stored layout.
-  const tabKeysJoined = tabs.filter((t) => isPtyMode(t.tab.mode)).map((t) => tabKeyOf(t.tab)).join(',');
+  const tabKeysJoined = tabs.filter((t) => isDockMode(t.tab.mode)).map((t) => tabKeyOf(t.tab)).join(',');
   useEffect(() => {
-    if (!layout) return;
+    if (layouts.length === 0) return;
     const valid = new Set(tabKeysJoined.split(',').filter(Boolean));
-    if (!leafKeys(layout).some((k) => !valid.has(k))) return;
-    const pruned = pruneLeaves(layout, valid);
-    setLayout(worktree.path, pruned);
+    if (!layouts.some((candidate) => leafKeys(candidate).some((key) => !valid.has(key)))) return;
+    const pruned = layouts
+      .map((candidate) => pruneLeaves(candidate, valid))
+      .filter((candidate): candidate is PaneNode => candidate?.kind === 'split');
+    setLayouts(worktree.path, pruned);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, tabKeysJoined, worktree.path]);
+  }, [layouts, tabKeysJoined, worktree.path]);
   const tabElsRef = useRef(new Map<string, HTMLElement>());
   const TAB_GAP = 2; // gap-0.5 in the strip
   const tabDragRef = useRef<null | {
     key: string;
     el: HTMLElement;
     startX: number;
+    startY: number;
     pointerId: number;
     started: boolean;
     fromIdx: number;
@@ -1663,12 +1928,55 @@ export function TerminalView({
     slots: { key: string; el: HTMLElement; center: number; width: number }[];
   }>(null);
   const justDraggedRef = useRef(false);
+  const [tabDragging, setTabDragging] = useState(false);
+  const [paneDrop, setPaneDrop] = useState<null | {
+    draggedKey: string;
+    targetKey: string;
+    side: PaneDockSide;
+    rect: { left: number; top: number; width: number; height: number };
+  }>(null);
+  const paneDropRef = useRef(paneDrop);
+  paneDropRef.current = paneDrop;
+
+  const clearTabDragStyles = (d: NonNullable<typeof tabDragRef.current>) => {
+    for (const s of d.slots) {
+      s.el.style.transition = '';
+      s.el.style.transform = '';
+      s.el.style.zIndex = '';
+      s.el.style.position = '';
+      s.el.style.boxShadow = '';
+      s.el.style.cursor = '';
+    }
+  };
+
+  const paneDropAt = (draggedKey: string, x: number, y: number) => {
+    const dragged = keyToTab(worktree.path, draggedKey);
+    if (!dragged || !isDockMode(dragged.mode)) return null;
+    for (const [targetKey, el] of paneLeafElsRef.current) {
+      const rect = el.getBoundingClientRect();
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+      const distances: Array<[PaneDockSide, number]> = [
+        ['left', x - rect.left],
+        ['right', rect.right - x],
+        ['top', y - rect.top],
+        ['bottom', rect.bottom - y],
+      ];
+      distances.sort((a, b) => a[1] - b[1]);
+      return {
+        draggedKey,
+        targetKey,
+        side: distances[0]![0],
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      };
+    }
+    return null;
+  };
 
   const tabPointerDown = (e: React.PointerEvent<HTMLElement>, tKey: string) => {
     if (e.button !== 0 || !activeGroup) return;
     // close button / rename input keep their own gestures
     if ((e.target as HTMLElement).closest('[data-tab-close], input')) return;
-    const slots = tabs
+    const slots = displayedTabs
       .map(({ tab }) => {
         const el = tabElsRef.current.get(tabKeyOf(tab));
         if (!el) return null;
@@ -1679,7 +1987,7 @@ export function TerminalView({
     const fromIdx = slots.findIndex((s) => s.key === tKey);
     if (fromIdx < 0) return;
     tabDragRef.current = {
-      key: tKey, el: e.currentTarget, startX: e.clientX, pointerId: e.pointerId,
+      key: tKey, el: e.currentTarget, startX: e.clientX, startY: e.clientY, pointerId: e.pointerId,
       started: false, fromIdx, insertIdx: fromIdx, slots,
     };
     // Do NOT capture here: pointer capture retargets the eventual click to
@@ -1691,15 +1999,28 @@ export function TerminalView({
     const d = tabDragRef.current;
     if (!d) return;
     const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
     if (!d.started) {
-      if (Math.abs(dx) < 4) return; // click, not a drag
+      if (Math.hypot(dx, dy) < 4) return; // click, not a drag
       d.started = true;
+      setTabDragging(true);
       try { d.el.setPointerCapture(d.pointerId); } catch { /* pointer gone */ }
       d.el.style.zIndex = '10';
       d.el.style.position = 'relative';
       d.el.style.transition = 'none';
       d.el.style.boxShadow = '0 4px 16px rgba(0,0,0,0.5)';
       d.el.style.cursor = 'grabbing';
+    }
+    const drop = paneDropAt(d.key, e.clientX, e.clientY);
+    paneDropRef.current = drop;
+    setPaneDrop(drop);
+    if (drop || Math.abs(dy) > 10) {
+      d.el.style.transform = `translate(${dx}px, ${dy}px)`;
+      d.slots.filter((_, i) => i !== d.fromIdx).forEach((s) => {
+        s.el.style.transition = 'transform 160ms ease';
+        s.el.style.transform = '';
+      });
+      return;
     }
     d.el.style.transform = `translateX(${dx}px)`;
     const draggedCenter = d.slots[d.fromIdx]!.center + dx;
@@ -1717,11 +2038,45 @@ export function TerminalView({
     });
   };
 
-  const tabPointerUp = () => {
+  const tabPointerUp = (e: React.PointerEvent<HTMLElement>) => {
     const d = tabDragRef.current;
     tabDragRef.current = null;
     if (!d || !d.started) return;
     justDraggedRef.current = true;
+    // Resolve once more at the release coordinates. This prevents a stale
+    // preview from docking after the pointer leaves a pane between the final
+    // move event and pointerup.
+    const drop = paneDropAt(d.key, e.clientX, e.clientY);
+    paneDropRef.current = null;
+    setPaneDrop(null);
+    setTabDragging(false);
+    if (drop) {
+      const current = paneLayoutsRef.current[worktree.path] ?? [];
+      const targetIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.targetKey));
+      const sourceIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.draggedKey));
+      const targetBase = targetIndex >= 0
+        ? current[targetIndex]!
+        : { kind: 'leaf', key: drop.targetKey } satisfies PaneNode;
+      const docked = dockLeaf(targetBase, drop.draggedKey, drop.targetKey, drop.side);
+
+      if (docked !== targetBase) {
+        const next: PaneNode[] = [];
+        current.forEach((candidate, index) => {
+          if (index === targetIndex) next.push(docked);
+          else if (index === sourceIndex) {
+            const pruned = removeLeaf(candidate, drop.draggedKey);
+            if (pruned?.kind === 'split') next.push(pruned);
+          } else next.push(candidate);
+        });
+        if (targetIndex < 0) next.push(docked);
+        setLayouts(worktree.path, next);
+        const tab = keyToTab(worktree.path, drop.draggedKey);
+        if (tab) setActive(tab);
+      }
+      clearTabDragStyles(d);
+      bumpTabOrder();
+      return;
+    }
     // settle the dragged tab into its target slot, then commit + clean up
     const others = d.slots.filter((_, i) => i !== d.fromIdx);
     const crossed = d.insertIdx > d.fromIdx
@@ -1736,17 +2091,19 @@ export function TerminalView({
       keys.splice(d.fromIdx, 1);
       keys.splice(d.insertIdx, 0, d.key);
       if (activeGroup) rememberTabOrder(activeGroup.path, keys);
-      for (const s of d.slots) {
-        s.el.style.transition = '';
-        s.el.style.transform = '';
-        s.el.style.zIndex = '';
-        s.el.style.position = '';
-        s.el.style.boxShadow = '';
-        s.el.style.cursor = '';
-      }
+      clearTabDragStyles(d);
       bumpTabOrder();
     };
     window.setTimeout(finish, 160);
+  };
+
+  const tabPointerCancel = () => {
+    const d = tabDragRef.current;
+    tabDragRef.current = null;
+    paneDropRef.current = null;
+    setPaneDrop(null);
+    setTabDragging(false);
+    if (d) clearTabDragStyles(d);
   };
 
   // If the active tab disappears (closed elsewhere / via SSE), fall back to
@@ -1757,7 +2114,7 @@ export function TerminalView({
       (t) => t.tab.path === active.path && t.tab.mode === active.mode && t.tab.id === active.id,
     );
     if (exists) return;
-    const fallback = tabs[0] ?? ordered.flatMap((g) => groupTabs(g, shellNames, browserMeta, caps.embeds, remoteShells[g.path] ?? [], browserEmbeds))[0];
+    const fallback = tabs[0] ?? ordered.flatMap((g) => groupTabs(g, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[g.path] ?? [], browserEmbeds))[0];
     if (fallback) setActive(fallback.tab);
     else onCloseRef.current();
   }, [tabs, ordered, active]);
@@ -1765,20 +2122,25 @@ export function TerminalView({
   // Allocate the lowest unused session id of a mode and register it as a
   // local (not yet server-confirmed) tab. Returns the new tab; the caller
   // decides where it appears (active tab, or a fresh split pane).
-  const allocSession = (m: 'shell' | 'claude' | 'codex' | 'opencode'): Tab | null => {
+  const allocSession = (m: 'shell' | 'claude' | 'codex' | 'opencode' | 'pi'): Tab | null => {
     const g = activeGroup;
     if (!g) return null;
     const serverIds =
       m === 'shell' ? g.serverShellIds
       : m === 'claude' ? g.serverClaudeIds
-      : m === 'codex' ? g.serverCodexIds : g.serverOpencodeIds;
+      : m === 'codex' ? g.serverCodexIds
+      : m === 'opencode' ? g.serverOpencodeIds : g.serverPiIds;
     const localKey =
       m === 'shell' ? ('localShellIds' as const)
       : m === 'claude' ? ('localClaudeIds' as const)
       : m === 'codex' ? ('localCodexIds' as const)
-      : ('localOpencodeIds' as const);
+      : m === 'opencode' ? ('localOpencodeIds' as const)
+      : ('localPiIds' as const);
     // For agents, id 1 lives on the *Open flag rather than the lists.
-    const agentOpen = m === 'claude' ? g.claudeOpen : m === 'codex' ? g.codexOpen : g.opencodeOpen;
+    const agentOpen =
+      m === 'claude' ? g.claudeOpen
+      : m === 'codex' ? g.codexOpen
+      : m === 'opencode' ? g.opencodeOpen : g.piOpen;
     const ids = [
       ...(m !== 'shell' && agentOpen ? ['1'] : []),
       ...sortIds([...serverIds, ...g[localKey]]),
@@ -1819,20 +2181,46 @@ export function TerminalView({
     rememberBrowserTabIds(g.path, nextIds);
     const pk = previewKey(g.path, id);
     setBrowserUrl((prev) => {
-      if (prev[pk]) return prev;
+      if (prev[pk] !== undefined) return prev;
       const url = defaultPreviewUrl(g.path);
+      if (!url) return prev;
       rememberBrowserUrl(pk, url);
       return { ...prev, [pk]: url };
     });
     setActive({ path: g.path, mode: 'browser', id });
   };
 
-  // An agent in the new-session menu: open the primary session if it isn't
-  // open, otherwise spawn the lowest unused id — same scheme as shells.
-  const addAgent = (m: 'claude' | 'codex' | 'opencode') => {
+  // Each Knowledge Base tab owns an independent selected document and tree
+  // state. The first uses id 1 for backward compatibility; later tabs use the
+  // same lowest-free-id scheme as Browser and terminal sessions.
+  const addKb = (initialDocument?: string) => {
     const g = activeGroup;
     if (!g) return;
-    const open = m === 'claude' ? g.claudeOpen : m === 'codex' ? g.codexOpen : g.opencodeOpen;
+    const used = [...(g.kbOpen ? ['1'] : []), ...g.kbIds];
+    let n = 1;
+    while (used.includes(String(n))) n++;
+    const id = String(n);
+    if (id === '1') {
+      rememberKbTab(g.path, true);
+      setGroups((prev) => prev.map((x) => (x.path === g.path ? { ...x, kbOpen: true } : x)));
+    } else {
+      const nextIds = sortIds([...g.kbIds, id]);
+      rememberKbTabIds(g.path, nextIds);
+      setGroups((prev) => prev.map((x) => (x.path === g.path ? { ...x, kbIds: nextIds } : x)));
+    }
+    if (initialDocument) rememberKbSelection(g.path, id, initialDocument);
+    setActive({ path: g.path, mode: 'kb', id });
+  };
+
+  // An agent in the new-session menu: open the primary session if it isn't
+  // open, otherwise spawn the lowest unused id — same scheme as shells.
+  const addAgent = (m: 'claude' | 'codex' | 'opencode' | 'pi') => {
+    const g = activeGroup;
+    if (!g) return;
+    const open =
+      m === 'claude' ? g.claudeOpen
+      : m === 'codex' ? g.codexOpen
+      : m === 'opencode' ? g.opencodeOpen : g.piOpen;
     if (!open) {
       openMode(m);
       return;
@@ -1845,26 +2233,32 @@ export function TerminalView({
   // ACTIVE worktree without leaving the panel. Marking the group open and
   // activating the tab is enough — the terminal WS spawns the pty on connect.
   const openMode = (
-    m: 'claude' | 'codex' | 'opencode' | 'vscode' | 'browser' | 'kb',
+    m: 'claude' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb',
     opts?: { path?: string; id?: string },
   ) => {
     const path = opts?.path ?? active.path;
-    // Agents can have several sessions; embeds are always the single tab.
-    const id = m === 'vscode' || m === 'browser' || m === 'kb' ? '1' : opts?.id ?? '1';
+    const id = m === 'vscode' ? '1' : opts?.id ?? '1';
     // Re-opening an agent lifts the user-closed suppression so SSE session
     // detection can drive the tab again.
-    if (m === 'claude' || m === 'codex' || m === 'opencode') {
+    if (m === 'claude' || m === 'codex' || m === 'opencode' || m === 'pi') {
       closedAgentsRef.current![m].delete(path);
       rememberClosedAgent(m, path, false);
       killedRemoteRef.current.delete(remoteKillKey(path, m, id));
     }
     if (m === 'vscode') rememberVscodeTab(path, true);
-    if (m === 'kb') rememberKbTab(path, true);
+    if (m === 'kb') {
+      if (id === '1') rememberKbTab(path, true);
+      else {
+        const nextIds = sortIds([...(readKbTabIds()[path] ?? []), id]);
+        rememberKbTabIds(path, nextIds);
+      }
+    }
     if (m === 'browser') {
       rememberBrowserTab(path, true);
       setBrowserUrl((prev) => {
-        if (prev[path]) return prev;
+        if (prev[path] !== undefined) return prev;
         const url = defaultPreviewUrl(path);
+        if (!url) return prev;
         rememberBrowserUrl(path, url);
         return { ...prev, [path]: url };
       });
@@ -1877,9 +2271,11 @@ export function TerminalView({
               claudeOpen: g.claudeOpen || m === 'claude',
               codexOpen: g.codexOpen || m === 'codex',
               opencodeOpen: g.opencodeOpen || m === 'opencode',
+              piOpen: g.piOpen || m === 'pi',
               vscodeOpen: g.vscodeOpen || m === 'vscode',
               browserOpen: g.browserOpen || m === 'browser',
-              kbOpen: g.kbOpen || m === 'kb',
+              kbOpen: g.kbOpen || (m === 'kb' && id === '1'),
+              kbIds: m === 'kb' && id !== '1' ? sortIds([...g.kbIds, id]) : g.kbIds,
             }
           : g,
       ),
@@ -1892,6 +2288,69 @@ export function TerminalView({
       id,
       remote: m === 'vscode' || m === 'browser' || m === 'kb' ? null : remoteFor(path),
     });
+  };
+
+  const submitHandoff = async (targetMode: AgentMode, notes: string) => {
+    const dialog = handoffDialog;
+    const g = activeGroup;
+    if (!dialog || !g) return;
+    setHandoffDialog({ ...dialog, busy: true, error: null });
+
+    const targetOpen =
+      targetMode === 'claude' ? g.claudeOpen
+      : targetMode === 'codex' ? g.codexOpen
+      : targetMode === 'opencode' ? g.opencodeOpen
+      : g.piOpen;
+    const serverIds =
+      targetMode === 'claude' ? g.serverClaudeIds
+      : targetMode === 'codex' ? g.serverCodexIds
+      : targetMode === 'opencode' ? g.serverOpencodeIds
+      : g.serverPiIds;
+    const localIds =
+      targetMode === 'claude' ? g.localClaudeIds
+      : targetMode === 'codex' ? g.localCodexIds
+      : targetMode === 'opencode' ? g.localOpencodeIds
+      : g.localPiIds;
+    const used = [...(targetOpen ? ['1'] : []), ...serverIds, ...localIds];
+    let n = 1;
+    while (used.includes(String(n))) n++;
+    const targetId = String(n);
+
+    try {
+      const { handoff } = await api.worktrees.createHandoff(localWsId, dialog.source.path, {
+        source: { mode: dialog.source.mode, sessionId: dialog.source.sessionId },
+        target: { mode: targetMode, sessionId: targetId },
+        notes,
+      });
+      closedAgentsRef.current![targetMode].delete(dialog.source.path);
+      rememberClosedAgent(targetMode, dialog.source.path, false);
+      setPendingHandoffs((prev) => ({ ...prev, [`${targetMode}:${targetId}`]: handoff.id }));
+      setGroups((prev) => prev.map((group) => {
+        if (group.path !== dialog.source.path) return group;
+        if (targetMode === 'claude') {
+          return targetId === '1'
+            ? { ...group, claudeOpen: true }
+            : { ...group, localClaudeIds: sortIds([...group.localClaudeIds, targetId]) };
+        }
+        if (targetMode === 'codex') {
+          return targetId === '1'
+            ? { ...group, codexOpen: true }
+            : { ...group, localCodexIds: sortIds([...group.localCodexIds, targetId]) };
+        }
+        if (targetMode === 'opencode') {
+          return targetId === '1'
+            ? { ...group, opencodeOpen: true }
+            : { ...group, localOpencodeIds: sortIds([...group.localOpencodeIds, targetId]) };
+        }
+        return targetId === '1'
+          ? { ...group, piOpen: true }
+          : { ...group, localPiIds: sortIds([...group.localPiIds, targetId]) };
+      }));
+      setActive({ path: dialog.source.path, mode: targetMode, id: targetId });
+      setHandoffDialog(null);
+    } catch (err) {
+      setHandoffDialog((current) => current ? { ...current, busy: false, error: (err as Error).message } : current);
+    }
   };
 
   // Apply an explicit open request from the parent (such as a notification)
@@ -1925,16 +2384,18 @@ export function TerminalView({
         busy = false; // don't block closing if the check fails
       }
       if (busy && !confirm('A command is still running in this shell. Close it anyway?')) return;
-    } else if (tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode') {
+    } else if (tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode' || tab.mode === 'pi') {
       const g = groups.find((x) => x.path === tab.path);
       const byId =
         tab.mode === 'claude' ? g?.claudeStatusById
-        : tab.mode === 'codex' ? g?.codexStatusById : g?.opencodeStatusById;
+        : tab.mode === 'codex' ? g?.codexStatusById
+        : tab.mode === 'opencode' ? g?.opencodeStatusById : g?.piStatusById;
       const aggregate =
         tab.mode === 'claude' ? g?.claudeStatus
-        : tab.mode === 'codex' ? g?.codexStatus : g?.opencodeStatus;
+        : tab.mode === 'codex' ? g?.codexStatus
+        : tab.mode === 'opencode' ? g?.opencodeStatus : g?.piStatus;
       const status = byId?.[tab.id] ?? (tab.id === '1' ? aggregate : undefined);
-      const label = tab.mode === 'claude' ? 'Claude' : tab.mode === 'codex' ? 'Codex' : 'OpenCode';
+      const label = SHELL_HOST_LABEL[tab.mode];
       if (status === 'working' && !confirm(`${label} is still working. Close it anyway?`)) return;
     }
     closeTab(tab);
@@ -1954,9 +2415,11 @@ export function TerminalView({
       );
       setRemoteShells((prev) => ({ ...prev, [tab.path]: next }));
       rememberRemoteShells(tab.path, next);
-      if (layout && hasLeaf(layout, tabKeyOf(tab))) {
-        const pruned = removeLeaf(layout, tabKeyOf(tab));
-        setLayout(worktree.path, pruned);
+      const currentLayouts = paneLayoutsRef.current[worktree.path] ?? [];
+      const containingIndex = currentLayouts.findIndex((candidate) => hasLeaf(candidate, tabKeyOf(tab)));
+      if (containingIndex >= 0) {
+        const pruned = removeLeaf(currentLayouts[containingIndex]!, tabKeyOf(tab));
+        commitLayoutAt(containingIndex, pruned);
         if (pruned && sameTab(active, tab)) {
           const next = keyToTab(worktree.path, leafKeys(pruned)[0]!);
           if (next) setActive(next);
@@ -1987,9 +2450,13 @@ export function TerminalView({
     }
     // Panes: drop this tab's leaf immediately; when it was the focused pane,
     // move focus to a surviving sibling so the split doesn't strand focus.
-    if (layout && isPtyMode(tab.mode) && tab.path === worktree.path && hasLeaf(layout, tabKeyOf(tab))) {
-      const pruned = removeLeaf(layout, tabKeyOf(tab));
-      setLayout(worktree.path, pruned);
+    const currentLayouts = paneLayoutsRef.current[worktree.path] ?? [];
+    const containingIndex = isDockMode(tab.mode) && tab.path === worktree.path
+      ? currentLayouts.findIndex((candidate) => hasLeaf(candidate, tabKeyOf(tab)))
+      : -1;
+    if (containingIndex >= 0) {
+      const pruned = removeLeaf(currentLayouts[containingIndex]!, tabKeyOf(tab));
+      commitLayoutAt(containingIndex, pruned);
       if (pruned && sameTab(active, tab)) {
         const next = keyToTab(worktree.path, leafKeys(pruned)[0]!);
         if (next) setActive(next);
@@ -1999,7 +2466,7 @@ export function TerminalView({
     // re-open them (cleared when the user opens the agent again via openMode).
     // Only the PRIMARY session carries the suppression — extra ids are
     // list-driven like shells, so a close just drops them from the lists.
-    if ((tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode') && tab.id === '1') {
+    if ((tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode' || tab.mode === 'pi') && tab.id === '1') {
       closedAgentsRef.current![tab.mode].add(tab.path);
       rememberClosedAgent(tab.mode, tab.path, true);
     }
@@ -2058,6 +2525,16 @@ export function TerminalView({
           }
           return { ...g, opencodeOpen: false };
         }
+        if (tab.mode === 'pi') {
+          if (tab.id !== '1') {
+            return {
+              ...g,
+              serverPiIds: g.serverPiIds.filter((i) => i !== tab.id),
+              localPiIds: g.localPiIds.filter((i) => i !== tab.id),
+            };
+          }
+          return { ...g, piOpen: false };
+        }
         if (tab.mode === 'vscode') {
           closeVscodeTab(tab.path);
           setVscodeUrls((m) => {
@@ -2087,8 +2564,14 @@ export function TerminalView({
           return { ...g, browserIds: nextIds };
         }
         if (tab.mode === 'kb') {
-          rememberKbTab(tab.path, false);
-          return { ...g, kbOpen: false };
+          forgetKbTabState(tab.path, tab.id);
+          if (tab.id === '1') {
+            rememberKbTab(tab.path, false);
+            return { ...g, kbOpen: false };
+          }
+          const nextIds = g.kbIds.filter((id) => id !== tab.id);
+          rememberKbTabIds(tab.path, nextIds);
+          return { ...g, kbIds: nextIds };
         }
         return {
           ...g,
@@ -2105,6 +2588,26 @@ export function TerminalView({
       tabIndex={-1}
       className="flex h-full w-full overflow-hidden bg-zinc-950 outline-none"
     >
+      {paneDrop && (() => {
+        const { rect, side } = paneDrop;
+        const style: React.CSSProperties = {
+          position: 'fixed',
+          left: side === 'right' ? rect.left + rect.width / 2 : rect.left,
+          top: side === 'bottom' ? rect.top + rect.height / 2 : rect.top,
+          width: side === 'left' || side === 'right' ? rect.width / 2 : rect.width,
+          height: side === 'top' || side === 'bottom' ? rect.height / 2 : rect.height,
+        };
+        return (
+          <div
+            data-testid="pane-drop-preview"
+            data-dock-side={side}
+            className="pointer-events-none z-[100] flex items-center justify-center border-2 border-sky-400 bg-sky-500/20 text-xs font-medium capitalize text-sky-100 shadow-[inset_0_0_32px_rgba(14,165,233,0.12)]"
+            style={style}
+          >
+            Dock {side}
+          </div>
+        );
+      })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
           {sidebarCollapsed && (
@@ -2119,11 +2622,13 @@ export function TerminalView({
           )}
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-          {tabs.map(({ tab, label: tabLabel, icon, hint }) => {
+          <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
+          {displayedTabs.map(({ tab, label: tabLabel, icon, hint }) => {
             const isActive =
               sameTab(active, tab);
-            const renamable = tab.mode === 'shell' || tab.mode === 'claude' || tab.mode === 'codex' || tab.mode === 'opencode';
+            const renamable =
+              tab.mode === 'shell' || tab.mode === 'claude' || tab.mode === 'codex'
+              || tab.mode === 'opencode' || tab.mode === 'pi';
             const isRenaming =
               renamable && renaming?.path === tab.path && renaming?.mode === tab.mode && renaming?.id === tab.id;
             const commitRename = () => {
@@ -2131,10 +2636,26 @@ export function TerminalView({
               renameSession(renaming.path, renaming.mode, renaming.id, renaming.value);
               setRenaming(null);
             };
-            const tKey = `${tab.mode}:${tab.id}`;
+            const tKey = tabKeyOf(tab);
+            const splitGroup = splitGroups.find((group) => hasLeaf(group.node, tKey));
+            const splitTabs = splitGroup?.tabs ?? [];
+            const isInSplit = !!splitGroup;
+            const splitIndex = isInSplit ? splitTabs.findIndex((entry) => tabKeyOf(entry.tab) === tKey) : -1;
+            const splitShape = !isInSplit
+              ? 'ml-0.5 rounded-md'
+              : splitTabs.length === 1
+                ? 'ml-0.5 rounded-md'
+                : splitIndex === 0
+                  ? 'ml-0.5 rounded-l-md rounded-r-none'
+                  : splitIndex === splitTabs.length - 1
+                    ? '-ml-px rounded-l-none rounded-r-md'
+                    : '-ml-px rounded-none';
             return (
               <span
                 key={tKey}
+                data-tab-key={tKey}
+                data-in-split={isInSplit || undefined}
+                data-split-group={splitGroup?.layoutIndex}
                 ref={(el) => {
                   if (el) tabElsRef.current.set(tKey, el);
                   else tabElsRef.current.delete(tKey);
@@ -2142,7 +2663,7 @@ export function TerminalView({
                 onPointerDown={(e) => { if (!isRenaming) tabPointerDown(e, tKey); }}
                 onPointerMove={tabPointerMove}
                 onPointerUp={tabPointerUp}
-                onPointerCancel={tabPointerUp}
+                onPointerCancel={tabPointerCancel}
                 onClickCapture={(e) => {
                   // a completed drag must not also activate the tab
                   if (justDraggedRef.current) {
@@ -2151,10 +2672,14 @@ export function TerminalView({
                     e.stopPropagation();
                   }
                 }}
-                className={`group flex shrink-0 select-none items-center rounded-md pr-1 text-xs transition-colors ${
+                className={`group flex shrink-0 select-none items-center pr-1 text-xs transition-colors ${splitShape} ${
                   isActive
-                    ? 'bg-zinc-800 text-zinc-100'
-                    : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
+                    ? isInSplit
+                      ? 'z-[1] border border-sky-500/40 bg-sky-500/15 text-zinc-100'
+                      : 'bg-zinc-800 text-zinc-100'
+                    : isInSplit
+                      ? 'border border-sky-500/15 bg-sky-500/5 text-zinc-400 hover:border-sky-500/30 hover:bg-sky-500/10 hover:text-zinc-200'
+                      : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
                 }`}
                 style={{ touchAction: 'none' }}
               >
@@ -2212,11 +2737,25 @@ export function TerminalView({
             }}
             title="New session"
             aria-label="New session"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
+            className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
           >
             <PlusIcon />
           </button>
           </div>
+          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode' || active.mode === 'pi') && (
+            <button
+              type="button"
+              onClick={() => setHandoffDialog({
+                source: { path: active.path, mode: active.mode as AgentMode, sessionId: active.id },
+                busy: false,
+                error: null,
+              })}
+              title="Continue this task with another agent"
+              className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100"
+            >
+              Handoff
+            </button>
+          )}
           {(() => {
             const p = procs[active.path] ?? { status: 'idle' as const };
             const busy = p.status === 'running' || p.status === 'starting';
@@ -2465,7 +3004,7 @@ export function TerminalView({
         })()}
         {bwMenu && (() => {
           const path = bwMenu.path; // a preview key: worktree path, or path\0browser:id
-          const currentUrl = browserUrl[path] ?? defaultPreviewUrl(path.split('\0')[0]!);
+          const currentUrl = resolvedBrowserUrl(path, path.split('\0')[0]!);
           const act = (fn: () => void) => () => {
             setBwMenu(null);
             fn();
@@ -2577,11 +3116,18 @@ export function TerminalView({
                   disabled: opencodeInstalled === false,
                   hint: 'OpenCode needs to be installed to use',
                 },
+                {
+                  label: 'Pi',
+                  icon: <PiIcon className="text-zinc-500" />,
+                  run: () => addAgent('pi'),
+                  disabled: piInstalled === false,
+                  hint: 'Pi needs to be installed to use',
+                },
                 { label: 'Shell', icon: <ShellIcon className="text-zinc-500" />, run: addShell },
                 ...(caps.embeds
                   ? [{ label: 'VS Code', icon: <VsCodeIcon className="text-zinc-500" />, run: () => openMode('vscode') }]
                   : []),
-                { label: 'Knowledge Base', icon: <BookIcon className="text-zinc-500" />, run: () => openMode('kb') },
+                { label: 'Knowledge Base', icon: <BookIcon className="text-zinc-500" />, run: () => addKb() },
                 // No per-runner "Shell on <runner>" row: runner worktrees show
                 // up in the sidebar like local ones, so a shell opened from
                 // THAT worktree already lands on the runner, in the right repo.
@@ -2615,7 +3161,7 @@ export function TerminalView({
             </div>
           </>
         )}
-        <div className="relative min-h-0 flex-1">
+        <div ref={paneSurfaceRef} className="relative min-h-0 flex-1">
           {/* VS Code frames stay MOUNTED (css-hidden) while other tabs are
               active: unmounting would kill the web workbench, and with it the
               Claude IDE bridge's active-file/selection context. One frame per
@@ -2647,6 +3193,36 @@ export function TerminalView({
               </div>
             )
           )}
+          {/* PTY tabs are mounted lazily on first view and then kept alive in
+              this flat layer. The pane tree supplies geometry only, so moving
+              between full tabs or split groups never destroys xterm/history
+              or reconnects the terminal WebSocket. */}
+          {tabs
+            .filter(({ tab }) => isPtyMode(tab.mode) && mountedPtyKeysRef.current.has(tabKeyOf(tab)))
+            .map(({ tab }) => {
+              const paneKey = tabKeyOf(tab);
+              const shown = !!paneTree && hasLeaf(paneTree, paneKey);
+              const placement = dockedSurfaceStyle(paneKey);
+              const placed = shown && !!placement;
+              const focused = placed && sameTab(active, tab);
+              return (
+                <div
+                  key={`pty:${paneKey}`}
+                  data-testid={`terminal-surface-${paneKey}`}
+                  className={placed ? 'z-10 overflow-hidden bg-zinc-950' : 'hidden'}
+                  style={placement}
+                >
+                  <XtermPane
+                    wsId={wsId}
+                    tab={tab as PtyTab}
+                    focused={focused}
+                    visible={placed}
+                    handoffId={pendingHandoffs[paneKey]}
+                    onFocus={() => { if (!focused) setActive(tab); }}
+                  />
+                </div>
+              );
+            })}
           {/* Browser previews: toolbar + placeholder per group; the page
               itself is a main-process WebContentsView glued to the
               placeholder. Panes mount only for the visible tab — the view
@@ -2656,11 +3232,14 @@ export function TerminalView({
               .flatMap((g) => [...(g.browserOpen ? ['1'] : []), ...g.browserIds.filter((i) => i !== '1')].map((bid) => ({ g, bid })))
               .map(({ g, bid }) => {
                 const pk = previewKey(g.path, bid);
-                const shown = active.mode === 'browser' && active.path === g.path && active.id === bid;
-                const url = browserUrl[pk] ?? defaultPreviewUrl(g.path);
+                const paneKey = tabKeyOf({ mode: 'browser', id: bid });
+                const shown = g.path === worktree.path && !!paneTree && hasLeaf(paneTree, paneKey);
+                const placement = dockedSurfaceStyle(paneKey);
+                const placed = shown && !!placement;
+                const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || showLogs || showDiff || mrReview);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || handoffDialog);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -2683,7 +3262,17 @@ export function TerminalView({
                 const BWBTN =
                   'shrink-0 rounded-md p-1.5 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-40';
                 return (
-                  <div key={`bw:${pk}`} className={shown ? 'flex h-full w-full flex-col' : 'hidden'}>
+                  <div
+                    key={`bw:${pk}`}
+                    data-testid={`browser-pane-${bid}`}
+                    className={placed ? 'z-10 flex flex-col overflow-hidden bg-zinc-950' : 'hidden'}
+                    style={placement}
+                    onPointerDownCapture={() => {
+                      if (!sameTab(active, { path: g.path, mode: 'browser', id: bid })) {
+                        setActive({ path: g.path, mode: 'browser', id: bid });
+                      }
+                    }}
+                  >
                     <div className="flex items-center gap-0.5 border-b border-zinc-900 px-2 py-1">
                       <button
                         onClick={() => void window.strado?.preview?.('back', pk)}
@@ -2705,6 +3294,7 @@ export function TerminalView({
                       </button>
                       <button
                         onClick={() => void window.strado?.preview?.('reload', pk)}
+                        disabled={!url}
                         title="Reload"
                         aria-label="Reload preview"
                         className={BWBTN}
@@ -2741,6 +3331,7 @@ export function TerminalView({
                         }}
                         title="DevTools"
                         aria-label="DevTools"
+                        disabled={!url}
                         className={BWBTN}
                       >
                         <ScreenIcon />
@@ -2758,34 +3349,57 @@ export function TerminalView({
                       >
                         ⋯
                       </button>
+                      {layout && hasLeaf(layout, paneKey) && (
+                        <button
+                          onClick={() => openPaneAsFullTab({ path: g.path, mode: 'browser', id: bid })}
+                          title="Remove from split and open as full tab"
+                          aria-label={`Open Browser${bid === '1' ? '' : ` ${bid}`} as full tab`}
+                          className="ml-0.5 shrink-0 rounded border border-sky-500/30 bg-sky-950/40 px-1.5 py-1 text-[10px] text-sky-300 hover:bg-sky-950/70 hover:text-sky-100"
+                        >
+                          Full tab
+                        </button>
+                      )}
                     </div>
-                    {browserLoad[pk]?.loading && (
+                    {url && browserLoad[pk]?.loading && (
                       <div className="h-0.5 w-full overflow-hidden bg-zinc-900">
                         <div className="h-full w-1/3 animate-pulse bg-sky-500" />
                       </div>
                     )}
-                    {browserLoad[pk]?.error && (
+                    {url && browserLoad[pk]?.error && (
                       <div className="border-b border-zinc-900 bg-red-950/40 px-3 py-2 text-xs text-red-200">
                         {browserLoad[pk]!.error}
                       </div>
                     )}
                     <div className={`flex min-h-0 flex-1 ${devtoolsMode[pk] === 'right' ? 'flex-row' : 'flex-col'}`}>
-                      {shown && window.strado?.preview && (
+                      {placed && url && window.strado?.preview && (
                         <BrowserPreviewPane
                           path={pk}
                           initialUrl={url}
                           suppressed={overlayUp}
+                          immediateSuppress={tabDragging}
                           onReady={(wcId) => setPreviewIds((prev) => ({ ...prev, [pk]: wcId }))}
                         />
                       )}
-                      {shown && !window.strado?.preview && (
+                      {placed && !url && (
+                        <div
+                          data-testid={`browser-start-${bid}`}
+                          className="flex flex-1 flex-col items-center justify-center gap-2 bg-zinc-950 px-6 text-center"
+                        >
+                          <span className="text-sky-400/70"><GlobeIcon /></span>
+                          <p className="text-sm text-zinc-300">Open a preview</p>
+                          <p className="max-w-sm text-xs leading-relaxed text-zinc-600">
+                            Enter a URL above, or start this worktree&apos;s dev server with Run.
+                          </p>
+                        </div>
+                      )}
+                      {placed && url && !window.strado?.preview && (
                         <div className="flex flex-1 items-center justify-center p-6 text-sm text-zinc-500">
                           Browser preview needs the updated desktop shell — quit the app fully (Cmd+Q) and run `npm run desktop` again.
                         </div>
                       )}
                       {devtoolsMode[pk] && previewIds[pk] !== undefined && (
                         <>
-                          {shown && (
+                          {placed && (
                             <div
                               role="separator"
                               aria-label="Resize DevTools"
@@ -2802,7 +3416,7 @@ export function TerminalView({
                             side={devtoolsMode[pk]!}
                             fraction={devtoolsSize[devtoolsMode[pk]!]}
                             targetId={previewIds[pk]!}
-                            suppressed={!shown || overlayUp}
+                            suppressed={!placed || overlayUp}
                             onFail={() => setDevtoolsMode((prev) => ({ ...prev, [pk]: null }))}
                           />
                         </>
@@ -2812,17 +3426,43 @@ export function TerminalView({
                 );
               })}
           {groups
-            .filter((g) => g.kbOpen)
-            .map((g) => {
-              const shown = active.mode === 'kb' && active.path === g.path;
+            .flatMap((g) => [...(g.kbOpen ? ['1'] : []), ...g.kbIds.filter((id) => id !== '1')].map((id) => ({ g, id })))
+            .map(({ g, id }) => {
+              const paneKey = tabKeyOf({ mode: 'kb', id });
+              const shown = g.path === worktree.path && !!paneTree && hasLeaf(paneTree, paneKey);
+              const placement = dockedSurfaceStyle(paneKey);
+              const placed = shown && !!placement;
               // Kept mounted so the selected doc and scroll position survive
               // tab switching — it holds no server session, only local state.
               return (
-                <div key={`kb-${g.path}`} data-testid={`kb-pane-${g.path}`} className={shown ? 'h-full w-full' : 'hidden'}>
+                <div
+                  key={`kb-${g.path}-${id}`}
+                  data-testid={id === '1' ? `kb-pane-${g.path}` : `kb-pane-${g.path}-${id}`}
+                  className={placed ? 'z-10 overflow-hidden bg-zinc-950' : 'hidden'}
+                  style={placement}
+                  onPointerDownCapture={() => {
+                    if (!sameTab(active, { path: g.path, mode: 'kb', id })) {
+                      setActive({ path: g.path, mode: 'kb', id });
+                    }
+                  }}
+                >
                   <KnowledgeBasePanel
                     wsId={wsId}
                     worktreePath={g.path}
-                    active={shown}
+                    instanceId={id}
+                    active={placed}
+                    onSelectedPath={(rel) => {
+                      const titleKey = `${g.path}\0kb:${id}`;
+                      const label = rel?.split('/').pop();
+                      setKbTitles((prev) => {
+                        if (label ? prev[titleKey] === label : !(titleKey in prev)) return prev;
+                        const next = { ...prev };
+                        if (label) next[titleKey] = label;
+                        else delete next[titleKey];
+                        return next;
+                      });
+                    }}
+                    onOpenInNewTab={(rel) => addKb(rel)}
                     onOpenInVsCode={(rel) => {
                       navigator.clipboard?.writeText(rel).catch(() => undefined);
                       openMode('vscode');
@@ -2833,7 +3473,7 @@ export function TerminalView({
             })}
         <div
           data-testid="xterm-pane"
-          className={active.mode === 'vscode' || active.mode === 'browser' || active.mode === 'kb' ? 'hidden' : 'relative h-full w-full'}
+          className={active.mode === 'vscode' ? 'hidden' : 'relative h-full w-full'}
         >
           {paneTree && renderPane(paneTree, [])}
         </div>
@@ -2881,6 +3521,19 @@ export function TerminalView({
               (active.path === worktree.path ? worktree : ({ path: active.path } as Worktree))
             }
             onClose={() => setShowDiff(false)}
+          />
+        </div>
+      )}
+      {handoffDialog && (
+        <div onClick={(event) => event.stopPropagation()}>
+          <HandoffDialog
+            source={{ mode: handoffDialog.source.mode, sessionId: handoffDialog.source.sessionId }}
+            opencodeInstalled={opencodeInstalled}
+            piInstalled={piInstalled}
+            busy={handoffDialog.busy}
+            error={handoffDialog.error}
+            onSubmit={(target, notes) => void submitHandoff(target, notes)}
+            onCancel={() => { if (!handoffDialog.busy) setHandoffDialog(null); }}
           />
         </div>
       )}

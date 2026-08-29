@@ -47,7 +47,8 @@ function isRunning(w: Worktree): boolean {
   return w.process.status === 'running' || w.process.status === 'starting' || !!w.process.external;
 }
 function agentWorking(w: Worktree): boolean {
-  return w.claudeStatus === 'working' || w.codexStatus === 'working' || w.opencodeStatus === 'working';
+  return w.claudeStatus === 'working' || w.codexStatus === 'working'
+    || w.opencodeStatus === 'working' || w.piStatus === 'working';
 }
 
 // Terminal-style loader shown while an agent is working (frames via CSS).

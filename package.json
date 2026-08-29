@@ -1,6 +1,6 @@
 {
   "name": "strado",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -14,7 +14,7 @@
     "start": "npm run build && STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev node packages/server/dist/index.js",
     "desktop": "STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev npm start -w @strado/desktop",
     "desktop:nocdp": "STRADO_HOME= STRADO_CONFIG_DIR= PORT= STRADO_PROFILE=dev STRADO_CDP_PORT=0 npm start -w @strado/desktop",
-    "test": "npm run test -w packages/ptyd && npm run test -w packages/relay && npm run test -w packages/runner && npm run test -w packages/server && npm run test -w packages/web",
+    "test": "npm run test -w packages/ptyd && npm run test -w packages/relay && npm run test -w packages/runner && npm run test -w packages/server && npm run test -w packages/web && npm run test -w packages/desktop",
     "lint": "echo 'no lint configured'",
     "postinstall": "node scripts/ensure-node-pty-exec.mjs"
   },

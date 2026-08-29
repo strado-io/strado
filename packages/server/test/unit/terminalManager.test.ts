@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeKey, codexKey, opencodeKey, parseSessionKey, sessionEnv, sessionsPayload, shellKey } from '../../src/services/terminalManager';
+import { claudeKey, codexKey, opencodeKey, parseSessionKey, piKey, sessionEnv, sessionsPayload, shellKey } from '../../src/services/terminalManager';
 
 describe('opencodeKey', () => {
   it('uses the legacy suffix-only key for opencode id 1', () => {
@@ -9,6 +9,18 @@ describe('opencodeKey', () => {
   it('round-trips through parseSessionKey for suffixed ids', () => {
     for (const id of ['1', '2', '7']) {
       expect(parseSessionKey(opencodeKey('/x', id))).toEqual({ path: '/x', mode: 'opencode', id });
+    }
+  });
+});
+
+describe('piKey', () => {
+  it('uses the legacy suffix-only key for pi id 1', () => {
+    expect(piKey('/wt/a', '1')).toBe('/wt/a\0pi');
+  });
+
+  it('round-trips through parseSessionKey for suffixed ids', () => {
+    for (const id of ['1', '2', '7']) {
+      expect(parseSessionKey(piKey('/x', id))).toEqual({ path: '/x', mode: 'pi', id });
     }
   });
 });
@@ -38,16 +50,19 @@ describe('sessionsPayload', () => {
       { path: '/wt/a', mode: 'shell' as const, id: '1' },
       { path: '/wt/a', mode: 'codex' as const, id: '2' },
       { path: '/wt/a', mode: 'opencode' as const, id: '1' },
+      { path: '/wt/a', mode: 'pi' as const, id: '2' },
     ];
     expect(sessionsPayload(live)).toEqual({
       hasClaudeSession: true,
       hasCodexSession: true,
       hasOpencodeSession: true,
+      hasPiSession: true,
       hasShellSession: true,
       shellSessions: ['1', '3'],
       claudeSessions: ['1', '2'],
       codexSessions: ['2'],
       opencodeSessions: ['1'],
+      piSessions: ['2'],
     });
   });
 
@@ -56,11 +71,13 @@ describe('sessionsPayload', () => {
       hasClaudeSession: false,
       hasCodexSession: false,
       hasOpencodeSession: false,
+      hasPiSession: false,
       hasShellSession: false,
       shellSessions: [],
       claudeSessions: [],
       codexSessions: [],
       opencodeSessions: [],
+      piSessions: [],
     });
   });
 });
@@ -126,6 +143,10 @@ describe('parseSessionKey', () => {
 
   it('parses the opencode key as opencode id 1', () => {
     expect(parseSessionKey('/wt/a\0opencode')).toEqual({ path: '/wt/a', mode: 'opencode', id: '1' });
+  });
+
+  it('parses the pi key as pi id 1', () => {
+    expect(parseSessionKey('/wt/a\0pi')).toEqual({ path: '/wt/a', mode: 'pi', id: '1' });
   });
 
   it('parses suffixed claude keys', () => {

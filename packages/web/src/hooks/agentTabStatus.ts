@@ -5,10 +5,10 @@
 // a Shell-hosted Claude light up the dedicated Claude tab, so these helpers
 // keep the two namespaces apart.
 export type AgentStatusValue = 'idle' | 'working' | 'waiting';
-export type AgentMode = 'claude' | 'codex' | 'opencode';
+export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 export type StatusById = Record<string, AgentStatusValue> | undefined;
 
-export const AGENT_MODES: AgentMode[] = ['claude', 'codex', 'opencode'];
+export const AGENT_MODES: AgentMode[] = ['claude', 'codex', 'opencode', 'pi'];
 
 /** Session key a Shell tab's hand-launched agents report under. */
 export function shellAgentKey(shellId: string): string {

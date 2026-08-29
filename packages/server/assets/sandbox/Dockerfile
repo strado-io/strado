@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The agents. Baked into the image layer — installed once, shared by every
 # sandbox, versioned with the image (spec decision 4).
 RUN npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai \
+    @earendil-works/pi-coding-agent \
     && corepack enable
 
 # askpass: answers git's credential prompt from env, so the push token is never

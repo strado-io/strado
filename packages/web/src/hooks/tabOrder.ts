@@ -1,6 +1,7 @@
 // Persisted per-worktree tab order for the hub's tab strip (drag-to-reorder).
-// Keys are `${mode}:${id}`. Tabs missing from the saved order keep their
-// structural position after the saved ones.
+// Keys are `${mode}:${id}` locally and `${mode}@${runnerId}:${id}` remotely.
+// Tabs missing from the saved order keep their structural position after the
+// saved ones.
 const STORE = 'strado.tabOrder';
 
 type OrderMap = Record<string, string[]>;
@@ -40,7 +41,7 @@ export function tabKeyOf(t: { mode: string; id: string; remote?: { runnerId: str
 // (keyed by path), so without this the tab selection dies with the unmount —
 // R1 on tab 3 → R2 → back to R1 landed on tab 1.
 const ACTIVE_STORE = 'strado.activeTab';
-const TAB_MODES = ['claude', 'shell', 'codex', 'opencode', 'vscode', 'browser', 'kb'] as const;
+const TAB_MODES = ['claude', 'shell', 'codex', 'opencode', 'pi', 'vscode', 'browser', 'kb'] as const;
 export type TabMode = (typeof TAB_MODES)[number];
 
 export function readActiveTab(path: string): { mode: TabMode; id: string } | null {

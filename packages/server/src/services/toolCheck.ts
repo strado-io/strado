@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { defaultShell } from './platform.js';
 
 export type ToolStatus = {
@@ -26,6 +26,11 @@ type ToolSpec = {
   // argv, never a shell string: the client only ever sends a tool id, and
   // nothing user-supplied reaches a shell.
   install?: { file: string; args: string[] };
+  // Minimum `node` major.minor the tool's CLI needs. Only set it for a tool
+  // that HARD-FAILS on an older runtime: it turns a bare "not installed" into
+  // a hint naming the real reason, which is otherwise unguessable — the CLI is
+  // on PATH and runs fine in the user's terminal, it just crashes here.
+  minNode?: string;
 };
 
 const TOOLS: ToolSpec[] = [
@@ -55,6 +60,19 @@ const TOOLS: ToolSpec[] = [
     install: { file: 'npm', args: ['install', '-g', 'opencode-ai'] },
   },
   {
+    id: 'pi',
+    label: 'Pi',
+    commands: ['pi --version'],
+    optional: true,
+    hint: 'Pi needs to be installed to use',
+    // pi declares engines.node >= 22.19.0 and its bundle throws outright on an
+    // older runtime rather than printing a version.
+    minNode: '22.19',
+    // `--ignore-scripts` is what pi's own quick start recommends: it needs no
+    // dependency lifecycle scripts for a normal npm install.
+    install: { file: 'npm', args: ['install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent'] },
+  },
+  {
     id: 'vscode',
     label: 'VS Code (embedded editor)',
     commands: ['code --version', 'code-insiders --version', 'code-server --version'],
@@ -63,14 +81,50 @@ const TOOLS: ToolSpec[] = [
   },
 ];
 
+// A LOGIN shell (`-l`), matching how the terminal routes actually launch an
+// agent (`defaultShell() -l -c '<agent>'`). `exec`'s `shell` option would give
+// a plain `<shell> -c`, which reads a different profile and so resolves a
+// different PATH — that gap let a probe report "not installed" for a CLI whose
+// tab starts fine, and the reverse. The probe has to measure the environment
+// the agent will actually run in, or it isn't answering the question.
 function tryCommand(cmd: string): Promise<string | null> {
   return new Promise((resolve) => {
-    // Login shell so GUI launches (Electron via Finder) still see the user's PATH.
-    exec(cmd, { timeout: 5000, shell: defaultShell() }, (err, stdout) => {
+    execFile(defaultShell(), ['-l', '-c', cmd], { timeout: 5000 }, (err, stdout) => {
       if (err) return resolve(null);
       resolve(stdout.trim().split('\n')[0] ?? '');
     });
   });
+}
+
+/** The node version the agent launch shell resolves, as printed (`v20.19.4`),
+ * or null when there is no node on it at all. NOT `process.versions.node`: the
+ * packaged app bundles its own node for the server, and no agent ever runs on
+ * it — gating on that would hide the tool from everyone. */
+async function launchShellNode(): Promise<string | null> {
+  const out = await tryCommand('node --version');
+  return out && /^v?\d+\./.test(out) ? out : null;
+}
+
+/** Compares on major.minor only — a floor is expressed that way, and patch
+ * releases never move it. Unparseable input is treated as "not below" so a
+ * surprising version string can't invent a reason the tool is missing. */
+function below(version: string, floor: string): boolean {
+  const v = version.match(/v?(\d+)\.(\d+)/);
+  const f = floor.match(/(\d+)\.(\d+)/);
+  if (!v || !f) return false;
+  const [vMajor, vMinor] = [Number(v[1]), Number(v[2])];
+  const [fMajor, fMinor] = [Number(f[1]), Number(f[2])];
+  return vMajor !== fMajor ? vMajor < fMajor : vMinor < fMinor;
+}
+
+/** Why a `minNode` tool failed to answer, when node is the reason. Falls back
+ * to the tool's own hint whenever node is fine (or absent) — a wrong guess
+ * here is worse than the generic message. */
+async function missingReason(tool: ToolSpec): Promise<string> {
+  if (!tool.minNode) return tool.hint;
+  const node = await launchShellNode();
+  if (!node || !below(node, tool.minNode)) return tool.hint;
+  return `${tool.label} needs Node ${tool.minNode}+ (found ${node})`;
 }
 
 // The install command as typed, for display and for the copy-me fallback.
@@ -114,7 +168,7 @@ async function probe(tool: ToolSpec): Promise<ToolStatus> {
     found: false,
     version: null,
     optional: tool.optional,
-    hint: tool.hint,
+    hint: await missingReason(tool),
     installable,
     installCommand,
   };

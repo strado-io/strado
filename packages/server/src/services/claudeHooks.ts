@@ -34,6 +34,13 @@ export function opencodePluginSourcePath(): string {
   return path.join(hooksDir(), 'strado-opencode-status.js');
 }
 
+/** Pi loads extensions from an explicit path (`pi -e <path>`), so unlike Claude
+ * and OpenCode there is nothing to install into the worktree — the launch
+ * command just points at this file. */
+export function piExtensionPath(): string {
+  return path.join(hooksDir(), 'strado-pi-status.ts');
+}
+
 // OpenCode auto-loads plugins from `.opencode/plugin/` in the project dir.
 // Copy our status plugin there so opencode picks it up; git-exclude `.opencode`
 // so it never shows up in the user's `git status`. Best-effort.

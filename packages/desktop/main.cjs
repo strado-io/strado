@@ -4,12 +4,13 @@
 // plain Node CHILD process, never inside Electron. That keeps node-pty on
 // the system Node ABI — no @electron/rebuild, no native-module drift — and
 // the same server keeps serving plain browser tabs in parallel.
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, globalShortcut, ipcMain, screen, shell, webContents } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, globalShortcut, ipcMain, screen, session, shell, webContents } = require('electron');
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const { resolveProfile } = require('./profile.cjs');
+const { vscodeOrigin, headersForRequest } = require('./vscode-frame-security.cjs');
 // Which instance is this? Packaged builds get `stable`; the repo's npm scripts
 // set STRADO_PROFILE=dev. See profile.cjs.
 const PROFILE = resolveProfile();
@@ -301,6 +302,31 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  // VS Code 1.136+ refuses cross-origin framing with both X-Frame-Options and
+  // CSP frame-ancestors. Keep an allowlist per dashboard webContents so only
+  // the localhost workbench origins returned by Strado get that restriction
+  // relaxed; Browser previews and arbitrary localhost pages remain untouched.
+  const vscodeOrigins = new Map(); // dashboard wc id -> Set<origin>
+  ipcMain.handle('strado:vscode-origin', (e, value) => {
+    // The preload belongs only to the local dashboard. Refuse registrations
+    // after an unexpected main-window navigation so external content can
+    // never use this bridge to weaken framing on a localhost service.
+    let senderOrigin = null;
+    try { senderOrigin = new globalThis.URL(e.sender.getURL()).origin; } catch { /* invalid/empty URL */ }
+    if (senderOrigin !== URL) return false;
+    const origin = vscodeOrigin(value);
+    if (!origin) return false;
+    const senderId = e.sender.id;
+    if (!vscodeOrigins.has(senderId)) {
+      e.sender.once('destroyed', () => vscodeOrigins.delete(senderId));
+    }
+    // There is one shared serve-web instance per Strado process. Replacing
+    // the prior origin prevents a dead port from remaining allowlisted if the
+    // daemon restarts on a different port.
+    vscodeOrigins.set(senderId, new Set([origin]));
+    return true;
+  });
+
   // Local dev servers often run HTTPS with self-signed certs (hosts-mapped
   // domains like dev.example.io) — Chrome lets you click through, an embed
   // silently blanks. Accept certificate errors ONLY for Browser previews;
@@ -785,6 +811,11 @@ if (!gotLock) {
         wc.on('page-title-updated', (_ev, title) => send({ type: 'title', title }));
         wc.on('page-favicon-updated', (_ev, favicons) =>
           send({ type: 'favicon', favicon: favicons?.[0] ?? null }));
+        // Native Browser panes sit above the renderer, so clicks inside their
+        // page do not bubble to React. Forward focus to keep the split's active
+        // tab highlight and keyboard actions pointed at the pane the user
+        // actually clicked.
+        wc.on('focus', () => send({ type: 'focus' }));
         // Scripted popups (window.open with features — OAuth/Google Sign-In)
         // must be REAL child windows: the popup delivers its result through
         // window.opener/postMessage and closes itself. Navigating the preview
@@ -1366,6 +1397,12 @@ if (!gotLock) {
       return;
     }
     startCmdWatch();
+    session.defaultSession.webRequest.onHeadersReceived(
+      { urls: ['http://127.0.0.1:*/*'] },
+      (details, callback) => callback({
+        responseHeaders: headersForRequest(details, vscodeOrigins),
+      }),
+    );
     buildMenu({
       onReload: (win) => {
         const visible = [...previews.values()].filter(

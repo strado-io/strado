@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld('strado', {
   // While the VS Code iframe is the active tab, main must intercept the
   // window's own key events (the cross-origin iframe swallows them).
   hotkeyScope: (enabled) => ipcRenderer.send('strado:hotkey-scope', enabled),
+  // Register the exact localhost VS Code origin before mounting its iframe.
+  // Main then relaxes only that origin's frame-blocking response headers.
+  vscodeOrigin: (url) => ipcRenderer.invoke('strado:vscode-origin', url),
   // Native folder picker for "Add repo"; resolves to the chosen absolute
   // path, or null if the user cancels.
   pickDirectory: () => ipcRenderer.invoke('strado:pick-directory'),

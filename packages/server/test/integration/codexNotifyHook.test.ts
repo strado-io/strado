@@ -50,6 +50,18 @@ describe('codex-notify-hook', () => {
     expect(received).toEqual([{ cwd: '/tmp/wt-a', status: 'waiting' }]);
   });
 
+  it('forwards the Codex thread id for clean rollout lookup', async () => {
+    const received: any[] = [];
+    const port = await listen(received);
+    await runHook(
+      [String(port), '/tmp/wt-a', JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'codex-thread-id' })],
+      { STRADO_SESSION_ID: '5' },
+    );
+    expect(received).toEqual([{
+      cwd: '/tmp/wt-a', status: 'waiting', sessionId: '5', providerSessionId: 'codex-thread-id',
+    }]);
+  });
+
   it('forwards STRADO_SESSION_ID so multi-session status lands on the right tab', async () => {
     const received: any[] = [];
     const port = await listen(received);

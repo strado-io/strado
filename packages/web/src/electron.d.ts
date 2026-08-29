@@ -10,7 +10,8 @@ type StradoPreviewEvent =
   | { key: string; type: 'error'; error: string }
   | { key: string; type: 'url'; url: string; canBack?: boolean; canForward?: boolean }
   | { key: string; type: 'title'; title: string }
-  | { key: string; type: 'favicon'; favicon: string | null };
+  | { key: string; type: 'favicon'; favicon: string | null }
+  | { key: string; type: 'focus' };
 
 interface Window {
   strado?: {
@@ -50,6 +51,9 @@ interface Window {
     // true while the VS Code iframe is the active tab (shell then intercepts
     // the window's own Cmd+Arrow keys)
     hotkeyScope?: (enabled: boolean) => void;
+    // Allow the exact localhost VS Code serve-web origin to be framed by this
+    // dashboard webContents. Resolves before the iframe is mounted.
+    vscodeOrigin?: (url: string) => Promise<boolean>;
     // native folder picker for "Add repo" — absent on older shells;
     // resolves to the chosen absolute path or null if cancelled
     pickDirectory?: () => Promise<string | null>;

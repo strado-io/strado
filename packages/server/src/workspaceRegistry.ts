@@ -3,8 +3,9 @@ import { AppError } from './errors.js';
 import { createRepoConfigStore, RepoConfigStore } from './repoConfig.js';
 import { createStateStore, StateStore } from './state.js';
 import { WorkspaceConfigStore } from './workspaceConfig.js';
+import { createHandoffStore, HandoffStore } from './services/handoffStore.js';
 
-export type WorkspaceStores = { repos: RepoConfigStore; state: StateStore };
+export type WorkspaceStores = { repos: RepoConfigStore; state: StateStore; handoffs: HandoffStore };
 
 export type WorkspaceStoreRegistry = {
   get(wsId: string): Promise<WorkspaceStores>;
@@ -36,6 +37,7 @@ export function createWorkspaceStoreRegistry(
         return {
           repos: createRepoConfigStore(path.join(dir, 'repos.json')),
           state: createStateStore(path.join(dir, 'state.json')),
+          handoffs: createHandoffStore(path.join(dir, 'handoffs.json')),
         };
       })();
       cache.set(wsId, p);
