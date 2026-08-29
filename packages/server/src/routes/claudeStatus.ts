@@ -10,11 +10,13 @@ const Body = z.object({
   // Which Claude tab this status belongs to (multi-session worktrees).
   // Absent for hooks spawned before multi-session — those are session 1.
   sessionId: z.string().regex(/^(?:\d+|shell:\d+)$/).optional(),
+  providerSessionId: z.string().min(1).max(200).optional(),
+  transcriptPath: z.string().min(1).max(4096).optional(),
 });
 
 export async function registerClaudeStatusRoutes(app: FastifyInstance) {
   app.post('/api/claude/status', async (req) => {
-    const { cwd, status, sessionId } = Body.parse(req.body);
+    const { cwd, status, sessionId, providerSessionId, transcriptPath } = Body.parse(req.body);
 
     const workspaces = await app.deps.workspaces.list();
     // NOTE: cwd is matched lexically (path.resolve via assertPathUnder), not via
@@ -37,6 +39,12 @@ export async function registerClaudeStatusRoutes(app: FastifyInstance) {
       }
     }
     if (!owned) throw new AppError('NOT_FOUND', `no repo owns ${cwd}`);
+
+    if (providerSessionId) {
+      await app.deps.agentSessions.set({
+        mode: 'claude', worktreePath: cwd, sessionId: sessionId ?? '1', providerSessionId, transcriptPath,
+      });
+    }
 
     // 'closed' means the agent process is gone, which is not the same as an
     // idle one: the session leaves the map so a Shell tab stops claiming it.

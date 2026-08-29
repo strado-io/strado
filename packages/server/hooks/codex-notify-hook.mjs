@@ -35,13 +35,13 @@ async function main() {
   const payloadRaw = process.argv[4];
   if (!cwd || !payloadRaw) return;
 
-  let type = null;
+  let payload;
   try {
-    type = JSON.parse(payloadRaw).type ?? null;
+    payload = JSON.parse(payloadRaw);
   } catch {
     return;
   }
-  if (type !== 'agent-turn-complete') return;
+  if (payload?.type !== 'agent-turn-complete') return;
 
   // Injected into the PTY env by the server (codex spawns us as a child, so
   // it's inherited); identifies WHICH Codex tab of the worktree this is.
@@ -49,9 +49,13 @@ async function main() {
   const sessionId = rawSessionId && process.env.STRADO_SESSION_MODE === 'shell'
     ? `shell:${rawSessionId}`
     : rawSessionId;
-  const body = JSON.stringify(
-    sessionId ? { cwd, status: 'waiting', sessionId } : { cwd, status: 'waiting' },
-  );
+  const providerSessionId = payload['thread-id'] ?? payload.thread_id ?? payload.threadId;
+  const body = JSON.stringify({
+    cwd,
+    status: 'waiting',
+    ...(sessionId ? { sessionId } : {}),
+    ...(typeof providerSessionId === 'string' ? { providerSessionId } : {}),
+  });
 
   const socketPath = process.env.STRADO_SERVER_SOCKET;
   if (socketPath) {

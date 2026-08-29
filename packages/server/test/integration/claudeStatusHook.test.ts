@@ -12,13 +12,13 @@ const SCRIPT = path.resolve(
 let server: http.Server | undefined;
 afterEach(() => server?.close());
 
-function runHook(args: string[], env: Record<string, string>): Promise<number> {
+function runHook(args: string[], env: Record<string, string>, stdin?: unknown): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn('node', [SCRIPT, ...args], {
       env: { ...process.env, ...env },
       stdio: ['pipe', 'ignore', 'ignore'],
     });
-    child.stdin.end(); // no stdin payload; rely on CLAUDE_PROJECT_DIR
+    child.stdin.end(stdin === undefined ? undefined : JSON.stringify(stdin));
     child.on('exit', (code) => resolve(code ?? -1));
   });
 }
@@ -71,6 +71,27 @@ describe('claude-status-hook', () => {
 
     expect(code).toBe(0);
     expect(received[0]).toEqual({ cwd: '/tmp/wt-a', status: 'working', sessionId: '2' });
+  });
+
+  it('forwards Claude session metadata for clean transcript lookup', async () => {
+    const received: any[] = [];
+    const port = await new Promise<number>((resolve) => {
+      server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => { received.push(JSON.parse(body)); res.end('{}'); });
+      });
+      server.listen(0, '127.0.0.1', () => resolve((server!.address() as any).port));
+    });
+
+    await runHook(['idle', String(port)], { STRADO_SESSION_ID: '4' }, {
+      cwd: '/tmp/wt-a', session_id: 'claude-provider-id', transcript_path: '/tmp/claude-provider-id.jsonl',
+    });
+
+    expect(received[0]).toEqual({
+      cwd: '/tmp/wt-a', status: 'idle', sessionId: '4',
+      providerSessionId: 'claude-provider-id', transcriptPath: '/tmp/claude-provider-id.jsonl',
+    });
   });
 
   it('namespaces a hook inherited by an agent launched from Shell', async () => {

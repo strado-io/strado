@@ -27,6 +27,7 @@ trusting the summary.
 - **Verify while you steer** — the built-in browser is scoped per worktree; agents prove their work in it
 - **Edit where agents work** — built-in IDE and terminals live next to every session
 - **Sessions survive everything** — closing the tab, restarting the app, even app updates
+- **Continue past agent limits** — hand work to a fresh Claude, Codex, or OpenCode session with clean conversation and Git context intact
 - **Review fast** — per-hunk stage/discard, commit graph, push/pull, MR creation
 - **Time tracking that doesn't lie** — hands-on time from real signals, no timers to start
 
@@ -56,8 +57,10 @@ branch, uncommitted changes, env profile, and run status live.
 ### Agent & terminal hub
 
 Persistent Claude Code, Codex, opencode, Pi, and shell sessions per worktree —
-they survive closing the tab and app updates. One hub window with a super-tab
-per worktree, plus the embedded IDE.
+they survive closing the tab and app updates. When an agent reaches a limit,
+handoff starts a fresh agent with clean provider conversation messages and
+repository state — never a replay of terminal screen output.
+One hub window with a super-tab per worktree, plus the embedded IDE.
 
 </td>
 <td width="50%">

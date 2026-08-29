@@ -29,6 +29,7 @@ import { sandboxSpecWrapper } from './services/sandbox/spec.js';
 import { startHookSocket } from './services/sandbox/hookSocket.js';
 import { createLastActivityTracker, startParkSweep } from './services/sandbox/park.js';
 import { resolveProfile } from './profile.js';
+import { createAgentSessionRegistry, type AgentSessionRegistry } from './services/agentSessionRegistry.js';
 
 export type Deps = {
   workspaces: WorkspaceConfigStore;
@@ -44,6 +45,10 @@ export type Deps = {
   codexStatus: ClaudeStatusStore;
   opencodeStatus: ClaudeStatusStore;
   piStatus: ClaudeStatusStore;
+  agentSessions: AgentSessionRegistry;
+  // Provider-native conversation stores live under the user's home. Kept
+  // separate from homeStateDir (~/.strado) and overridable in tests.
+  agentHomeDir: string;
   gitChanges: GitChangesService;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
@@ -89,6 +94,7 @@ export type Deps = {
 export type AppOptions = {
   configDir?: string;
   homeStateDir?: string;
+  agentHomeDir?: string;
 };
 
 // The built daemon bundle. Packaged app: next to the server bundle
@@ -121,6 +127,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const codexStatus = createAgentStatusStore(bus, 'codexStatus');
   const opencodeStatus = createAgentStatusStore(bus, 'opencodeStatus');
   const piStatus = createAgentStatusStore(bus, 'piStatus');
+  const agentSessions = createAgentSessionRegistry(path.join(homeStateDir, 'agent-sessions.json'));
   const activity = createActivityTracker(path.join(homeStateDir, 'activity.json'));
   const debugLog = createDebugLog(process.env.STRADO_LOG_DIR || path.join(homeStateDir, 'logs'));
   // Declared ahead of the callbacks below: onTerminalExit closes over
@@ -243,6 +250,8 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     codexStatus,
     opencodeStatus,
     piStatus,
+    agentSessions,
+    agentHomeDir: options.agentHomeDir ?? os.homedir(),
     gitChanges: createGitChangesService(),
     activity,
     // File saves (any editor) beat the activity clock; worktree paths are
@@ -346,6 +355,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerMiscRoutes(scoped);
     const { registerClaudeSessionsRoutes } = await import('./routes/claudeSessions.js');
     await registerClaudeSessionsRoutes(scoped);
+    const { registerHandoffRoutes } = await import('./routes/handoffs.js');
+    await registerHandoffRoutes(scoped);
     const { registerGitProviderWorktreeRoutes } = await import('./routes/gitProvider.js');
     await registerGitProviderWorktreeRoutes(scoped);
   }, { prefix: '/api/w/:wsId' });

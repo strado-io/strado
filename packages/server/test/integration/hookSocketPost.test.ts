@@ -169,12 +169,12 @@ describe('hooks with STRADO_SERVER_SOCKET set', () => {
 
     const { StradoStatus } = await import('../../hooks/strado-opencode-status.js');
     const plugin = await StradoStatus();
-    await plugin['chat.message']();
-    await plugin.event({ event: { type: 'session.idle' } });
+    await plugin['chat.message']({ sessionID: 'opencode-provider-id' });
+    await plugin.event({ event: { type: 'session.idle', properties: { sessionID: 'opencode-provider-id' } } });
 
     expect(viaSocket).toEqual([
-      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'working', sessionId: 'shell:4' } },
-      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'waiting', sessionId: 'shell:4' } },
+      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'working', sessionId: 'shell:4', providerSessionId: 'opencode-provider-id' } },
+      { url: '/api/opencode/status', body: { cwd: '/tmp/wt-a', status: 'waiting', sessionId: 'shell:4', providerSessionId: 'opencode-provider-id' } },
     ]);
     expect(viaPort).toEqual([]);
   });

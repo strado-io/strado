@@ -4,13 +4,14 @@ import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { installClaudeHooks, installOpencodePlugin, codexNotifyScriptPath, piExtensionPath } from '../services/claudeHooks.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { defaultShell } from '../services/platform.js';
+import { handoffPrompt, type HandoffRecord } from '../services/handoffStore.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
   | { type: 'resize'; cols: number; rows: number };
 
-// Best-effort plain-text view of a pty buffer for hover previews: strip ANSI
-// escapes and control characters, keep the last non-empty lines.
+// Best-effort plain-text view of a pty buffer for hover previews only. This
+// rendered output is deliberately never used by agent handoffs.
 function peekLines(buffer: string, max: number): string[] {
   const text = buffer
     // OSC sequences (titles, hyperlinks), then CSI/other escapes
@@ -23,10 +24,46 @@ function peekLines(buffer: string, max: number): string[] {
     .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
   return text
     .split('\n')
-    .map((l) => l.trimEnd())
-    .filter((l) => l.trim().length > 0)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
     .slice(-max)
-    .map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l));
+    .map((line) => (line.length > 200 ? `${line.slice(0, 200)}…` : line));
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function agentCommand(
+  mode: 'claude' | 'codex' | 'opencode' | 'pi',
+  sessionId: string,
+  codexNotify: string,
+  handoff?: HandoffRecord,
+): string {
+  if (handoff) {
+    const prompt = shellQuote(handoffPrompt(handoff));
+    if (mode === 'claude') return `claude -- ${prompt}`;
+    if (mode === 'codex') return `codex -c '${codexNotify}' -- ${prompt}`;
+    if (mode === 'opencode') return `opencode --prompt ${prompt}`;
+    // Pi is not a handoff target — AgentMode and HandoffDialog offer only the
+    // three above — so this is unreachable today. Falling through to a normal
+    // Pi launch beats silently starting the wrong agent if that ever changes.
+  }
+  if (mode === 'codex') {
+    return sessionId === '1'
+      ? `codex -c '${codexNotify}' resume --last || codex -c '${codexNotify}'`
+      : `codex -c '${codexNotify}'`;
+  }
+  if (mode === 'opencode') return sessionId === '1' ? 'opencode --continue || opencode' : 'opencode';
+  if (mode === 'pi') {
+    // Pi has no ambient hook config to write — its status extension is loaded
+    // by path, so every launch carries `-e`. Same primary-session rule.
+    const piExtension = piExtensionPath();
+    return sessionId === '1'
+      ? `pi -c -e "${piExtension}" || pi -e "${piExtension}"`
+      : `pi -e "${piExtension}"`;
+  }
+  return 'claude';
 }
 
 export async function registerTerminalRoutes(app: FastifyInstance) {
@@ -66,7 +103,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       }
     },
   );
-  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; cols?: string; rows?: string } }>(
+  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; handoff?: string; cols?: string; rows?: string } }>(
     '/ws/terminal',
     { websocket: true },
     async (connection, req) => {
@@ -121,6 +158,21 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         return fail('invalid path');
       }
 
+      let handoff: HandoffRecord | undefined;
+      if (req.query.handoff) {
+        const found = await stores.handoffs.get(req.query.handoff);
+        if (!found || found.workspaceId !== wsId || found.worktreePath !== target) {
+          return fail('handoff not found');
+        }
+        if (found.target.mode !== mode || found.target.sessionId !== sessionId) {
+          return fail('handoff target does not match this session');
+        }
+        // An accepted handoff on a reconnect is an ordinary reattach: its
+        // initial prompt was already supplied when this pty was spawned.
+        if (found.status === 'ready') handoff = found;
+        else if (found.status !== 'accepted') return fail(`handoff is ${found.status}`);
+      }
+
       // Setup is complete — remove the buffer handler and wire up the real one.
       socket.off('message', bufferHandler);
 
@@ -144,20 +196,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // Only the primary session resumes the directory's last conversation —
       // a second tab resuming the SAME conversation as the first would have
       // both sessions fighting over one thread, so extras start fresh.
-      const codexCmd =
-        sessionId === '1'
-          ? `codex -c '${codexNotify}' resume --last || codex -c '${codexNotify}'`
-          : `codex -c '${codexNotify}'`;
-      // Same rule as codex: only the primary session continues the last
-      // conversation; extra tabs start fresh.
-      const opencodeCmd = sessionId === '1' ? `opencode --continue || opencode` : `opencode`;
-      // Pi has no ambient hook config to write — its status extension is loaded
-      // by path, so every launch carries `-e`. Same primary-session rule again.
-      const piExtension = piExtensionPath();
-      const piCmd =
-        sessionId === '1'
-          ? `pi -c -e "${piExtension}" || pi -e "${piExtension}"`
-          : `pi -e "${piExtension}"`;
+      const agentCmd = mode === 'shell' ? '' : agentCommand(mode, sessionId, codexNotify, handoff);
       // Start a login shell first, then let the bootstrap load the interactive
       // profile and prepend Strado's launchers AFTER it. User rc files commonly
       // prepend nvm/Homebrew paths, which otherwise hide the Codex launcher.
@@ -167,11 +206,11 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         mode === 'shell'
           ? { file: defaultShell(), args: ['-l', '-c', shellCmd] }
           : mode === 'codex'
-            ? { file: defaultShell(), args: ['-l', '-c', codexCmd] }
+            ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
             : mode === 'opencode'
-              ? { file: defaultShell(), args: ['-l', '-c', opencodeCmd] }
-              : mode === 'pi'
-                ? { file: defaultShell(), args: ['-l', '-c', piCmd] }
+              ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
+              : mode === 'pi' || handoff
+                ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
                 : undefined;
 
       if (mode === 'claude' || mode === 'shell') {
@@ -198,7 +237,11 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       };
 
       try {
+        if (handoff && app.deps.terminal.status(sessionKey).status === 'running') {
+          return fail('handoff target session is already running');
+        }
         await app.deps.terminal.ensure(sessionKey, target, spec, size);
+        if (handoff) await stores.handoffs.accept(handoff.id);
       } catch (err) {
         return fail(`could not start session: ${(err as Error).message}`);
       }

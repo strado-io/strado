@@ -4,7 +4,7 @@
 // Worktree dir comes from CLAUDE_PROJECT_DIR (fallback: `cwd` in stdin JSON).
 // Never blocks Claude: ~1s timeout, errors swallowed, always exits 0.
 
-function readStdinCwd() {
+function readStdinPayload() {
   return new Promise((resolve) => {
     if (process.stdin.isTTY) return resolve(null);
     let data = '';
@@ -20,7 +20,8 @@ function readStdinCwd() {
     process.stdin.on('end', () => {
       clearTimeout(timer);
       try {
-        finish(JSON.parse(data).cwd ?? null);
+        const parsed = JSON.parse(data);
+        finish(parsed && typeof parsed === 'object' ? parsed : null);
       } catch {
         finish(null);
       }
@@ -61,7 +62,8 @@ async function main() {
   const status = process.argv[2];
   const port = process.argv[3] || '7777';
   if (!status) return;
-  const cwd = process.env.CLAUDE_PROJECT_DIR || (await readStdinCwd());
+  const payload = await readStdinPayload();
+  const cwd = process.env.CLAUDE_PROJECT_DIR || payload?.cwd;
   if (!cwd) return;
 
   // Injected into the PTY env by the server; identifies WHICH Claude tab of
@@ -71,7 +73,15 @@ async function main() {
   const sessionId = rawSessionId && process.env.STRADO_SESSION_MODE === 'shell'
     ? `shell:${rawSessionId}`
     : rawSessionId;
-  const body = JSON.stringify(sessionId ? { cwd, status, sessionId } : { cwd, status });
+  const providerSessionId = typeof payload?.session_id === 'string' ? payload.session_id : undefined;
+  const transcriptPath = typeof payload?.transcript_path === 'string' ? payload.transcript_path : undefined;
+  const body = JSON.stringify({
+    cwd,
+    status,
+    ...(sessionId ? { sessionId } : {}),
+    ...(providerSessionId ? { providerSessionId } : {}),
+    ...(transcriptPath ? { transcriptPath } : {}),
+  });
 
   const socketPath = process.env.STRADO_SERVER_SOCKET;
   if (socketPath) {

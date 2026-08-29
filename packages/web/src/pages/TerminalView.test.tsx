@@ -62,6 +62,10 @@ const setEnvProfile = vi.fn().mockResolvedValue({});
 const procLogs = vi.fn().mockResolvedValue({ lines: ['boot line'] });
 const wtPatch = vi.fn().mockResolvedValue({});
 const envCheck = vi.fn().mockResolvedValue([]);
+const createHandoff = vi.fn().mockResolvedValue({
+  handoff: { id: 'handoff-1', target: { mode: 'codex', sessionId: '1' } },
+  prompt: 'continue',
+});
 const kbFiles = vi.fn().mockResolvedValue({ files: [], truncated: false });
 const kbFile = vi.fn().mockResolvedValue({ content: '', size: 0, mtimeMs: 0 });
 const runnersList = vi.fn().mockResolvedValue({ runners: [] });
@@ -91,6 +95,7 @@ vi.mock('../api', () => ({
       upload: vi.fn(),
       list: (...a: unknown[]) => worktreesList(...a),
       mergeRequests: (...a: unknown[]) => mergeRequests(...a),
+      createHandoff: (...a: unknown[]) => createHandoff(...a),
       git: {
         changes: (...a: unknown[]) => gitChanges(...a),
         branches: vi.fn().mockResolvedValue({ branches: [] }),
@@ -174,6 +179,10 @@ beforeEach(() => {
   procLogs.mockReset().mockResolvedValue({ lines: ['boot line'] });
   wtPatch.mockReset().mockResolvedValue({});
   envCheck.mockReset().mockResolvedValue([]);
+  createHandoff.mockReset().mockResolvedValue({
+    handoff: { id: 'handoff-1', target: { mode: 'codex', sessionId: '1' } },
+    prompt: 'continue',
+  });
   kbFiles.mockReset().mockResolvedValue({ files: [], truncated: false });
   kbFile.mockReset().mockResolvedValue({ content: '', size: 0, mtimeMs: 0 });
   sseHandler = null;
@@ -184,6 +193,29 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllMocks(); });
 
 describe('TerminalView', () => {
+  it('creates a handoff and starts a fresh target session with its packet id', async () => {
+    render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Handoff' }));
+    expect(screen.getByRole('dialog', { name: 'Continue with another agent' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Anything the next agent must know/), {
+      target: { value: 'Continue with the failing parser case' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Codex' }));
+
+    await vi.waitFor(() => expect(createHandoff).toHaveBeenCalledWith(
+      'default',
+      worktree.path,
+      {
+        source: { mode: 'claude', sessionId: '1' },
+        target: { mode: 'codex', sessionId: '1' },
+        notes: 'Continue with the failing parser case',
+      },
+    ));
+    await vi.waitFor(() => expect(FakeWS.instances.some((ws) =>
+      ws.url.includes('mode=codex') && ws.url.includes('handoff=handoff-1'),
+    )).toBe(true));
+  });
+
   it('offers Browser in the new-session menu only inside Electron', () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     fireEvent.click(screen.getByLabelText('New session'));

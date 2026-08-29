@@ -44,11 +44,16 @@ export const StradoStatus = async () => {
     });
   }
 
-  async function report(status) {
+  async function report(status, providerSessionId) {
     // The socket stands in for the port inside a container; either one is a
     // route to the server, and a manual `opencode` run has neither.
     if (!cwd || (!port && !socketPath)) return;
-    const body = JSON.stringify(sessionId ? { cwd, status, sessionId } : { cwd, status });
+    const body = JSON.stringify({
+      cwd,
+      status,
+      ...(sessionId ? { sessionId } : {}),
+      ...(typeof providerSessionId === 'string' ? { providerSessionId } : {}),
+    });
     if (socketPath) {
       await postOverSocket(body);
       return;
@@ -70,11 +75,11 @@ export const StradoStatus = async () => {
   }
 
   return {
-    'chat.message': async () => {
-      await report('working');
+    'chat.message': async ({ sessionID } = {}) => {
+      await report('working', sessionID);
     },
     event: async ({ event }) => {
-      if (event?.type === 'session.idle') await report('waiting');
+      if (event?.type === 'session.idle') await report('waiting', event.properties?.sessionID);
     },
   };
 };

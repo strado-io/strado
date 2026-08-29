@@ -40,6 +40,14 @@ afterEach(async () => {
 });
 
 describe('POST /api/codex/status', () => {
+  it('maps a Strado tab to its Codex thread', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/codex/status',
+      payload: { cwd: repo, status: 'waiting', sessionId: '2', providerSessionId: 'codex-id' },
+    });
+    expect(await app.deps.agentSessions.get('codex', repo, '2')).toMatchObject({ providerSessionId: 'codex-id' });
+  });
+
   it('keys status by sessionId and aggregates across sessions', async () => {
     await app.inject({
       method: 'POST',

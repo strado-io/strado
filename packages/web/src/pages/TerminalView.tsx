@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { MergeRequest, RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { track } from '../telemetry';
-import { api } from '../api';
+import { api, type AgentMode } from '../api';
 import { subscribeWorktrees } from '../eventStream';
 import { useCapabilities } from '../hooks/capabilities';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
@@ -41,6 +41,7 @@ import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
+import { HandoffDialog } from '../components/HandoffDialog';
 
 type Tab = {
   path: string;
@@ -952,6 +953,15 @@ export function TerminalView({
   // finds the sessions still running on the runner.
   const [remoteShells, setRemoteShells] = useState<Record<string, RemoteShell[]>>(() => readRemoteShells());
   const [renaming, setRenaming] = useState<{ path: string; mode: NamedSessionMode; id: string; value: string } | null>(null);
+  const [handoffDialog, setHandoffDialog] = useState<{
+    source: { path: string; mode: AgentMode; sessionId: string };
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
+  // A ready handoff is attached to exactly one freshly allocated target tab.
+  // The server consumes it atomically on the first socket connection, so a
+  // later reconnect cannot inject the kickoff prompt twice.
+  const [pendingHandoffs, setPendingHandoffs] = useState<Record<string, string>>({});
   // "+" on the session-tab row: pick which session type to open.
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const addMenuRef = useRef(false);
@@ -1445,6 +1455,7 @@ export function TerminalView({
           wsId={wsId}
           tab={tab}
           focused={isFocused}
+          handoffId={pendingHandoffs[node.key]}
           onFocus={() => { if (!isFocused) setActive(tab); }}
         />
       );
@@ -1959,6 +1970,61 @@ export function TerminalView({
     });
   };
 
+  const submitHandoff = async (targetMode: AgentMode, notes: string) => {
+    const dialog = handoffDialog;
+    const g = activeGroup;
+    if (!dialog || !g) return;
+    setHandoffDialog({ ...dialog, busy: true, error: null });
+
+    const targetOpen =
+      targetMode === 'claude' ? g.claudeOpen
+      : targetMode === 'codex' ? g.codexOpen
+      : g.opencodeOpen;
+    const serverIds =
+      targetMode === 'claude' ? g.serverClaudeIds
+      : targetMode === 'codex' ? g.serverCodexIds
+      : g.serverOpencodeIds;
+    const localIds =
+      targetMode === 'claude' ? g.localClaudeIds
+      : targetMode === 'codex' ? g.localCodexIds
+      : g.localOpencodeIds;
+    const used = [...(targetOpen ? ['1'] : []), ...serverIds, ...localIds];
+    let n = 1;
+    while (used.includes(String(n))) n++;
+    const targetId = String(n);
+
+    try {
+      const { handoff } = await api.worktrees.createHandoff(localWsId, dialog.source.path, {
+        source: { mode: dialog.source.mode, sessionId: dialog.source.sessionId },
+        target: { mode: targetMode, sessionId: targetId },
+        notes,
+      });
+      closedAgentsRef.current![targetMode].delete(dialog.source.path);
+      rememberClosedAgent(targetMode, dialog.source.path, false);
+      setPendingHandoffs((prev) => ({ ...prev, [`${targetMode}:${targetId}`]: handoff.id }));
+      setGroups((prev) => prev.map((group) => {
+        if (group.path !== dialog.source.path) return group;
+        if (targetMode === 'claude') {
+          return targetId === '1'
+            ? { ...group, claudeOpen: true }
+            : { ...group, localClaudeIds: sortIds([...group.localClaudeIds, targetId]) };
+        }
+        if (targetMode === 'codex') {
+          return targetId === '1'
+            ? { ...group, codexOpen: true }
+            : { ...group, localCodexIds: sortIds([...group.localCodexIds, targetId]) };
+        }
+        return targetId === '1'
+          ? { ...group, opencodeOpen: true }
+          : { ...group, localOpencodeIds: sortIds([...group.localOpencodeIds, targetId]) };
+      }));
+      setActive({ path: dialog.source.path, mode: targetMode, id: targetId });
+      setHandoffDialog(null);
+    } catch (err) {
+      setHandoffDialog((current) => current ? { ...current, busy: false, error: (err as Error).message } : current);
+    }
+  };
+
   // Apply an explicit open request from the parent (such as a notification)
   // that lands while THIS worktree's hub is already open — the
   // initial mount is already handled by the seeded `active`/`groups` state,
@@ -2296,6 +2362,20 @@ export function TerminalView({
             <PlusIcon />
           </button>
           </div>
+          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode') && (
+            <button
+              type="button"
+              onClick={() => setHandoffDialog({
+                source: { path: active.path, mode: active.mode as AgentMode, sessionId: active.id },
+                busy: false,
+                error: null,
+              })}
+              title="Continue this task with another agent"
+              className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100"
+            >
+              Handoff
+            </button>
+          )}
           {(() => {
             const p = procs[active.path] ?? { status: 'idle' as const };
             const busy = p.status === 'running' || p.status === 'starting';
@@ -2746,7 +2826,7 @@ export function TerminalView({
                 const url = browserUrl[pk] ?? defaultPreviewUrl(g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || showLogs || showDiff || mrReview);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || showLogs || showDiff || mrReview || handoffDialog);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -2967,6 +3047,18 @@ export function TerminalView({
               (active.path === worktree.path ? worktree : ({ path: active.path } as Worktree))
             }
             onClose={() => setShowDiff(false)}
+          />
+        </div>
+      )}
+      {handoffDialog && (
+        <div onClick={(event) => event.stopPropagation()}>
+          <HandoffDialog
+            source={{ mode: handoffDialog.source.mode, sessionId: handoffDialog.source.sessionId }}
+            opencodeInstalled={opencodeInstalled}
+            busy={handoffDialog.busy}
+            error={handoffDialog.error}
+            onSubmit={(target, notes) => void submitHandoff(target, notes)}
+            onCancel={() => { if (!handoffDialog.busy) setHandoffDialog(null); }}
           />
         </div>
       )}

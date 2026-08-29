@@ -78,6 +78,7 @@ Key boundaries:
 |---|---|---|
 | **Worktree dashboard** | Create / adopt / delete worktrees across repos and workspaces; each row shows branch, uncommitted changes, env profile, dev-server status, agent status, tracked time — live via SSE. | `web/pages/Dashboard.tsx`, `server/routes/worktrees.ts` |
 | **Agent & terminal hub** | Persistent Claude Code / Codex / OpenCode / Pi / shell sessions per worktree; multiple Claude sessions (`Claude N` tabs); sessions survive tab close, server restart and app upgrade. Split panes, drag-reorder tabs, hold-Cmd Arc-style switcher with live previews. | `web/pages/TerminalView.tsx`, `server/routes/terminal.ts`, `packages/ptyd` |
+| **Agent handoff** | Continue a task in a fresh provider session when the current agent reaches a limit. Maps each Strado tab to its provider conversation, extracts clean user/assistant messages, and persists them with authoritative Git state. Rendered terminal output is never used as conversation context. | `web/components/HandoffDialog.tsx`, `server/routes/handoffs.ts`, `server/services/agentConversation.ts`, `server/services/handoffStore.ts` |
 | **Embedded VS Code** | `code serve-web` per folder in a cross-origin iframe, kept mounted across tab switches; Cmd+W reaches the editor (Close Window is Shift+Cmd+W). | `server/services/vscodeWeb.ts`, desktop hotkey wiring |
 | **Preview browser + agent verification** | Multi-tab in-app browser (WebContentsView) with toolbar and dockable DevTools. Exposed to agents via the `strado-preview` MCP (screenshot, click, fill, eval, console, network) — scoped so each session only sees **its own worktree's** tabs. | `desktop/main.cjs`, `desktop/preview-mcp.cjs`, `server/routes/previewTargets.ts` |
 | **Diff & commit** | Staged/unstaged hunks, per-hunk stage/discard, commit, push/pull, branch diff, commit graph, in-app MR/PR review and creation. | `web/pages/DiffView.tsx`, `server/routes/gitChanges.ts` |
@@ -139,13 +140,14 @@ stay under inotify limits. (Chokidar on macOS froze the dashboard ~40s on real r
 ├── license.json / jira.json / gitlab.json / github.json   (0600)
 ├── profile.json          # fullName, callMe, telemetry opt-out
 ├── activity.json         # tracked seconds per worktree
+├── agent-sessions.json   # Strado tab → provider conversation id lookup
 ├── logs/
 ├── worktrees/<repoId>/   # default worktree root
 └── ptyd/                 # ptyd.sock, bin/, manifest, log
 
 config/ (stable: <cwd>/config, dev: <home>/config)
 ├── workspaces.json
-└── workspaces/<wsId>/    # repos.json, state.json, sprints.json, .backups/
+└── workspaces/<wsId>/    # repos.json, state.json, sprints.json, handoffs.json, .backups/
 ```
 
 All stores share one design: serialized write queue, reads never write back,

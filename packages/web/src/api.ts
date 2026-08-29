@@ -71,6 +71,23 @@ export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
 
+export type AgentMode = 'claude' | 'codex' | 'opencode';
+export type Handoff = {
+  id: string;
+  workspaceId: string;
+  worktreePath: string;
+  taskLabel: string;
+  source: { mode: AgentMode; sessionId: string };
+  target: { mode: AgentMode; sessionId: string };
+  status: 'ready' | 'accepted' | 'cancelled';
+  notes: string;
+  conversation: Array<{ role: 'user' | 'assistant'; content: string }>;
+  contextSource: 'claude-history' | 'codex-history' | 'opencode-history' | 'none';
+  repository: { branch: string; head: string; status: string[]; diffStat: string };
+  createdAt: string;
+  acceptedAt: string | null;
+};
+
 export const api = {
   terminal: {
     peek: (ws: string, path: string, mode: string, session = '1') =>
@@ -277,6 +294,28 @@ export const api = {
       request<{ branch: string; dirty: boolean; ahead: number; behind: number }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/refresh-git`,
         { method: 'POST' },
+      ),
+    createHandoff: (
+      wsId: string,
+      p: string,
+      payload: {
+        source: { mode: AgentMode; sessionId: string };
+        target: { mode: AgentMode; sessionId: string };
+        notes: string;
+      },
+    ) =>
+      request<{ handoff: Handoff; prompt: string }>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      ),
+    handoffs: (wsId: string, p: string) =>
+      request<{ handoffs: Handoff[] }>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs`,
+      ).then((body) => body.handoffs),
+    cancelHandoff: (wsId: string, p: string, id: string) =>
+      request<void>(
+        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs/${encodeURIComponent(id)}`,
+        { method: 'DELETE' },
       ),
     upload: (wsId: string, p: string, file: { name: string; dataBase64: string }) =>
       request<{ path: string }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/upload`, {
