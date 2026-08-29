@@ -45,9 +45,9 @@ export function agentCommand(
     if (mode === 'claude') return `claude -- ${prompt}`;
     if (mode === 'codex') return `codex -c '${codexNotify}' -- ${prompt}`;
     if (mode === 'opencode') return `opencode --prompt ${prompt}`;
-    // Pi is not a handoff target — AgentMode and HandoffDialog offer only the
-    // three above — so this is unreachable today. Falling through to a normal
-    // Pi launch beats silently starting the wrong agent if that ever changes.
+    // `--` ends option parsing, so the prompt reaches pi as a first message.
+    // No `-c`: a handoff target is always a fresh conversation.
+    return `pi -e "${piExtensionPath()}" -- ${prompt}`;
   }
   if (mode === 'codex') {
     return sessionId === '1'

@@ -101,6 +101,47 @@ describe('agent handoffs', () => {
     expect(saved.handoffs[0].id).toBe(body.handoff.id);
   });
 
+  it('reads a Pi source session and can target a fresh Pi tab', async () => {
+    // Pi stores sessions per working directory; Strado finds the file by the
+    // `session` header's cwd, so the directory name itself never matters.
+    const sessionDir = path.join(tmp, 'agents', '.pi', 'agent', 'sessions', 'slug');
+    await fs.mkdir(sessionDir, { recursive: true });
+    await fs.writeFile(path.join(sessionDir, '2026-08-29T10-00-00-000Z_pi-1.jsonl'), [
+      JSON.stringify({ type: 'session', version: 3, id: 'pi-1', cwd: repo }),
+      JSON.stringify({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'Port the parser' }] } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Parser ported, tests pending.' }] } }),
+    ].join('\n'));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/w/default/worktrees/${encodeURIComponent(repo)}/handoffs`,
+      payload: {
+        source: { mode: 'pi', sessionId: '1' },
+        target: { mode: 'claude', sessionId: '2' },
+        notes: '',
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().handoff.contextSource).toBe('pi-history');
+    expect(response.json().handoff.conversation).toEqual([
+      { role: 'user', content: 'Port the parser' },
+      { role: 'assistant', content: 'Parser ported, tests pending.' },
+    ]);
+
+    const toPi = await app.inject({
+      method: 'POST',
+      url: `/api/w/default/worktrees/${encodeURIComponent(repo)}/handoffs`,
+      payload: {
+        source: { mode: 'claude', sessionId: '1' },
+        target: { mode: 'pi', sessionId: '2' },
+        notes: '',
+      },
+    });
+    expect(toPi.statusCode).toBe(201);
+    expect(toPi.json().handoff.target).toEqual({ mode: 'pi', sessionId: '2' });
+  });
+
   it('refuses to target an already-running session', async () => {
     await app.deps.terminal.ensure(codexKey(repo, '1'), repo);
     const response = await app.inject({

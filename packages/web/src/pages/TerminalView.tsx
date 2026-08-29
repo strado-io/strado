@@ -2299,15 +2299,18 @@ export function TerminalView({
     const targetOpen =
       targetMode === 'claude' ? g.claudeOpen
       : targetMode === 'codex' ? g.codexOpen
-      : g.opencodeOpen;
+      : targetMode === 'opencode' ? g.opencodeOpen
+      : g.piOpen;
     const serverIds =
       targetMode === 'claude' ? g.serverClaudeIds
       : targetMode === 'codex' ? g.serverCodexIds
-      : g.serverOpencodeIds;
+      : targetMode === 'opencode' ? g.serverOpencodeIds
+      : g.serverPiIds;
     const localIds =
       targetMode === 'claude' ? g.localClaudeIds
       : targetMode === 'codex' ? g.localCodexIds
-      : g.localOpencodeIds;
+      : targetMode === 'opencode' ? g.localOpencodeIds
+      : g.localPiIds;
     const used = [...(targetOpen ? ['1'] : []), ...serverIds, ...localIds];
     let n = 1;
     while (used.includes(String(n))) n++;
@@ -2334,9 +2337,14 @@ export function TerminalView({
             ? { ...group, codexOpen: true }
             : { ...group, localCodexIds: sortIds([...group.localCodexIds, targetId]) };
         }
+        if (targetMode === 'opencode') {
+          return targetId === '1'
+            ? { ...group, opencodeOpen: true }
+            : { ...group, localOpencodeIds: sortIds([...group.localOpencodeIds, targetId]) };
+        }
         return targetId === '1'
-          ? { ...group, opencodeOpen: true }
-          : { ...group, localOpencodeIds: sortIds([...group.localOpencodeIds, targetId]) };
+          ? { ...group, piOpen: true }
+          : { ...group, localPiIds: sortIds([...group.localPiIds, targetId]) };
       }));
       setActive({ path: dialog.source.path, mode: targetMode, id: targetId });
       setHandoffDialog(null);
@@ -2734,7 +2742,7 @@ export function TerminalView({
             <PlusIcon />
           </button>
           </div>
-          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode') && (
+          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode' || active.mode === 'pi') && (
             <button
               type="button"
               onClick={() => setHandoffDialog({
@@ -3521,6 +3529,7 @@ export function TerminalView({
           <HandoffDialog
             source={{ mode: handoffDialog.source.mode, sessionId: handoffDialog.source.sessionId }}
             opencodeInstalled={opencodeInstalled}
+            piInstalled={piInstalled}
             busy={handoffDialog.busy}
             error={handoffDialog.error}
             onSubmit={(target, notes) => void submitHandoff(target, notes)}

@@ -118,6 +118,20 @@ export function parseOpenCodeConversation(raw: string): HandoffConversationMessa
   return compact(messages);
 }
 
+export function parsePiConversation(raw: string): HandoffConversationMessage[] {
+  const messages = parseJsonLines(raw).flatMap((entry): HandoffConversationMessage[] => {
+    if (entry.type !== 'message' || !isRecord(entry.message)) return [];
+    const role = entry.message.role;
+    // Pi writes tool results as their own `toolResult` role, so dropping
+    // everything but user/assistant leaves the semantic conversation.
+    if (role !== 'user' && role !== 'assistant') return [];
+    const content = textContent(entry.message.content);
+    if (role === 'user' && isInjectedUserContext(content)) return [];
+    return content ? [{ role, content }] : [];
+  });
+  return compact(messages);
+}
+
 async function safeRead(filePath: string, root: string): Promise<string | null> {
   const resolved = path.resolve(filePath);
   const relative = path.relative(path.resolve(root), resolved);
@@ -228,6 +242,36 @@ async function opencodeConversation(
   }
 }
 
+async function piConversation(
+  cwd: string,
+  reference: AgentSessionReference | null,
+  homeDir: string,
+): Promise<AgentConversation> {
+  const root = path.join(homeDir, '.pi', 'agent', 'sessions');
+  let raw = reference?.transcriptPath ? await safeRead(reference.transcriptPath, root) : null;
+  if (!raw) {
+    const files = await filesUnder(root, (name) => name.endsWith('.jsonl'));
+    if (reference?.providerSessionId) {
+      const id = reference.providerSessionId;
+      const match = files.find((file) => path.basename(file).includes(id));
+      if (match) raw = await safeRead(match, root);
+    }
+    // Pi groups sessions into a directory named after the working directory,
+    // but the `session` header carries the authoritative cwd — match on that
+    // rather than reproducing pi's slug, the same way Codex is resolved.
+    for (const file of raw ? [] : (await newest(files)).slice(0, 50)) {
+      const candidate = await safeRead(file, root);
+      const header = candidate && parseJsonLines(candidate).find((entry) => entry.type === 'session');
+      if (header && path.resolve(String(header.cwd ?? '')) === path.resolve(cwd)) {
+        raw = candidate;
+        break;
+      }
+    }
+  }
+  const messages = raw ? parsePiConversation(raw) : [];
+  return { messages, source: messages.length ? 'pi-history' : 'none' };
+}
+
 export async function collectAgentConversation(
   mode: AgentMode,
   cwd: string,
@@ -245,5 +289,6 @@ export async function collectAgentConversation(
     })).stdout);
   if (mode === 'claude') return claudeConversation(cwd, reference, homeDir);
   if (mode === 'codex') return codexConversation(cwd, reference, homeDir);
+  if (mode === 'pi') return piConversation(cwd, reference, homeDir);
   return opencodeConversation(cwd, reference, runOpenCode);
 }

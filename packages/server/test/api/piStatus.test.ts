@@ -55,6 +55,19 @@ describe('POST /api/pi/status', () => {
     expect(app.deps.piStatus.sessions(repo)).toEqual({ '2': 'working', '1': 'waiting' });
   });
 
+  it('maps a Strado tab to Pi session metadata', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/pi/status',
+      payload: {
+        cwd: repo, status: 'waiting', sessionId: '2', providerSessionId: 'pi-id',
+        transcriptPath: '/tmp/pi-id.jsonl',
+      },
+    });
+    expect(await app.deps.agentSessions.get('pi', repo, '2')).toMatchObject({
+      providerSessionId: 'pi-id', transcriptPath: '/tmp/pi-id.jsonl',
+    });
+  });
+
   it('surfaces piStatusById on the worktrees listing', async () => {
     await app.inject({
       method: 'POST',

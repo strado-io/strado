@@ -3,6 +3,7 @@ import {
   parseClaudeConversation,
   parseCodexConversation,
   parseOpenCodeConversation,
+  parsePiConversation,
 } from './agentConversation';
 
 describe('provider conversation extraction', () => {
@@ -52,6 +53,25 @@ describe('provider conversation extraction', () => {
     expect(parseOpenCodeConversation(raw)).toEqual([
       { role: 'user', content: 'Build handoff' },
       { role: 'assistant', content: 'The API is ready.' },
+    ]);
+  });
+
+  it('reads Pi session entries without tool calls and session metadata', () => {
+    const raw = [
+      { type: 'session', version: 3, id: '01a049cc', cwd: '/repo' },
+      { type: 'model_change', provider: 'openrouter', modelId: 'glm' },
+      { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'Ship the migration' }] } },
+      { type: 'message', message: { role: 'assistant', content: [
+        { type: 'thinking', thinking: 'private reasoning' },
+        { type: 'toolCall', name: 'bash' },
+        { type: 'text', text: 'Migration written, tests still pending.' },
+      ] } },
+      { type: 'message', message: { role: 'toolResult', content: [{ type: 'text', text: 'terminal bytes' }] } },
+    ].map((entry) => JSON.stringify(entry)).join('\n');
+
+    expect(parsePiConversation(raw)).toEqual([
+      { role: 'user', content: 'Ship the migration' },
+      { role: 'assistant', content: 'Migration written, tests still pending.' },
     ]);
   });
 });

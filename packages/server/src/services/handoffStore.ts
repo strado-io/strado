@@ -4,14 +4,19 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { backupBeforeWrite } from '../backups.js';
 
-export type AgentMode = 'claude' | 'codex' | 'opencode';
+export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 
 export type HandoffConversationMessage = {
   role: 'user' | 'assistant';
   content: string;
 };
 
-export type HandoffContextSource = 'claude-history' | 'codex-history' | 'opencode-history' | 'none';
+export type HandoffContextSource =
+  | 'claude-history'
+  | 'codex-history'
+  | 'opencode-history'
+  | 'pi-history'
+  | 'none';
 
 export type HandoffRepositorySnapshot = {
   branch: string;

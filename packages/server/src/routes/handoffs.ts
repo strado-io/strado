@@ -5,12 +5,12 @@ import { AppError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
 import { exec } from '../shell.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
-import { claudeKey, codexKey, opencodeKey } from '../services/terminalManager.js';
+import { claudeKey, codexKey, opencodeKey, piKey } from '../services/terminalManager.js';
 import { collectAgentConversation } from '../services/agentConversation.js';
 import { handoffPrompt, type AgentMode } from '../services/handoffStore.js';
 import type { RepoConfigStore } from '../repoConfig.js';
 
-const AgentModeSchema = z.enum(['claude', 'codex', 'opencode']);
+const AgentModeSchema = z.enum(['claude', 'codex', 'opencode', 'pi']);
 const SessionIdSchema = z.string().regex(/^\d+$/);
 
 const CreateBody = z.object({
@@ -24,6 +24,7 @@ const CreateBody = z.object({
 function sessionKey(worktreePath: string, mode: AgentMode, id: string): string {
   return mode === 'codex' ? codexKey(worktreePath, id)
     : mode === 'opencode' ? opencodeKey(worktreePath, id)
+    : mode === 'pi' ? piKey(worktreePath, id)
     : claudeKey(worktreePath, id);
 }
 

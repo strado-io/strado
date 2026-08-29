@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { AgentMode } from '../api';
-import { ClaudeIcon, CodexIcon, OpencodeIcon } from './hub/icons';
+import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon } from './hub/icons';
 
-const LABEL: Record<AgentMode, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
-const ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon };
+const LABEL: Record<AgentMode, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
+const ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon, pi: PiIcon };
 
 export function HandoffDialog({
   source,
   opencodeInstalled,
+  piInstalled,
   busy,
   error,
   onSubmit,
@@ -15,15 +16,20 @@ export function HandoffDialog({
 }: {
   source: { mode: AgentMode; sessionId: string };
   opencodeInstalled: boolean | null;
+  piInstalled: boolean | null;
   busy: boolean;
   error: string | null;
   onSubmit: (target: AgentMode, notes: string) => void;
   onCancel: () => void;
 }) {
-  const choices = ['claude', 'codex', 'opencode'] as AgentMode[];
+  const choices = ['claude', 'codex', 'opencode', 'pi'] as AgentMode[];
+  // Only the optional agents can be missing; Claude and Codex are assumed
+  // present the same way the rest of the hub assumes them.
+  const missing = (mode: AgentMode) =>
+    (mode === 'opencode' && opencodeInstalled === false) || (mode === 'pi' && piInstalled === false);
   // Prefer another provider for usage-limit recovery, while still allowing a
   // fresh same-provider session when the old conversation hit a context limit.
-  const first = choices.find((mode) => mode !== source.mode && (mode !== 'opencode' || opencodeInstalled !== false)) ?? source.mode;
+  const first = choices.find((mode) => mode !== source.mode && !missing(mode)) ?? source.mode;
   const [target, setTarget] = useState<AgentMode>(first);
   const [notes, setNotes] = useState('');
 
@@ -52,7 +58,7 @@ export function HandoffDialog({
           <div className="grid grid-cols-2 gap-2">
             {choices.map((mode) => {
               const ModeIcon = ICON[mode];
-              const disabled = mode === 'opencode' && opencodeInstalled === false;
+              const disabled = missing(mode);
               return (
                 <button
                   key={mode}
@@ -105,7 +111,7 @@ export function HandoffDialog({
           </button>
           <button
             type="button"
-            disabled={busy || (target === 'opencode' && opencodeInstalled === false)}
+            disabled={busy || missing(target)}
             onClick={() => onSubmit(target, notes)}
             className="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600 disabled:cursor-wait disabled:opacity-60"
           >

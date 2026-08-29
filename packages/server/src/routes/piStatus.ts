@@ -9,11 +9,13 @@ const Body = z.object({
   status: z.enum(['idle', 'working', 'waiting', 'closed']),
   // Which Pi tab this status belongs to (multi-session worktrees).
   sessionId: z.string().regex(/^(?:\d+|shell:\d+)$/).optional(),
+  providerSessionId: z.string().min(1).max(200).optional(),
+  transcriptPath: z.string().min(1).max(4096).optional(),
 });
 
 export async function registerPiStatusRoutes(app: FastifyInstance) {
   app.post('/api/pi/status', async (req) => {
-    const { cwd, status, sessionId } = Body.parse(req.body);
+    const { cwd, status, sessionId, providerSessionId, transcriptPath } = Body.parse(req.body);
 
     // Same lexical-ownership check as /api/codex/status: cwd must be a repo
     // root or live under a repo's worktrees dir in some workspace.
@@ -33,6 +35,12 @@ export async function registerPiStatusRoutes(app: FastifyInstance) {
       }
     }
     if (!owned) throw new AppError('NOT_FOUND', `no repo owns ${cwd}`);
+
+    if (providerSessionId) {
+      await app.deps.agentSessions.set({
+        mode: 'pi', worktreePath: cwd, sessionId: sessionId ?? '1', providerSessionId, transcriptPath,
+      });
+    }
 
     // 'closed' means the agent process is gone, which is not the same as an
     // idle one: the session leaves the map so a Shell tab stops claiming it.

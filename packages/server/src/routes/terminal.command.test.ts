@@ -20,12 +20,21 @@ describe('agentCommand', () => {
     expect(agentCommand('codex', '2', 'notify=[]', record())).toContain("codex -c 'notify=[]' --");
     expect(agentCommand('opencode', '2', 'notify=[]', record())).toContain('opencode --prompt');
     expect(agentCommand('codex', '2', 'notify=[]', record())).not.toContain('resume');
+    const pi = agentCommand('pi', '2', 'notify=[]', record());
+    expect(pi).toMatch(/^pi -e "/);
+    expect(pi).toContain(' -- ');
+    expect(pi).not.toContain('-c -e');
   });
 
   it('shell-quotes user notes instead of allowing a command break-out', () => {
     const command = agentCommand('codex', '2', 'notify=[]', record("don't run $(touch /tmp/nope)"));
     expect(command).toContain("don'\\''t run $(touch /tmp/nope)");
     expect(command).toMatch(/^codex /);
+  });
+
+  it('launches Pi with its status extension and no handoff prompt otherwise', () => {
+    expect(agentCommand('pi', '1', 'notify=[]')).toContain('pi -c -e');
+    expect(agentCommand('pi', '2', 'notify=[]')).not.toContain('-c -e');
   });
 
   it('never forwards a legacy terminal snapshot', () => {

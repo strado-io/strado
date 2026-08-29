@@ -216,6 +216,28 @@ describe('TerminalView', () => {
     )).toBe(true));
   });
 
+  it('hands a Claude tab off to a fresh Pi session when pi is installed', async () => {
+    envCheck.mockResolvedValue([{ id: 'pi', found: true }]);
+    render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Handoff' }));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Pi' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Pi' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Pi' }));
+
+    await vi.waitFor(() => expect(createHandoff).toHaveBeenCalledWith(
+      'default',
+      worktree.path,
+      {
+        source: { mode: 'claude', sessionId: '1' },
+        target: { mode: 'pi', sessionId: '1' },
+        notes: '',
+      },
+    ));
+    await vi.waitFor(() => expect(FakeWS.instances.some((ws) =>
+      ws.url.includes('mode=pi') && ws.url.includes('handoff=handoff-1'),
+    )).toBe(true));
+  });
+
   it('offers Browser in the new-session menu only inside Electron', () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     fireEvent.click(screen.getByLabelText('New session'));

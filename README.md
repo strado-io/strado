@@ -27,7 +27,7 @@ trusting the summary.
 - **Verify while you steer** — the built-in browser is scoped per worktree; agents prove their work in it
 - **Edit where agents work** — built-in IDE and terminals live next to every session
 - **Sessions survive everything** — closing the tab, restarting the app, even app updates
-- **Continue past agent limits** — hand work to a fresh Claude, Codex, or OpenCode session with clean conversation and Git context intact
+- **Continue past agent limits** — hand work to a fresh Claude, Codex, OpenCode, or Pi session with clean conversation and Git context intact
 - **Review fast** — per-hunk stage/discard, commit graph, push/pull, MR creation
 - **Time tracking that doesn't lie** — hands-on time from real signals, no timers to start
 

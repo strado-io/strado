@@ -49,11 +49,37 @@ export default function stradoStatus(pi: any) {
     });
   }
 
-  async function report(status: string) {
+  // `ctx` is absent only where pi gives a handler none; the ids are then
+  // simply left out, exactly as they are for a pre-handoff Strado build.
+  function sessionRef(ctx: any): { providerSessionId?: string; transcriptPath?: string } {
+    const manager = ctx?.sessionManager;
+    if (!manager) return {};
+    try {
+      const providerSessionId = manager.getSessionId?.();
+      // Unset for an ephemeral (`--no-session`) run, which has no history to
+      // hand off — the id alone still identifies the tab's conversation.
+      const transcriptPath = manager.getSessionFile?.();
+      return {
+        ...(typeof providerSessionId === 'string' ? { providerSessionId } : {}),
+        ...(typeof transcriptPath === 'string' ? { transcriptPath } : {}),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  async function report(status: string, ctx?: any) {
     // The socket stands in for the port inside a container; either one is a
     // route to the server, and a manual `pi` run has neither.
     if (!cwd || (!port && !socketPath)) return;
-    const body = JSON.stringify(sessionId ? { cwd, status, sessionId } : { cwd, status });
+    const body = JSON.stringify({
+      cwd,
+      status,
+      ...(sessionId ? { sessionId } : {}),
+      // Lets a handoff find THIS tab's pi session file instead of guessing
+      // the newest one for the worktree.
+      ...(status === 'closed' ? {} : sessionRef(ctx)),
+    });
     if (socketPath) {
       await postOverSocket(body);
       return;
@@ -76,19 +102,19 @@ export default function stradoStatus(pi: any) {
 
   // The turn started. `turn_start` would fire per LLM round-trip; this fires
   // once per user prompt, which is the boundary Strado's "working" means.
-  pi.on('before_agent_start', async () => {
-    await report('working');
+  pi.on('before_agent_start', async (_event: unknown, ctx: any) => {
+    await report('working', ctx);
   });
   // A blocking extension prompt (confirm/select/input) is the agent asking the
   // human for something — the same thing Claude's Notification hook reports.
-  pi.on('ui_prompt_start', async () => {
-    await report('waiting');
+  pi.on('ui_prompt_start', async (_event: unknown, ctx: any) => {
+    await report('waiting', ctx);
   });
   // `agent_end` can be followed by an auto-retry, an auto-compact, or a queued
   // message; `agent_settled` is pi's own "I will not continue on my own" signal
   // and is what its docs point status integrations at.
-  pi.on('agent_settled', async () => {
-    await report('waiting');
+  pi.on('agent_settled', async (_event: unknown, ctx: any) => {
+    await report('waiting', ctx);
   });
   // The process is going away — drop the registration entirely rather than
   // leaving an idle session behind (matters for Shell-hosted pi, where presence

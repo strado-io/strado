@@ -71,7 +71,7 @@ export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
 
-export type AgentMode = 'claude' | 'codex' | 'opencode';
+export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 export type Handoff = {
   id: string;
   workspaceId: string;
