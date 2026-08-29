@@ -5,7 +5,8 @@
   "description": "Electron shell for Strado",
   "main": "main.cjs",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test *.test.cjs"
   },
   "devDependencies": {
     "electron": "^33.0.0"

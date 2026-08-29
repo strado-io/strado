@@ -1056,6 +1056,58 @@ describe('TerminalView', () => {
     expect(screen.queryByText('VS Code')).not.toBeInTheDocument();
   });
 
+  it('registers the VS Code origin with Electron before mounting the iframe', async () => {
+    let finishRegistration: (allowed: boolean) => void = () => {};
+    const vscodeOrigin = vi.fn(() => new Promise<boolean>((resolve) => {
+      finishRegistration = resolve;
+    }));
+    (window as any).strado = { vscodeOrigin };
+    try {
+      render(
+        <TerminalView
+          worktree={baseWorktree}
+          mode="vscode"
+          onClose={vi.fn()}
+        />,
+      );
+
+      await vi.waitFor(() =>
+        expect(vscodeOrigin).toHaveBeenCalledWith('http://127.0.0.1:7788/'));
+      expect(screen.queryByTitle('VS Code')).not.toBeInTheDocument();
+
+      await act(async () => { finishRegistration(true); });
+      expect(await screen.findByTitle('VS Code')).toHaveAttribute(
+        'src',
+        `http://127.0.0.1:7788/?folder=${encodeURIComponent(baseWorktree.path)}`,
+      );
+    } finally {
+      delete (window as any).strado;
+    }
+  });
+
+  it('asks for a desktop restart when the reloaded preload has no main-process handler', async () => {
+    (window as any).strado = {
+      vscodeOrigin: vi.fn().mockRejectedValue(
+        new Error("Error invoking remote method 'strado:vscode-origin': Error: No handler registered for 'strado:vscode-origin'"),
+      ),
+    };
+    try {
+      render(
+        <TerminalView
+          worktree={baseWorktree}
+          mode="vscode"
+          onClose={vi.fn()}
+        />,
+      );
+      expect(await screen.findByText(
+        'VS Code web failed to start: Restart Strado Dev to finish enabling the VS Code embed',
+      )).toBeInTheDocument();
+      expect(screen.queryByTitle('VS Code')).not.toBeInTheDocument();
+    } finally {
+      delete (window as any).strado;
+    }
+  });
+
   it('header run button starts the dev server and flips to stop when SSE reports it running', () => {
     render(
       <TerminalView

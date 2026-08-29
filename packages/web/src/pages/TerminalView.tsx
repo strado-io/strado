@@ -1327,9 +1327,28 @@ export function TerminalView({
     const attempt = () => {
       api.vscode
         .open(path)
-        .then((r) => {
+        .then(async (r) => {
           if (!alive) return;
           if (r.ready === false) { timer = setTimeout(attempt, 3000); return; }
+          // VS Code 1.136+ sends SAMEORIGIN/frame-ancestors headers. Electron
+          // relaxes them only after this exact loopback origin is registered;
+          // await the IPC so the first iframe navigation cannot race it.
+          if (window.strado?.vscodeOrigin) {
+            let allowed = false;
+            try {
+              allowed = await window.strado.vscodeOrigin(r.url);
+            } catch (error) {
+              // During local development Vite can reload the new preload/web
+              // bundle while Electron main is still the previous build, which
+              // has no IPC handler yet. Make the required restart actionable.
+              if (/No handler registered for 'strado:vscode-origin'/i.test(String(error))) {
+                throw new Error('Restart Strado Dev to finish enabling the VS Code embed');
+              }
+              throw error;
+            }
+            if (!allowed) throw new Error('VS Code returned an unsupported embed URL');
+          }
+          if (!alive) return;
           setVscodeUrls((m) => ({ ...m, [path]: r.url }));
         })
         .catch((e) => alive && setVscodeError(e instanceof Error ? e.message : String(e)));
