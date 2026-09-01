@@ -332,7 +332,9 @@ export function SidebarBody({
     );
   };
   const TopItem = ({ active, onClick, label, count, loading = false, icon }: {
-    active: boolean; onClick: () => void; label: string; count: number; loading?: boolean; icon: React.ReactNode;
+    active: boolean; onClick: () => void; label: string;
+    /** null leaves the trailing slot empty — for rows that have no count. */
+    count: number | null; loading?: boolean; icon: React.ReactNode;
   }) => (
     <button
       onClick={onClick}
@@ -355,6 +357,13 @@ export function SidebarBody({
       <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354Z" />
     </svg>
   );
+  // A gauge: the quota dial the Usage page is mostly about.
+  const usageIcon = (
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden {...stroke}>
+      <path d="M2.2 11.5a6.5 6.5 0 1 1 11.6 0" />
+      <path d="M8 8.5 11 5.8" />
+    </svg>
+  );
   const chevron = (open: boolean) => (
     <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden {...stroke} className={`transition-transform ${open ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
   );
@@ -366,6 +375,10 @@ export function SidebarBody({
           label="Tasks" count={taskCount} icon={tasksIcon} />
         <TopItem active={selected.kind === 'reviews'} onClick={() => onSelect({ kind: 'reviews' })}
           label="Code reviews" count={reviewCount} loading={reviewLoading} icon={reviewsIcon} />
+        {/* No count: a number here would be either a cost or a percentage, and
+            both need the units the page itself carries. */}
+        <TopItem active={selected.kind === 'usage'} onClick={() => onSelect({ kind: 'usage' })}
+          label="Usage" count={null} icon={usageIcon} />
       </div>
 
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">

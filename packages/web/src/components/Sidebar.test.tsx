@@ -105,6 +105,25 @@ describe('Sidebar tree', () => {
     expect(activePane().getByText('6')).toBeInTheDocument();
   });
 
+  it('shows Usage beneath Code reviews and selects it on click', () => {
+    const onSelect = vi.fn();
+    wrap(<Sidebar {...base} onSelect={onSelect} expandedRepos={new Set()} />);
+    const rows = activePane().getAllByRole('button').map((button) => button.textContent ?? '');
+    const reviewIndex = rows.findIndex((text) => text.includes('Code reviews'));
+    const usageIndex = rows.findIndex((text) => text.includes('Usage'));
+    expect(usageIndex).toBe(reviewIndex + 1);
+
+    fireEvent.click(activePane().getByText('Usage'));
+
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'usage' });
+  });
+
+  it('leaves the Usage row without a count', () => {
+    wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+    const usageRow = activePane().getByText('Usage').closest('button');
+    expect(usageRow).toHaveTextContent(/^Usage$/);
+  });
+
   it('shows a spinner instead of zero while code reviews are first loading', () => {
     wrap(<Sidebar {...base} reviewCount={0} reviewLoading expandedRepos={new Set()} />);
     const reviewRow = activePane().getByText('Code reviews').closest('button');
