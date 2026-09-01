@@ -144,6 +144,13 @@ export async function readClaudeEvents(file: string, fromOffset: number): Promis
     seen.add(key);
 
     const ts = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+    // Cache writes bill by TTL: 1.25x input for the 5-minute cache, 2x for the
+    // hour. `cache_creation_input_tokens` is their sum, so the breakdown is
+    // what decides the price; older lines carry only the sum and are treated
+    // as 5-minute writes.
+    const writeTotal = num(usage.cache_creation_input_tokens);
+    const breakdown = isRecord(usage.cache_creation) ? usage.cache_creation : null;
+    const write1h = breakdown ? Math.min(num(breakdown.ephemeral_1h_input_tokens), writeTotal) : 0;
     events.push({
       ts: Number.isFinite(ts) ? ts : Date.now(),
       agent: 'claude',
@@ -151,7 +158,8 @@ export async function readClaudeEvents(file: string, fromOffset: number): Promis
       cwd: typeof entry.cwd === 'string' ? entry.cwd : '',
       tokens: {
         input: num(usage.input_tokens),
-        cacheWrite: num(usage.cache_creation_input_tokens),
+        cacheWrite: writeTotal - write1h,
+        cacheWrite1h: write1h,
         cacheRead: num(usage.cache_read_input_tokens),
         output: num(usage.output_tokens),
       },

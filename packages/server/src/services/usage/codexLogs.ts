@@ -148,7 +148,8 @@ export async function readCodexEvents(
       agent: 'codex',
       model,
       cwd,
-      tokens: { input, cacheWrite, cacheRead, output },
+      // Codex has one cache tier, so nothing lands in the 1-hour bucket.
+      tokens: { input, cacheWrite, cacheWrite1h: 0, cacheRead, output },
     });
   }
 

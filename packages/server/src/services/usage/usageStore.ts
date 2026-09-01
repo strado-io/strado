@@ -51,9 +51,9 @@ export type UsageSummary = {
 /**
  * Per (date, model) totals for one log file, in a fixed tuple so a cache
  * covering months of transcripts stays small on disk:
- * [cost, fullRateCost, input, cacheWrite, cacheRead, output].
+ * [cost, fullRateCost, input, cacheWrite5m, cacheWrite1h, cacheRead, output].
  */
-type Tally = [number, number, number, number, number, number];
+type Tally = [number, number, number, number, number, number, number];
 
 /**
  * Buckets live under the file they came from. That is what makes a rewritten
@@ -82,7 +82,7 @@ type CacheShape = {
   skipped: number;
 };
 
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 const DAY_MS = 86_400_000;
 /** Longest window the UI offers, plus room; older days are dropped. */
 const RETAIN_DAYS = 120;
@@ -96,7 +96,7 @@ const emptyCache = (): CacheShape => ({
 
 const dayKey = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
 
-const emptyTally = (): Tally => [0, 0, 0, 0, 0, 0];
+const emptyTally = (): Tally => [0, 0, 0, 0, 0, 0, 0];
 
 export type UsageStoreOptions = {
   /** Home dir holding `.claude` and `.codex`; `app.deps.agentHomeDir`. */
@@ -160,8 +160,9 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
     tally[1] += fullRateUsd(model, event.tokens);
     tally[2] += event.tokens.input;
     tally[3] += event.tokens.cacheWrite;
-    tally[4] += event.tokens.cacheRead;
-    tally[5] += event.tokens.output;
+    tally[4] += event.tokens.cacheWrite1h;
+    tally[5] += event.tokens.cacheRead;
+    tally[6] += event.tokens.output;
     if (!file.cwd && event.cwd) file.cwd = event.cwd;
   }
 
@@ -287,7 +288,8 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
         const point = series.get(date);
         if (!point) continue;
         for (const [model, tally] of Object.entries(byModel)) {
-          const [cost, atFullRate, input, cacheWrite, cacheRead, output] = tally;
+          const [cost, atFullRate, input, write5m, write1h, cacheRead, output] = tally;
+          const cacheWrite = write5m + write1h;
           const tokens = input + cacheWrite + cacheRead + output;
 
           point[file.agent].cost += cost;

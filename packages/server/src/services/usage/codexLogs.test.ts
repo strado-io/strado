@@ -63,7 +63,7 @@ describe('readCodexEvents', () => {
       cwd: '/repo/wt',
       // Codex reports total input including the cached share; the priced
       // uncached input is the remainder.
-      tokens: { input: 40, cacheRead: 60, cacheWrite: 10, output: 5 },
+      tokens: { input: 40, cacheRead: 60, cacheWrite: 10, cacheWrite1h: 0, output: 5 },
     });
   });
 

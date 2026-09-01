@@ -47,7 +47,7 @@ describe('readClaudeEvents', () => {
       agent: 'claude',
       model: 'claude-opus-5',
       cwd: '/repo/wt',
-      tokens: { input: 10, cacheWrite: 20, cacheRead: 30, output: 40 },
+      tokens: { input: 10, cacheWrite: 20, cacheWrite1h: 0, cacheRead: 30, output: 40 },
     });
     expect(events[0]!.ts).toBe(Date.parse('2026-08-30T10:00:00.000Z'));
   });
@@ -65,7 +65,38 @@ describe('readClaudeEvents', () => {
     ]);
     const { events } = await readClaudeEvents(file, 0);
     expect(events).toHaveLength(2);
-    expect(events[1]!.tokens).toEqual({ input: 1, cacheWrite: 0, cacheRead: 0, output: 2 });
+    expect(events[1]!.tokens).toEqual({ input: 1, cacheWrite: 0, cacheWrite1h: 0, cacheRead: 0, output: 2 });
+  });
+
+  it('splits cache writes into the five-minute and one-hour buckets', async () => {
+    const file = await write('a.jsonl', [line({
+      message: {
+        id: 'msg_ttl',
+        model: 'claude-opus-5',
+        usage: {
+          input_tokens: 5,
+          cache_creation_input_tokens: 1_000,
+          cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+          cache_read_input_tokens: 0,
+          output_tokens: 7,
+        },
+      },
+    })]);
+
+    const { events } = await readClaudeEvents(file, 0);
+
+    expect(events[0]!.tokens).toEqual({
+      input: 5, cacheWrite: 400, cacheWrite1h: 600, cacheRead: 0, output: 7,
+    });
+  });
+
+  it('treats a write with no TTL breakdown as a five-minute write', async () => {
+    const file = await write('a.jsonl', [line()]);
+
+    const { events } = await readClaudeEvents(file, 0);
+
+    expect(events[0]!.tokens.cacheWrite).toBe(20);
+    expect(events[0]!.tokens.cacheWrite1h).toBe(0);
   });
 
   it('ignores lines without usage', async () => {
