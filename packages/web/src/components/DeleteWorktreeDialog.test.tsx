@@ -22,7 +22,7 @@ const worktree: Worktree = {
 };
 
 const renderDialog = () => render(
-  <DeleteWorktreeDialog worktree={worktree} onCancel={vi.fn()} onDeleted={vi.fn()} />,
+  <DeleteWorktreeDialog worktree={worktree} onCancel={vi.fn()} onConfirm={vi.fn()} />,
 );
 
 describe('DeleteWorktreeDialog', () => {
