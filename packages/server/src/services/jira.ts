@@ -61,6 +61,13 @@ export async function writeJiraConfig(input: unknown): Promise<{ accountName: st
   return { accountName: me?.displayName ?? cfg.email };
 }
 
+export async function testJiraConfig(): Promise<{ accountName: string }> {
+  const cfg = await readJiraConfig();
+  if (!cfg) throw new AppError('VALIDATION', 'Jira is not connected');
+  const me = (await jiraFetch(cfg, '/rest/api/3/myself')) as { displayName?: string };
+  return { accountName: me?.displayName ?? cfg.email };
+}
+
 function authHeaders(cfg: JiraConfig): Record<string, string> {
   const token = Buffer.from(`${cfg.email}:${cfg.apiToken}`).toString('base64');
   return { authorization: `Basic ${token}`, accept: 'application/json' };

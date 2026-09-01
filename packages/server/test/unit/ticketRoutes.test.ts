@@ -221,4 +221,17 @@ describe('linear connect routes', () => {
     expect(res.json()).toEqual({ ok: true });
     expect(fs.existsSync(linearConfigPath())).toBe(false);
   });
+
+  it('tests the saved Linear token against the API', async () => {
+    fs.writeFileSync(linearConfigPath(), JSON.stringify({ accessToken: 'x', workspaceName: 'Acme' }));
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { organization: { name: 'Acme' } } }),
+    });
+    const app = await buildApp(makeProvider('jira'), makeProvider('linear'));
+    const res = await app.inject({ method: 'POST', url: '/api/tickets/linear/config/test' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, workspaceName: 'Acme' });
+  });
 });

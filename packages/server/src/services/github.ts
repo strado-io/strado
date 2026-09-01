@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { AppError, AuthError } from '../errors.js';
+import { clearHostHealth, hostUnreachable, markHostUnreachable } from './providerHealth.js';
 import {
   REVIEW_PAGE_SIZE,
   type MergeRequest, type MergeRequestChange, type ReviewChanges, type ReviewCounts,
@@ -56,6 +57,10 @@ export async function githubApiFetch(
   // and the caller can say so precisely instead.
   opts?: { allowForbidden?: boolean },
 ): Promise<Response> {
+  // A host we just failed to reach is refused without touching the network:
+  // one blackholed repo would otherwise cost 10s per call, per worktree, per
+  // poll tick — enough to keep every browser socket parked.
+  if (hostUnreachable(host)) throw unreachableError(host);
   let res: Response;
   try {
     res = await fetch(`${apiBase(host)}${pathname}`, {
@@ -69,17 +74,26 @@ export async function githubApiFetch(
       },
     });
   } catch (err) {
+    // A caller-supplied abort is the caller giving up, not the host failing.
+    if (init?.signal?.aborted) throw err;
+    markHostUnreachable(host);
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
       throw new AppError('VALIDATION', `GitHub at ${host} did not respond within 10s — check your network/VPN`);
     }
     throw err;
   }
+  // Any response at all proves the host is reachable — even a 401.
+  clearHostHealth(host);
   if (res.status === 401 || (res.status === 403 && !opts?.allowForbidden)) {
     // 403 also covers rate-limit exhaustion; both read as "reconnect" in the
     // UI, which is acceptable at our 60s-cached request volume.
     throw new AuthError('GitHub rejected the token — check its repo access and expiry');
   }
   return res;
+}
+
+function unreachableError(host: string): AppError {
+  return new AppError('VALIDATION', `GitHub at ${host} is unreachable — check your network/VPN`);
 }
 
 /** Read every page of a GitHub REST collection instead of silently stopping at 100. */
@@ -130,6 +144,18 @@ export async function writeGithubHost(host: string, token: string, owner?: strin
   await fsp.mkdir(path.dirname(file), { recursive: true });
   await fsp.writeFile(file, JSON.stringify(cfg, null, 2), { mode: 0o600 });
   return { username: me?.login ?? host };
+}
+
+export async function testGithubConfig(): Promise<{ accounts: number }> {
+  const cfg = await readGithubConfig();
+  const entries = Object.entries(cfg);
+  if (entries.length === 0) throw new AppError('VALIDATION', 'GitHub is not connected');
+  await Promise.all(entries.map(async ([key, { token }]) => {
+    const host = key.split('/')[0] ?? key;
+    const res = await githubApiFetch(host, token, '/user');
+    if (!res.ok) throw new AppError('VALIDATION', `GitHub at ${host} responded ${res.status}`);
+  }));
+  return { accounts: entries.length };
 }
 
 export async function removeGithubHost(host: string): Promise<void> {
@@ -207,6 +233,7 @@ async function pullRequests(
   const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${limit}:${search}`}`;
   const hit = cache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.mrs;
+  if (opts?.force) clearHostHealth(host); // an explicit refresh always gets to try
 
   // Worktree branches are pushed to origin, so the head owner is the repo
   // owner (first projectPath segment). Fork PRs are out of scope.
@@ -326,6 +353,7 @@ export async function pullRequestCountsForProject(
   const key = `${host}\0${projectPath}`;
   const hit = countCache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.counts;
+  if (opts?.force) clearHostHealth(host);
   const entries = await Promise.all(([
     ['open', 'is:open'],
     ['merged', 'is:merged'],

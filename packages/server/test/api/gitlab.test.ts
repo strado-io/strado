@@ -165,6 +165,10 @@ describe('/api/gitlab/config', () => {
     expect(read.statusCode).toBe(200);
     expect(read.json()).toEqual({ hosts: ['gitlab.com'] });
     expect(JSON.stringify(read.json())).not.toContain('glpat-abc');
+
+    const test = await app.inject({ method: 'POST', url: '/api/gitlab/config/test' });
+    expect(test.statusCode).toBe(200);
+    expect(test.json()).toEqual({ ok: true, accounts: 1 });
   });
 
   it('rejects a bad token with 400 and does not persist it', async () => {

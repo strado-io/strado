@@ -3,7 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getTicketProvider, listTicketProviders } from '../services/tickets/registry.js';
 import type { TicketIssue, TicketProviderId } from '../services/tickets/types.js';
-import { writeLinearConfig, deleteLinearConfig, readLinearConfig } from '../services/tickets/linear.js';
+import { writeLinearConfig, deleteLinearConfig, readLinearConfig, testLinearConfig } from '../services/tickets/linear.js';
 import { hasFeature } from '../services/entitlements.js';
 
 const ProviderParam = z.enum(['jira', 'linear']);
@@ -165,6 +165,11 @@ export async function registerTicketRoutes(app: FastifyInstance) {
   app.get('/api/tickets/linear/config', async () => {
     const cfg = await readLinearConfig();
     return { connected: cfg !== null, workspaceName: cfg?.workspaceName ?? null };
+  });
+
+  app.post('/api/tickets/linear/config/test', async (_req, reply) => {
+    if (!(await guardProvider('linear', reply))) return reply;
+    return { ok: true, ...(await testLinearConfig()) };
   });
 
   app.delete('/api/tickets/linear/config', async () => {

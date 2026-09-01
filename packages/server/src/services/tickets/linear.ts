@@ -67,6 +67,14 @@ export async function writeLinearConfig(accessToken: string): Promise<{ workspac
   return { workspaceName };
 }
 
+export async function testLinearConfig(): Promise<{ workspaceName: string }> {
+  const cfg = await readLinearConfig();
+  if (!cfg) throw new AppError('VALIDATION', 'Linear is not connected');
+  const body = await gqlRaw(cfg.accessToken, '{ organization { name } }');
+  const workspaceName = (body.data?.organization as { name?: string } | undefined)?.name ?? cfg.workspaceName;
+  return { workspaceName };
+}
+
 async function requireConfig(): Promise<LinearConfig> {
   const cfg = await readLinearConfig();
   if (!cfg) throw new AppError('VALIDATION', 'Linear is not connected — open Connections in settings');

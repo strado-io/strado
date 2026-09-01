@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, type WorktreeMergeRequests } from '../api';
 import type { MergeRequest } from '../types';
 
 // One chip per branch: the MR that best answers "what happened to this
@@ -16,6 +16,12 @@ export function pickMrSummary(mrs: MergeRequest[]): MergeRequest | null {
 }
 
 const TTL_MS = 60_000; // matches the server-side per-branch cache
+
+// Polling *at* the TTL meant every tick landed the microsecond the entry went
+// stale, so the cache never served anything and each tick cost a full round of
+// provider calls. Poll well clear of the TTL instead: create/merge events call
+// invalidateMrPath for immediacy, so the interval only backstops those.
+const POLL_MS = 5 * 60_000;
 
 type Entry = { at: number; mr: MergeRequest | null };
 const cache = new Map<string, Entry>();
@@ -39,33 +45,58 @@ export function invalidateMrPath(path: string): void {
   inflight.delete(path);
 }
 
-function fetchSummary(wsId: string, path: string): Promise<MergeRequest | null> {
-  const hit = cache.get(path);
-  if (hit && Date.now() - hit.at < TTL_MS) return Promise.resolve(hit.mr);
-  const pending = inflight.get(path);
-  if (pending) return pending;
-  // call the api synchronously (tests dedupe on the mock being invoked
-  // before the microtask queue drains) but route a synchronous throw
-  // (e.g. an incomplete api mock) into the same rejection path as an
-  // async one, so both keep the last cached value below.
-  let call: Promise<Awaited<ReturnType<typeof api.worktrees.mergeRequests>>>;
-  try {
-    call = api.worktrees.mergeRequests(wsId, path);
-  } catch (err) {
-    call = Promise.reject(err);
+function summaryOf(entry: WorktreeMergeRequests | undefined): MergeRequest | null {
+  return entry?.kind === 'list' ? pickMrSummary(entry.mergeRequests) : null;
+}
+
+/**
+ * Summaries for `paths`, reading the cache first and asking for whatever is
+ * left in ONE batch request. Each path still gets its own inflight entry, so
+ * two components mounting the same path share a single lookup.
+ */
+function fetchSummaries(wsId: string, paths: string[]): Promise<Map<string, MergeRequest | null>> {
+  const now = Date.now();
+  const out = new Map<string, MergeRequest | null>();
+  const settled: Array<Promise<unknown>> = [];
+  const wanted: string[] = [];
+
+  for (const path of paths) {
+    const hit = cache.get(path);
+    if (hit && now - hit.at < TTL_MS) { out.set(path, hit.mr); continue; }
+    const pending = inflight.get(path);
+    if (pending) { settled.push(pending.then((mr) => out.set(path, mr))); continue; }
+    wanted.push(path);
   }
-  const p = call
-    .then((r) => (r.kind === 'list' ? pickMrSummary(r.mergeRequests) : null))
-    // transient failure (server restarting mid-poll): keep showing the
-    // last known chip instead of flickering it away
-    .catch(() => cache.get(path)?.mr ?? null)
-    .then((mr) => {
-      cache.set(path, { at: Date.now(), mr });
-      inflight.delete(path);
-      return mr;
-    });
-  inflight.set(path, p);
-  return p;
+
+  if (wanted.length) {
+    // call the api synchronously (tests dedupe on the mock being invoked
+    // before the microtask queue drains) but route a synchronous throw
+    // (e.g. an incomplete api mock) into the same rejection path as an
+    // async one, so both keep the last cached value below.
+    let call: Promise<Awaited<ReturnType<typeof api.worktrees.mergeRequestsBatch>>>;
+    try {
+      call = api.worktrees.mergeRequestsBatch(wsId, wanted);
+    } catch (err) {
+      call = Promise.reject(err);
+    }
+    for (const path of wanted) {
+      const per = call
+        .then((r) => summaryOf(r?.results?.[path]))
+        // transient failure (server restarting mid-poll, host behind a VPN):
+        // keep showing the last known chip instead of flickering it away
+        .catch(() => cache.get(path)?.mr ?? null)
+        .then((mr) => {
+          cache.set(path, { at: Date.now(), mr });
+          inflight.delete(path);
+          out.set(path, mr);
+          return mr;
+        });
+      inflight.set(path, per);
+      settled.push(per);
+    }
+  }
+
+  return Promise.all(settled).then(() => out);
 }
 
 /**
@@ -82,13 +113,11 @@ export function useMrSummaries(
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      const entries = await Promise.all(
-        paths.map(async (p) => [p, await fetchSummary(wsId, p)] as const),
-      );
-      if (alive) setByPath(new Map(entries));
+      const summaries = await fetchSummaries(wsId, paths);
+      if (alive) setByPath(summaries);
     };
     void load();
-    const timer = setInterval(() => void load(), TTL_MS);
+    const timer = setInterval(() => void load(), POLL_MS);
     return () => {
       alive = false;
       clearInterval(timer);

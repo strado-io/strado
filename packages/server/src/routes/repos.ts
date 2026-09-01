@@ -10,6 +10,13 @@ const CloneBody = z.object({
   url: z.string().min(1).max(2048),
   // Absolute target dir; omitted means <STRADO_REPOS_DIR|~/repos>/<name>.
   dest: z.string().min(1).max(4096).optional(),
+  // Parent directory selected by the compact clone dialog. The repository
+  // name derived from the URL is appended on the server.
+  parent: z.string().min(1).max(4096).optional(),
+});
+const CreateBody = z.object({
+  name: z.string().trim().min(1).max(120),
+  parent: z.string().trim().min(1).max(4096).optional(),
 });
 
 export async function registerReposRoutes(app: FastifyInstance) {
@@ -39,7 +46,7 @@ export async function registerReposRoutes(app: FastifyInstance) {
   app.post('/repos/clone', async (req, reply) => {
     const body = CloneBody.parse(req.body);
     const { cloneRepo } = await import('../services/repoClone.js');
-    const cloned = await cloneRepo({ url: body.url, dest: body.dest });
+    const cloned = await cloneRepo({ url: body.url, dest: body.dest, parent: body.parent });
     const detected = await detectRepo(cloned.path);
     const known = await req.workspace!.stores.repos.list();
     if (!known.some((r) => r.path === detected.path)) {
@@ -56,6 +63,22 @@ export async function registerReposRoutes(app: FastifyInstance) {
     }
     const created = await req.workspace!.stores.repos.add(config);
     return reply.code(200).send({ repo: created, warnings, alreadyRegistered: false, path: cloned.path });
+  });
+
+  app.post('/repos/create', async (req, reply) => {
+    const body = CreateBody.parse(req.body);
+    const { createLocalRepo } = await import('../services/repoCreate.js');
+    const createdProject = await createLocalRepo(body);
+    const detected = await detectRepo(createdProject.path);
+    const known = await req.workspace!.stores.repos.list();
+    const existing = known.find((repo) => repo.path === detected.path);
+    if (existing) {
+      return reply.code(200).send({ repo: existing, path: detected.path, alreadyRegistered: true });
+    }
+    detected.id = uniqueRepoId(detected.id, detected.path, new Set(known.map((repo) => repo.id)));
+    const { warnings: _warnings, ...config } = detected;
+    const created = await req.workspace!.stores.repos.add(config);
+    return reply.code(200).send({ repo: created, path: detected.path, alreadyRegistered: createdProject.alreadyPresent });
   });
 
   app.post('/repos', async (req, reply) => {

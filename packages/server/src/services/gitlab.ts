@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { AppError, AuthError } from '../errors.js';
+import { clearHostHealth, hostUnreachable, markHostUnreachable } from './providerHealth.js';
 
 const ConfigSchema = z.record(z.string(), z.object({ token: z.string().min(1) }));
 export type GitlabConfig = z.infer<typeof ConfigSchema>;
@@ -39,6 +40,10 @@ export async function gitlabApiFetch(
   // read_api-only token reads everything and refuses every write.
   opts?: { allowForbidden?: boolean },
 ): Promise<Response> {
+  // A host we just failed to reach is refused without touching the network:
+  // one blackholed repo would otherwise cost 10s per call, per worktree, per
+  // poll tick — enough to keep every browser socket parked.
+  if (hostUnreachable(host)) throw unreachableError(host);
   let res: Response;
   try {
     res = await fetch(`https://${host}/api/v4${pathname}`, {
@@ -47,15 +52,24 @@ export async function gitlabApiFetch(
       headers: { 'PRIVATE-TOKEN': token, accept: 'application/json', ...(init?.headers ?? {}) },
     });
   } catch (err) {
+    // A caller-supplied abort is the caller giving up, not the host failing.
+    if (init?.signal?.aborted) throw err;
+    markHostUnreachable(host);
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
       throw new AppError('VALIDATION', `GitLab at ${host} did not respond within 10s — check your network/VPN`);
     }
     throw err;
   }
+  // Any response at all proves the host is reachable — even a 401.
+  clearHostHealth(host);
   if (res.status === 401 || (res.status === 403 && !opts?.allowForbidden)) {
     throw new AuthError('GitLab rejected the token — check its scope (api) and expiry');
   }
   return res;
+}
+
+function unreachableError(host: string): AppError {
+  return new AppError('VALIDATION', `GitLab at ${host} is unreachable — check your network/VPN`);
 }
 
 /** Read every page of a GitLab REST collection instead of silently stopping at 100. */
@@ -92,6 +106,17 @@ export async function writeGitlabHost(host: string, token: string): Promise<{ us
   await fsp.mkdir(path.dirname(file), { recursive: true });
   await fsp.writeFile(file, JSON.stringify(cfg, null, 2), { mode: 0o600 });
   return { username: me?.username ?? host };
+}
+
+export async function testGitlabConfig(): Promise<{ accounts: number }> {
+  const cfg = await readGitlabConfig();
+  const entries = Object.entries(cfg);
+  if (entries.length === 0) throw new AppError('VALIDATION', 'GitLab is not connected');
+  await Promise.all(entries.map(async ([host, { token }]) => {
+    const res = await gitlabApiFetch(host, token, '/user');
+    if (!res.ok) throw new AppError('VALIDATION', `GitLab at ${host} responded ${res.status}`);
+  }));
+  return { accounts: entries.length };
 }
 
 export async function removeGitlabHost(host: string): Promise<void> {
@@ -165,6 +190,7 @@ async function mergeRequests(
   const key = `${host}\0${projectPath}\0${branch ?? `*:${requestedState ?? 'all'}:${page}:${limit}:${search}`}`;
   const hit = cache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.mrs;
+  if (opts?.force) clearHostHealth(host); // an explicit refresh always gets to try
 
   const proj = encodeURIComponent(projectPath);
   const branchQuery = branch ? `source_branch=${encodeURIComponent(branch)}&` : '';
@@ -288,6 +314,7 @@ export async function mergeRequestCountsForProject(
   const key = `${host}\0${projectPath}`;
   const hit = countCache.get(key);
   if (!opts?.force && hit && Date.now() - hit.at < TTL_MS) return hit.counts;
+  if (opts?.force) clearHostHealth(host);
   const proj = encodeURIComponent(projectPath);
   const entries = await Promise.all(([
     ['open', 'opened'], ['merged', 'merged'], ['closed', 'closed'],

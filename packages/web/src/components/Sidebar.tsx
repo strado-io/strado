@@ -12,12 +12,32 @@ import { SpaceDots } from './sidebar/SpaceDots';
 import { AccountMenu } from './AccountMenu';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
+export type AddRepoAnchor = { left: number; right: number; bottom: number };
+
+const PINNED_WORKTREES_STORE = 'strado:pinned-worktrees-by-ws';
+
+type PinnedWorktreesByWorkspace = Record<string, string[]>;
+
+function readPinnedWorktrees(): PinnedWorktreesByWorkspace {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PINNED_WORKTREES_STORE) ?? '{}') as unknown;
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    return Object.fromEntries(
+      Object.entries(stored).flatMap(([wsId, values]) =>
+        Array.isArray(values) ? [[wsId, values.filter((value): value is string => typeof value === 'string')]] : [],
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 /**
  * One view left. 'active' used to list running dev servers on their own page —
  * dead most of the time, since the signal it carried (a running server, an
  * agent at work) already lives directly on the worktree rows.
  */
-export type SidebarView = { kind: 'tasks' } | { kind: 'reviews' };
+export type SidebarView = { kind: 'tasks' } | { kind: 'reviews' } | { kind: 'usage' };
 
 export type Props = {
   repos: RepoConfig[];
@@ -32,7 +52,7 @@ export type Props = {
   /** True until the first workspace-wide code-review fetch settles. */
   reviewLoading?: boolean;
   onCollapse: () => void;
-  onAddRepo: () => void;
+  onAddRepo: (anchor?: AddRepoAnchor) => void;
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
   onToggleRepo: (repoId: string) => void;
@@ -157,6 +177,21 @@ export function Sidebar({
   reviewLoading = false,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
+  const [pinnedWorktrees, setPinnedWorktrees] = useState<PinnedWorktreesByWorkspace>(readPinnedWorktrees);
+  useEffect(() => {
+    try { localStorage.setItem(PINNED_WORKTREES_STORE, JSON.stringify(pinnedWorktrees)); }
+    catch { /* quota / disabled storage — pinning still works for this session */ }
+  }, [pinnedWorktrees]);
+
+  const togglePinnedWorktree = (wsId: string, pinId: string) => {
+    setPinnedWorktrees((current) => {
+      const existing = current[wsId] ?? [];
+      const nextForWorkspace = existing.includes(pinId)
+        ? existing.filter((id) => id !== pinId)
+        : [...existing, pinId];
+      return { ...current, [wsId]: nextForWorkspace };
+    });
+  };
 
   // Drag the right edge to resize; pointer capture keeps the drag alive over
   // the VS Code iframe, and the edge follows the cursor so it rarely strays
@@ -187,6 +222,8 @@ export function Sidebar({
       reviewLoading={false}
       remoteWorktrees={[]}
       runnerStatuses={[]}
+      pinnedWorktreeIds={pinnedWorktrees[wsId] ?? []}
+      onTogglePinnedWorktree={(pinId) => togglePinnedWorktree(wsId, pinId)}
     />
   );
 
@@ -206,6 +243,8 @@ export function Sidebar({
         remoteLoading={remoteLoading}
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+        pinnedWorktreeIds={pinnedWorktrees[workspace.id] ?? []}
+        onTogglePinnedWorktree={(pinId) => togglePinnedWorktree(workspace.id, pinId)}
       />
     ),
   });

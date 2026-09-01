@@ -59,3 +59,40 @@ describe('api client', () => {
     expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ ticketProvider: 'linear' });
   });
 });
+
+describe('api client request timeout', () => {
+  it('aborts a hung request and throws a TIMEOUT error', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_res, rej) => {
+        init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const pending = api.repos.list('default');
+      const assertion = expect(pending).rejects.toMatchObject({ code: 'TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves long-running calls like repo clone without a timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_res, rej) => {
+        init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      void api.repos.clone('default', 'git@host:g/p.git').then(() => { settled = true; }, () => { settled = true; });
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(settled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -1,0 +1,400 @@
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createQuotaService, dropRolledOverWindows, parseClaudeLimits } from './quota.js';
+import type { RateLimitSnapshot } from './codexLogs.js';
+
+let home = '';
+
+// Resets are relative: a fixed epoch would drift into the past and the
+// rolled-over rule would zero these windows.
+const codexSnapshot: RateLimitSnapshot = {
+  capturedAt: Date.now() - 60_000,
+  windows: [
+    { label: 'Session (5h)', usedPercent: 36, resetsAt: Date.now() + 2 * 3_600_000 },
+    { label: 'Weekly', usedPercent: 40, resetsAt: Date.now() + 5 * 86_400_000 },
+  ],
+};
+
+const idToken = (claims: Record<string, unknown>) => {
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  return `header.${body}.signature`;
+};
+
+const writeClaudeAccount = async (over: Record<string, unknown> = {}) => {
+  await fsp.writeFile(
+    path.join(home, '.claude.json'),
+    JSON.stringify({
+      oauthAccount: {
+        emailAddress: 'dev@example.com',
+        organizationName: 'Acme',
+        organizationType: 'claude_team',
+        userRateLimitTier: 'default_claude_max_5x',
+        ...over,
+      },
+    }),
+    'utf8',
+  );
+};
+
+const writeCodexAuth = async (claims: Record<string, unknown> = {}) => {
+  await fsp.mkdir(path.join(home, '.codex'), { recursive: true });
+  await fsp.writeFile(
+    path.join(home, '.codex', 'auth.json'),
+    JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        id_token: idToken({
+          email: 'dev@example.com',
+          'https://api.openai.com/auth.chatgpt_plan_type': 'plus',
+          ...claims,
+        }),
+      },
+    }),
+    'utf8',
+  );
+};
+
+const service = (over: Partial<Parameters<typeof createQuotaService>[0]> = {}) => createQuotaService({
+  agentHomeDir: home,
+  codexRateLimits: async () => codexSnapshot,
+  readClaudeToken: async () => 'oauth-token',
+  fetchImpl: (async () => new Response(JSON.stringify({
+    five_hour: { utilization: 2, resets_at: '2026-09-01T18:00:00Z' },
+    seven_day: { utilization: 0, resets_at: '2026-09-07T18:00:00Z' },
+  }), { status: 200 })) as typeof fetch,
+  ...over,
+});
+
+beforeEach(async () => {
+  home = await fsp.mkdtemp(path.join(os.tmpdir(), 'usage-quota-'));
+});
+
+afterEach(async () => {
+  await fsp.rm(home, { recursive: true, force: true });
+  vi.useRealTimers();
+});
+
+describe('dropRolledOverWindows', () => {
+  const now = Date.parse('2026-09-01T18:00:00Z');
+
+  it('zeroes a window whose reset has already passed', () => {
+    expect(dropRolledOverWindows([
+      { label: 'Session (5h)', usedPercent: 44, resetsAt: now - 60_000 },
+    ], now)).toEqual([
+      { label: 'Session (5h)', usedPercent: 0, resetsAt: null },
+    ]);
+  });
+
+  it('leaves a live window untouched', () => {
+    const live = [{ label: 'Weekly', usedPercent: 41, resetsAt: now + 86_400_000 }];
+
+    expect(dropRolledOverWindows(live, now)).toEqual(live);
+  });
+
+  it('keeps a window with no reset time as reported', () => {
+    const unknown = [{ label: 'Weekly · Fable', usedPercent: 0, resetsAt: null }];
+
+    expect(dropRolledOverWindows(unknown, now)).toEqual(unknown);
+  });
+});
+
+describe('parseClaudeLimits', () => {
+  const limits = [
+    { kind: 'session', group: 'session', percent: 5, resets_at: '2026-09-01T16:40:00Z', scope: null },
+    { kind: 'weekly_all', group: 'weekly', percent: 2, resets_at: '2026-09-07T13:00:00Z', scope: null },
+    {
+      kind: 'weekly_scoped',
+      group: 'weekly',
+      percent: 0,
+      resets_at: null,
+      scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+    },
+  ];
+
+  it('names every window, including the model-scoped one', () => {
+    expect(parseClaudeLimits(limits)).toEqual([
+      { label: 'Session (5h)', usedPercent: 5, resetsAt: Date.parse('2026-09-01T16:40:00Z') },
+      { label: 'Weekly', usedPercent: 2, resetsAt: Date.parse('2026-09-07T13:00:00Z') },
+      { label: 'Weekly · Fable', usedPercent: 0, resetsAt: null },
+    ]);
+  });
+
+  it('reads exactly 1% as 1%, not as a share of one', () => {
+    // The live payload reports `percent: 1` for a model-scoped window at 1%;
+    // the old ≤1 heuristic turned that into 100%.
+    const [window] = parseClaudeLimits([
+      { kind: 'weekly_scoped', percent: 1, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+    ]);
+    expect(window!.usedPercent).toBe(1);
+  });
+
+  it('clamps an out-of-range percentage into 0..100', () => {
+    const [over, under] = parseClaudeLimits([
+      { kind: 'session', percent: 140, resets_at: null },
+      { kind: 'weekly_all', percent: -3, resets_at: null },
+    ]);
+    expect(over!.usedPercent).toBe(100);
+    expect(under!.usedPercent).toBe(0);
+  });
+
+  it('falls back to the surface when a scope names no model', () => {
+    const [window] = parseClaudeLimits([
+      { kind: 'weekly_scoped', percent: 3, resets_at: null, scope: { model: null, surface: 'code' } },
+    ]);
+
+    expect(window!.label).toBe('Weekly · code');
+  });
+
+  it('keeps an unfamiliar window with a readable label', () => {
+    const [window] = parseClaudeLimits([{ kind: 'monthly_all', percent: 7, resets_at: null }]);
+
+    expect(window!.label).toBe('Monthly all');
+  });
+
+  it('drops entries with no percentage rather than showing zero', () => {
+    expect(parseClaudeLimits([
+      { kind: 'session', percent: null },
+      { kind: 'weekly_all' },
+      'nope',
+    ])).toEqual([]);
+  });
+
+  it('ignores a payload that is not an array', () => {
+    expect(parseClaudeLimits({ session: { percent: 5 } })).toEqual([]);
+    expect(parseClaudeLimits(undefined)).toEqual([]);
+  });
+});
+
+describe('claude account card', () => {
+  it('prefers the limits array over the fixed top-level keys', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service({
+      fetchImpl: (async () => new Response(JSON.stringify({
+        five_hour: { utilization: 99, resets_at: '2026-09-01T18:00:00Z' },
+        seven_day: { utilization: 98, resets_at: '2026-09-07T18:00:00Z' },
+        nimbus_quill: { utilization: 0, resets_at: null },
+        limits: [
+          { kind: 'session', percent: 5, resets_at: '2026-09-01T16:40:00Z' },
+          { kind: 'weekly_all', percent: 2, resets_at: '2026-09-07T13:00:00Z' },
+          { kind: 'weekly_scoped', percent: 0, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+        ],
+      }), { status: 200 })) as typeof fetch,
+    }).accounts();
+
+    expect(claude!.windows.map((w) => [w.label, w.usedPercent])).toEqual([
+      ['Session (5h)', 5],
+      ['Weekly', 2],
+      ['Weekly · Fable', 0],
+    ]);
+  });
+
+  it('reads identity locally and quota from the usage endpoint', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service().accounts();
+
+    expect(claude).toMatchObject({
+      agent: 'claude',
+      accountLabel: 'dev@example.com',
+      plan: 'TEAM',
+      quotaStatus: 'official',
+    });
+    expect(claude!.windows).toEqual([
+      { label: 'Session (5h)', usedPercent: 2, resetsAt: Date.parse('2026-09-01T18:00:00Z') },
+      { label: 'Weekly', usedPercent: 0, resetsAt: Date.parse('2026-09-07T18:00:00Z') },
+    ]);
+  });
+
+  it('labels a max subscription without an organization', async () => {
+    await writeClaudeAccount({ organizationType: 'claude_personal', organizationName: null });
+
+    const [claude] = await service().accounts();
+
+    expect(claude!.plan).toBe('MAX');
+  });
+
+  it('reports quota unavailable when the fetch fails, keeping the account', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service({
+      fetchImpl: (async () => { throw new Error('offline'); }) as typeof fetch,
+    }).accounts();
+
+    expect(claude).toMatchObject({ agent: 'claude', quotaStatus: 'unavailable' });
+    expect(claude!.windows).toEqual([]);
+  });
+
+  it('reports quota unavailable on a non-200 response', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service({
+      fetchImpl: (async () => new Response('nope', { status: 403 })) as typeof fetch,
+    }).accounts();
+
+    expect(claude!.quotaStatus).toBe('unavailable');
+  });
+
+  it('reports quota unavailable when the payload has no known windows', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service({
+      fetchImpl: (async () => new Response(JSON.stringify({ something_else: true }), { status: 200 })) as typeof fetch,
+    }).accounts();
+
+    expect(claude!.quotaStatus).toBe('unavailable');
+  });
+
+  it('reports quota unavailable when no credential can be read', async () => {
+    await writeClaudeAccount();
+    const fetchImpl = vi.fn();
+
+    const [claude] = await service({
+      readClaudeToken: async () => { throw new Error('keychain locked'); },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    }).accounts();
+
+    expect(claude!.quotaStatus).toBe('unavailable');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('omits the claude card when the machine has no claude account', async () => {
+    const cards = await service().accounts();
+
+    expect(cards.some((card) => card.agent === 'claude')).toBe(false);
+  });
+
+  it('keeps a sub-1% utilization as a fraction of a percent', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service({
+      fetchImpl: (async () => new Response(JSON.stringify({
+        five_hour: { utilization: 0.42, resets_at: '2026-09-01T18:00:00Z' },
+      }), { status: 200 })) as typeof fetch,
+    }).accounts();
+
+    expect(claude!.windows[0]!.usedPercent).toBe(0.42);
+  });
+});
+
+describe('codex account card', () => {
+  it('reads identity from the id token and windows from the rollout snapshot', async () => {
+    await writeCodexAuth();
+
+    const cards = await service().accounts();
+    const codex = cards.find((card) => card.agent === 'codex');
+
+    expect(codex).toMatchObject({
+      accountLabel: 'dev@example.com',
+      plan: 'PLUS',
+      credentialSource: '~/.codex',
+      quotaStatus: 'official',
+    });
+    expect(codex!.windows).toEqual(codexSnapshot.windows);
+  });
+
+  it('reads the plan from the namespaced claim object', async () => {
+    await fsp.mkdir(path.join(home, '.codex'), { recursive: true });
+    const body = Buffer.from(JSON.stringify({
+      email: 'dev@example.com',
+      'https://api.openai.com/auth': { chatgpt_plan_type: 'plus', chatgpt_account_id: 'acct' },
+    })).toString('base64url');
+    await fsp.writeFile(
+      path.join(home, '.codex', 'auth.json'),
+      JSON.stringify({ tokens: { id_token: `h.${body}.s` } }),
+      'utf8',
+    );
+
+    const cards = await service().accounts();
+
+    expect(cards.find((card) => card.agent === 'codex')).toMatchObject({
+      accountLabel: 'dev@example.com',
+      plan: 'PLUS',
+    });
+  });
+
+  it('zeroes a rolled-over session window instead of repeating a stale figure', async () => {
+    await writeCodexAuth();
+    const rolledOver = {
+      capturedAt: Date.now() - 3 * 60 * 60_000,
+      windows: [
+        { label: 'Session (5h)', usedPercent: 44, resetsAt: Date.now() - 60_000 },
+        { label: 'Weekly', usedPercent: 41, resetsAt: Date.now() + 86_400_000 },
+      ],
+    };
+
+    const cards = await service({ codexRateLimits: async () => rolledOver }).accounts();
+    const codex = cards.find((card) => card.agent === 'codex');
+
+    // The 5h window rolled over: Codex itself reports a fresh window, so ours
+    // must not keep claiming 44%.
+    expect(codex!.windows[0]).toEqual({ label: 'Session (5h)', usedPercent: 0, resetsAt: null });
+    expect(codex!.windows[1]!.usedPercent).toBe(41);
+    expect(codex!.measuredAt).toBe(rolledOver.capturedAt);
+  });
+
+  it('reports when the claude figures were measured', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service().accounts();
+
+    expect(claude!.measuredAt).toBeGreaterThan(Date.now() - 5_000);
+  });
+
+  it('keeps the card with unavailable quota when no snapshot exists yet', async () => {
+    await writeCodexAuth();
+
+    const cards = await service({ codexRateLimits: async () => null }).accounts();
+    const codex = cards.find((card) => card.agent === 'codex');
+
+    expect(codex).toMatchObject({ quotaStatus: 'unavailable', windows: [] });
+  });
+
+  it('omits the codex card when there is no auth file', async () => {
+    const cards = await service().accounts();
+
+    expect(cards.some((card) => card.agent === 'codex')).toBe(false);
+  });
+
+  it('survives a malformed id token', async () => {
+    await fsp.mkdir(path.join(home, '.codex'), { recursive: true });
+    await fsp.writeFile(path.join(home, '.codex', 'auth.json'), '{"tokens":{"id_token":"garbage"}}', 'utf8');
+
+    const cards = await service().accounts();
+    const codex = cards.find((card) => card.agent === 'codex');
+
+    expect(codex).toMatchObject({ agent: 'codex', accountLabel: 'Codex account' });
+  });
+});
+
+describe('caching', () => {
+  it('serves a second call from cache', async () => {
+    await writeClaudeAccount();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      five_hour: { utilization: 5, resets_at: '2026-09-01T18:00:00Z' },
+    }), { status: 200 }));
+    const quota = service({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await quota.accounts();
+    await quota.accounts();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches once the cache window passes', async () => {
+    vi.useFakeTimers();
+    await writeClaudeAccount();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      five_hour: { utilization: 5, resets_at: '2026-09-01T18:00:00Z' },
+    }), { status: 200 }));
+    const quota = service({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await quota.accounts();
+    vi.advanceTimersByTime(6 * 60_000);
+    await quota.accounts();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});

@@ -60,6 +60,17 @@ describe('cloneRepo', () => {
     expect(result).toEqual({ path: dest, alreadyPresent: true });
   });
 
+  it('appends the URL-derived repository name to a selected parent folder', async () => {
+    const dest = path.join(tmp, 'service');
+    fs.mkdirSync(dest);
+    await exec('git', ['init', '-q', '-b', 'main', '.'], { cwd: dest });
+
+    await expect(cloneRepo({ url: 'https://github.com/o/service.git', parent: tmp })).resolves.toEqual({
+      path: dest,
+      alreadyPresent: true,
+    });
+  });
+
   it('refuses to clone over a non-empty directory that is not a repo', async () => {
     const dest = path.join(tmp, 'occupied');
     fs.mkdirSync(dest);

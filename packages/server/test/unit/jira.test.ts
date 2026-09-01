@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getIssue, getIssues, getTransitions, doTransition, writeJiraConfig, jiraConfigPath, type JiraConfig } from '../../src/services/jira';
+import { getIssue, getIssues, getTransitions, doTransition, writeJiraConfig, testJiraConfig, jiraConfigPath, type JiraConfig } from '../../src/services/jira';
 
 const cfg: JiraConfig = {
   baseUrl: 'https://org.atlassian.net',
@@ -232,6 +232,23 @@ describe('jira service', () => {
       const file = jiraConfigPath();
       expect(JSON.parse(fs.readFileSync(file, 'utf8')).email).toBe(cfg.email);
       expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      homedirSpy.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('tests saved Jira credentials without returning the token', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-home-'));
+    const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(home);
+    try {
+      fetchMock.mockResolvedValue(jsonResponse(200, { displayName: 'Kamlesh B' }));
+      await writeJiraConfig({ baseUrl: cfg.baseUrl, email: cfg.email, apiToken: 'tok' });
+      fetchMock.mockClear();
+      fetchMock.mockResolvedValue(jsonResponse(200, { displayName: 'Kamlesh B' }));
+
+      await expect(testJiraConfig()).resolves.toEqual({ accountName: 'Kamlesh B' });
+      expect(fetchMock.mock.calls[0]![0]).toBe('https://org.atlassian.net/rest/api/3/myself');
     } finally {
       homedirSpy.mockRestore();
       fs.rmSync(home, { recursive: true, force: true });

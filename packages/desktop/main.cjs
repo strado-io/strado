@@ -11,6 +11,7 @@ const path = require('node:path');
 
 const { resolveProfile } = require('./profile.cjs');
 const { vscodeOrigin, headersForRequest } = require('./vscode-frame-security.cjs');
+const { rotateIfOversized } = require('./log-rotate.cjs');
 // Which instance is this? Packaged builds get `stable`; the repo's npm scripts
 // set STRADO_PROFILE=dev. See profile.cjs.
 const PROFILE = resolveProfile();
@@ -164,6 +165,9 @@ async function ensureServer() {
   const logDir = app.getPath('logs');
   fs.mkdirSync(logDir, { recursive: true });
   serverLogPath = path.join(logDir, 'server.log');
+  // Append-only across every launch — rotate before reopening so it stays
+  // bounded instead of growing until someone notices.
+  rotateIfOversized(serverLogPath);
   const logFd = fs.openSync(serverLogPath, 'a');
   fs.writeSync(logFd, `\n--- strado server spawn ${new Date().toISOString()} ---\n`);
   serverChild = spawn(spawnSpec.command, spawnSpec.args, {

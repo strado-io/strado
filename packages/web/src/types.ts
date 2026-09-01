@@ -206,3 +206,79 @@ export type ReviewChanges = {
   truncated: boolean;
   total: number | null;
 };
+
+/** Which agent a usage figure came from. */
+export type UsageAgent = 'claude' | 'codex';
+
+export type UsageAgentTotals = { cost: number; tokens: number };
+
+export type UsageDayPoint = { date: string; claude: UsageAgentTotals; codex: UsageAgentTotals };
+
+export type UsageModelRow = {
+  id: string;
+  agent: UsageAgent;
+  cost: number;
+  tokens: number;
+  /** Percent of total cost, or of total tokens when nothing has a price. */
+  share: number;
+  /** False when the price table has no row for the model: cost reads 0. */
+  priced: boolean;
+};
+
+/** Cost rolled up per worktree; `path` is null on the Unattributed row. */
+export type UsageWorktreeRow = { label: string; path: string | null; cost: number; tokens: number };
+
+export type UsageTotals = {
+  cost: number;
+  tokens: number;
+  cachedInput: number;
+  uncachedInput: number;
+  cacheWrite: number;
+  output: number;
+  cacheSavings: number;
+  cacheSavingsMultiple: number;
+};
+
+/** Which rate table priced a summary, shown beside the cost figures. */
+export type UsagePricing = {
+  source: 'litellm' | 'builtin';
+  /** ISO timestamp of the catalog fetch; null for the built-in table. */
+  fetchedAt: string | null;
+};
+
+export type UsageSummary = {
+  range: { from: string; to: string };
+  pricing: UsagePricing;
+  totals: UsageTotals;
+  byAgent: Record<UsageAgent, UsageAgentTotals>;
+  series: UsageDayPoint[];
+  models: UsageModelRow[];
+  worktrees: UsageWorktreeRow[];
+  skipped: number;
+  bytesRead: number;
+};
+
+export type UsageQuotaWindow = { label: string; usedPercent: number; resetsAt: number | null };
+
+export type UsageAccount = {
+  agent: UsageAgent;
+  /** When the figures were measured; Codex reports only while a session runs. */
+  measuredAt: number | null;
+  accountLabel: string;
+  plan: string | null;
+  credentialSource: string;
+  windows: UsageQuotaWindow[];
+  /** 'unavailable' means no vendor numbers — never show an estimate as a limit. */
+  quotaStatus: 'official' | 'unavailable';
+};
+
+export type MachineSample = {
+  cpuPercent: number;
+  cpuCount: number;
+  memUsedBytes: number;
+  memTotalBytes: number;
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  loadAvg: number[];
+  uptimeSec: number;
+};

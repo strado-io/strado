@@ -44,7 +44,10 @@ export function DeleteWorktreeDialog({
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/60">
+    // z-50 like every other dialog: the hub's toolbar and panes are
+    // positioned, so an unlayered backdrop dims the app while the panel
+    // itself renders behind the terminal.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Delete worktree">
       <div className="w-[460px] rounded-lg bg-zinc-900 p-6 text-sm">
         <h2 className="mb-2 text-lg font-semibold">Delete worktree</h2>
         <p className="mb-3 text-zinc-400">

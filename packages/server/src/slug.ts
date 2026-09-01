@@ -20,6 +20,18 @@ function slugifyTicket(s: string): string {
 export function buildWorktreeSlug(ticketId: string, title: string): string {
   const ticket = slugifyTicket(ticketId);
   const cleaned = slugifyTitle(title);
-  if (ticket && cleaned) return `${ticket}_${cleaned}`;
-  return ticket || cleaned || 'worktree';
+  const full = ticket && cleaned ? `${ticket}_${cleaned}` : ticket || cleaned || 'worktree';
+  if (full.length <= MAX_WORKTREE_SLUG_LENGTH) return full;
+
+  // Two long descriptions can share the same beginning. A suffix derived
+  // from the full slug prevents truncation from making them the same branch.
+  const hash = createHash('sha256').update(full).digest('hex').slice(0, 8);
+  const prefixLength = MAX_WORKTREE_SLUG_LENGTH - hash.length - 1;
+  const prefix = full.slice(0, prefixLength).replace(/[_-]+$/g, '');
+  return `${prefix}_${hash}`;
 }
+import { createHash } from 'node:crypto';
+
+// Keeps branch names readable in Git UIs and safely below common filesystem
+// component limits even when a whole task description is pasted into Title.
+export const MAX_WORKTREE_SLUG_LENGTH = 80;

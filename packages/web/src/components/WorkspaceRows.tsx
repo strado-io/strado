@@ -113,15 +113,11 @@ export function WorkspaceRows({
                 </button>
               )}
             </td>
-            <td className="px-2 py-2 text-base">{w.icon}</td>
             <td className="px-2 py-2">
               {w.name}
               {w.id === activeId && <span className="ml-2 text-[10px] text-emerald-400">active</span>}
             </td>
             <td className="px-2 py-2 font-mono text-[11px] text-zinc-400">{w.id}</td>
-            <td className="px-2 py-2">
-              <span className="inline-block h-4 w-4 rounded" style={{ background: w.color }} />
-            </td>
             <td className="px-2 py-2 text-zinc-400">{w.defaultEditor}</td>
             <td className="px-2 py-2 text-zinc-400">{w.defaultPortBase}</td>
             <td className="px-2 py-2 text-right">

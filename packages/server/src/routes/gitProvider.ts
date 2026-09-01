@@ -6,14 +6,14 @@ import { AppError, AuthError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
 import { parseRemoteUrl, isGitlabHost, isGithubHost, resolveSshAlias } from '../services/gitProviders.js';
 import {
-  readGitlabConfig, writeGitlabHost, removeGitlabHost, gitlabHostToken, mergeRequestsForBranch,
+  readGitlabConfig, writeGitlabHost, removeGitlabHost, testGitlabConfig, gitlabHostToken, mergeRequestsForBranch,
   mergeRequestsForProject, mergeRequestCountsForProject, mergeRequestChanges, mergeRequestDiscussion,
   mergeRequestCommits, commitChanges as gitlabCommitChanges,
   postMergeRequestReview, postMergeRequestLineComment, createMergeRequest, mergeMergeRequest,
-  REVIEW_PAGE_SIZE, type ReviewCounts,
+  REVIEW_PAGE_SIZE, type ReviewCounts, type MergeRequest,
 } from '../services/gitlab.js';
 import {
-  readGithubConfig, writeGithubHost, removeGithubHost, githubTokenFor, pullRequestsForBranch,
+  readGithubConfig, writeGithubHost, removeGithubHost, testGithubConfig, githubTokenFor, pullRequestsForBranch,
   pullRequestsForProject, pullRequestCountsForProject, pullRequestChanges, pullRequestDiscussion,
   pullRequestCommits, commitChanges as githubCommitChanges,
   postPullRequestReview, postPullRequestLineComment, createPullRequest, mergePullRequest,
@@ -95,6 +95,7 @@ export async function registerGitProviderConfigRoutes(app: FastifyInstance) {
     const { username } = await writeGitlabHost(host, token);
     return { ok: true, host, username };
   });
+  app.post('/api/gitlab/config/test', async () => ({ ok: true, ...(await testGitlabConfig()) }));
   app.delete<{ Params: { host: string } }>('/api/gitlab/config/:host', async (req) => {
     const Params = z.object({ host: z.string().min(1).max(253) });
     const { host } = Params.parse(req.params);
@@ -116,6 +117,7 @@ export async function registerGitProviderConfigRoutes(app: FastifyInstance) {
     const { username } = await writeGithubHost(host, token, owner);
     return { ok: true, host: owner ? `${host}/${owner}` : host, username };
   });
+  app.post('/api/github/config/test', async () => ({ ok: true, ...(await testGithubConfig()) }));
   app.delete<{ Params: { host: string } }>('/api/github/config/:host', async (req) => {
     const Params = z.object({ host: z.string().min(1).max(354) });
     const { host } = Params.parse(req.params);
@@ -166,6 +168,67 @@ async function resolveProviderTarget(
 // deepest exact page of 50; the response advertises that limit when relevant.
 const GITHUB_SEARCH_PAGE_LIMIT = 1_000 / REVIEW_PAGE_SIZE;
 const AGGREGATE_MAX_ITEMS = 100;
+
+// A batch answers at most this many paths, and probes at most this many at a
+// time — enough to stay quick, low enough to not stampede the provider.
+const BATCH_MAX_PATHS = 200;
+const BATCH_CONCURRENCY = 6;
+
+async function mapConcurrent<T, R>(
+  items: T[], limit: number, worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const output = new Array<R>(items.length);
+  let cursor = 0;
+  const run = async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      output[index] = await worker(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return output;
+}
+
+type BranchMergeRequests =
+  | { kind: 'absent' }
+  | { kind: 'needsAuth'; provider: Provider }
+  | { kind: 'list'; provider: Provider; mergeRequests: MergeRequest[] }
+  // `error` carries the original so the single-worktree route can rethrow it
+  // verbatim (its status code is part of that route's contract); the batch
+  // keeps only the message, since one bad path must not fail the response.
+  | { kind: 'error'; error: unknown; message: string };
+
+/** The MRs open on a worktree's current branch, or why there are none. */
+async function branchMergeRequests(
+  req: import('fastify').FastifyRequest, target: string,
+): Promise<BranchMergeRequests> {
+  let t: ProviderTarget;
+  try {
+    t = await resolveProviderTarget(req, target);
+  } catch (err) {
+    // Unknown/out-of-tree path: absent for the caller, never fatal for a batch.
+    return { kind: 'error', error: err, message: err instanceof Error ? err.message : String(err) };
+  }
+  if (t.kind === 'absent') return { kind: 'absent' };
+  if (t.kind === 'needsAuth') return { kind: 'needsAuth', provider: t.provider };
+  const branch = await currentBranch(target);
+  if (!branch) return { kind: 'absent' };
+  try {
+    const list = t.provider === 'gitlab'
+      ? await mergeRequestsForBranch(t.host, t.token, t.projectPath, branch)
+      : await pullRequestsForBranch(t.host, t.token, t.projectPath, branch);
+    return {
+      kind: 'list',
+      provider: t.provider,
+      mergeRequests: list.map((m) => ({ ...m, provider: t.provider })),
+    };
+  } catch (err) {
+    // expired/again-rejected token mid-poll → ask the user to reconnect
+    if (err instanceof AuthError) return { kind: 'needsAuth', provider: t.provider };
+    return { kind: 'error', error: err, message: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
   // Workspace-wide review inbox. Unlike the branch endpoint below, this starts
@@ -291,29 +354,40 @@ export async function registerGitProviderWorktreeRoutes(app: FastifyInstance) {
   app.get<{ Params: { encodedPath: string } }>(
     '/worktrees/:encodedPath/merge-requests',
     async (req, reply) => {
-      const target = decodeURIComponent(req.params.encodedPath);
-      const t = await resolveProviderTarget(req, target);
-      if (t.kind === 'absent') return reply.code(204).send();
-      if (t.kind === 'needsAuth') return { needsAuth: true, provider: t.provider };
-      const branch = await currentBranch(target);
-      if (!branch) return reply.code(204).send();
-      try {
-        const list = t.provider === 'gitlab'
-          ? await mergeRequestsForBranch(t.host, t.token, t.projectPath, branch)
-          : await pullRequestsForBranch(t.host, t.token, t.projectPath, branch);
-        return {
-          provider: t.provider,
-          mergeRequests: list.map((m) => ({ ...m, provider: t.provider })),
-        };
-      } catch (err) {
-        // expired/again-rejected token mid-poll → ask the user to reconnect
-        if (err instanceof AuthError) {
-          return { needsAuth: true, provider: t.provider };
-        }
-        throw err;
-      }
+      const entry = await branchMergeRequests(req, decodeURIComponent(req.params.encodedPath));
+      if (entry.kind === 'absent') return reply.code(204).send();
+      if (entry.kind === 'needsAuth') return { needsAuth: true, provider: entry.provider };
+      if (entry.kind === 'error') throw entry.error;
+      return { provider: entry.provider, mergeRequests: entry.mergeRequests };
     },
   );
+
+  // One call for every worktree's branch MR, instead of one call per worktree.
+  //
+  // Why it exists: the board polls a chip per worktree. A repo with two dozen
+  // worktrees therefore fired two dozen requests per tick, and a browser only
+  // lends an origin six HTTP/1.1 sockets — several of which SSE holds — so the
+  // fan-out queued behind itself and starved every unrelated call (closing a
+  // shell included). Collapsing it to one request removes the amplification.
+  //
+  // POST because the paths are absolute and numerous: a query string of two
+  // dozen of them runs past what a URL should carry. It is a read; it has no
+  // side effects.
+  const BatchBody = z.object({
+    paths: z.array(z.string().min(1).max(4096)).max(BATCH_MAX_PATHS),
+  });
+  app.post('/merge-requests/batch', async (req) => {
+    const { paths } = BatchBody.parse(req.body);
+    // De-duplicated so a path listed twice costs one lookup.
+    const unique = [...new Set(paths)];
+    const entries = await mapConcurrent(unique, BATCH_CONCURRENCY, async (target) => {
+      const entry = await branchMergeRequests(req, target);
+      return [target, entry.kind === 'error'
+        ? { kind: 'error' as const, message: entry.message }
+        : entry] as const;
+    });
+    return { results: Object.fromEntries(entries) };
+  });
 
   app.get<{ Params: { encodedPath: string; iid: string } }>(
     '/worktrees/:encodedPath/merge-requests/:iid/changes',

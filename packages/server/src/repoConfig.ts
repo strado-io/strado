@@ -29,7 +29,10 @@ export const RepoConfigSchema = z.object({
   // `<home>/worktrees/<repoId>`, computed from the id. Old repos.json files
   // still carry the key; read() strips it and rewrites the file once.
   projectSubdir: z.string().nullable(),
-  startCommand: z.string().min(1),
+  // Some repositories are libraries or non-web projects and have no sensible
+  // default process. Starting them reports the existing "empty startCommand"
+  // validation until the user supplies a per-worktree command.
+  startCommand: z.string(),
   defaultPort: z.number().int().positive(),
   fixedPort: z.boolean().optional(),
   editor: z.enum(ALLOWED_EDITORS),

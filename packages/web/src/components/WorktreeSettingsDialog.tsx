@@ -11,9 +11,9 @@ export type WorktreeSettingsPatch = Partial<{
 }>;
 
 const inputCls =
-  'h-8 w-full rounded border border-zinc-700 bg-zinc-900 px-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none';
-const labelCls = 'text-[11px] font-medium uppercase tracking-wide text-zinc-500';
-const ghostBtn = 'rounded px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200';
+  'h-9 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600';
+const labelCls = 'text-xs font-medium text-zinc-300';
+const ghostBtn = 'rounded-md px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200';
 
 // Everything configurable about one worktree, plus its maintenance actions —
 // this replaces the old row "⋯" menu (link/adopt/reset/delete live here now).
@@ -33,11 +33,8 @@ export function WorktreeSettingsDialog({
 }: {
   worktree: Worktree;
   repo: RepoConfig | null;
-  // all rows of the workspace — link/relink pick their source from these
-  // (window.prompt does not exist in the Electron shell)
   worktrees: Worktree[];
   onSave: (patch: WorktreeSettingsPatch) => Promise<void> | void;
-  // profile changes restart a running dev server, so they use their own route
   onSetEnvProfile: (profile: string) => Promise<void> | void;
   onLink: (source: string) => void;
   onUnlink: () => void;
@@ -61,53 +58,69 @@ export function WorktreeSettingsDialog({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // link/relink source picker (inline, replaces the old window.prompt)
+  const [runtimeOpen, setRuntimeOpen] = useState(
+    Boolean(meta?.startCommand || meta?.previewUrl || Object.keys(meta?.env ?? {}).length > 0),
+  );
   const [linkMode, setLinkMode] = useState<'link' | 'relink' | null>(null);
   const [linkSource, setLinkSource] = useState('');
-  // untracked adoption inputs
   const [adoptTicket, setAdoptTicket] = useState('');
   const [adoptTitle, setAdoptTitle] = useState('');
 
-  // Sensible sources: the repo's main checkout plus sibling worktrees with a
-  // REAL node_modules install (a symlink source must own the files).
   const linkCandidates = (() => {
     const seen = new Set<string>([worktree.path]);
-    const out: { path: string; label: string }[] = [];
+    const candidates: { path: string; label: string }[] = [];
     if (repo && !seen.has(repo.path)) {
       seen.add(repo.path);
-      out.push({ path: repo.path, label: `${repo.name} (main checkout)` });
+      candidates.push({ path: repo.path, label: `${repo.name} (main checkout)` });
     }
-    for (const w of worktrees) {
-      if (w.repoId !== worktree.repoId || seen.has(w.path)) continue;
-      if (w.nodeModules?.status !== 'directory') continue;
-      seen.add(w.path);
-      out.push({ path: w.path, label: w.meta?.ticketId || w.branch || w.path.split('/').pop() || w.path });
+    for (const sibling of worktrees) {
+      if (sibling.repoId !== worktree.repoId || seen.has(sibling.path)) continue;
+      if (sibling.nodeModules?.status !== 'directory') continue;
+      seen.add(sibling.path);
+      candidates.push({
+        path: sibling.path,
+        label: sibling.meta?.ticketId || sibling.branch || sibling.path.split('/').pop() || sibling.path,
+      });
     }
-    return out;
+    return candidates;
   })();
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [busy, onClose]);
 
-  const nm = worktree.nodeModules?.status;
-  const label = meta?.ticketId ?? worktree.path.split('/').pop();
+  const nodeModulesStatus = worktree.nodeModules?.status;
+  const label = meta?.ticketId || worktree.branch || worktree.path.split('/').pop();
+  // A missing node_modules directory in a Rust, Go, or Java repository is not
+  // an action item. Only show these controls for an actual Node-style repo.
+  const nodeProject = nodeModulesStatus === 'directory' || nodeModulesStatus === 'symlink'
+    || /(?:^|\s)(?:npm|pnpm|yarn|bun)(?:\s|$)/.test(repo?.startCommand ?? '');
+  const hasMaintenanceActions = worktree.tracked
+    && (nodeProject || (worktree.activitySeconds ?? 0) > 0);
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
+      if (!title.trim()) throw new Error('Title is required.');
+      if (port.trim()) {
+        const parsedPort = Number(port);
+        if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+          throw new Error('Port must be a whole number between 1 and 65535.');
+        }
+      }
+
       const patch: WorktreeSettingsPatch = {};
-      if (ticketId.trim() && ticketId.trim() !== meta?.ticketId) patch.ticketId = ticketId.trim();
-      if (title.trim() && title.trim() !== meta?.title) patch.title = title.trim();
-      const portNum = Number(port);
-      if (port.trim() && Number.isInteger(portNum) && portNum > 0 && portNum !== meta?.port) patch.port = portNum;
-      const cmd = startCommand.trim();
-      if (cmd !== (meta?.startCommand ?? '')) patch.startCommand = cmd || null;
+      if (ticketId.trim() !== (meta?.ticketId ?? '')) patch.ticketId = ticketId.trim();
+      if (title.trim() !== meta?.title) patch.title = title.trim();
+      const portNumber = Number(port);
+      if (port.trim() && portNumber !== meta?.port) patch.port = portNumber;
+      const command = startCommand.trim();
+      if (command !== (meta?.startCommand ?? '')) patch.startCommand = command || null;
       const url = previewUrl.trim();
       if (url !== (meta?.previewUrl ?? '')) patch.previewUrl = url || null;
       const env: Record<string, string> = {};
@@ -115,223 +128,363 @@ export function WorktreeSettingsDialog({
         if (row.key.trim()) env[row.key.trim()] = row.value;
       }
       if (JSON.stringify(env) !== JSON.stringify(meta?.env ?? {})) patch.env = env;
+
       if (Object.keys(patch).length > 0) await onSave(patch);
       if (envProfile && envProfile !== initialProfile) await onSetEnvProfile(envProfile);
       onClose();
-    } catch (err) {
-      setError((err as Error).message);
+    } catch (saveError) {
+      setError((saveError as Error).message);
       setBusy(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="flex max-h-[85vh] w-full max-w-lg flex-col gap-4 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-4 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onMouseDown={busy ? undefined : onClose}
+    >
+      <form
+        aria-labelledby="worktree-settings-title"
+        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (worktree.tracked) void save();
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="text-sm text-zinc-200">
-          Worktree settings · <span className="font-mono text-zinc-100">{label}</span>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-zinc-600" title={worktree.path}>
-            {worktree.path}
-          </div>
-        </div>
-
-        {!worktree.tracked ? (
-          <div className="flex flex-col gap-2 rounded border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-            <span>Untracked worktree — adopt it to manage its settings.</span>
-            <div className="flex items-center gap-1.5">
-              <input
-                value={adoptTicket}
-                onChange={(e) => setAdoptTicket(e.target.value)}
-                placeholder="FD-1234"
-                aria-label="Adopt ticket ID"
-                className={`${inputCls} w-32 font-mono`}
-              />
-              <input
-                value={adoptTitle}
-                onChange={(e) => setAdoptTitle(e.target.value)}
-                placeholder="Title"
-                aria-label="Adopt title"
-                className={inputCls}
-              />
-              <button
-                onClick={() => onAdopt(adoptTicket.trim(), adoptTitle.trim())}
-                disabled={!adoptTicket.trim()}
-                className="shrink-0 rounded bg-amber-700 px-2 py-1.5 font-medium text-white hover:bg-amber-600 disabled:opacity-50"
-              >
-                Adopt
-              </button>
+        <header className="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 id="worktree-settings-title" className="shrink-0 text-base font-semibold text-zinc-100">
+                Worktree settings
+              </h2>
+              <span className="truncate rounded bg-zinc-900 px-2 py-0.5 font-mono text-xs text-zinc-400">
+                {label}
+              </span>
+            </div>
+            <div className="mt-1 truncate font-mono text-[11px] text-zinc-600" title={worktree.path}>
+              {worktree.path}
             </div>
           </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1">
-                <span className={labelCls}>Ticket ID</span>
-                <input value={ticketId} onChange={(e) => setTicketId(e.target.value)} placeholder="FD-1234" className={`${inputCls} font-mono`} />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className={labelCls}>Port</span>
-                <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" placeholder={repo ? String(repo.defaultPort) : '3000'} className={`${inputCls} font-mono`} />
-              </label>
-              <label className="col-span-2 flex flex-col gap-1">
-                <span className={labelCls}>Title</span>
-                <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What is this worktree for?" className={inputCls} />
-              </label>
-              {profiles.length > 0 && (
-                <label className="col-span-2 flex flex-col gap-1">
-                  <span className={labelCls}>Env profile</span>
-                  <select
-                    value={envProfile}
-                    onChange={(e) => setEnvProfile(e.target.value)}
-                    title="Switching restarts a running dev server"
-                    className={`${inputCls} cursor-pointer uppercase`}
-                  >
-                    {profiles.map((p) => (
-                      <option key={p.name} value={p.name}>{p.name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label className="col-span-2 flex flex-col gap-1">
-                <span className={labelCls}>Start command override</span>
-                <input
-                  value={startCommand}
-                  onChange={(e) => setStartCommand(e.target.value)}
-                  aria-label="Start command override"
-                  placeholder={repo?.startCommand ?? 'npm run dev'}
-                  className={`${inputCls} font-mono`}
-                />
-                <span className="text-[11px] text-zinc-600">
-                  Empty uses the repo command{profiles.length > 0 ? '; include {ENV_FILE} to keep env profiles' : ''}.
-                </span>
-              </label>
-              <label className="col-span-2 flex flex-col gap-1">
-                <span className={labelCls}>Preview URL override</span>
-                <input
-                  value={previewUrl}
-                  onChange={(e) => setPreviewUrl(e.target.value)}
-                  aria-label="Preview URL override"
-                  placeholder={`http://localhost:${meta?.port ?? repo?.defaultPort ?? 3000}`}
-                  className={`${inputCls} font-mono`}
-                />
-                <span className="text-[11px] text-zinc-600">Default Browser-tab URL for this worktree.</span>
-              </label>
-            </div>
+          <button
+            type="button"
+            aria-label="Close"
+            disabled={busy}
+            onClick={onClose}
+            className="shrink-0 rounded-md p-1 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-40"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+              <path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
 
-            <div className="flex flex-col gap-1.5">
-              <span className={labelCls}>Env variables (injected at start)</span>
-              {envRows.map((row, i) => (
-                <div key={i} className="flex items-center gap-1.5">
+        <div className="min-h-0 overflow-y-auto px-5 py-5">
+          {!worktree.tracked ? (
+            <section className="rounded-lg border border-amber-900/50 bg-amber-950/20 p-4">
+              <h3 className="text-sm font-medium text-amber-200">Add this worktree to Strado</h3>
+              <p className="mt-1 text-xs leading-5 text-amber-300/70">
+                This Git worktree is not tracked yet. Add its ticket and title to manage it here.
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-[9rem_1fr]">
+                <label className="block">
+                  <span className={`mb-1.5 block ${labelCls}`}>Ticket ID</span>
                   <input
-                    value={row.key}
-                    onChange={(e) => setEnvRows((p) => p.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
-                    placeholder="KEY"
-                    aria-label={`Env key ${i + 1}`}
-                    className={`${inputCls} w-2/5 font-mono uppercase`}
-                  />
-                  <input
-                    value={row.value}
-                    onChange={(e) => setEnvRows((p) => p.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
-                    placeholder="value"
-                    aria-label={`Env value ${i + 1}`}
+                    value={adoptTicket}
+                    onChange={(event) => setAdoptTicket(event.target.value)}
+                    placeholder="FD-1234"
+                    aria-label="Adopt ticket ID"
                     className={`${inputCls} font-mono`}
                   />
-                  <button
-                    aria-label={`Remove env var ${i + 1}`}
-                    onClick={() => setEnvRows((p) => p.filter((_, j) => j !== i))}
-                    className="shrink-0 rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-                      <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                    </svg>
-                  </button>
+                </label>
+                <label className="block">
+                  <span className={`mb-1.5 block ${labelCls}`}>Title</span>
+                  <input
+                    value={adoptTitle}
+                    onChange={(event) => setAdoptTitle(event.target.value)}
+                    placeholder="What is this worktree for?"
+                    aria-label="Adopt title"
+                    className={inputCls}
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onAdopt(adoptTicket.trim(), adoptTitle.trim())}
+                  disabled={!adoptTicket.trim()}
+                  className="rounded-md bg-zinc-100 px-3.5 py-2 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40"
+                >
+                  Add worktree
+                </button>
+              </div>
+            </section>
+          ) : (
+            <div className="space-y-4">
+              <section>
+                <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
+                  <label className="block">
+                    <span className={`mb-1.5 block ${labelCls}`}>
+                      Ticket <span className="font-normal text-zinc-600">(optional)</span>
+                    </span>
+                    <input
+                      aria-label="Ticket ID"
+                      value={ticketId}
+                      onChange={(event) => setTicketId(event.target.value)}
+                      placeholder="FD-1234"
+                      className={`${inputCls} font-mono`}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`mb-1.5 block ${labelCls}`}>Title</span>
+                    <input
+                      aria-label="Title"
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder="What is this worktree for?"
+                      className={inputCls}
+                    />
+                  </label>
                 </div>
-              ))}
-              <button
-                onClick={() => setEnvRows((p) => [...p, { key: '', value: '' }])}
-                className="self-start rounded px-1.5 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+              </section>
+
+              <details
+                className="group overflow-hidden rounded-lg border border-zinc-800"
+                open={runtimeOpen}
+                onToggle={(event) => setRuntimeOpen(event.currentTarget.open)}
               >
-                + Add variable
-              </button>
+                <summary className="flex cursor-pointer list-none items-center gap-3 px-3.5 py-3 hover:bg-zinc-900/70 [&::-webkit-details-marker]:hidden">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-zinc-500">
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+                      <path d="M3 4h10M3 8h10M3 12h10" />
+                      <circle cx="6" cy="4" r="1.3" fill="currentColor" />
+                      <circle cx="10" cy="8" r="1.3" fill="currentColor" />
+                      <circle cx="7" cy="12" r="1.3" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-zinc-300">Runtime &amp; environment</span>
+                    <span className="mt-0.5 block text-[11px] text-zinc-600">Port, start command, preview URL and variables</span>
+                  </span>
+                  <svg className="text-zinc-600 transition-transform group-open:rotate-90" width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+                    <path d="m5 3.5 3.5 3.5L5 10.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </summary>
+
+                <div className="space-y-4 border-t border-zinc-800 p-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={`mb-1.5 block ${labelCls}`}>Port</span>
+                      <input
+                        aria-label="Port"
+                        value={port}
+                        onChange={(event) => setPort(event.target.value)}
+                        inputMode="numeric"
+                        placeholder={repo ? String(repo.defaultPort) : '3000'}
+                        className={`${inputCls} font-mono`}
+                      />
+                    </label>
+                    {profiles.length > 0 && (
+                      <label className="block">
+                        <span className={`mb-1.5 block ${labelCls}`}>Environment profile</span>
+                        <select
+                          aria-label="Env profile"
+                          value={envProfile}
+                          onChange={(event) => setEnvProfile(event.target.value)}
+                          title="Switching restarts a running dev server"
+                          className={`${inputCls} cursor-pointer uppercase`}
+                        >
+                          {profiles.map((profile) => (
+                            <option key={profile.name} value={profile.name}>{profile.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+
+                  <label className="block">
+                    <span className={`mb-1.5 block ${labelCls}`}>Start command override</span>
+                    <input
+                      value={startCommand}
+                      onChange={(event) => setStartCommand(event.target.value)}
+                      aria-label="Start command override"
+                      placeholder={repo?.startCommand || 'No repository command configured'}
+                      className={`${inputCls} font-mono`}
+                    />
+                    <span className="mt-1.5 block text-[11px] text-zinc-600">
+                      Leave empty to use the repository command{profiles.length > 0 ? '; use {ENV_FILE} to include the selected profile' : ''}.
+                    </span>
+                  </label>
+
+                  <label className="block">
+                    <span className={`mb-1.5 block ${labelCls}`}>Preview URL override</span>
+                    <input
+                      value={previewUrl}
+                      onChange={(event) => setPreviewUrl(event.target.value)}
+                      aria-label="Preview URL override"
+                      placeholder={`http://localhost:${meta?.port ?? repo?.defaultPort ?? 3000}`}
+                      className={`${inputCls} font-mono`}
+                    />
+                    <span className="mt-1.5 block text-[11px] text-zinc-600">Leave empty to use the detected local URL.</span>
+                  </label>
+
+                  <div className="border-t border-zinc-800 pt-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div>
+                        <h4 className={labelCls}>Environment variables</h4>
+                        <p className="mt-0.5 text-[11px] text-zinc-600">Injected when this worktree starts.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEnvRows((previous) => [...previous, { key: '', value: '' }])}
+                        className={ghostBtn}
+                      >
+                        Add variable
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {envRows.length === 0 && (
+                        <p className="rounded-md border border-dashed border-zinc-800 px-3 py-2.5 text-xs text-zinc-600">No custom variables.</p>
+                      )}
+                      {envRows.map((row, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <input
+                            value={row.key}
+                            onChange={(event) => setEnvRows((previous) => previous.map((item, itemIndex) => (
+                              itemIndex === index ? { ...item, key: event.target.value } : item
+                            )))}
+                            placeholder="KEY"
+                            aria-label={`Env key ${index + 1}`}
+                            className={`${inputCls} w-2/5 font-mono uppercase`}
+                          />
+                          <input
+                            value={row.value}
+                            onChange={(event) => setEnvRows((previous) => previous.map((item, itemIndex) => (
+                              itemIndex === index ? { ...item, value: event.target.value } : item
+                            )))}
+                            placeholder="value"
+                            aria-label={`Env value ${index + 1}`}
+                            className={`${inputCls} font-mono`}
+                          />
+                          <button
+                            type="button"
+                            aria-label={`Remove env var ${index + 1}`}
+                            onClick={() => setEnvRows((previous) => previous.filter((_, itemIndex) => itemIndex !== index))}
+                            className="shrink-0 rounded-md p-2 text-zinc-500 hover:bg-red-950/50 hover:text-red-300"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden>
+                              <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              {hasMaintenanceActions && (
+                <section className="rounded-lg border border-zinc-800 p-3.5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-sm font-medium text-zinc-300">Worktree maintenance</h3>
+                      <p className="mt-1 text-[11px] leading-4 text-zinc-600">
+                        {nodeProject && nodeModulesStatus === 'symlink'
+                          ? 'node_modules is linked from another checkout.'
+                          : nodeProject && nodeModulesStatus === 'directory'
+                            ? 'This worktree has its own installed node_modules.'
+                            : nodeProject
+                              ? 'Share node_modules from an existing checkout.'
+                              : 'Manage local activity data for this worktree.'}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {nodeProject && nodeModulesStatus === 'symlink' && (
+                        <>
+                          <button type="button" className={ghostBtn} onClick={onUnlink}>Unlink node_modules</button>
+                          <button type="button" className={ghostBtn} onClick={() => setLinkMode('relink')}>Relink…</button>
+                        </>
+                      )}
+                      {nodeProject && nodeModulesStatus === 'directory' && (
+                        <button type="button" className={ghostBtn} onClick={() => setLinkMode('link')}>Replace with link…</button>
+                      )}
+                      {nodeProject && (nodeModulesStatus === 'missing' || nodeModulesStatus == null) && (
+                        <button type="button" className={ghostBtn} onClick={() => setLinkMode('link')}>Link node_modules…</button>
+                      )}
+                      {(worktree.activitySeconds ?? 0) > 0 && (
+                        <button type="button" className={ghostBtn} onClick={onResetTime}>Reset tracked time</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {linkMode && (
+                    <div className="mt-3 flex items-center gap-2 border-t border-zinc-800 pt-3">
+                      <select
+                        value={linkSource}
+                        onChange={(event) => setLinkSource(event.target.value)}
+                        aria-label="Link source worktree"
+                        className={`${inputCls} cursor-pointer`}
+                      >
+                        <option value="" disabled>Choose source worktree…</option>
+                        {linkCandidates.map((candidate) => (
+                          <option key={candidate.path} value={candidate.path}>{candidate.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (linkMode === 'relink') onRelink(linkSource);
+                          else onLink(linkSource);
+                        }}
+                        disabled={!linkSource}
+                        className="shrink-0 rounded-md bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40"
+                      >
+                        {linkMode === 'relink' ? 'Relink' : 'Link'}
+                      </button>
+                      <button type="button" onClick={() => setLinkMode(null)} className={ghostBtn}>Cancel</button>
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
-          </>
-        )}
-
-        {error && <div className="rounded bg-red-950/60 px-3 py-2 text-xs text-red-300">{error}</div>}
-
-        {linkMode && (
-          <div className="flex items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/60 px-3 py-2">
-            <span className="shrink-0 text-[11px] uppercase tracking-wide text-zinc-500">
-              {linkMode === 'relink' ? 'Relink from' : 'Link from'}
-            </span>
-            <select
-              value={linkSource}
-              onChange={(e) => setLinkSource(e.target.value)}
-              aria-label="Link source worktree"
-              className={`${inputCls} cursor-pointer`}
-            >
-              <option value="" disabled>Pick a source…</option>
-              {linkCandidates.map((c) => (
-                <option key={c.path} value={c.path}>{c.label}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => {
-                if (linkMode === 'relink') onRelink(linkSource);
-                else onLink(linkSource);
-              }}
-              disabled={!linkSource}
-              className="shrink-0 rounded bg-sky-700 px-2 py-1.5 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-50"
-            >
-              {linkMode === 'relink' ? 'Relink' : 'Link'}
-            </button>
-            <button onClick={() => setLinkMode(null)} className={`${ghostBtn} shrink-0`}>
-              Cancel
-            </button>
-          </div>
-        )}
-
-        <div className="flex items-center gap-1 border-t border-zinc-900 pt-3">
-          {worktree.tracked && (
-            <>
-              {nm === 'symlink' && (
-                <>
-                  <button className={ghostBtn} onClick={onUnlink}>Unlink node_modules</button>
-                  <button className={ghostBtn} onClick={() => setLinkMode('relink')}>Relink…</button>
-                </>
-              )}
-              {nm === 'directory' && (
-                <button className={ghostBtn} onClick={() => setLinkMode('link')}>Replace installed with link…</button>
-              )}
-              {(nm === 'missing' || nm == null) && (
-                <button className={ghostBtn} onClick={() => setLinkMode('link')}>Link node_modules…</button>
-              )}
-              {(worktree.activitySeconds ?? 0) > 0 && (
-                <button className={ghostBtn} onClick={onResetTime}>Reset time</button>
-              )}
-            </>
           )}
-          <button className={`${ghostBtn} hover:bg-red-950/60 hover:text-red-300`} onClick={onDelete}>
-            Delete…
+
+          {error && (
+            <div role="alert" className="mt-4 rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-300">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <footer className="flex items-center gap-2 border-t border-zinc-800 px-5 py-3.5">
+          <button
+            type="button"
+            className="rounded-md px-2.5 py-1.5 text-xs text-red-400/80 hover:bg-red-950/50 hover:text-red-300"
+            onClick={onDelete}
+          >
+            Delete worktree…
           </button>
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose} className="rounded px-3 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onClose}
+              className="rounded-md px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-40"
+            >
               Cancel
             </button>
             {worktree.tracked && (
               <button
-                onClick={() => void save()}
+                type="submit"
                 disabled={busy}
-                className="rounded bg-sky-700 px-3 py-1 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                className="rounded-md bg-zinc-100 px-4 py-2 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40"
               >
                 {busy ? 'Saving…' : 'Save'}
               </button>
             )}
           </div>
-        </div>
-      </div>
+        </footer>
+      </form>
     </div>
   );
 }

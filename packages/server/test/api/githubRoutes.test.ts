@@ -386,6 +386,10 @@ describe('/api/github/config', () => {
     const read1 = await app.inject({ method: 'GET', url: '/api/github/config' });
     expect(read1.json()).toEqual({ hosts: ['github.com/workorg'] });
 
+    const test = await app.inject({ method: 'POST', url: '/api/github/config/test' });
+    expect(test.statusCode).toBe(200);
+    expect(test.json()).toEqual({ ok: true, accounts: 1 });
+
     const del = await app.inject({
       method: 'DELETE',
       url: `/api/github/config/${encodeURIComponent('github.com/workorg')}`,
@@ -394,5 +398,55 @@ describe('/api/github/config', () => {
 
     const read2 = await app.inject({ method: 'GET', url: '/api/github/config' });
     expect(read2.json()).toEqual({ hosts: [] });
+  });
+});
+
+describe('POST /api/w/:ws/merge-requests/batch', () => {
+  it('answers every requested path in one round trip', async () => {
+    await setupRepo('git@github.com:octo/app.git');
+    await writeGithubToken();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = url.toString();
+      if (u.includes('/repos/octo/app/pulls?')) {
+        return new Response(JSON.stringify([prJson({ number: 42 })]), { status: 200 });
+      }
+      if (u.includes('/check-runs')) return new Response(JSON.stringify({ check_runs: [] }), { status: 200 });
+      return new Response('not found', { status: 404 });
+    }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/merge-requests/batch',
+      payload: { paths: [repo, path.join(tmp, 'not-a-repo')] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const { results } = res.json();
+    expect(results[repo]).toMatchObject({
+      kind: 'list',
+      provider: 'github',
+      mergeRequests: [expect.objectContaining({ number: 42, provider: 'github' })],
+    });
+    expect(results[path.join(tmp, 'not-a-repo')]).toEqual({ kind: 'absent' });
+  });
+
+  it('reports a failing path without sinking the rest of the batch', async () => {
+    await setupRepo('git@github.com:octo/app.git');
+    await writeGithubToken();
+    (pullRequestsForBranch as unknown as Mock).mockRejectedValueOnce(
+      new AppError('VALIDATION', 'GitHub at github.com is unreachable — check your network/VPN'),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/merge-requests/batch',
+      payload: { paths: [repo] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().results[repo]).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('unreachable'),
+    });
   });
 });
