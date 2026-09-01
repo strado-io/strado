@@ -1,0 +1,227 @@
+import { execFile } from 'node:child_process';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import { isRecord } from './claudeLogs.js';
+import type { RateLimitSnapshot } from './codexLogs.js';
+
+const run = promisify(execFile);
+
+export type QuotaWindow = { label: string; usedPercent: number; resetsAt: number | null };
+
+export type AccountCard = {
+  agent: 'claude' | 'codex';
+  /** Account email when known, else a generic name. Never a credential. */
+  accountLabel: string;
+  /** Plan badge as the vendor names it: TEAM, MAX, PRO, PLUS. */
+  plan: string | null;
+  /** Where the credential lives, shown so users know what they are looking at. */
+  credentialSource: string;
+  windows: QuotaWindow[];
+  /**
+   * 'official' means the numbers came from the vendor (an API call for Claude, a
+   * rate-limit snapshot the CLI wrote for Codex). 'unavailable' means we have
+   * none — the UI says so rather than showing a guess as if it were a limit.
+   */
+  quotaStatus: 'official' | 'unavailable';
+};
+
+/** Claude Code's `/usage` endpoint; see the design doc for how it is reached. */
+const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const CLAUDE_OAUTH_BETA = 'oauth-2025-04-20';
+const KEYCHAIN_SERVICE = 'Claude Code-credentials';
+const CACHE_MS = 5 * 60_000;
+
+/** Windows the usage payload may carry, in the order the UI shows them. */
+const CLAUDE_WINDOWS: { key: string; label: string }[] = [
+  { key: 'five_hour', label: 'Session (5h)' },
+  { key: 'seven_day', label: 'Weekly' },
+  { key: 'seven_day_opus', label: 'Weekly · Opus' },
+  { key: 'seven_day_fable', label: 'Weekly · Fable' },
+];
+
+export type QuotaServiceOptions = {
+  /** Home dir holding `.claude.json` and `.codex`; `app.deps.agentHomeDir`. */
+  agentHomeDir: string;
+  /** Newest Codex rate-limit snapshot, from the usage store. */
+  codexRateLimits: () => Promise<RateLimitSnapshot | null>;
+  /** Overridden in tests; by default the Keychain or the credentials file. */
+  readClaudeToken?: () => Promise<string>;
+  fetchImpl?: typeof fetch;
+};
+
+export type QuotaService = { accounts(): Promise<AccountCard[]> };
+
+const asPercent = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  // Payloads have used both a 0-100 percentage and a 0-1 share; a value at or
+  // below 1 is ambiguous only when usage is under 1%, where both read the same.
+  return value > 1 ? value : value * 100;
+};
+
+const asTimestamp = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Seconds or milliseconds — anything below this bound is clearly seconds.
+    return value < 10_000_000_000 ? value * 1000 : value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+function claudePlan(account: Record<string, unknown>): string | null {
+  const orgType = typeof account.organizationType === 'string' ? account.organizationType : '';
+  if (orgType.includes('team')) return 'TEAM';
+  if (orgType.includes('enterprise')) return 'ENTERPRISE';
+  const tier = typeof account.userRateLimitTier === 'string' ? account.userRateLimitTier : '';
+  if (tier.includes('max')) return 'MAX';
+  if (tier.includes('pro')) return 'PRO';
+  return null;
+}
+
+async function keychainToken(): Promise<string> {
+  const { stdout } = await run('security', ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w']);
+  const raw = stdout.trim();
+  // The Keychain item holds the credentials JSON, not a bare token.
+  try {
+    const parsed = JSON.parse(raw);
+    const oauth = isRecord(parsed) && isRecord(parsed.claudeAiOauth) ? parsed.claudeAiOauth : null;
+    const token = oauth && typeof oauth.accessToken === 'string' ? oauth.accessToken : null;
+    if (!token) throw new Error('no accessToken in keychain item');
+    return token;
+  } catch (err) {
+    if (raw.startsWith('{')) throw err as Error;
+    return raw;
+  }
+}
+
+async function fileToken(agentHomeDir: string): Promise<string> {
+  const raw = await fsp.readFile(path.join(agentHomeDir, '.claude', '.credentials.json'), 'utf8');
+  const parsed = JSON.parse(raw);
+  const oauth = isRecord(parsed) && isRecord(parsed.claudeAiOauth) ? parsed.claudeAiOauth : null;
+  const token = oauth && typeof oauth.accessToken === 'string' ? oauth.accessToken : null;
+  if (!token) throw new Error('no accessToken in credentials file');
+  return token;
+}
+
+function decodeJwtClaims(token: string): Record<string, unknown> | null {
+  const body = token.split('.')[1];
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Account identity and quota for every agent signed in on this machine.
+ *
+ * Identity is always local: Claude Code keeps it in `~/.claude.json` and Codex
+ * in its id token. Quota is not — Codex writes rate-limit snapshots into its
+ * rollout logs, but Claude Code has to be asked, so that one call is cached and
+ * every failure degrades to `quotaStatus: 'unavailable'` instead of throwing.
+ */
+export function createQuotaService({
+  agentHomeDir,
+  codexRateLimits,
+  readClaudeToken,
+  fetchImpl = fetch,
+}: QuotaServiceOptions): QuotaService {
+  const readToken = readClaudeToken
+    ?? (async () => (process.platform === 'darwin' ? keychainToken() : fileToken(agentHomeDir)));
+
+  let cached: { at: number; cards: AccountCard[] } | null = null;
+
+  async function claudeQuota(): Promise<QuotaWindow[]> {
+    let token: string;
+    try {
+      token = await readToken();
+    } catch {
+      return [];
+    }
+    if (!token) return [];
+    let payload: unknown;
+    try {
+      const res = await fetchImpl(CLAUDE_USAGE_URL, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          'anthropic-beta': CLAUDE_OAUTH_BETA,
+          accept: 'application/json',
+        },
+      });
+      if (!res.ok) return [];
+      payload = await res.json();
+    } catch {
+      return [];
+    }
+    if (!isRecord(payload)) return [];
+    const source = isRecord(payload.usage) ? payload.usage : payload;
+    const windows: QuotaWindow[] = [];
+    for (const { key, label } of CLAUDE_WINDOWS) {
+      const entry = source[key];
+      if (!isRecord(entry)) continue;
+      windows.push({
+        label,
+        usedPercent: asPercent(entry.utilization ?? entry.used_percent ?? entry.percent_used),
+        resetsAt: asTimestamp(entry.resets_at ?? entry.reset_at ?? entry.resetsAt),
+      });
+    }
+    return windows;
+  }
+
+  async function claudeCard(): Promise<AccountCard | null> {
+    let account: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(await fsp.readFile(path.join(agentHomeDir, '.claude.json'), 'utf8'));
+      account = isRecord(parsed) && isRecord(parsed.oauthAccount) ? parsed.oauthAccount : null;
+    } catch {
+      account = null;
+    }
+    if (!account) return null;
+    const windows = await claudeQuota();
+    return {
+      agent: 'claude',
+      accountLabel: typeof account.emailAddress === 'string' ? account.emailAddress : 'Claude account',
+      plan: claudePlan(account),
+      credentialSource: process.platform === 'darwin' ? 'Keychain' : '~/.claude',
+      windows,
+      quotaStatus: windows.length ? 'official' : 'unavailable',
+    };
+  }
+
+  async function codexCard(): Promise<AccountCard | null> {
+    let tokens: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(await fsp.readFile(path.join(agentHomeDir, '.codex', 'auth.json'), 'utf8'));
+      tokens = isRecord(parsed) && isRecord(parsed.tokens) ? parsed.tokens : null;
+    } catch {
+      return null;
+    }
+    if (!tokens) return null;
+    const claims = typeof tokens.id_token === 'string' ? decodeJwtClaims(tokens.id_token) : null;
+    const planClaim = claims?.['https://api.openai.com/auth.chatgpt_plan_type'];
+    const snapshot = await codexRateLimits();
+    return {
+      agent: 'codex',
+      accountLabel: typeof claims?.email === 'string' ? claims.email : 'Codex account',
+      plan: typeof planClaim === 'string' && planClaim ? planClaim.toUpperCase() : null,
+      credentialSource: '~/.codex',
+      windows: snapshot?.windows ?? [],
+      quotaStatus: snapshot?.windows.length ? 'official' : 'unavailable',
+    };
+  }
+
+  return {
+    async accounts() {
+      if (cached && Date.now() - cached.at < CACHE_MS) return cached.cards;
+      const [claude, codex] = await Promise.all([claudeCard(), codexCard()]);
+      const cards = [claude, codex].filter((card): card is AccountCard => card !== null);
+      cached = { at: Date.now(), cards };
+      return cards;
+    },
+  };
+}
