@@ -11,6 +11,12 @@ export type QuotaWindow = { label: string; usedPercent: number; resetsAt: number
 
 export type AccountCard = {
   agent: 'claude' | 'codex';
+  /**
+   * When these numbers were measured. Live for Claude (an API call per refresh);
+   * for Codex it is the last snapshot its CLI wrote, which only happens while a
+   * session runs — so the UI says how old it is.
+   */
+  measuredAt: number | null;
   /** Account email when known, else a generic name. Never a credential. */
   accountLabel: string;
   /** Plan badge as the vendor names it: TEAM, MAX, PRO, PLUS. */
@@ -72,6 +78,23 @@ const asTimestamp = (value: unknown): number | null => {
   }
   return null;
 };
+
+/**
+ * A window whose reset has passed has rolled over: the percentage Codex wrote
+ * before the reset describes a window that no longer exists. Codex itself
+ * reports a fresh window after re-reading, so a stale row is zeroed rather than
+ * left claiming usage the account no longer has against it.
+ *
+ * The next reset is unknowable from a rolled-over snapshot — it depends on when
+ * the next turn runs — so it is dropped rather than guessed.
+ */
+export function dropRolledOverWindows(windows: QuotaWindow[], now = Date.now()): QuotaWindow[] {
+  return windows.map((window) => (
+    window.resetsAt !== null && window.resetsAt <= now
+      ? { ...window, usedPercent: 0, resetsAt: null }
+      : window
+  ));
+}
 
 /** `weekly_scoped` → `Weekly · Fable`: the scope names what the window covers. */
 function scopedSuffix(scope: unknown): string | null {
@@ -246,6 +269,8 @@ export function createQuotaService({
     const windows = await claudeQuota();
     return {
       agent: 'claude',
+      // Fetched just now, so the numbers are as live as the vendor has them.
+      measuredAt: windows.length ? Date.now() : null,
       accountLabel: typeof account.emailAddress === 'string' ? account.emailAddress : 'Claude account',
       plan: claudePlan(account),
       credentialSource: process.platform === 'darwin' ? 'Keychain' : '~/.claude',
@@ -265,13 +290,15 @@ export function createQuotaService({
     if (!tokens) return null;
     const claims = typeof tokens.id_token === 'string' ? decodeJwtClaims(tokens.id_token) : null;
     const snapshot = await codexRateLimits();
+    const windows = dropRolledOverWindows(snapshot?.windows ?? []);
     return {
       agent: 'codex',
+      measuredAt: snapshot?.capturedAt ?? null,
       accountLabel: typeof claims?.email === 'string' ? claims.email : 'Codex account',
       plan: codexPlan(claims),
       credentialSource: '~/.codex',
-      windows: snapshot?.windows ?? [],
-      quotaStatus: snapshot?.windows.length ? 'official' : 'unavailable',
+      windows,
+      quotaStatus: windows.length ? 'official' : 'unavailable',
     };
   }
 

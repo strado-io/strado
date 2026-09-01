@@ -12,6 +12,7 @@ const HOUR = 3_600_000;
 
 const claude = (over: Partial<UsageAccount> = {}): UsageAccount => ({
   agent: 'claude',
+  measuredAt: Date.now(),
   accountLabel: 'dev@example.com',
   plan: 'TEAM',
   credentialSource: 'Keychain',
@@ -25,6 +26,7 @@ const claude = (over: Partial<UsageAccount> = {}): UsageAccount => ({
 
 const codex = (usedPercent: number): UsageAccount => ({
   agent: 'codex',
+  measuredAt: Date.now(),
   accountLabel: 'dev@strado.io',
   plan: 'PLUS',
   credentialSource: '~/.codex',

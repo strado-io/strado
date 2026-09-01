@@ -1,4 +1,5 @@
 import { QuotaBar } from './QuotaBar';
+import { measurementAge } from './format';
 import type { UsageAccount } from '../../types';
 
 const AGENT_NAME: Record<'claude' | 'codex', string> = {
@@ -23,6 +24,7 @@ function maskEmail(label: string): string {
  * lives, above a bar per rate-limit window.
  */
 export function AccountCard({ account, hideEmails }: { account: UsageAccount; hideEmails: boolean }) {
+  const age = measurementAge(account.measuredAt);
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950">
       <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-2">
@@ -35,7 +37,15 @@ export function AccountCard({ account, hideEmails }: { account: UsageAccount; hi
             {account.plan}
           </span>
         )}
-        <span className="ml-auto shrink-0 font-mono text-[10px] text-zinc-600">{account.credentialSource}</span>
+        {age && (
+          <span
+            className="ml-auto shrink-0 text-[10px] text-zinc-600"
+            title="These limits were last reported by the agent at this time"
+          >{age}</span>
+        )}
+        <span className={`${age ? '' : 'ml-auto '}shrink-0 font-mono text-[10px] text-zinc-600`}>
+          {account.credentialSource}
+        </span>
       </div>
       <div className="px-3 py-1.5">
         {account.quotaStatus === 'official' ? (

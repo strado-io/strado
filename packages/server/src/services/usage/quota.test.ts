@@ -2,16 +2,18 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createQuotaService, parseClaudeLimits } from './quota.js';
+import { createQuotaService, dropRolledOverWindows, parseClaudeLimits } from './quota.js';
 import type { RateLimitSnapshot } from './codexLogs.js';
 
 let home = '';
 
+// Resets are relative: a fixed epoch would drift into the past and the
+// rolled-over rule would zero these windows.
 const codexSnapshot: RateLimitSnapshot = {
-  capturedAt: 1_788_260_000_000,
+  capturedAt: Date.now() - 60_000,
   windows: [
-    { label: 'Session (5h)', usedPercent: 36, resetsAt: 1_788_266_796_000 },
-    { label: 'Weekly', usedPercent: 40, resetsAt: 1_788_773_664_000 },
+    { label: 'Session (5h)', usedPercent: 36, resetsAt: Date.now() + 2 * 3_600_000 },
+    { label: 'Weekly', usedPercent: 40, resetsAt: Date.now() + 5 * 86_400_000 },
   ],
 };
 
@@ -72,6 +74,30 @@ beforeEach(async () => {
 afterEach(async () => {
   await fsp.rm(home, { recursive: true, force: true });
   vi.useRealTimers();
+});
+
+describe('dropRolledOverWindows', () => {
+  const now = Date.parse('2026-09-01T18:00:00Z');
+
+  it('zeroes a window whose reset has already passed', () => {
+    expect(dropRolledOverWindows([
+      { label: 'Session (5h)', usedPercent: 44, resetsAt: now - 60_000 },
+    ], now)).toEqual([
+      { label: 'Session (5h)', usedPercent: 0, resetsAt: null },
+    ]);
+  });
+
+  it('leaves a live window untouched', () => {
+    const live = [{ label: 'Weekly', usedPercent: 41, resetsAt: now + 86_400_000 }];
+
+    expect(dropRolledOverWindows(live, now)).toEqual(live);
+  });
+
+  it('keeps a window with no reset time as reported', () => {
+    const unknown = [{ label: 'Weekly · Fable', usedPercent: 0, resetsAt: null }];
+
+    expect(dropRolledOverWindows(unknown, now)).toEqual(unknown);
+  });
 });
 
 describe('parseClaudeLimits', () => {
@@ -269,6 +295,34 @@ describe('codex account card', () => {
       accountLabel: 'dev@example.com',
       plan: 'PLUS',
     });
+  });
+
+  it('zeroes a rolled-over session window instead of repeating a stale figure', async () => {
+    await writeCodexAuth();
+    const rolledOver = {
+      capturedAt: Date.now() - 3 * 60 * 60_000,
+      windows: [
+        { label: 'Session (5h)', usedPercent: 44, resetsAt: Date.now() - 60_000 },
+        { label: 'Weekly', usedPercent: 41, resetsAt: Date.now() + 86_400_000 },
+      ],
+    };
+
+    const cards = await service({ codexRateLimits: async () => rolledOver }).accounts();
+    const codex = cards.find((card) => card.agent === 'codex');
+
+    // The 5h window rolled over: Codex itself reports a fresh window, so ours
+    // must not keep claiming 44%.
+    expect(codex!.windows[0]).toEqual({ label: 'Session (5h)', usedPercent: 0, resetsAt: null });
+    expect(codex!.windows[1]!.usedPercent).toBe(41);
+    expect(codex!.measuredAt).toBe(rolledOver.capturedAt);
+  });
+
+  it('reports when the claude figures were measured', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service().accounts();
+
+    expect(claude!.measuredAt).toBeGreaterThan(Date.now() - 5_000);
   });
 
   it('keeps the card with unavailable quota when no snapshot exists yet', async () => {

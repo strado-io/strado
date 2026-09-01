@@ -17,6 +17,7 @@ const summary = (cost: number): UsageSummary => ({
 
 const accounts = [{
   agent: 'claude' as const,
+  measuredAt: Date.now(),
   accountLabel: 'dev@example.com',
   plan: 'TEAM',
   credentialSource: 'Keychain',

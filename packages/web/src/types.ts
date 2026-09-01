@@ -262,6 +262,8 @@ export type UsageQuotaWindow = { label: string; usedPercent: number; resetsAt: n
 
 export type UsageAccount = {
   agent: UsageAgent;
+  /** When the figures were measured; Codex reports only while a session runs. */
+  measuredAt: number | null;
   accountLabel: string;
   plan: string | null;
   credentialSource: string;

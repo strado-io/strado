@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bytes, money, percent, pricingNote, shortDate, tokens, untilReset } from './format';
+import { bytes, measurementAge, money, percent, pricingNote, shortDate, tokens, untilReset } from './format';
 
 describe('money', () => {
   it('rounds and groups above a thousand', () => {
@@ -99,5 +99,20 @@ describe('pricingNote', () => {
 
   it('drops an unparseable date rather than printing it', () => {
     expect(pricingNote({ source: 'litellm', fetchedAt: 'whenever' })).toBe('LiteLLM rates');
+  });
+});
+
+describe('measurementAge', () => {
+  const now = Date.parse('2026-09-01T18:00:00Z');
+
+  it('stays quiet while the reading is fresh', () => {
+    expect(measurementAge(now - 4 * 60_000, now)).toBeNull();
+    expect(measurementAge(null, now)).toBeNull();
+  });
+
+  it('reports minutes, hours and days once it matters', () => {
+    expect(measurementAge(now - 25 * 60_000, now)).toBe('25m ago');
+    expect(measurementAge(now - 3 * 3_600_000, now)).toBe('3h ago');
+    expect(measurementAge(now - 2 * 86_400_000, now)).toBe('2d ago');
   });
 });

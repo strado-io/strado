@@ -45,6 +45,7 @@ const summary = (over: Partial<UsageSummary> = {}): UsageSummary => ({
 
 const claudeAccount: UsageAccount = {
   agent: 'claude',
+  measuredAt: Date.now(),
   accountLabel: 'dev@example.com',
   plan: 'TEAM',
   credentialSource: 'Keychain',
@@ -107,6 +108,19 @@ describe('UsagePage', () => {
     expect(sessionBar).toHaveAttribute('aria-valuenow', '2');
     expect(screen.getByText('↺ 1h 9m')).toBeInTheDocument();
     expect(screen.getByText('↺ 6d 2h')).toBeInTheDocument();
+  });
+
+  it('says how old a stale reading is', async () => {
+    mocks.accounts.mockResolvedValue([{
+      ...claudeAccount,
+      agent: 'codex',
+      measuredAt: Date.now() - 3 * 60 * 60_000,
+      credentialSource: '~/.codex',
+    }]);
+
+    render(<UsagePage wsId="ws-1" />);
+
+    expect(await screen.findByText('3h ago')).toBeInTheDocument();
   });
 
   it('masks emails on request and restores them', async () => {

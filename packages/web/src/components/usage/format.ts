@@ -71,3 +71,19 @@ export function pricingNote(pricing: { source: 'litellm' | 'builtin'; fetchedAt:
   if (!fetched || Number.isNaN(fetched.getTime())) return 'LiteLLM rates';
   return `LiteLLM rates · ${shortDate(fetched.toISOString().slice(0, 10))}`;
 }
+
+/**
+ * How old a quota measurement is, once it is old enough to matter. Codex writes
+ * its limits only while a session runs, so a card can be hours behind; saying
+ * so beats presenting a stale percentage as current.
+ */
+export function measurementAge(measuredAt: number | null, now = Date.now()): string | null {
+  if (!measuredAt) return null;
+  const minutes = Math.floor((now - measuredAt) / 60_000);
+  if (minutes < 10) return null;
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days}d ago`;
+  if (hours > 0) return `${hours}h ago`;
+  return `${minutes}m ago`;
+}
