@@ -49,9 +49,9 @@ const PER_MILLION: Record<string, Rate> = {
   'claude-sonnet-4-5': { input: 3, output: 15, longContextOver: 200_000 },
   'claude-haiku-4-5': { input: 1, output: 5 },
   // OpenAI — the rates Codex bills against, with the 272K long-context band.
-  'gpt-5.6-sol': { input: 5, output: 30, longContextOver: 272_000 },
+  'gpt-5.6-sol': { input: 4, output: 20, longContextOver: 272_000 },
   // The family row is what an unlisted 5.6 variant falls back to.
-  'gpt-5.6': { input: 5, output: 30, longContextOver: 272_000 },
+  'gpt-5.6': { input: 4, output: 20, longContextOver: 272_000 },
   'gpt-5.6-terra': { input: 2, output: 12, longContextOver: 272_000 },
   'gpt-5.6-luna': { input: 0.2, output: 1.2, longContextOver: 272_000 },
   'gpt-5.5': { input: 5, output: 30, longContextOver: 272_000 },

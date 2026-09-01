@@ -86,8 +86,8 @@ describe('priceUsd', () => {
       );
       return priceUsd(model, tokens(scaled)).cost * (1_000_000 / scale);
     };
-    expect(perMillion('gpt-5.6-sol', { input: 1_000_000 })).toBeCloseTo(5, 6);
-    expect(perMillion('gpt-5.6-sol', { output: 1_000_000 })).toBeCloseTo(30, 6);
+    expect(perMillion('gpt-5.6-sol', { input: 1_000_000 })).toBeCloseTo(4, 6);
+    expect(perMillion('gpt-5.6-sol', { output: 1_000_000 })).toBeCloseTo(20, 6);
     expect(perMillion('gpt-5.6-terra', { input: 1_000_000 })).toBeCloseTo(2, 6);
     expect(perMillion('gpt-5.6-luna', { input: 1_000_000 })).toBeCloseTo(0.2, 6);
   });
@@ -104,7 +104,7 @@ describe('priceUsd', () => {
     const shortRate = priceUsd('gpt-5.6-sol', short).cost / 100_000;
     const longCost = priceUsd('gpt-5.6-sol', long).cost;
     // Input doubles and output is 1.5x once the prompt passes 272K tokens.
-    expect(longCost).toBeCloseTo(300_000 * (5 / 1e6) * 2 + 1_000 * (30 / 1e6) * 1.5, 6);
+    expect(longCost).toBeCloseTo(300_000 * (4 / 1e6) * 2 + 1_000 * (20 / 1e6) * 1.5, 6);
     expect(longCost / 300_000).toBeGreaterThan(shortRate);
   });
 
