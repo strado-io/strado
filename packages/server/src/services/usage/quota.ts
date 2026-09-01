@@ -32,12 +32,14 @@ const CLAUDE_OAUTH_BETA = 'oauth-2025-04-20';
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const CACHE_MS = 5 * 60_000;
 
-/** Windows the usage payload may carry, in the order the UI shows them. */
-const CLAUDE_WINDOWS: { key: string; label: string }[] = [
+/**
+ * Legacy shape: fixed top-level keys. Only read when the payload carries no
+ * `limits` array, which is self-describing and covers model-scoped windows the
+ * fixed keys cannot name.
+ */
+const CLAUDE_LEGACY_WINDOWS: { key: string; label: string }[] = [
   { key: 'five_hour', label: 'Session (5h)' },
   { key: 'seven_day', label: 'Weekly' },
-  { key: 'seven_day_opus', label: 'Weekly · Opus' },
-  { key: 'seven_day_fable', label: 'Weekly · Fable' },
 ];
 
 export type QuotaServiceOptions = {
@@ -70,6 +72,49 @@ const asTimestamp = (value: unknown): number | null => {
   }
   return null;
 };
+
+/** `weekly_scoped` → `Weekly · Fable`: the scope names what the window covers. */
+function scopedSuffix(scope: unknown): string | null {
+  if (!isRecord(scope)) return null;
+  const model = isRecord(scope.model) ? scope.model : null;
+  const name = model && typeof model.display_name === 'string' ? model.display_name : null;
+  if (name) return name;
+  return typeof scope.surface === 'string' && scope.surface ? scope.surface : null;
+}
+
+function limitLabel(kind: string, scope: unknown): string {
+  const suffix = scopedSuffix(scope);
+  if (kind === 'session') return 'Session (5h)';
+  if (kind === 'weekly_all') return 'Weekly';
+  if (kind === 'weekly_scoped') return suffix ? `Weekly · ${suffix}` : 'Weekly · scoped';
+  // An unfamiliar window still gets a readable row rather than being dropped.
+  const readable = kind.replace(/_/g, ' ').replace(/^\w/, (first) => first.toUpperCase());
+  return suffix ? `${readable} · ${suffix}` : readable;
+}
+
+/**
+ * The usage payload's `limits` array: one entry per rate-limit window, each
+ * naming its own kind and scope. Preferred over the fixed top-level keys
+ * because model-scoped windows (a weekly cap that applies to one model only)
+ * arrive here with the model's display name, and their key names are internal
+ * codenames that change.
+ */
+export function parseClaudeLimits(value: unknown): QuotaWindow[] {
+  if (!Array.isArray(value)) return [];
+  const windows: QuotaWindow[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const kind = typeof entry.kind === 'string' ? entry.kind : '';
+    const percent = entry.percent ?? entry.utilization;
+    if (!kind || typeof percent !== 'number' || !Number.isFinite(percent)) continue;
+    windows.push({
+      label: limitLabel(kind, entry.scope),
+      usedPercent: asPercent(percent),
+      resetsAt: asTimestamp(entry.resets_at),
+    });
+  }
+  return windows;
+}
 
 function claudePlan(account: Record<string, unknown>): string | null {
   const orgType = typeof account.organizationType === 'string' ? account.organizationType : '';
@@ -173,8 +218,11 @@ export function createQuotaService({
     }
     if (!isRecord(payload)) return [];
     const source = isRecord(payload.usage) ? payload.usage : payload;
+    const fromLimits = parseClaudeLimits(source.limits);
+    if (fromLimits.length) return fromLimits;
+
     const windows: QuotaWindow[] = [];
-    for (const { key, label } of CLAUDE_WINDOWS) {
+    for (const { key, label } of CLAUDE_LEGACY_WINDOWS) {
       const entry = source[key];
       if (!isRecord(entry)) continue;
       windows.push({

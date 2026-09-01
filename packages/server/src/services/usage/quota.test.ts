@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createQuotaService } from './quota.js';
+import { createQuotaService, parseClaudeLimits } from './quota.js';
 import type { RateLimitSnapshot } from './codexLogs.js';
 
 let home = '';
@@ -74,7 +74,79 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+describe('parseClaudeLimits', () => {
+  const limits = [
+    { kind: 'session', group: 'session', percent: 5, resets_at: '2026-09-01T16:40:00Z', scope: null },
+    { kind: 'weekly_all', group: 'weekly', percent: 2, resets_at: '2026-09-07T13:00:00Z', scope: null },
+    {
+      kind: 'weekly_scoped',
+      group: 'weekly',
+      percent: 0,
+      resets_at: null,
+      scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+    },
+  ];
+
+  it('names every window, including the model-scoped one', () => {
+    expect(parseClaudeLimits(limits)).toEqual([
+      { label: 'Session (5h)', usedPercent: 5, resetsAt: Date.parse('2026-09-01T16:40:00Z') },
+      { label: 'Weekly', usedPercent: 2, resetsAt: Date.parse('2026-09-07T13:00:00Z') },
+      { label: 'Weekly · Fable', usedPercent: 0, resetsAt: null },
+    ]);
+  });
+
+  it('falls back to the surface when a scope names no model', () => {
+    const [window] = parseClaudeLimits([
+      { kind: 'weekly_scoped', percent: 3, resets_at: null, scope: { model: null, surface: 'code' } },
+    ]);
+
+    expect(window!.label).toBe('Weekly · code');
+  });
+
+  it('keeps an unfamiliar window with a readable label', () => {
+    const [window] = parseClaudeLimits([{ kind: 'monthly_all', percent: 7, resets_at: null }]);
+
+    expect(window!.label).toBe('Monthly all');
+  });
+
+  it('drops entries with no percentage rather than showing zero', () => {
+    expect(parseClaudeLimits([
+      { kind: 'session', percent: null },
+      { kind: 'weekly_all' },
+      'nope',
+    ])).toEqual([]);
+  });
+
+  it('ignores a payload that is not an array', () => {
+    expect(parseClaudeLimits({ session: { percent: 5 } })).toEqual([]);
+    expect(parseClaudeLimits(undefined)).toEqual([]);
+  });
+});
+
 describe('claude account card', () => {
+  it('prefers the limits array over the fixed top-level keys', async () => {
+    await writeClaudeAccount();
+
+    const [claude] = await service({
+      fetchImpl: (async () => new Response(JSON.stringify({
+        five_hour: { utilization: 99, resets_at: '2026-09-01T18:00:00Z' },
+        seven_day: { utilization: 98, resets_at: '2026-09-07T18:00:00Z' },
+        nimbus_quill: { utilization: 0, resets_at: null },
+        limits: [
+          { kind: 'session', percent: 5, resets_at: '2026-09-01T16:40:00Z' },
+          { kind: 'weekly_all', percent: 2, resets_at: '2026-09-07T13:00:00Z' },
+          { kind: 'weekly_scoped', percent: 0, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+        ],
+      }), { status: 200 })) as typeof fetch,
+    }).accounts();
+
+    expect(claude!.windows.map((w) => [w.label, w.usedPercent])).toEqual([
+      ['Session (5h)', 5],
+      ['Weekly', 2],
+      ['Weekly · Fable', 0],
+    ]);
+  });
+
   it('reads identity locally and quota from the usage endpoint', async () => {
     await writeClaudeAccount();
 
