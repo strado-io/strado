@@ -21,6 +21,8 @@ export type MachineOptions = {
   /** How long to watch the CPU counters; short enough for a request. */
   windowMs?: number;
   diskProbe?: () => Promise<string>;
+  /** `vm_stat` output on darwin; overridden in tests. */
+  memProbe?: () => Promise<string>;
 };
 
 type CpuTotals = { idle: number; total: number };
@@ -36,6 +38,29 @@ function cpuTotals(): CpuTotals {
   }
   return { idle, total };
 }
+
+const defaultMemProbe = async (): Promise<string> => {
+  const { stdout } = await run('vm_stat');
+  return stdout;
+};
+
+/**
+ * `os.freemem()` on macOS counts only genuinely free pages, so a healthy
+ * machine reads 99% used — inactive and speculative pages are reclaimable on
+ * demand and are not pressure. `vm_stat` exposes them, which is the same basis
+ * Activity Monitor reports against.
+ */
+export function parseVmStat(output: string): number | null {
+  const pageSize = Number(/page size of (\d+) bytes/.exec(output)?.[1]);
+  if (!Number.isFinite(pageSize) || pageSize <= 0) return null;
+  const pages = (label: string): number => {
+    const found = new RegExp(`Pages ${label}:\\s+(\\d+)`).exec(output);
+    return found ? Number(found[1]) : 0;
+  };
+  const reclaimable = pages('free') + pages('inactive') + pages('speculative') + pages('purgeable');
+  if (reclaimable <= 0) return null;
+  return reclaimable * pageSize;
+};
 
 const defaultDiskProbe = async (): Promise<string> => {
   const { stdout } = await run('df', ['-k', os.homedir()]);
@@ -57,7 +82,11 @@ function parseDf(output: string): { total: number; used: number } | null {
 }
 
 /** A point-in-time look at the machine the agents are running on. */
-export async function sampleMachine({ windowMs = 150, diskProbe = defaultDiskProbe }: MachineOptions = {}): Promise<MachineSample> {
+export async function sampleMachine({
+  windowMs = 150,
+  diskProbe = defaultDiskProbe,
+  memProbe = defaultMemProbe,
+}: MachineOptions = {}): Promise<MachineSample> {
   const before = cpuTotals();
   const disk = await (async () => {
     try {
@@ -79,10 +108,19 @@ export async function sampleMachine({ windowMs = 150, diskProbe = defaultDiskPro
     : 0;
 
   const memTotalBytes = os.totalmem();
+  const available = process.platform === 'darwin'
+    ? await (async () => {
+      try {
+        return parseVmStat(await memProbe());
+      } catch {
+        return null;
+      }
+    })()
+    : null;
   return {
     cpuPercent,
     cpuCount: os.cpus().length,
-    memUsedBytes: memTotalBytes - os.freemem(),
+    memUsedBytes: Math.max(0, memTotalBytes - (available ?? os.freemem())),
     memTotalBytes,
     diskUsedBytes: disk?.used ?? null,
     diskTotalBytes: disk?.total ?? null,

@@ -7,8 +7,8 @@ const AGENT_NAME: Record<'claude' | 'codex', string> = {
 };
 
 const AGENT_DOT: Record<'claude' | 'codex', string> = {
-  claude: 'bg-orange-500',
-  codex: 'bg-sky-400',
+  claude: 'bg-sky-500',
+  codex: 'bg-blue-400',
 };
 
 /** Masks the local part of an email: `k•••@fleetx.io`. */

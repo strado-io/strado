@@ -4,7 +4,9 @@ import { money, shortDate, tokens } from './format';
 import type { UsageDayPoint } from '../../types';
 
 const BOX = { width: 1000, height: 420 };
-const PAD = { left: 8, right: 8, top: 8, bottom: 22 };
+// Top padding leaves room for the highest axis label, which is drawn above
+// its gridline and would otherwise be clipped by the viewBox.
+const PAD = { left: 8, right: 8, top: 20, bottom: 22 };
 
 const axisLabel = (value: number, metric: ChartMetric) => (
   metric === 'cost' ? money(value) : tokens(value)
@@ -49,10 +51,13 @@ export function UsageChart({ series, metric }: { series: UsageDayPoint[]; metric
             );
           })}
 
-          <path d={geometry.claudeArea} className="fill-orange-500/15" />
-          <path d={geometry.codexArea} className="fill-sky-400/15" />
-          <path d={geometry.claudeLine} fill="none" className="stroke-orange-500" strokeWidth={2} />
-          <path d={geometry.codexLine} fill="none" className="stroke-sky-400" strokeWidth={2} />
+          {/* Codex is usually the thinner band, so its stacked top edge is drawn
+              first: where the two lines coincide, Claude's stroke stays on top
+              instead of a blue outline implying spend that isn't there. */}
+          <path d={geometry.codexArea} className="fill-blue-400/25" />
+          <path d={geometry.codexLine} fill="none" className="stroke-blue-400" strokeWidth={2} />
+          <path d={geometry.claudeArea} className="fill-sky-500/15" />
+          <path d={geometry.claudeLine} fill="none" className="stroke-sky-500" strokeWidth={2} />
 
           {hover !== null && geometry.xs[hover] !== undefined && (
             <line
@@ -98,11 +103,11 @@ export function UsageChart({ series, metric }: { series: UsageDayPoint[]; metric
         >
           <div className="mb-0.5 text-zinc-400">{shortDate(hovered.date)}</div>
           <div className="flex items-center gap-2 font-mono tabular-nums text-zinc-300">
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-sky-500" />
             {format(hovered.claude[metric])}
           </div>
           <div className="flex items-center gap-2 font-mono tabular-nums text-zinc-300">
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-blue-400" />
             {format(hovered.codex[metric])}
           </div>
         </div>

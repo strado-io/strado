@@ -2,8 +2,8 @@ import { percent, untilReset } from './format';
 import type { UsageQuotaWindow } from '../../types';
 
 const AGENT_FILL: Record<'claude' | 'codex', string> = {
-  claude: 'bg-orange-500',
-  codex: 'bg-sky-400',
+  claude: 'bg-sky-500',
+  codex: 'bg-blue-400',
 };
 
 /**

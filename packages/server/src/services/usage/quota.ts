@@ -106,6 +106,19 @@ async function fileToken(agentHomeDir: string): Promise<string> {
   return token;
 }
 
+/**
+ * OpenAI namespaces its claims under an object keyed by a URL. Some tokens
+ * flatten that into a dotted key instead, so both spellings are checked.
+ */
+function codexPlan(claims: Record<string, unknown> | null): string | null {
+  if (!claims) return null;
+  const namespaced = claims['https://api.openai.com/auth'];
+  const nested = isRecord(namespaced) ? namespaced.chatgpt_plan_type : undefined;
+  const flat = claims['https://api.openai.com/auth.chatgpt_plan_type'];
+  const plan = [nested, flat].find((value) => typeof value === 'string' && value);
+  return typeof plan === 'string' ? plan.toUpperCase() : null;
+}
+
 function decodeJwtClaims(token: string): Record<string, unknown> | null {
   const body = token.split('.')[1];
   if (!body) return null;
@@ -203,12 +216,11 @@ export function createQuotaService({
     }
     if (!tokens) return null;
     const claims = typeof tokens.id_token === 'string' ? decodeJwtClaims(tokens.id_token) : null;
-    const planClaim = claims?.['https://api.openai.com/auth.chatgpt_plan_type'];
     const snapshot = await codexRateLimits();
     return {
       agent: 'codex',
       accountLabel: typeof claims?.email === 'string' ? claims.email : 'Codex account',
-      plan: typeof planClaim === 'string' && planClaim ? planClaim.toUpperCase() : null,
+      plan: codexPlan(claims),
       credentialSource: '~/.codex',
       windows: snapshot?.windows ?? [],
       quotaStatus: snapshot?.windows.length ? 'official' : 'unavailable',

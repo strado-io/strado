@@ -2,8 +2,8 @@ import { money, percent, tokens } from './format';
 import type { UsageModelRow, UsageWorktreeRow } from '../../types';
 
 const AGENT_DOT: Record<'claude' | 'codex', string> = {
-  claude: 'bg-orange-500',
-  codex: 'bg-sky-400',
+  claude: 'bg-sky-500',
+  codex: 'bg-blue-400',
 };
 
 const HEAD = 'text-[11px] font-normal text-zinc-600';

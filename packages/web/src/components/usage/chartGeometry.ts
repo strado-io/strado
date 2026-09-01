@@ -121,7 +121,9 @@ export function stackedSeries(
       : '',
     claudeLine,
     codexLine,
-    ticks: [0, max / 3, (max * 2) / 3, max],
+    // Halves of a 1/2/5 axis top stay round numbers; thirds would print
+    // $333.33 on the gridline.
+    ticks: [0, max / 2, max],
     max,
     xs,
   };

@@ -186,7 +186,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
                       <li key={agent} className="flex items-center gap-2 text-[11px]">
                         <span
                           aria-hidden
-                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${agent === 'claude' ? 'bg-orange-500' : 'bg-sky-400'}`}
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${agent === 'claude' ? 'bg-sky-500' : 'bg-blue-400'}`}
                         />
                         <span className="min-w-0 flex-1 truncate text-zinc-400">{AGENT_NAME[agent]}</span>
                         <span className="font-mono tabular-nums text-zinc-300">

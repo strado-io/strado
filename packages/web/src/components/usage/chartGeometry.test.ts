@@ -12,6 +12,12 @@ const box = { width: 600, height: 400 };
 const finite = (path: string) => !/NaN|Infinity|undefined/.test(path);
 
 describe('axisTop', () => {
+  it('keeps gridline values round', () => {
+    const geometry = stackedSeries([day('2026-08-30', 437)], 'cost', box);
+
+    expect(geometry.ticks).toEqual([0, 250, 500]);
+  });
+
   it('rounds a peak up to 1, 2 or 5 times a power of ten', () => {
     expect(axisTop(437)).toBe(500);
     expect(axisTop(120)).toBe(200);
@@ -70,7 +76,7 @@ describe('stackedSeries', () => {
 
     expect(geometry.claudeArea).toBe('');
     expect(geometry.codexArea).toBe('');
-    expect(geometry.ticks).toEqual([0, 1 / 3, 2 / 3, 1]);
+    expect(geometry.ticks).toEqual([0, 0.5, 1]);
   });
 
   it('switches the axis to tokens when asked', () => {

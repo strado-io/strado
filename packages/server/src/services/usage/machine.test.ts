@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sampleMachine } from './machine.js';
+import { parseVmStat, sampleMachine } from './machine.js';
 
 describe('sampleMachine', () => {
   it('reports memory, cpu and uptime for this machine', async () => {
@@ -42,5 +42,52 @@ describe('sampleMachine', () => {
     const sample = await sampleMachine({ windowMs: 20, diskProbe: async () => 'not a df table' });
 
     expect(sample.diskTotalBytes).toBeNull();
+  });
+});
+
+describe('parseVmStat', () => {
+  const output = [
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                               10000.',
+    'Pages active:                            400000.',
+    'Pages inactive:                          200000.',
+    'Pages speculative:                        50000.',
+    'Pages purgeable:                          20000.',
+  ].join('\n');
+
+  it('counts reclaimable pages as available memory', () => {
+    expect(parseVmStat(output)).toBe((10_000 + 200_000 + 50_000 + 20_000) * 16_384);
+  });
+
+  it('returns null when the output is not vm_stat', () => {
+    expect(parseVmStat('nope')).toBeNull();
+  });
+});
+
+describe('memory on darwin', () => {
+  it('uses the reclaimable figure rather than free pages alone', async () => {
+    const output = [
+      'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+      'Pages free:                               10000.',
+      'Pages inactive:                          200000.',
+    ].join('\n');
+
+    const sample = await sampleMachine({ windowMs: 20, memProbe: async () => output });
+
+    if (process.platform !== 'darwin') {
+      expect(sample.memUsedBytes).toBeGreaterThan(0);
+      return;
+    }
+    expect(sample.memUsedBytes).toBe(sample.memTotalBytes - 210_000 * 16_384);
+  });
+
+  it('falls back to free memory when the probe fails', async () => {
+    const sample = await sampleMachine({
+      windowMs: 20,
+      memProbe: async () => { throw new Error('no vm_stat'); },
+    });
+
+    expect(sample.memUsedBytes).toBeGreaterThan(0);
+    expect(sample.memUsedBytes).toBeLessThanOrEqual(sample.memTotalBytes);
   });
 });

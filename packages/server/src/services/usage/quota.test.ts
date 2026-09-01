@@ -179,6 +179,26 @@ describe('codex account card', () => {
     expect(codex!.windows).toEqual(codexSnapshot.windows);
   });
 
+  it('reads the plan from the namespaced claim object', async () => {
+    await fsp.mkdir(path.join(home, '.codex'), { recursive: true });
+    const body = Buffer.from(JSON.stringify({
+      email: 'dev@example.com',
+      'https://api.openai.com/auth': { chatgpt_plan_type: 'plus', chatgpt_account_id: 'acct' },
+    })).toString('base64url');
+    await fsp.writeFile(
+      path.join(home, '.codex', 'auth.json'),
+      JSON.stringify({ tokens: { id_token: `h.${body}.s` } }),
+      'utf8',
+    );
+
+    const cards = await service().accounts();
+
+    expect(cards.find((card) => card.agent === 'codex')).toMatchObject({
+      accountLabel: 'dev@example.com',
+      plan: 'PLUS',
+    });
+  });
+
   it('keeps the card with unavailable quota when no snapshot exists yet', async () => {
     await writeCodexAuth();
 
