@@ -195,6 +195,21 @@ describe('createUsageStore', () => {
     expect(summary.bytesRead).toBe(0);
   });
 
+  it('counts subagent transcripts nested under a session', async () => {
+    await writeClaude('/repo/wt-a', [claudeLine()]);
+    const subagents = path.join(home, '.claude', 'projects', encodeProjectDir('/repo/wt-a'), 'session', 'subagents');
+    await fsp.mkdir(subagents, { recursive: true });
+    await fsp.writeFile(path.join(subagents, 'agent-a.jsonl'), `${claudeLine({ id: 'sub' })}\n`, 'utf8');
+    const store = createUsageStore({ agentHomeDir: home, stateDir });
+
+    const summary = await store.summary({ days: 7, worktrees: labels() });
+
+    expect(summary.totals.tokens).toBe(206_000);
+    expect(summary.worktrees).toEqual([
+      { label: 'wt-a', path: '/repo/wt-a', cost: expect.any(Number), tokens: 206_000 },
+    ]);
+  });
+
   it('exposes the newest codex rate-limit snapshot', async () => {
     await writeCodex(codexLines());
     const store = createUsageStore({ agentHomeDir: home, stateDir });

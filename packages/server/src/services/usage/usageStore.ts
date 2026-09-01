@@ -82,7 +82,7 @@ type CacheShape = {
   skipped: number;
 };
 
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 const DAY_MS = 86_400_000;
 /** Longest window the UI offers, plus room; older days are dropped. */
 const RETAIN_DAYS = 120;

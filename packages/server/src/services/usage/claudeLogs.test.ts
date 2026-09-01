@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { claudeProjectDirs, encodeProjectDir, matchProjectDir, readClaudeEvents } from './claudeLogs.js';
+import { claudeProjectDirs, claudeTranscripts, encodeProjectDir, matchProjectDir, readClaudeEvents } from './claudeLogs.js';
 
 let dir = '';
 
@@ -114,6 +114,27 @@ describe('readClaudeEvents', () => {
     const { events, offset } = await readClaudeEvents(path.join(dir, 'nope.jsonl'), 0);
     expect(events).toHaveLength(0);
     expect(offset).toBe(0);
+  });
+});
+
+describe('claudeTranscripts', () => {
+  it('includes nested subagent transcripts, not just the session files', async () => {
+    const project = path.join(dir, '-repo-wt');
+    await fsp.mkdir(path.join(project, 'session-1', 'subagents'), { recursive: true });
+    await fsp.writeFile(path.join(project, 'session-1.jsonl'), `${line()}\n`, 'utf8');
+    await fsp.writeFile(path.join(project, 'session-1', 'subagents', 'agent-a.jsonl'), `${line()}\n`, 'utf8');
+    await fsp.writeFile(path.join(project, 'notes.md'), 'x', 'utf8');
+
+    const files = await claudeTranscripts(project);
+
+    expect(files.map((file) => path.relative(project, file)).sort()).toEqual([
+      'session-1.jsonl',
+      path.join('session-1', 'subagents', 'agent-a.jsonl'),
+    ]);
+  });
+
+  it('returns nothing for a directory that is not there', async () => {
+    expect(await claudeTranscripts(path.join(dir, 'missing'))).toEqual([]);
   });
 });
 

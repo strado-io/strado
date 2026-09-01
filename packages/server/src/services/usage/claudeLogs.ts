@@ -45,15 +45,29 @@ export async function claudeProjectDirs(root: string): Promise<string[]> {
   return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(root, entry.name));
 }
 
+/**
+ * Every transcript under a project directory, including the nested
+ * `<sessionId>/subagents/*.jsonl` files. Subagent turns are their own API calls
+ * — on a Task-heavy machine they are a third of the spend — so a shallow read
+ * of the project directory silently undercounts.
+ */
 export async function claudeTranscripts(projectDir: string): Promise<string[]> {
-  try {
-    const entries = await fsp.readdir(projectDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
-      .map((entry) => path.join(projectDir, entry.name));
-  } catch {
-    return [];
+  const found: string[] = [];
+  async function visit(dir: string): Promise<void> {
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await visit(full);
+      else if (entry.isFile() && entry.name.endsWith('.jsonl')) found.push(full);
+    }
   }
+  await visit(projectDir);
+  return found;
 }
 
 /** Reads `file` from `fromOffset`, returning whole lines only. */
