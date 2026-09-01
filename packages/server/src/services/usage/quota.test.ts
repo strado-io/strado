@@ -121,6 +121,24 @@ describe('parseClaudeLimits', () => {
     ]);
   });
 
+  it('reads exactly 1% as 1%, not as a share of one', () => {
+    // The live payload reports `percent: 1` for a model-scoped window at 1%;
+    // the old ≤1 heuristic turned that into 100%.
+    const [window] = parseClaudeLimits([
+      { kind: 'weekly_scoped', percent: 1, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+    ]);
+    expect(window!.usedPercent).toBe(1);
+  });
+
+  it('clamps an out-of-range percentage into 0..100', () => {
+    const [over, under] = parseClaudeLimits([
+      { kind: 'session', percent: 140, resets_at: null },
+      { kind: 'weekly_all', percent: -3, resets_at: null },
+    ]);
+    expect(over!.usedPercent).toBe(100);
+    expect(under!.usedPercent).toBe(0);
+  });
+
   it('falls back to the surface when a scope names no model', () => {
     const [window] = parseClaudeLimits([
       { kind: 'weekly_scoped', percent: 3, resets_at: null, scope: { model: null, surface: 'code' } },
@@ -248,7 +266,7 @@ describe('claude account card', () => {
     expect(cards.some((card) => card.agent === 'claude')).toBe(false);
   });
 
-  it('accepts a fractional utilization expressed as a share of one', async () => {
+  it('keeps a sub-1% utilization as a fraction of a percent', async () => {
     await writeClaudeAccount();
 
     const [claude] = await service({
@@ -257,7 +275,7 @@ describe('claude account card', () => {
       }), { status: 200 })) as typeof fetch,
     }).accounts();
 
-    expect(claude!.windows[0]!.usedPercent).toBe(42);
+    expect(claude!.windows[0]!.usedPercent).toBe(0.42);
   });
 });
 

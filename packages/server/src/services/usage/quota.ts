@@ -62,9 +62,11 @@ export type QuotaService = { accounts(): Promise<AccountCard[]> };
 
 const asPercent = (value: unknown): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
-  // Payloads have used both a 0-100 percentage and a 0-1 share; a value at or
-  // below 1 is ambiguous only when usage is under 1%, where both read the same.
-  return value > 1 ? value : value * 100;
+  // The usage endpoint reports a 0-100 percentage everywhere (`utilization:
+  // 4.0`, `percent: 1`). An earlier guess treated anything at or below 1 as a
+  // 0-1 share, which rendered a model-scoped window sitting at exactly 1% as
+  // 100%. Read it as a percentage and only clamp.
+  return Math.min(100, Math.max(0, value));
 };
 
 const asTimestamp = (value: unknown): number | null => {
