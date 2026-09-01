@@ -123,7 +123,7 @@ describe('OrganizationSection', () => {
     await userEvent.type(input, 'new-teammate@x.io');
     await userEvent.click(screen.getByRole('button', { name: /^invite$/i }));
 
-    await screen.findByText('Invited new-teammate@x.io — we emailed them.');
+    await screen.findByText('Invitation sent to new-teammate@x.io.');
     // Let sendInvite()'s trailing refresh() settle too, same reasoning as the
     // "clicking Invite" test above.
     await waitFor(() => expect(orgGet).toHaveBeenCalledTimes(2));
@@ -141,9 +141,7 @@ describe('OrganizationSection', () => {
     await userEvent.type(input, 'new-teammate@x.io');
     await userEvent.click(screen.getByRole('button', { name: /^invite$/i }));
 
-    await screen.findByText(
-      'Invited new-teammate@x.io, but the email could not be sent. Ask them to sign in with that address and accept in Settings → Organization.',
-    );
+    await screen.findByText('Invitation created for new-teammate@x.io, but email delivery failed.');
     await waitFor(() => expect(orgGet).toHaveBeenCalledTimes(2));
   });
 
@@ -274,7 +272,7 @@ describe('OrganizationSection', () => {
     render(<OrganizationSection />);
     await screen.findByText(/owner@x\.io/);
 
-    expect(screen.queryByText(/existing sessions on/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/runner sessions can remain/i)).not.toBeInTheDocument();
   });
 
   it('warns that removing someone does not immediately cut off a runner session already in use', async () => {
@@ -284,6 +282,6 @@ describe('OrganizationSection', () => {
     render(<OrganizationSection />);
     await screen.findByText(/owner@x\.io/);
 
-    expect(screen.getByText(/existing sessions on/i)).toBeInTheDocument();
+    expect(screen.getByText(/runner sessions can remain/i)).toBeInTheDocument();
   });
 });

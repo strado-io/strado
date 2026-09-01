@@ -28,7 +28,8 @@ const workspace: Workspace = {
 describe('SettingsModal', () => {
   it('opens on the section given by the prop', () => {
     render(<SettingsModal section="jira" onClose={() => {}} />);
-    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'jira');
+    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'integrations');
+    expect(screen.getByTestId('integration-pane')).toHaveAttribute('data-integration', 'jira');
   });
 
   it('defaults to the profile section', async () => {
@@ -37,30 +38,34 @@ describe('SettingsModal', () => {
     expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'profile');
   });
 
+  it('shows an icon for every settings navigation item', () => {
+    render(<SettingsModal onClose={() => {}} onOpenFeedback={() => {}} />);
+    for (const id of ['profile', 'organization', 'appearance', 'workspaces', 'runners', 'integrations', 'privacy', 'feedback']) {
+      expect(screen.getByTestId(`settings-icon-${id}`)).toBeInTheDocument();
+    }
+  });
+
   it('switches panes when a nav item is clicked', () => {
     render(<SettingsModal onClose={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }));
     expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'appearance');
   });
 
-  it('opens the Linear section from the nav', () => {
+  it('groups connections under a single Integrations navigation item', () => {
     render(<SettingsModal onClose={() => {}} />);
-    // Without entitlements the item carries a "Pro" badge in its accessible
-    // name ("Linear Pro"), and clicking it must still open the pane (upsell).
-    fireEvent.click(screen.getByRole('button', { name: /^Linear\b/ }));
-    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'linear');
+    fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'integrations');
+    expect(screen.queryByRole('button', { name: /^Jira$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^Jira\b/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^Linear\b/ })).toBeInTheDocument();
   });
 
-  it('opens the GitLab section from the nav', () => {
+  it('switches between providers inside Integrations', () => {
     render(<SettingsModal onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'GitLab' }));
-    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'gitlab');
-  });
-
-  it('opens the GitHub section from the nav', () => {
-    render(<SettingsModal onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'GitHub' }));
-    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'github');
+    fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+    expect(screen.getByTestId('integration-pane')).toHaveAttribute('data-integration', 'github');
+    fireEvent.click(screen.getByRole('tab', { name: 'GitLab' }));
+    expect(screen.getByTestId('integration-pane')).toHaveAttribute('data-integration', 'gitlab');
   });
 
   it('keeps workspace management inside Settings', async () => {
@@ -69,9 +74,10 @@ describe('SettingsModal', () => {
         <SettingsModal onClose={() => {}} />
       </WorkspaceContext.Provider>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Manage workspaces' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspaces' }));
     expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'workspaces');
     expect(await screen.findByRole('heading', { name: 'Workspaces' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'General' })).not.toBeInTheDocument();
   });
 
   it('opens runners in its own infrastructure section', () => {

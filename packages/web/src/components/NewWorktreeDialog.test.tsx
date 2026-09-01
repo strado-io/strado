@@ -13,16 +13,23 @@ vi.mock('../eventStream', () => ({
 }));
 
 const ticketsMyIssues = vi.fn();
+const gitBranches = vi.fn();
 vi.mock('../api', () => ({
   api: {
     tickets: {
       myIssues: (...a: unknown[]) => ticketsMyIssues(...a),
+    },
+    worktrees: {
+      git: {
+        branches: (...a: unknown[]) => gitBranches(...a),
+      },
     },
   },
 }));
 
 beforeEach(() => {
   ticketsMyIssues.mockReset().mockResolvedValue([]);
+  gitBranches.mockReset().mockResolvedValue({ branches: ['main'], current: 'main' });
   publishTickets({ configured: [] });
   jobHandler = null;
 });
@@ -55,6 +62,7 @@ describe('NewWorktreeDialog', () => {
   it('accepts a free-form (non-Jira) ticket id', () => {
     const onSubmit = vi.fn();
     render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add ticket' }));
     fireEvent.change(screen.getByLabelText(/^ticket \(optional\)$/i), { target: { value: 'spike-thing' } });
     fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Thing' } });
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
@@ -73,11 +81,16 @@ describe('NewWorktreeDialog', () => {
     );
   });
 
-  it('never shows a From Jira button — the ticket picker fills the form instead', async () => {
+  it('does not load tickets until the ticket picker is opened', async () => {
     publishTickets({ configured: ['jira'] });
     render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={vi.fn()} />);
+
+    expect(ticketsMyIssues).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox', { name: 'My open tickets' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add ticket' }));
     await vi.waitFor(() => expect(ticketsMyIssues).toHaveBeenCalledWith('jira'));
-    expect(screen.queryByRole('button', { name: /from jira/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('listbox', { name: 'My open tickets' })).toBeInTheDocument();
   });
 
   it('merges my open issues from every connected tracker, badge-tagged, and picking fills the form', async () => {
@@ -91,6 +104,7 @@ describe('NewWorktreeDialog', () => {
     );
     const onSubmit = vi.fn();
     render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add ticket' }));
 
     expect(await screen.findByText('Fix maps')).toBeInTheDocument();
     expect(screen.getByText('Ship linear')).toBeInTheDocument();
@@ -99,7 +113,7 @@ describe('NewWorktreeDialog', () => {
     expect(screen.getByTitle('Linear')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('option', { name: /ship linear/i }));
-    expect(screen.getByLabelText(/^ticket \(optional\)$/i)).toHaveValue('ENG-9');
+    expect(screen.getByRole('button', { name: 'Ticket: ENG-9' })).toBeInTheDocument();
     expect(screen.getByLabelText(/^title$/i)).toHaveValue('Ship linear');
 
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
@@ -116,19 +130,89 @@ describe('NewWorktreeDialog', () => {
         : Promise.resolve([{ key: 'ENG-9', summary: 'Ship linear', status: 'Todo', category: 'new', provider: 'linear' }]),
     );
     render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add ticket' }));
     expect(await screen.findByText('Ship linear')).toBeInTheDocument();
   });
 
   it('submits valid payload', () => {
     const onSubmit = vi.fn();
     render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={onSubmit} />);
-    fireEvent.change(screen.getByLabelText(/ticket/i), { target: { value: 'FD-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add ticket' }));
+    fireEvent.change(screen.getByLabelText(/^ticket \(optional\)$/i), { target: { value: 'FD-1' } });
     fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Thing' } });
-    fireEvent.change(screen.getByLabelText(/source branch/i), { target: { value: 'main' } });
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ repoId: 'r', ticketId: 'FD-1', title: 'Thing', sourceBranch: 'main' }),
     );
+  });
+
+  it('loads Git branches into a source branch dropdown', async () => {
+    gitBranches.mockResolvedValue({ branches: ['main', 'release/next', 'origin/main'], current: 'main' });
+    const onSubmit = vi.fn();
+    render(
+      <NewWorktreeDialog
+        repos={repos}
+        worktrees={[]}
+        workspaceId="workspace-1"
+        onCancel={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const branch = screen.getByRole('button', { name: 'Source branch' });
+    await vi.waitFor(() => expect(gitBranches).toHaveBeenCalledWith('workspace-1', '/main'));
+    fireEvent.click(branch);
+    fireEvent.click(await screen.findByRole('button', { name: 'release/next' }));
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Release work' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ sourceBranch: 'release/next' }));
+  });
+
+  it('keeps manual ticket entry usable when every connected provider is unavailable', async () => {
+    publishTickets({ configured: ['linear'] });
+    ticketsMyIssues.mockRejectedValue(new Error('tracker unavailable'));
+    render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add ticket' }));
+    expect(await screen.findByText('No open tickets found. You can still enter an ID above.')).toBeInTheDocument();
+    expect(screen.queryByText(/could not load tickets/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^ticket \(optional\)$/i)).toBeEnabled();
+  });
+
+  it('hides the node_modules choice and uses the repo main worktree as its default', () => {
+    const onSubmit = vi.fn();
+    render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={onSubmit} />);
+
+    expect(screen.queryByLabelText(/link node_modules from/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Simpler creation' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ sourceWorktree: '/main' }));
+  });
+
+  it('uses the shared picker for the creation machine and keeps offline runners disabled', () => {
+    const onSubmit = vi.fn();
+    render(
+      <NewWorktreeDialog
+        repos={repos}
+        worktrees={[]}
+        runners={[
+          { runnerId: 'runner-dev-id', name: 'runner-dev', online: true },
+          { runnerId: 'runner-offline-id', name: 'runner-offline', online: false },
+        ]}
+        onCancel={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Where' }));
+    expect(screen.getByRole('button', { name: 'runner-offline (offline)' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'runner-dev' }));
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Remote work' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ runnerId: 'runner-dev-id' }));
   });
 
   // A spinner for a multi-minute clone on a runner is indistinguishable from a

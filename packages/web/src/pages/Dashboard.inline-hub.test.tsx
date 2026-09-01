@@ -112,7 +112,9 @@ describe('Dashboard inline hub', () => {
   it('opens the workspace-level code reviews page from the sidebar', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    expect(document.querySelector('[data-filter-bar]')).toBeInTheDocument();
+    // Tasks has no empty toolbar when there are no running servers or sidebar
+    // controls, so the table begins at the top of the content area.
+    expect(document.querySelector('[data-filter-bar]')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Code reviews'));
     expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();

@@ -187,6 +187,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(input),
       }),
+    testConfig: () => request<{ ok: boolean; accountName: string }>('/api/jira/config/test', { method: 'POST' }),
   },
   tickets: {
     providers: () => request<{ providers: Array<{ provider: TicketProviderId; configured: boolean; label: string }> }>('/api/tickets/providers').then((b) => b.providers),
@@ -206,6 +207,7 @@ export const api = {
     linearConnectStart: () => request<{ url: string; state: string }>('/api/tickets/linear/connect', { method: 'POST' }),
     linearConnectStatus: (state: string) => request<{ connected: boolean; workspaceName?: string }>(`/api/tickets/linear/connect/${state}`),
     linearConfig: () => request<{ connected: boolean; workspaceName: string | null }>('/api/tickets/linear/config'),
+    linearTest: () => request<{ ok: boolean; workspaceName: string }>('/api/tickets/linear/config/test', { method: 'POST' }),
     linearDisconnect: () => request<{ ok: boolean }>('/api/tickets/linear/config', { method: 'DELETE' }),
   },
   gitlab: {
@@ -216,6 +218,7 @@ export const api = {
       }),
     removeConfig: (host: string) =>
       request<{ ok: boolean }>(`/api/gitlab/config/${encodeURIComponent(host)}`, { method: 'DELETE' }),
+    testConfig: () => request<{ ok: boolean; accounts: number }>('/api/gitlab/config/test', { method: 'POST' }),
   },
   github: {
     config: () => request<{ hosts: string[] }>('/api/github/config'),
@@ -225,6 +228,7 @@ export const api = {
       }),
     removeConfig: (host: string) =>
       request<{ ok: boolean }>(`/api/github/config/${encodeURIComponent(host)}`, { method: 'DELETE' }),
+    testConfig: () => request<{ ok: boolean; accounts: number }>('/api/github/config/test', { method: 'POST' }),
   },
   repos: {
     list: (wsId: string) =>
@@ -235,12 +239,17 @@ export const api = {
       request<RepoConfig>(`${wsBase(wsId)}/repos`, { method: 'POST', body: JSON.stringify(repo) }),
     // Clone onto the machine running THIS server (the point of the flow: a
     // runner provisions repos itself instead of you SSHing in to clone).
-    clone: (wsId: string, url: string, dest?: string) =>
+    clone: (wsId: string, url: string, parent?: string) =>
       request<{ repo: RepoConfig; warnings: string[]; alreadyRegistered: boolean; path: string }>(
         `${wsBase(wsId)}/repos/clone`,
-        { method: 'POST', body: JSON.stringify(dest ? { url, dest } : { url }) },
+        { method: 'POST', body: JSON.stringify(parent ? { url, parent } : { url }) },
         // A clone of a large repo legitimately runs for minutes.
         { timeoutMs: 0 },
+      ),
+    create: (wsId: string, name: string, parent?: string) =>
+      request<{ repo: RepoConfig; path: string; alreadyRegistered: boolean }>(
+        `${wsBase(wsId)}/repos/create`,
+        { method: 'POST', body: JSON.stringify(parent ? { name, parent } : { name }) },
       ),
     patch: (wsId: string, id: string, patch: Partial<RepoConfig>) =>
       request<RepoConfig>(`${wsBase(wsId)}/repos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),

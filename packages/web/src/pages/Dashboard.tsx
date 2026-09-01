@@ -5,12 +5,12 @@ import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } fr
 import { playDoneBeep } from '../lib/beep';
 import type { MergeRequest, RepoConfig, Worktree, WorkflowStatus } from '../types';
 import { OnboardingCard } from '../components/OnboardingCard';
-import { AddRepoDialog } from '../components/AddRepoDialog';
+import { AddRepoDialog, type AddRepoAnchor } from '../components/AddRepoDialog';
 import { Sidebar, type SidebarView } from '../components/Sidebar';
 import type { UpdateFooterProps } from '../components/UpdateFooter';
 import { FilterBar } from '../components/FilterBar';
 import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
-import { ImportTicketsDialog } from '../components/ImportTicketsDialog';
+import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
@@ -329,15 +329,15 @@ export function Dashboard(props: {
   // subscribe via useTickets).
   const [ticketsOn, setTicketsOn] = useState(false);
   const { providerErrors } = useTickets();
-  const [showImportTickets, setShowImportTickets] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [showAddRepo, setShowAddRepo] = useState(false);
+  const [addRepoAnchor, setAddRepoAnchor] = useState<AddRepoAnchor | null>(null);
   // Full-screen renderer overlays can be owned here or one level up in App.
   // The Browser preview and its DevTools are native WebContentsViews, so they
   // have to be parked off-screen while any of these is visible.
   const modalOpen = !!(
-    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo || showImportTickets
+    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo
   );
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem('strado:onboarding-welcomed') === '1');
   const [checklistDismissed, setChecklistDismissed] = useState(
@@ -606,6 +606,7 @@ export function Dashboard(props: {
       onKillExternal={handleKillExternal}
     />
   );
+  const hasRunningServers = state.worktrees.some(isRunning);
 
   const handleSetEnvProfile = async (w: Worktree, profile: string) => {
     const wasRunning = w.process.status === 'running' || w.process.status === 'starting';
@@ -685,7 +686,10 @@ export function Dashboard(props: {
           reviewCount={codeReviews.counts.open}
           reviewLoading={codeReviews.loading && codeReviews.repositories.length === 0}
           onCollapse={() => setSidebarCollapsed(true)}
-          onAddRepo={() => setShowAddRepo(true)}
+          onAddRepo={(anchor) => {
+            setAddRepoAnchor(anchor ?? null);
+            setShowAddRepo(true);
+          }}
           onDeleteRepo={async (repo) => {
             if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
             try {
@@ -713,7 +717,7 @@ export function Dashboard(props: {
         {/* Code reviews carries the sidebar toggle and running-servers chip in
             its own toolbar, so the shared row would only be an empty strip. */}
         {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote
-          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (
+          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (sidebarCollapsed || hasRunningServers) && (
         <FilterBar
           leading={
             sidebarCollapsed ? (
@@ -727,19 +731,7 @@ export function Dashboard(props: {
               </button>
             ) : undefined
           }
-          trailing={
-            <div className="flex items-center gap-2">
-              {runningServers}
-              {!selectedWorktree && activeView.kind === 'tasks' && ticketsOn && (
-                <button
-                  className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-                  onClick={() => setShowImportTickets(true)}
-                >
-                  Import tickets
-                </button>
-              )}
-            </div>
-          }
+          trailing={runningServers}
         />
         )}
 
@@ -841,7 +833,10 @@ export function Dashboard(props: {
                 const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
                 commitTree(repos, worktrees);
               }}
-              onOpenRepos={() => setShowAddRepo(true)}
+              onOpenRepos={() => {
+                setAddRepoAnchor(null);
+                setShowAddRepo(true);
+              }}
             />
           ) : (
             <>
@@ -930,30 +925,14 @@ export function Dashboard(props: {
 
       {showAddRepo && (
         <AddRepoDialog
+          anchor={addRepoAnchor}
           onAdded={async () => {
             const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
             commitTree(repos, worktrees);
           }}
-          onClose={() => setShowAddRepo(false)}
-        />
-      )}
-
-      {showImportTickets && (
-        <ImportTicketsDialog
-          repos={state.repos}
-          worktrees={state.worktrees}
-          onCancel={() => setShowImportTickets(false)}
-          onDone={async () => {
-            setShowImportTickets(false);
-            try {
-              const [repos, worktrees] = await Promise.all([
-                api.repos.list(wsId),
-                api.worktrees.list(wsId),
-              ]);
-              commitTree(repos, worktrees);
-            } catch {
-              // the 15s poll will catch up
-            }
+          onClose={() => {
+            setShowAddRepo(false);
+            setAddRepoAnchor(null);
           }}
         />
       )}

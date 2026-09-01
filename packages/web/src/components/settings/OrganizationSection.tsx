@@ -111,8 +111,8 @@ export function OrganizationSection({ reload = () => window.location.reload() }:
       setInviteEmail('');
       setInviteStatus(
         result.emailed
-          ? `Invited ${email} — we emailed them.`
-          : `Invited ${email}, but the email could not be sent. Ask them to sign in with that address and accept in Settings → Organization.`,
+          ? `Invitation sent to ${email}.`
+          : `Invitation created for ${email}, but email delivery failed.`,
       );
       await refresh();
     } catch (e) {
@@ -205,80 +205,150 @@ export function OrganizationSection({ reload = () => window.location.reload() }:
     }
   }
 
+  const inputCls = 'h-9 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-zinc-600';
+
   return (
-    <section className="flex flex-col gap-4">
-      <div>
-        <h3 className="text-sm font-medium text-zinc-300">Organization</h3>
+    <section className="max-w-2xl">
+      <header className="mb-7 pr-10">
         {editingName ? (
-          <div className="mt-1 flex items-center gap-2">
+          <div className="flex max-w-md items-center gap-2">
             <input
               aria-label="Organization name"
-              className="rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
+              className={inputCls}
               value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
+              onChange={(event) => setNameDraft(event.target.value)}
               autoFocus
             />
             <button
+              type="button"
               disabled={renaming || !nameDraft.trim()}
-              onClick={saveRename}
-              className="rounded bg-emerald-700 px-2 py-1 text-xs text-white disabled:opacity-50"
+              onClick={() => void saveRename()}
+              className="rounded-md bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40"
             >
               {renaming ? 'Saving…' : 'Save'}
             </button>
-            <button
-              onClick={() => setEditingName(false)}
-              className="rounded px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200"
-            >
+            <button type="button" onClick={() => setEditingName(false)} className="rounded-md px-2.5 py-2 text-xs text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200">
               Cancel
             </button>
           </div>
         ) : (
-          <div className="mt-1 flex items-center gap-2">
-            <p className="text-sm text-zinc-200">{view.active.name}</p>
+          <div className="flex items-center gap-2.5">
+            <h1 className="truncate text-lg font-semibold text-zinc-100">{view.active.name}</h1>
+            <PlanBadge plan={view.entitlements?.plan} />
             {isOwner && (
               <button
+                type="button"
+                aria-label="Rename organization"
                 onClick={() => {
                   setNameDraft(view.active.name);
                   setEditingName(true);
                 }}
-                className="text-xs text-zinc-500 hover:text-zinc-300"
+                className="rounded-md p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300"
               >
-                Rename
+                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m3 11.5-.5 2 2-.5 7.8-7.8-1.5-1.5z" /><path d="m9.8 4.7 1.5 1.5" />
+                </svg>
               </button>
             )}
           </div>
         )}
-      </div>
+      </header>
 
-      <div>
-        <h4 className="text-xs font-medium uppercase tracking-wide text-zinc-600">Plan</h4>
-        <div className="mt-1 flex items-center gap-2">
-          <PlanBadge plan={view.entitlements?.plan} />
-          <p className="text-sm text-zinc-400">
-            {view.entitlements?.plan === 'pro'
-              ? 'Cloud features enabled — runners, remote worktrees, sandboxes, Jira & Linear.'
-              : 'Local features only. Cloud features (runners, remote, sandboxes, Jira & Linear) need Pro.'}
-          </p>
-        </div>
-      </div>
-
-      <div>
-        <h4 className="text-xs font-medium uppercase tracking-wide text-zinc-600">Members</h4>
-        <ul className="mt-1 space-y-1">
-          {view.members.map((m) => {
-            const isMe = !!myEmail && m.email.toLowerCase() === myEmail.toLowerCase();
-            return (
-              <li key={m.email} className="flex items-center justify-between rounded bg-zinc-900 px-2 py-1 text-sm">
-                <span className="text-zinc-300">
-                  {m.name || m.email} <span className="text-zinc-600">({m.email})</span>{' '}
-                  <span className="text-zinc-500">· {m.role}</span>
-                  {isMe && <span className="ml-1 text-xs text-emerald-400">you</span>}
+      {view.invitations.incoming.length > 0 && (
+        <section className="mb-7">
+          <h2 className="mb-3 text-sm font-medium text-zinc-200">Invitations</h2>
+          <ul className="space-y-2">
+            {view.invitations.incoming.map((invitation) => (
+              <li key={invitation.id} className="flex items-center gap-3 rounded-lg bg-zinc-900/35 p-3.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-xs font-semibold text-zinc-300">
+                  {invitation.orgName.charAt(0).toUpperCase()}
                 </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm text-zinc-200">{invitation.orgName}</div>
+                  <div className="mt-0.5 truncate text-xs text-zinc-600">From {invitation.invitedBy}</div>
+                </div>
+                <button
+                  type="button"
+                  disabled={busyInvitationId === invitation.id}
+                  onClick={() => void acceptInvite(invitation.id)}
+                  className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40"
+                >
+                  Accept
+                </button>
+                <button
+                  type="button"
+                  disabled={busyInvitationId === invitation.id}
+                  onClick={() => void declineInvite(invitation.id)}
+                  className="rounded-md px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
+                >
+                  Decline
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section>
+        <div className="mb-3 flex items-center justify-between gap-4">
+          <h2 className="text-sm font-medium text-zinc-200">
+            Members <span className="ml-1 font-normal text-zinc-600">{view.members.length}</span>
+          </h2>
+        </div>
+
+        {isOwner && (
+          <form
+            className="mb-4 flex items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendInvite();
+            }}
+          >
+            <input
+              aria-label="Invite by email"
+              type="email"
+              placeholder="Invite by email"
+              value={inviteEmail}
+              onChange={(event) => {
+                setInviteEmail(event.target.value);
+                setInviteStatus(null);
+              }}
+              className={inputCls}
+            />
+            <button
+              type="submit"
+              disabled={inviting || !inviteEmail.trim()}
+              className="shrink-0 rounded-md bg-zinc-100 px-4 py-2 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40"
+            >
+              {inviting ? 'Inviting…' : 'Invite'}
+            </button>
+          </form>
+        )}
+
+        {inviteStatus && <p role="status" className="mb-3 text-xs text-zinc-500">{inviteStatus}</p>}
+
+        <ul className="space-y-2">
+          {view.members.map((member) => {
+            const isMe = !!myEmail && member.email.toLowerCase() === myEmail.toLowerCase();
+            return (
+              <li key={member.email} className="flex items-center gap-3 rounded-lg bg-zinc-900/35 px-3.5 py-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-xs font-semibold text-zinc-300">
+                  {(member.name || member.email).charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm text-zinc-200">{member.name || member.email}</span>
+                    {isMe && <span className="shrink-0 text-[10px] text-emerald-400">you</span>}
+                  </div>
+                  {member.name && <div className="mt-0.5 truncate text-xs text-zinc-600">{member.email}</div>}
+                </div>
+                <span className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] capitalize text-zinc-500">{member.role}</span>
                 {isOwner && !isMe && (
                   <button
-                    disabled={busyEmail === m.email}
-                    onClick={() => removeMember(m.email)}
-                    className="text-xs text-zinc-500 hover:text-red-300 disabled:opacity-50"
+                    type="button"
+                    disabled={busyEmail === member.email}
+                    onClick={() => void removeMember(member.email)}
+                    className="rounded-md px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
                   >
                     Remove
                   </button>
@@ -286,123 +356,50 @@ export function OrganizationSection({ reload = () => window.location.reload() }:
               </li>
             );
           })}
+
+          {view.invitations.outgoing.map((invitation) => (
+            <li key={invitation.email} className="flex items-center gap-3 rounded-lg bg-zinc-900/20 px-3.5 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-xs text-zinc-600">@</span>
+              <span className="min-w-0 flex-1 truncate text-sm text-zinc-400">{invitation.email}</span>
+              <span className="rounded bg-zinc-900 px-2 py-0.5 text-[10px] text-zinc-600">Pending</span>
+              {isOwner && (
+                <button
+                  type="button"
+                  disabled={busyEmail === invitation.email}
+                  onClick={() => void cancelInvite(invitation.email)}
+                  className="rounded-md px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+              )}
+            </li>
+          ))}
         </ul>
+
         {isOwner && view.members.length > 1 && (
-          <p className="mt-1 text-xs text-zinc-600">
-            Removing someone ends their access to this org, but existing sessions on
-            runners they already opened may persist briefly — revoke the runner to
-            cut access immediately.
-          </p>
+          <p className="mt-2 text-[11px] text-zinc-600">Runner sessions can remain active briefly after member removal.</p>
         )}
-      </div>
+      </section>
 
-      {view.invitations.outgoing.length > 0 && (
-        <div>
-          <h4 className="text-xs font-medium uppercase tracking-wide text-zinc-600">Pending invitations</h4>
-          <ul className="mt-1 space-y-1">
-            {view.invitations.outgoing.map((inv) => (
-              <li
-                key={inv.email}
-                className="flex items-center justify-between rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-300"
-              >
-                <span>{inv.email}</span>
-                {isOwner && (
-                  <button
-                    disabled={busyEmail === inv.email}
-                    onClick={() => cancelInvite(inv.email)}
-                    className="text-xs text-zinc-500 hover:text-red-300 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
+      {error && <div role="alert" className="mt-4 rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-300">{error}</div>}
+
+      <div className="mt-8">
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={leaving}
+            onClick={() => void leave()}
+            className="rounded-md border border-red-900/60 bg-red-950/20 px-3.5 py-2 text-xs font-medium text-red-400 hover:border-red-800 hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+          >
+            {leaving ? 'Leaving…' : 'Leave organization'}
+          </button>
         </div>
-      )}
-
-      {view.invitations.incoming.length > 0 && (
-        <div>
-          <h4 className="text-xs font-medium uppercase tracking-wide text-zinc-600">Invitations for you</h4>
-          <ul className="mt-1 space-y-1">
-            {view.invitations.incoming.map((inv) => (
-              <li
-                key={inv.id}
-                className="flex items-center justify-between rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-300"
-              >
-                <span>
-                  {inv.orgName} <span className="text-zinc-600">(invited by {inv.invitedBy})</span>
-                </span>
-                <span className="flex gap-2">
-                  <button
-                    disabled={busyInvitationId === inv.id}
-                    onClick={() => acceptInvite(inv.id)}
-                    className="text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
-                  >
-                    Accept
-                  </button>
-                  <button
-                    disabled={busyInvitationId === inv.id}
-                    onClick={() => declineInvite(inv.id)}
-                    className="text-xs text-zinc-500 hover:text-red-300 disabled:opacity-50"
-                  >
-                    Decline
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {isOwner && (
-        <div className="flex flex-col gap-1">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-zinc-600">Invite</h4>
-          <div className="flex items-center gap-2">
-            <input
-              aria-label="Invite by email"
-              type="email"
-              placeholder="email address"
-              value={inviteEmail}
-              onChange={(e) => {
-                setInviteEmail(e.target.value);
-                setInviteStatus(null);
-              }}
-              className="w-full rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
-            />
-            <button
-              disabled={inviting || !inviteEmail.trim()}
-              onClick={sendInvite}
-              className="shrink-0 rounded bg-emerald-700 px-3 py-1 text-sm text-white disabled:opacity-50"
-            >
-              {inviting ? 'Inviting…' : 'Invite'}
-            </button>
-          </div>
-          {inviteStatus && <p className="text-xs text-zinc-500">{inviteStatus}</p>}
-          <p className="text-xs text-zinc-600">
-            Anyone you invite can see and open every runner in this organization.
-          </p>
-        </div>
-      )}
-
-      {error && <p className="text-xs text-red-300">{error}</p>}
-
-      <div className="border-t border-zinc-900 pt-3">
-        <button
-          disabled={leaving}
-          onClick={leave}
-          className="rounded bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-red-900/40 hover:text-red-200 disabled:opacity-50"
-        >
-          {leaving ? 'Leaving…' : 'Leave organization'}
-        </button>
         {leaveRefusal && (
-          <p className="mt-2 text-xs text-red-300">
+          <p className="mt-2 text-right text-xs text-red-300">
             {leaveRefusal.kind === 'orphans_runners' &&
-              `Can't leave — this org has runners only visible here: ${leaveRefusal.runners.join(', ')}. Revoke them first, or transfer ownership.`}
+              `Can't leave — revoke these runners first: ${leaveRefusal.runners.join(', ')}.`}
             {leaveRefusal.kind === 'last_owner' &&
-              `Can't leave — you're the only owner and ${leaveRefusal.members} other member${
-                leaveRefusal.members === 1 ? '' : 's'
-              } would be left without one. Promote another member to owner first.`}
+              `Can't leave — promote another owner for the remaining ${leaveRefusal.members} member${leaveRefusal.members === 1 ? '' : 's'}.`}
             {leaveRefusal.kind === 'other' && leaveRefusal.message}
           </p>
         )}

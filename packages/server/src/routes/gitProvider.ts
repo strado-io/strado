@@ -6,14 +6,14 @@ import { AppError, AuthError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
 import { parseRemoteUrl, isGitlabHost, isGithubHost, resolveSshAlias } from '../services/gitProviders.js';
 import {
-  readGitlabConfig, writeGitlabHost, removeGitlabHost, gitlabHostToken, mergeRequestsForBranch,
+  readGitlabConfig, writeGitlabHost, removeGitlabHost, testGitlabConfig, gitlabHostToken, mergeRequestsForBranch,
   mergeRequestsForProject, mergeRequestCountsForProject, mergeRequestChanges, mergeRequestDiscussion,
   mergeRequestCommits, commitChanges as gitlabCommitChanges,
   postMergeRequestReview, postMergeRequestLineComment, createMergeRequest, mergeMergeRequest,
   REVIEW_PAGE_SIZE, type ReviewCounts, type MergeRequest,
 } from '../services/gitlab.js';
 import {
-  readGithubConfig, writeGithubHost, removeGithubHost, githubTokenFor, pullRequestsForBranch,
+  readGithubConfig, writeGithubHost, removeGithubHost, testGithubConfig, githubTokenFor, pullRequestsForBranch,
   pullRequestsForProject, pullRequestCountsForProject, pullRequestChanges, pullRequestDiscussion,
   pullRequestCommits, commitChanges as githubCommitChanges,
   postPullRequestReview, postPullRequestLineComment, createPullRequest, mergePullRequest,
@@ -95,6 +95,7 @@ export async function registerGitProviderConfigRoutes(app: FastifyInstance) {
     const { username } = await writeGitlabHost(host, token);
     return { ok: true, host, username };
   });
+  app.post('/api/gitlab/config/test', async () => ({ ok: true, ...(await testGitlabConfig()) }));
   app.delete<{ Params: { host: string } }>('/api/gitlab/config/:host', async (req) => {
     const Params = z.object({ host: z.string().min(1).max(253) });
     const { host } = Params.parse(req.params);
@@ -116,6 +117,7 @@ export async function registerGitProviderConfigRoutes(app: FastifyInstance) {
     const { username } = await writeGithubHost(host, token, owner);
     return { ok: true, host: owner ? `${host}/${owner}` : host, username };
   });
+  app.post('/api/github/config/test', async () => ({ ok: true, ...(await testGithubConfig()) }));
   app.delete<{ Params: { host: string } }>('/api/github/config/:host', async (req) => {
     const Params = z.object({ host: z.string().min(1).max(354) });
     const { host } = Params.parse(req.params);

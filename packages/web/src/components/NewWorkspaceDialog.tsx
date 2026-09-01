@@ -10,8 +10,6 @@ export function NewWorkspaceDialog({
 }) {
   const [id, setId] = useState('');
   const [name, setName] = useState('');
-  const [color, setColor] = useState('#10b981');
-  const [icon, setIcon] = useState('W');
   const [defaultEditor, setEditor] = useState<Workspace['defaultEditor']>('code');
   const [defaultPortBase, setPortBase] = useState(8000);
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +18,17 @@ export function NewWorkspaceDialog({
     e.preventDefault();
     setSubmitting(true);
     try {
-      await onCreate({ id, name, color, icon, defaultEditor, defaultPortBase, logDir: null });
+      await onCreate({
+        id,
+        name,
+        // These values remain part of the stored workspace shape for backward
+        // compatibility, but they are no longer user-facing settings.
+        color: '#71717a',
+        icon: name.trim().charAt(0).toUpperCase() || 'W',
+        defaultEditor,
+        defaultPortBase,
+        logDir: null,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -45,16 +53,6 @@ export function NewWorkspaceDialog({
           <label className={labelCls}>
             Name
             <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} required />
-          </label>
-          <label className={labelCls}>
-            Color
-            <input type="color" className="h-9 w-full rounded border border-zinc-800 bg-transparent"
-                   value={color} onChange={(e) => setColor(e.target.value)} />
-          </label>
-          <label className={labelCls}>
-            Icon
-            <input className={inputCls} value={icon} maxLength={2}
-                   onChange={(e) => setIcon(e.target.value)} required />
           </label>
           <label className={labelCls}>
             Editor

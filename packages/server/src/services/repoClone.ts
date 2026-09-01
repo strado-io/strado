@@ -46,10 +46,18 @@ export async function cloneRepo(opts: {
   url: string;
   /** Absolute target directory; defaults to <reposDir>/<name>. */
   dest?: string;
+  /** Parent directory chosen in the UI; the URL-derived name is appended. */
+  parent?: string;
   timeoutMs?: number;
 }): Promise<CloneResult> {
   const { url, name } = parseCloneUrl(opts.url);
-  const dest = opts.dest ? path.resolve(opts.dest) : path.join(defaultReposDir(), name);
+  const rawParent = opts.parent?.trim();
+  const expandedParent = rawParent === '~'
+    ? os.homedir()
+    : rawParent?.startsWith('~/') ? path.join(os.homedir(), rawParent.slice(2)) : rawParent;
+  const dest = opts.dest
+    ? path.resolve(opts.dest)
+    : path.join(expandedParent ? path.resolve(expandedParent) : defaultReposDir(), name);
 
   // Idempotent: re-running "add repo" for something already cloned should
   // register it, not fail or clone a second copy.

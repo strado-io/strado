@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorktreeSlug } from '../../src/slug';
+import { buildWorktreeSlug, MAX_WORKTREE_SLUG_LENGTH } from '../../src/slug';
 
 describe('buildWorktreeSlug', () => {
   it('joins ticket id with snake-cased title', () => {
@@ -26,5 +26,15 @@ describe('buildWorktreeSlug', () => {
   });
   it('falls back to "worktree" when both are empty', () => {
     expect(buildWorktreeSlug('', '')).toBe('worktree');
+  });
+  it('bounds a pasted description while keeping long branches collision-resistant', () => {
+    const shared = 'Explain and implement the complete customer authentication migration '.repeat(4);
+    const first = buildWorktreeSlug('FD-123', `${shared}for the admin application`);
+    const second = buildWorktreeSlug('FD-123', `${shared}for the mobile application`);
+
+    expect(first).toHaveLength(MAX_WORKTREE_SLUG_LENGTH);
+    expect(second).toHaveLength(MAX_WORKTREE_SLUG_LENGTH);
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/^FD-123_Explain_and_implement/);
   });
 });

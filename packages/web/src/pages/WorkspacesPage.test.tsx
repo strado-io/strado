@@ -192,5 +192,7 @@ describe('WorkspacesPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /New workspace/i })).toBeTruthy();
     });
+    expect(screen.queryByLabelText('Color')).toBeNull();
+    expect(screen.queryByLabelText('Icon')).toBeNull();
   });
 });

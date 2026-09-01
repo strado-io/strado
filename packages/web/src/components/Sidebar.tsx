@@ -12,6 +12,8 @@ import { SpaceDots } from './sidebar/SpaceDots';
 import { AccountMenu } from './AccountMenu';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
+export type AddRepoAnchor = { left: number; right: number; bottom: number };
+
 /**
  * One view left. 'active' used to list running dev servers on their own page —
  * dead most of the time, since the signal it carried (a running server, an
@@ -32,7 +34,7 @@ export type Props = {
   /** True until the first workspace-wide code-review fetch settles. */
   reviewLoading?: boolean;
   onCollapse: () => void;
-  onAddRepo: () => void;
+  onAddRepo: (anchor?: AddRepoAnchor) => void;
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
   onToggleRepo: (repoId: string) => void;

@@ -146,6 +146,18 @@ export async function writeGithubHost(host: string, token: string, owner?: strin
   return { username: me?.login ?? host };
 }
 
+export async function testGithubConfig(): Promise<{ accounts: number }> {
+  const cfg = await readGithubConfig();
+  const entries = Object.entries(cfg);
+  if (entries.length === 0) throw new AppError('VALIDATION', 'GitHub is not connected');
+  await Promise.all(entries.map(async ([key, { token }]) => {
+    const host = key.split('/')[0] ?? key;
+    const res = await githubApiFetch(host, token, '/user');
+    if (!res.ok) throw new AppError('VALIDATION', `GitHub at ${host} responded ${res.status}`);
+  }));
+  return { accounts: entries.length };
+}
+
 export async function removeGithubHost(host: string): Promise<void> {
   const cfg = await readGithubConfig();
   if (!(host in cfg)) return;

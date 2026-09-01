@@ -386,6 +386,10 @@ describe('/api/github/config', () => {
     const read1 = await app.inject({ method: 'GET', url: '/api/github/config' });
     expect(read1.json()).toEqual({ hosts: ['github.com/workorg'] });
 
+    const test = await app.inject({ method: 'POST', url: '/api/github/config/test' });
+    expect(test.statusCode).toBe(200);
+    expect(test.json()).toEqual({ ok: true, accounts: 1 });
+
     const del = await app.inject({
       method: 'DELETE',
       url: `/api/github/config/${encodeURIComponent('github.com/workorg')}`,

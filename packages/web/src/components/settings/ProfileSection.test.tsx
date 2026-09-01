@@ -18,10 +18,12 @@ describe('ProfileSection', () => {
     render(<ProfileSection />);
 
     await waitFor(() => expect(screen.getByText('KB')).toBeInTheDocument()); // avatar initials
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     const callMe = screen.getByLabelText(/call you/i);
     fireEvent.change(callMe, { target: { value: 'KB' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(profileSave).toHaveBeenCalledWith({ fullName: 'Kamlesh Bishnoi', callMe: 'KB' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Changes saved');
     expect(screen.queryByLabelText(/anthropic api key/i)).toBeNull();
   });
 });

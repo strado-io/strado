@@ -30,7 +30,7 @@ const siblings = [
   },
 ] as Worktree[];
 
-function setup(overrides: Partial<Worktree> = {}) {
+function setup(overrides: Partial<Worktree> = {}, repoOverride: RepoConfig = repo) {
   const h = {
     onSave: vi.fn().mockResolvedValue(undefined),
     onSetEnvProfile: vi.fn().mockResolvedValue(undefined),
@@ -40,7 +40,7 @@ function setup(overrides: Partial<Worktree> = {}) {
   render(
     <WorktreeSettingsDialog
       worktree={{ ...worktree, ...overrides } as Worktree}
-      repo={repo}
+      repo={repoOverride}
       worktrees={siblings}
       {...h}
     />,
@@ -92,7 +92,7 @@ describe('WorktreeSettingsDialog', () => {
     const h = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Unlink node_modules' }));
     expect(h.onUnlink).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Delete…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete worktree…' }));
     expect(h.onDelete).toHaveBeenCalled();
   });
 
@@ -117,12 +117,32 @@ describe('WorktreeSettingsDialog', () => {
 
   it('untracked worktrees adopt with inline ticket/title inputs', () => {
     const h = setup({ tracked: false });
-    expect(screen.queryByLabelText('Ticket ID')).not.toBeInTheDocument();
-    const adopt = screen.getByRole('button', { name: 'Adopt' });
+    expect(screen.queryByRole('textbox', { name: 'Ticket ID' })).not.toBeInTheDocument();
+    const adopt = screen.getByRole('button', { name: 'Add worktree' });
     expect(adopt).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Adopt ticket ID'), { target: { value: 'FD-9' } });
     fireEvent.change(screen.getByLabelText('Adopt title'), { target: { value: 'legacy tree' } });
     fireEvent.click(adopt);
     expect(h.onAdopt).toHaveBeenCalledWith('FD-9', 'legacy tree');
+  });
+
+  it('validates the port instead of silently ignoring an invalid value', async () => {
+    const h = setup();
+    fireEvent.change(screen.getByLabelText('Port'), { target: { value: '70000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('between 1 and 65535');
+    expect(h.onSave).not.toHaveBeenCalled();
+    expect(h.onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not offer node_modules maintenance for a non-Node repository', () => {
+    setup(
+      { nodeModules: { status: 'missing' } } as Partial<Worktree>,
+      { ...repo, startCommand: 'cargo run' },
+    );
+
+    expect(screen.queryByRole('button', { name: /node_modules/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Worktree maintenance')).not.toBeInTheDocument();
   });
 });

@@ -92,6 +92,7 @@ function AppShell() {
         <NewWorktreeDialog
           repos={repos}
           worktrees={worktrees}
+          workspaceId={wsId}
           preselectRepoId={dialog.repoId}
           onCancel={close}
           runners={runners}

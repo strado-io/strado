@@ -108,6 +108,17 @@ export async function writeGitlabHost(host: string, token: string): Promise<{ us
   return { username: me?.username ?? host };
 }
 
+export async function testGitlabConfig(): Promise<{ accounts: number }> {
+  const cfg = await readGitlabConfig();
+  const entries = Object.entries(cfg);
+  if (entries.length === 0) throw new AppError('VALIDATION', 'GitLab is not connected');
+  await Promise.all(entries.map(async ([host, { token }]) => {
+    const res = await gitlabApiFetch(host, token, '/user');
+    if (!res.ok) throw new AppError('VALIDATION', `GitLab at ${host} responded ${res.status}`);
+  }));
+  return { accounts: entries.length };
+}
+
 export async function removeGitlabHost(host: string): Promise<void> {
   const cfg = await readGitlabConfig();
   if (!(host in cfg)) return;

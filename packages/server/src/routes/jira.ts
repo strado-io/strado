@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { readJiraConfig, writeJiraConfig, getIssue, getIssues, getTransitions, doTransition, getMyOpenIssues, getOpenSprints, getSprintIssues } from '../services/jira.js';
+import { readJiraConfig, writeJiraConfig, testJiraConfig, getIssue, getIssues, getTransitions, doTransition, getMyOpenIssues, getOpenSprints, getSprintIssues } from '../services/jira.js';
 import { AppError } from '../errors.js';
 import { hasFeature } from '../services/entitlements.js';
 
@@ -49,6 +49,11 @@ export async function registerJiraRoutes(app: FastifyInstance) {
     // A trailing slash in the base URL breaks path joins downstream.
     const result = await writeJiraConfig({ ...body, baseUrl: body.baseUrl.replace(/\/+$/, '') });
     return { ok: true, accountName: result.accountName };
+  });
+
+  app.post('/api/jira/config/test', async () => {
+    if (!(await hasFeature('jira'))) throw new AppError('VALIDATION', 'Jira requires a Pro plan');
+    return { ok: true, ...(await testJiraConfig()) };
   });
 
   app.get<{ Params: { key: string } }>('/api/jira/issue/:key', async (req) => {

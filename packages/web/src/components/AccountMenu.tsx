@@ -12,31 +12,44 @@ function initials(value: string): string {
 }
 
 function MenuIcon({ kind }: { kind: 'settings' | 'organization' | 'feedback' | 'signout' }) {
+  const iconProps = {
+    width: 16,
+    height: 16,
+    viewBox: '0 0 24 24',
+    'aria-hidden': true,
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    className: 'shrink-0',
+  };
+
   if (kind === 'organization') {
     return (
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 13.5V3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v10.5M10 6.5h2.5a1 1 0 0 1 1 1v6M1.5 13.5h13" />
+      <svg {...iconProps}>
+        <path d="M5 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16M16 9h3a2 2 0 0 1 2 2v10M3 21h19M8 7h2M8 11h2M8 15h2" />
       </svg>
     );
   }
   if (kind === 'feedback') {
     return (
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M2 3.5h12v8H8l-3 2.5v-2.5H2z" />
+      <svg {...iconProps}>
+        <path d="M4 5h16v11H9l-5 4v-4H4V5Z" />
       </svg>
     );
   }
   if (kind === 'signout') {
     return (
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M6 2.5H3.5v11H6M9.5 5 13 8l-3.5 3M13 8H6" />
+      <svg {...iconProps}>
+        <path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M16 8l4 4-4 4M20 12H9" />
       </svg>
     );
   }
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4" />
+    <svg {...iconProps}>
+      <path d="M9.6 3.2 10 2h4l.4 1.2c.12.38.4.68.76.84l.31.13c.37.15.78.13 1.13-.06l1.13-.6 2.76 2.76-.6 1.13c-.19.35-.21.76-.06 1.13l.13.31c.16.36.46.64.84.76L22 10v4l-1.2.4c-.38.12-.68.4-.84.76l-.13.31c-.15.37-.13.78.06 1.13l.6 1.13-2.76 2.76-1.13-.6c-.35-.19-.76-.21-1.13-.06l-.31.13c-.36.16-.64.46-.76.84L14 22h-4l-.4-1.2a1.4 1.4 0 0 0-.76-.84l-.31-.13a1.4 1.4 0 0 0-1.13.06l-1.13.6-2.76-2.76.6-1.13c.19-.35.21-.76.06-1.13l-.13-.31a1.4 1.4 0 0 0-.84-.76L2 14v-4l1.2-.4c.38-.12.68-.4.84-.76l.13-.31a1.4 1.4 0 0 0-.06-1.13l-.6-1.13 2.76-2.76 1.13.6c.35.19.76.21 1.13.06l.31-.13c.36-.16.64-.46.76-.84Z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }

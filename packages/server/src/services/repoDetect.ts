@@ -69,6 +69,20 @@ function pickStartCommand(pkg: PackageJson | null): { command: string; script: s
   return null;
 }
 
+async function hasFile(dir: string, name: string): Promise<boolean> {
+  return fsp.stat(path.join(dir, name)).then((stat) => stat.isFile(), () => false);
+}
+
+async function pickNonNodeStartCommand(dir: string): Promise<string | null> {
+  if (await hasFile(dir, 'Cargo.toml')) return 'cargo run';
+  if (await hasFile(dir, 'go.mod')) return 'go run .';
+  if (await hasFile(dir, 'mvnw')) return './mvnw spring-boot:run';
+  if (await hasFile(dir, 'pom.xml')) return 'mvn spring-boot:run';
+  if (await hasFile(dir, 'gradlew')) return './gradlew bootRun';
+  if ((await hasFile(dir, 'build.gradle')) || (await hasFile(dir, 'build.gradle.kts'))) return 'gradle bootRun';
+  return null;
+}
+
 function detectPort(scriptText: string, pkg: PackageJson | null): number | null {
   const m = /(?:--port|-p)[ =](\d{2,5})/.exec(scriptText) ?? /\bPORT=(\d{2,5})/.exec(scriptText);
   if (m) return Number(m[1]);
@@ -136,12 +150,17 @@ export async function detectRepo(inputPath: string): Promise<DetectedRepo> {
     }
   }
 
-  const start = pickStartCommand(pkg);
-  if (!pkg) warnings.push('no package.json found — set the start command manually');
-  else if (!start) warnings.push('no dev/start/serve script in package.json — set the start command manually');
+  const nodeStart = pickStartCommand(pkg);
+  let nonNodeStart: string | null = null;
+  if (!pkg) {
+    nonNodeStart = await pickNonNodeStartCommand(abs);
+    if (nonNodeStart && abs !== gitRoot) projectSubdir = path.relative(gitRoot, abs);
+    else if (!nonNodeStart && abs !== gitRoot) nonNodeStart = await pickNonNodeStartCommand(gitRoot);
+  }
+  if (pkg && !nodeStart) warnings.push('no dev/start/serve script detected — configure a start command if this project needs one');
 
-  const port = start ? detectPort(start.script, pkg) : null;
-  if (start && port === null) warnings.push('could not detect a port — defaulted to 8080');
+  const port = nodeStart ? detectPort(nodeStart.script, pkg) : null;
+  if (nodeStart && port === null) warnings.push('could not detect a port — defaulted to 8080');
 
   const envProfiles = await detectEnvProfiles(pkgDir);
   const base = path.basename(gitRoot);
@@ -156,7 +175,7 @@ export async function detectRepo(inputPath: string): Promise<DetectedRepo> {
     path: gitRoot,
     cloneUrl,
     projectSubdir,
-    startCommand: start?.command ?? 'npm run dev',
+    startCommand: nodeStart?.command ?? nonNodeStart ?? '',
     defaultPort: port ?? 8080,
     editor: 'code',
     envProfiles,

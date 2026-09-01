@@ -6,7 +6,7 @@ import { useMrSummaries } from '../../hooks/mrSummaries';
 import { chipStatus, displayLabel, sessionChips, type SessionChip } from '../../hooks/sessions';
 import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
-import type { SidebarView } from '../Sidebar';
+import type { AddRepoAnchor, SidebarView } from '../Sidebar';
 import { PlusIcon } from '../hub/icons';
 import { SESSION_COLOR, SessionAvatarIcon } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
@@ -25,7 +25,7 @@ export type SidebarBodyProps = {
   reviewCount?: number;
   /** True until the first workspace-wide code-review fetch settles. */
   reviewLoading?: boolean;
-  onAddRepo: () => void;
+  onAddRepo: (anchor?: AddRepoAnchor) => void;
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
   onToggleRepo: (repoId: string) => void;
@@ -384,7 +384,10 @@ export function SidebarBody({
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
         <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">Repos</span>
         <button
-          onClick={onAddRepo}
+          onClick={(event) => {
+            const { left, right, bottom } = event.currentTarget.getBoundingClientRect();
+            onAddRepo({ left, right, bottom });
+          }}
           aria-label="Add repo"
           title="Add repo"
           className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300"

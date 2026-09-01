@@ -21,6 +21,7 @@ describe('LinearSection', () => {
   it('shows Connect Linear when not connected', async () => {
     vi.spyOn(api.api.tickets, 'linearConfig').mockResolvedValue({ connected: false, workspaceName: null });
     render(<LinearSection />);
+    expect(await screen.findByText('Not connected')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /connect linear/i })).toBeInTheDocument();
   });
 
@@ -76,6 +77,7 @@ describe('LinearSection', () => {
     render(<LinearSection />);
 
     await screen.findByText('Acme');
+    expect(screen.getByText('Connected')).toBeInTheDocument();
     await act(async () => {
       screen.getByRole('button', { name: /disconnect/i }).click();
       // flush disconnect()'s await plus its unawaited providers() refresh
@@ -87,5 +89,19 @@ describe('LinearSection', () => {
     expect(disconnect).toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /connect linear/i })).toBeInTheDocument();
     expect(readTickets().configured).toEqual([]);
+  });
+
+  it('tests an existing connection', async () => {
+    vi.spyOn(api.api.tickets, 'linearConfig').mockResolvedValue({ connected: true, workspaceName: 'Acme' });
+    const testConnection = vi.spyOn(api.api.tickets, 'linearTest').mockResolvedValue({ ok: true, workspaceName: 'Acme' });
+    render(<LinearSection />);
+
+    await screen.findByText('Acme');
+    await act(async () => {
+      screen.getByRole('button', { name: 'Test connection' }).click();
+    });
+
+    expect(testConnection).toHaveBeenCalled();
+    expect(await screen.findByText('Connection is working.')).toBeInTheDocument();
   });
 });

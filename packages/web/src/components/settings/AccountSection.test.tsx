@@ -20,7 +20,7 @@ describe('AccountSection', () => {
     const reload = vi.fn();
 
     render(<AccountSection reload={reload} />);
-    await screen.findByText(/signed in as/i);
+    await screen.findByText('k@x.io');
     await userEvent.click(screen.getByRole('button', { name: /sign out/i }));
 
     await waitFor(() => expect(authSignout).toHaveBeenCalled());
@@ -36,7 +36,8 @@ describe('AccountSection', () => {
     });
 
     render(<AccountSection reload={vi.fn()} />);
-    await screen.findByText(/signed in as/i);
+    await screen.findByText('k@x.io');
+    expect(screen.getByText('Signed in')).toBeInTheDocument();
     expect(screen.queryByText(/invite code/i)).not.toBeInTheDocument();
   });
 });

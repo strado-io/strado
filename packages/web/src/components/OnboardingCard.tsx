@@ -120,7 +120,9 @@ export function OnboardingCard({
             )}
             <dt>start</dt>
             <dd className="text-zinc-300">
-              {detected.startCommand} <span className="text-zinc-500">→ port {detected.defaultPort}</span>
+              {detected.startCommand
+                ? <>{detected.startCommand} <span className="text-zinc-500">→ port {detected.defaultPort}</span></>
+                : <span className="text-zinc-500">Not detected (optional)</span>}
             </dd>
             {(detected.envProfiles?.length ?? 0) > 0 && (
               <>
