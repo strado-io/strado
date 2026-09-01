@@ -160,6 +160,8 @@ describe('GET /api/w/:ws/usage/accounts', () => {
 
     expect(res.json().accounts).toEqual([{
       agent: 'codex',
+      // No snapshot yet, so nothing has been measured.
+      measuredAt: null,
       accountLabel: 'dev@example.com',
       plan: 'PRO',
       credentialSource: '~/.codex',
