@@ -104,7 +104,10 @@ export function WorktreeHoverCard({
       onFocus={onFocus}
       onBlur={onBlur}
       onClick={(e) => e.stopPropagation()}
-      className="fixed z-[70] flex flex-col gap-2 rounded-lg border border-zinc-700 bg-zinc-900 p-2.5 text-left shadow-2xl"
+      // z-30 keeps the card above the board and the sidebar it floats out of,
+      // and below every dialog: a hover affordance must never cover a
+      // confirm the user is trying to read.
+      className="fixed z-30 flex flex-col gap-2 rounded-lg border border-zinc-700 bg-zinc-900 p-2.5 text-left shadow-2xl"
       style={{ left: x, top: y, width: HOVER_CARD_WIDTH }}
     >
       <div>
