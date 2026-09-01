@@ -58,8 +58,15 @@ describe('priceUsd', () => {
     expect(priceUsd('claude-sonnet-5', t).cost).toBeCloseTo(parts, 10);
   });
 
+  it('falls back to the family rate for an unlisted variant', () => {
+    expect(priceUsd('gpt-5.6-terra', tokens({ input: 1_000_000 })))
+      .toEqual(priceUsd('gpt-5.6', tokens({ input: 1_000_000 })));
+    expect(priceUsd('claude-opus-5-preview', tokens({ output: 1_000_000 })))
+      .toEqual(priceUsd('claude-opus-5', tokens({ output: 1_000_000 })));
+  });
+
   it('never guesses a price for an unknown model', () => {
-    expect(priceUsd('some-new-model', tokens({ input: 1_000_000 }))).toEqual({ cost: 0, known: false });
+    expect(priceUsd('llama-4-maverick', tokens({ input: 1_000_000 }))).toEqual({ cost: 0, known: false });
   });
 
   it('prices codex models', () => {
@@ -76,6 +83,6 @@ describe('fullRateUsd', () => {
   });
 
   it('is zero for an unknown model', () => {
-    expect(fullRateUsd('some-new-model', tokens({ cacheRead: 1_000_000 }))).toBe(0);
+    expect(fullRateUsd('llama-4-maverick', tokens({ cacheRead: 1_000_000 }))).toBe(0);
   });
 });

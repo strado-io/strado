@@ -61,8 +61,21 @@ export function normalizeModelId(raw: string): string {
   return id;
 }
 
+/**
+ * Vendors ship named variants of a model faster than a price table can track
+ * them (`gpt-5.6-terra`, `claude-opus-5-preview`). Falling back to the family
+ * the variant was cut from prices it at its base rate instead of reporting the
+ * turn as free.
+ */
 function rateFor(model: string): Rate | null {
-  return PER_MILLION[normalizeModelId(model)] ?? null;
+  let id = normalizeModelId(model);
+  for (;;) {
+    const rate = PER_MILLION[id];
+    if (rate) return rate;
+    const cut = id.lastIndexOf('-');
+    if (cut <= 0) return null;
+    id = id.slice(0, cut);
+  }
 }
 
 /** Priced with the cache discounts the agent actually got. */
