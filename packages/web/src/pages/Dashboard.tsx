@@ -28,6 +28,7 @@ import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
 import { CodeReviewsPage } from '../components/CodeReviewsPage';
+import { UsagePage } from '../components/usage/UsagePage';
 import { useCodeReviews } from '../hooks/codeReviews';
 
 type State = {
@@ -712,7 +713,7 @@ export function Dashboard(props: {
         {/* Code reviews carries the sidebar toggle and running-servers chip in
             its own toolbar, so the shared row would only be an empty strip. */}
         {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote
-          && activeView.kind !== 'reviews' && (
+          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (
         <FilterBar
           leading={
             sidebarCollapsed ? (
@@ -815,6 +816,14 @@ export function Dashboard(props: {
             onRepoChange={setReviewRepoId}
             onSearchChange={setReviewSearch}
             onPageChange={codeReviews.goToPage}
+            sidebarCollapsed={sidebarCollapsed}
+            onExpandSidebar={() => setSidebarCollapsed(false)}
+            runningServers={runningServers}
+          />
+        ) : activeView.kind === 'usage' ? (
+          <UsagePage
+            key={wsId}
+            wsId={wsId}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={() => setSidebarCollapsed(false)}
             runningServers={runningServers}
