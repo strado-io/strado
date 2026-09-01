@@ -1,4 +1,4 @@
-import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository } from './types';
+import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
 
 export class ApiClientError extends Error {
   code: string;
@@ -216,6 +216,13 @@ export const api = {
         pageLimit: number | null;
       }>(`${wsBase(wsId)}/merge-requests?${query}`);
     },
+  },
+  usage: {
+    summary: (wsId: string, days: 7 | 30 | 90) =>
+      request<UsageSummary>(`${wsBase(wsId)}/usage/summary?days=${days}`),
+    accounts: (wsId: string) =>
+      request<{ accounts: UsageAccount[] }>(`${wsBase(wsId)}/usage/accounts`).then((b) => b.accounts),
+    machine: (wsId: string) => request<MachineSample>(`${wsBase(wsId)}/usage/machine`),
   },
   worktrees: {
     list: (wsId: string) =>
