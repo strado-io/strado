@@ -1,4 +1,5 @@
 import { bytes, percent } from './format';
+import { MachineLoading } from './UsageLoading';
 import type { MachineSample } from '../../types';
 
 const Meter = ({ label, used, detail }: { label: string; used: number; detail: string }) => (
@@ -27,7 +28,7 @@ function uptime(seconds: number): string {
 
 /** What the box running the agents is doing right now. */
 export function MachineResources({ sample }: { sample: MachineSample | null }) {
-  if (!sample) return <p className="px-1 py-6 text-sm text-zinc-500">Reading machine resources…</p>;
+  if (!sample) return <MachineLoading />;
 
   const memPercent = sample.memTotalBytes > 0 ? (sample.memUsedBytes / sample.memTotalBytes) * 100 : 0;
   const diskPercent = sample.diskTotalBytes && sample.diskUsedBytes !== null

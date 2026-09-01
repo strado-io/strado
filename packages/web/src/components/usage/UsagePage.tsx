@@ -6,6 +6,7 @@ import { AccountCard, AGENT_NAME } from './AccountCard';
 import { ModelTable, WorktreeTable } from './BreakdownTables';
 import { MachineResources } from './MachineResources';
 import { StatStrip } from './StatStrip';
+import { AccountsLoading, ChartLoading } from './UsageLoading';
 import { UsageChart } from './UsageChart';
 import type { ChartMetric } from './chartGeometry';
 import { money, percent, pricingNote, shortDate, tokens } from './format';
@@ -128,9 +129,9 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
               <span className="text-[11px] text-zinc-600">Vendor-reported quota · refreshes every 5 min</span>
             </div>
             {accounts.length === 0 ? (
-              <p className="text-[11px] text-zinc-600">
-                {loading ? 'Reading agent credentials…' : 'No agent signed in on this machine.'}
-              </p>
+              loading ? <AccountsLoading /> : (
+                <p className="text-[11px] text-zinc-600">No agent signed in on this machine.</p>
+              )
             ) : (
               <div className="grid gap-2 lg:grid-cols-2">
                 {accounts.map((account) => (
@@ -168,7 +169,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
             </div>
 
             {loading && !summary ? (
-              <p className="py-8 text-sm text-zinc-500">Reading session logs…</p>
+              <ChartLoading />
             ) : !summary || summary.totals.tokens === 0 ? (
               <p className="py-8 text-sm text-zinc-500">
                 No agent turns in this window. Run Claude Code or Codex in a worktree and usage lands here.
