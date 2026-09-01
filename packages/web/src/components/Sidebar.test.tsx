@@ -32,6 +32,7 @@ vi.mock('../api', async (importOriginal) => {
 // jsdom has no layout, so the carousel would measure every pane as 0 wide.
 const PANE_WIDTH = 300;
 beforeEach(() => {
+  localStorage.clear();
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(PANE_WIDTH);
   vi.mocked(useMrSummaries).mockReturnValue(new Map());
 });
@@ -130,6 +131,50 @@ describe('Sidebar tree', () => {
     expect(reviewRow).not.toBeNull();
     expect(reviewRow && within(reviewRow).getByRole('status', { name: 'Loading code reviews' })).toBeInTheDocument();
     expect(reviewRow).not.toHaveTextContent('0');
+  });
+
+  describe('pinned worktrees', () => {
+    it('shows a hover-only pin button and places the pinned shortcut below Code reviews and above Repos', () => {
+      wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+
+      const pin = activePane().getByRole('button', { name: 'Pin FD-1' });
+      expect(pin).toHaveClass('opacity-0', 'pointer-events-none', 'group-hover:opacity-100', 'group-hover:pointer-events-auto');
+      fireEvent.click(pin);
+
+      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
+      expect(within(pinned).getByText('FD-1')).toBeInTheDocument();
+      const reviews = activePane().getByText('Code reviews');
+      const repos = activePane().getByText('Repos');
+      expect(reviews.compareDocumentPosition(pinned) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(pinned.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('keeps a pinned worktree visible when its repo is collapsed and opens it from the shortcut', () => {
+      localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ w1: ['local:/r1/FD-1'] }));
+      const onOpenWorktree = vi.fn();
+      wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} expandedRepos={new Set()} />);
+
+      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
+      fireEvent.click(within(pinned).getByText('FD-1'));
+      expect(onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
+      expect(activePane().getAllByText('FD-1')).toHaveLength(1);
+    });
+
+    it('unpins from the pinned shortcut and persists pins across remounts', () => {
+      const first = wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+      fireEvent.click(activePane().getByRole('button', { name: 'Pin FD-2' }));
+      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws') ?? '{}')).toEqual({
+        w1: ['local:/r1/FD-2'],
+      });
+
+      first.unmount();
+      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
+      expect(within(pinned).getByText('FD-2')).toBeInTheDocument();
+      fireEvent.click(within(pinned).getByRole('button', { name: 'Unpin FD-2 from pinned' }));
+      expect(activePane().queryByRole('region', { name: 'Pinned worktrees' })).toBeNull();
+      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws') ?? '{}')).toEqual({ w1: [] });
+    });
   });
 
   it('shows the agent-working loader on the specific worktree row, not the repo row', () => {
@@ -360,11 +405,11 @@ describe('Sidebar tree', () => {
     expect(base.onDeleteWorktree).toHaveBeenCalledWith(base.worktrees[0]);
   });
 
-  it('reserves the worktree action-button width before hover', () => {
+  it('overlays worktree actions on hover without reserving row width', () => {
     wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
     const actions = screen.getByLabelText('FD-1 actions');
-    expect(actions).toHaveClass('inline-flex', 'invisible', 'group-hover:visible', 'h-5', 'w-5', 'p-[3px]');
-    expect(actions).not.toHaveClass('hidden');
+    expect(actions).toHaveClass('inline-flex', 'opacity-0', 'group-hover:opacity-100', 'h-5', 'w-5', 'p-[3px]');
+    expect(actions.parentElement).toHaveClass('absolute', 'right-1');
   });
 
   it('repo-row + button fires new-worktree without opening the menu', () => {
@@ -544,6 +589,22 @@ describe('Sidebar tree', () => {
       fireEvent.click(screen.getByText('FD-9'));
       expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ path: '/home/strado/demo-repo.worktrees/FD-9' }));
     });
+
+    it('pins a runner worktree into the same workspace-level pinned section', () => {
+      const w = remote();
+      wrap(
+        <Sidebar {...base} expandedRepos={new Set(['r1'])} remoteWorktrees={[w]}
+          runnerStatuses={statuses(true)} />,
+      );
+      fireEvent.click(activePane().getByRole('button', { name: 'Pin FD-9 on runner-dev' }));
+
+      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
+      expect(within(pinned).getByText('FD-9')).toBeInTheDocument();
+      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws') ?? '{}')).toEqual({
+        w1: [`remote:${w.runnerId}:${w.path}`],
+      });
+    });
+
     it('offers delete on a runner worktree, and never on a repo root', () => {
       const onDelete = vi.fn();
       const { unmount } = wrap(
@@ -565,7 +626,7 @@ describe('Sidebar tree', () => {
           runnerStatuses={statuses(true)} onDeleteRemoteWorktree={onDelete} />,
       );
       expect(screen.queryByLabelText('main on runner-dev actions')).toBeNull();
-      expect(screen.getByTestId('action-slot-runner-dev-wq3p:/home/strado/demo-repo.worktrees/FD-9')).toHaveClass('h-5', 'w-5');
+      expect(screen.getByRole('button', { name: 'Pin main on runner-dev' }).parentElement).toHaveClass('absolute', 'right-1');
     });
   });
 
