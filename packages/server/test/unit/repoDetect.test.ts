@@ -66,12 +66,14 @@ describe('detectRepo', () => {
     expect(d.startCommand).toBe('npm start');
   });
 
-  it('warns when there is no package.json but still returns git-level detection', async () => {
+  it('returns git-level detection with no start command when there is no package.json', async () => {
+    // A repo without package.json is not assumed to be a Node project: no npm
+    // default and no warning — a language-neutral repo is a valid answer.
     const d = await detectRepo(tmp);
     expect(d.path).toBe(tmp);
-    expect(d.startCommand).toBe('npm run dev');
+    expect(d.startCommand).toBe('');
     expect(d.defaultPort).toBe(8080);
-    expect(d.warnings.some((w) => w.includes('no package.json'))).toBe(true);
+    expect(d.warnings.some((w) => w.includes('package.json'))).toBe(false);
   });
 
   it('rejects a directory outside any git repo', async () => {
