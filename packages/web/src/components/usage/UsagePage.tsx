@@ -6,7 +6,7 @@ import { AccountCard, AGENT_NAME } from './AccountCard';
 import { ModelTable, WorktreeTable } from './BreakdownTables';
 import { MachineResources } from './MachineResources';
 import { StatStrip } from './StatStrip';
-import { AccountsLoading, ChartLoading } from './UsageLoading';
+import { UsageLoading } from './UsageLoading';
 import { UsageChart } from './UsageChart';
 import type { ChartMetric } from './chartGeometry';
 import { money, percent, pricingNote, shortDate, tokens } from './format';
@@ -112,9 +112,11 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
       </div>
 
       {tab === 'machine' ? (
-        <div className="px-3 py-3">
+        <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
           <MachineResources sample={machine} />
         </div>
+      ) : loading && !summary ? (
+        <UsageLoading label="Loading usage…" />
       ) : (
         <div className="flex flex-col gap-5 px-3 py-3">
           {error && (
@@ -129,9 +131,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
               <span className="text-[11px] text-zinc-600">Vendor-reported quota · refreshes every 5 min</span>
             </div>
             {accounts.length === 0 ? (
-              loading ? <AccountsLoading /> : (
-                <p className="text-[11px] text-zinc-600">No agent signed in on this machine.</p>
-              )
+              <p className="text-[11px] text-zinc-600">No agent signed in on this machine.</p>
             ) : (
               <div className="grid gap-2 lg:grid-cols-2">
                 {accounts.map((account) => (
@@ -168,9 +168,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
               </div>
             </div>
 
-            {loading && !summary ? (
-              <ChartLoading />
-            ) : !summary || summary.totals.tokens === 0 ? (
+            {!summary || summary.totals.tokens === 0 ? (
               <p className="py-8 text-sm text-zinc-500">
                 No agent turns in this window. Run Claude Code or Codex in a worktree and usage lands here.
               </p>

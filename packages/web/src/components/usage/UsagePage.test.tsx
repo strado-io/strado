@@ -68,35 +68,33 @@ beforeEach(() => {
 });
 
 describe('UsagePage', () => {
-  it('holds the page shape with skeletons while the logs are read', async () => {
+  it('waits with one centred loader, the way code reviews does', async () => {
     mocks.summary.mockImplementation(() => new Promise(() => {}));
-    mocks.accounts.mockImplementation(() => new Promise(() => {}));
 
     render(<UsagePage wsId="ws-1" />);
 
-    expect(await screen.findByRole('status', { name: 'Reading session logs' })).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: 'Reading agent credentials' })).toBeInTheDocument();
-    // The bare wait text is gone; the spinner carries the same words.
-    expect(screen.getByText('Reading session logs…')).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: 'Loading usage' })).toBeInTheDocument();
+    expect(screen.getByText('Loading usage…')).toBeInTheDocument();
+    // Nothing else competes with it while the first read runs.
+    expect(screen.queryByText('ACCOUNTS')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Daily/ })).not.toBeInTheDocument();
   });
 
-  it('drops the skeletons once the numbers land', async () => {
+  it('replaces the loader with the page once the numbers land', async () => {
     render(<UsagePage wsId="ws-1" />);
 
     await waitFor(() => expect(screen.getByText('$3,798')).toBeInTheDocument());
-    expect(screen.queryByRole('status', { name: 'Reading session logs' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('status', { name: 'Reading agent credentials' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading usage' })).not.toBeInTheDocument();
   });
 
-  it('shows meter skeletons until the machine sample returns', async () => {
+  it('waits the same way for the machine sample', async () => {
     mocks.machine.mockImplementation(() => new Promise(() => {}));
     render(<UsagePage wsId="ws-1" />);
     await waitFor(() => expect(screen.getByText('$3,798')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Machine resources' }));
 
-    expect(await screen.findByRole('status', { name: 'Reading machine resources' })).toBeInTheDocument();
-    expect(screen.getByText('Sampling this machine…')).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: 'Loading machine resources' })).toBeInTheDocument();
   });
 
   it('shows the account card with quota and reset countdown', async () => {
