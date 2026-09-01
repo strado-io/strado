@@ -276,6 +276,49 @@ describe('createUsageStore', () => {
     expect(snapshot?.windows[0]!.usedPercent).toBe(36);
   });
 
+  it('reads codex quota without parsing the logs first', async () => {
+    await writeClaude('/repo/wt-a', [claudeLine()]);
+    await writeCodex(codexLines());
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
+
+    const snapshot = await store.codexRateLimits();
+
+    expect(snapshot?.windows[0]!.usedPercent).toBe(36);
+    // No summary ran, so nothing was parsed into the cache.
+    await expect(fsp.stat(path.join(stateDir, 'usage-cache.json'))).rejects.toThrow();
+  });
+
+  it('prefers a newer snapshot than the one already cached', async () => {
+    await writeCodex(codexLines());
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
+    await store.summary({ days: 7, worktrees: labels() });
+
+    await writeCodex([
+      JSON.stringify({
+        type: 'session_meta',
+        timestamp: iso(0),
+        payload: { id: 's2', cwd: '/repo/wt-b', model: 'gpt-5.6' },
+      }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: iso(0),
+        payload: {
+          type: 'token_count',
+          info: { last_token_usage: { input_tokens: 10, output_tokens: 1 } },
+          rate_limits: { primary: { used_percent: 77, window_minutes: 300, resets_at: 1_788_299_999 } },
+        },
+      }),
+    ], 'rollout-b.jsonl');
+
+    expect((await store.codexRateLimits())?.windows[0]!.usedPercent).toBe(77);
+  });
+
+  it('reports no codex quota when no rollout carries one', async () => {
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
+
+    expect(await store.codexRateLimits()).toBeNull();
+  });
+
   it('returns an empty summary when no agent logs exist', async () => {
     const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 

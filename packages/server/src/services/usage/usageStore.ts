@@ -106,6 +106,10 @@ const dayKey = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
 /** Marks a tally whose turns billed at the long-context band. */
 const LONG_BAND_SUFFIX = '#long';
 
+/** How many recent rollouts the quota fast path looks at, and how far back. */
+const SNAPSHOT_FILES = 5;
+const SNAPSHOT_TAIL_BYTES = 256 * 1024;
+
 const emptyTally = (): Tally => [0, 0, 0, 0, 0];
 
 export type UsageStoreOptions = {
@@ -119,6 +123,11 @@ export type UsageStoreOptions = {
 
 export type UsageStore = {
   summary(input: { days: number; worktrees: WorktreeLabel[] }): Promise<UsageSummary>;
+  /**
+   * Codex quota without a full parse: only the newest rollouts are read, and
+   * only their tail. The toolbar's quota control cannot wait on a cold scan of
+   * months of logs.
+   */
   codexRateLimits(): Promise<RateLimitSnapshot | null>;
 };
 
@@ -242,6 +251,38 @@ export function createUsageStore({ agentHomeDir, stateDir, catalog }: UsageStore
     }
     state.codexRateLimits = newest;
     return bytes;
+  }
+
+  /**
+   * The newest rate-limit snapshot Codex wrote, read from the few most recently
+   * touched rollouts. Cheap enough to sit behind a toolbar control: it stats the
+   * rollout list and tail-reads at most `SNAPSHOT_FILES` of them.
+   */
+  async function newestCodexSnapshot(): Promise<RateLimitSnapshot | null> {
+    const root = path.join(agentHomeDir, '.codex', 'sessions');
+    const files = await codexRolloutFiles(root);
+    const stamped: { file: string; mtimeMs: number; size: number }[] = [];
+    for (const file of files) {
+      try {
+        const stat = await fsp.stat(file);
+        stamped.push({ file, mtimeMs: stat.mtimeMs, size: stat.size });
+      } catch {
+        // Rotated away between listing and stat; nothing to read.
+      }
+    }
+    stamped.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    let newest: RateLimitSnapshot | null = null;
+    for (const { file, size } of stamped.slice(0, SNAPSHOT_FILES)) {
+      // Rate limits ride on `token_count` events, so the end of the file is
+      // where the current numbers are.
+      const from = Math.max(0, size - SNAPSHOT_TAIL_BYTES);
+      const read = await readCodexEvents(file, from);
+      if (read.rateLimits && (!newest || read.rateLimits.capturedAt >= newest.capturedAt)) {
+        newest = read.rateLimits;
+      }
+    }
+    return newest;
   }
 
   /** One scan at a time: concurrent callers share the in-flight pass. */
@@ -389,9 +430,14 @@ export function createUsageStore({ agentHomeDir, stateDir, catalog }: UsageStore
       return aggregate(state, days, worktrees, bytesRead, pricer, provenance);
     },
     async codexRateLimits() {
-      const { table } = await catalog.rates();
-      await scan(createPricer(table));
-      return (await load()).codexRateLimits;
+      const state = await load();
+      const fresh = await newestCodexSnapshot();
+      // A cached snapshot only wins when nothing newer was written, so a
+      // restarted Codex session still updates the bars.
+      if (fresh && (!state.codexRateLimits || fresh.capturedAt >= state.codexRateLimits.capturedAt)) {
+        state.codexRateLimits = fresh;
+      }
+      return state.codexRateLimits;
     },
   };
 }

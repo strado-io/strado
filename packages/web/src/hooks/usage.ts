@@ -84,3 +84,59 @@ export function useUsage(wsId: string, days: UsageRange) {
 
   return { ...state, refresh };
 }
+
+/**
+ * Quota cards on their own, for the toolbar's usage control.
+ *
+ * Shared across every open worktree hub: the module-level cache means ten tabs
+ * make one request, and a tab opened mid-window paints from the last answer
+ * instead of waiting for its own.
+ */
+type AccountsCache = { wsId: string; at: number; accounts: UsageAccount[]; inFlight: Promise<UsageAccount[]> | null };
+
+const accountsCache: AccountsCache = { wsId: '', at: 0, accounts: [], inFlight: null };
+
+function loadAccounts(wsId: string): Promise<UsageAccount[]> {
+  const fresh = accountsCache.wsId === wsId && Date.now() - accountsCache.at < POLL_MS;
+  if (fresh) return Promise.resolve(accountsCache.accounts);
+  if (accountsCache.inFlight && accountsCache.wsId === wsId) return accountsCache.inFlight;
+  const request = (api.usage?.accounts(wsId) ?? Promise.resolve([]))
+    .then((accounts) => {
+      accountsCache.wsId = wsId;
+      accountsCache.at = Date.now();
+      accountsCache.accounts = accounts;
+      return accounts;
+    })
+    .catch(() => [] as UsageAccount[])
+    .finally(() => { accountsCache.inFlight = null; });
+  accountsCache.wsId = wsId;
+  accountsCache.inFlight = request;
+  return request;
+}
+
+/** Test seam: drops the shared cache so each case starts cold. */
+export function resetQuotaCache(): void {
+  accountsCache.wsId = '';
+  accountsCache.at = 0;
+  accountsCache.accounts = [];
+  accountsCache.inFlight = null;
+}
+
+export function useQuotaAccounts(wsId: string) {
+  const [accounts, setAccounts] = useState<UsageAccount[]>(
+    accountsCache.wsId === wsId ? accountsCache.accounts : [],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => loadAccounts(wsId).then((next) => { if (alive) setAccounts(next); });
+    load();
+    const timer = setInterval(() => {
+      accountsCache.at = 0;
+      load();
+    }, POLL_MS);
+    return () => { alive = false; clearInterval(timer); };
+  }, [wsId]);
+
+  return accounts;
+}

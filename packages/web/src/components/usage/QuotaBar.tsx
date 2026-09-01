@@ -16,7 +16,7 @@ export function QuotaBar({ window: quotaWindow, agent }: { window: UsageQuotaWin
   const reset = untilReset(quotaWindow.resetsAt);
   return (
     <div className="flex items-center gap-2.5 py-[3px] text-[11px]">
-      <span className="w-[104px] shrink-0 truncate text-zinc-500">{quotaWindow.label}</span>
+      <span className="w-[88px] shrink-0 truncate text-zinc-500">{quotaWindow.label}</span>
       <div
         role="meter"
         aria-label={`${quotaWindow.label} used`}

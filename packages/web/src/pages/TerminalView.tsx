@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { MergeRequest, RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
+import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
 import { api, type AgentMode } from '../api';
 import { subscribeWorktrees } from '../eventStream';
@@ -513,6 +514,7 @@ export function TerminalView({
   sidebarCollapsed = false,
   onExpandSidebar,
   runningServers,
+  onOpenUsage,
   openSeq = 0,
   modalOpen = false,
 }: {
@@ -533,6 +535,8 @@ export function TerminalView({
    *  reachable from inside a worktree. Owned by the Dashboard, which is where
    *  the live worktree list and the start/stop calls are. */
   runningServers?: React.ReactNode;
+  /** Switches the board to the Usage view — the quota dial's footer link. */
+  onOpenUsage?: () => void;
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
@@ -2837,6 +2841,7 @@ export function TerminalView({
                     ))}
                   </select>
                 )}
+                <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} />
                 <button
                   className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
                     p.status === 'running'

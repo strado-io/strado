@@ -776,6 +776,7 @@ export function Dashboard(props: {
               sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
               runningServers={runningServers}
+              onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
             />
           </div>
@@ -791,6 +792,7 @@ export function Dashboard(props: {
               sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
               runningServers={runningServers}
+              onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
             />
           </div>
