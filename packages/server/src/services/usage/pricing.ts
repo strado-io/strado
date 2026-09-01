@@ -33,6 +33,7 @@ const PER_MILLION: Record<string, Rate> = {
   // OpenAI — the GPT-5 family rates Codex bills against.
   'gpt-5.6': { input: 1.25, output: 10 },
   'gpt-5.6-codex': { input: 1.25, output: 10 },
+  'gpt-5.6-sol': { input: 1.25, output: 10 },
   'gpt-5.5': { input: 1.25, output: 10 },
   'gpt-5.5-codex': { input: 1.25, output: 10 },
   'gpt-5': { input: 1.25, output: 10 },

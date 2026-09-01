@@ -64,6 +64,7 @@ describe('priceUsd', () => {
 
   it('prices codex models', () => {
     expect(priceUsd('gpt-5.6', tokens({ input: 1_000_000 })).known).toBe(true);
+    expect(priceUsd('gpt-5.6-sol', tokens({ input: 1_000_000 })).known).toBe(true);
   });
 });
 
