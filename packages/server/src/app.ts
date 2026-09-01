@@ -270,7 +270,15 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
 }
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: 'info' }, maxParamLength: 4096 });
+  // Two lines per request, at ~40 requests/min, is how server.log reached
+  // 180 MB on a normal workstation — and none of it was ever read. App-level
+  // logs (startup, errors) stay at info; set STRADO_LOG_REQUESTS=1 to get the
+  // per-request trace back while debugging.
+  const app = Fastify({
+    logger: { level: 'info' },
+    maxParamLength: 4096,
+    disableRequestLogging: process.env.STRADO_LOG_REQUESTS !== '1',
+  });
 
   app.setErrorHandler((err, _req, reply) => {
     const mapped =

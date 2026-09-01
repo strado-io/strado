@@ -1,5 +1,12 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
 
+/** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
+export type WorktreeMergeRequests =
+  | { kind: 'absent' }
+  | { kind: 'needsAuth'; provider: 'gitlab' | 'github' }
+  | { kind: 'list'; provider: 'gitlab' | 'github'; mergeRequests: MergeRequest[] }
+  | { kind: 'error'; message: string };
+
 export class ApiClientError extends Error {
   code: string;
   details?: unknown;
@@ -10,10 +17,47 @@ export class ApiClientError extends Error {
   }
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+// Every call gets a deadline. The server already caps each upstream provider
+// call at 10s, but a route can chain several, and a browser only gives an
+// origin six HTTP/1.1 sockets — a couple of which SSE holds permanently. One
+// unreachable host (VPN off) was enough to park every remaining socket on
+// 10s requests, so unrelated calls — closing a shell, listing worktrees —
+// queued in the browser and the app looked frozen. A client-side deadline is
+// the backstop that guarantees a socket always comes back.
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Opt out with `timeoutMs: 0` for calls that are legitimately unbounded (git clone). */
+type RequestOpts = { timeoutMs?: number };
+
+async function request<T>(url: string, init?: RequestInit, opts?: RequestOpts): Promise<T> {
   const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
   if (init?.body != null) headers['content-type'] = 'application/json';
-  const res = await fetch(url, { ...init, headers });
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // A plain AbortController + setTimeout rather than AbortSignal.timeout: it
+  // composes with a caller-supplied signal and is clearable, so a settled
+  // request leaves no pending timer behind.
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const caller = init?.signal;
+  const onCallerAbort = () => controller?.abort();
+  if (controller && caller) {
+    if (caller.aborted) controller.abort();
+    else caller.addEventListener('abort', onCallerAbort, { once: true });
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, headers, ...(controller ? { signal: controller.signal } : {}) });
+  } catch (err) {
+    // Only *our* deadline becomes TIMEOUT; a caller-driven abort (unmount)
+    // must stay an abort so callers can keep ignoring it.
+    if (controller?.signal.aborted && !caller?.aborted) {
+      throw new ApiClientError('TIMEOUT', `Request to ${url} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+    caller?.removeEventListener('abort', onCallerAbort);
+  }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   const body = text ? JSON.parse(text) : undefined;
@@ -195,6 +239,8 @@ export const api = {
       request<{ repo: RepoConfig; warnings: string[]; alreadyRegistered: boolean; path: string }>(
         `${wsBase(wsId)}/repos/clone`,
         { method: 'POST', body: JSON.stringify(dest ? { url, dest } : { url }) },
+        // A clone of a large repo legitimately runs for minutes.
+        { timeoutMs: 0 },
       ),
     patch: (wsId: string, id: string, patch: Partial<RepoConfig>) =>
       request<RepoConfig>(`${wsBase(wsId)}/repos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
@@ -337,6 +383,14 @@ export const api = {
       if (r.needsAuth) return { kind: 'needsAuth' as const, provider };
       return { kind: 'list' as const, provider, mergeRequests: r.mergeRequests ?? [] };
     },
+    // One request for many worktrees. The per-worktree call above still backs
+    // single-pane views; this is what the board and sidebar poll with, so a
+    // repo with two dozen worktrees costs one socket instead of two dozen.
+    mergeRequestsBatch: (wsId: string, paths: string[]) =>
+      request<{ results: Record<string, WorktreeMergeRequests> }>(
+        `${wsBase(wsId)}/merge-requests/batch`,
+        { method: 'POST', body: JSON.stringify({ paths }) },
+      ),
     mergeRequestChanges: async (wsId: string, p: string, iid: number) => {
       const r = await request<{ needsAuth?: boolean; provider?: 'gitlab' | 'github'; files?: MergeRequestChange[]; truncated?: boolean; total?: number | null } | undefined>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/merge-requests/${iid}/changes`,
