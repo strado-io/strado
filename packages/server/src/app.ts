@@ -355,6 +355,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerMiscRoutes(scoped);
     const { registerClaudeSessionsRoutes } = await import('./routes/claudeSessions.js');
     await registerClaudeSessionsRoutes(scoped);
+    const { registerUsageRoutes } = await import('./routes/usage.js');
+    await registerUsageRoutes(scoped);
     const { registerHandoffRoutes } = await import('./routes/handoffs.js');
     await registerHandoffRoutes(scoped);
     const { registerGitProviderWorktreeRoutes } = await import('./routes/gitProvider.js');
