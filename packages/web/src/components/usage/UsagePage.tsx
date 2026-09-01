@@ -8,7 +8,7 @@ import { MachineResources } from './MachineResources';
 import { StatStrip } from './StatStrip';
 import { UsageChart } from './UsageChart';
 import type { ChartMetric } from './chartGeometry';
-import { money, percent, shortDate, tokens } from './format';
+import { money, percent, pricingNote, shortDate, tokens } from './format';
 
 type Tab = 'tokens' | 'machine';
 
@@ -179,7 +179,9 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
                   <div className="font-mono text-2xl tabular-nums text-zinc-100">
                     {money(summary.totals.cost)}<span className="text-zinc-500">*</span>
                   </div>
-                  <p className="mt-0.5 text-[11px] text-zinc-600">* if billed at full API rate</p>
+                  <p className="mt-0.5 text-[11px] text-zinc-600">
+                    * if billed at full API rate · {pricingNote(summary.pricing)}
+                  </p>
                   <p className="text-[11px] text-emerald-500">Cost to you: covered by your plans</p>
                   <ul className="mt-3 flex flex-col gap-1">
                     {(['claude', 'codex'] as const).map((agent) => (

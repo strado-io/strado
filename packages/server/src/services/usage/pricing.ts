@@ -1,69 +1,95 @@
 /**
- * Per-model API list prices, used to turn local session-log token counts into a
- * "what this would cost at full API rate" figure. Subscription plans do not
- * bill per token, so every number derived from here is an estimate the UI
- * labels as such.
+ * Model rates, used to turn local session-log token counts into a "what this
+ * would cost at full API rate" figure. Subscription plans do not bill per
+ * token, so every number derived from here is an estimate the UI labels as
+ * such.
  *
- * Rates are $ per million tokens. Cross-checked against ccusage (Claude) and
- * CodexBar (Codex) on the same logs.
+ * Rates are $ per million tokens. The built-in table is the offline fallback;
+ * `priceCatalog.ts` fetches current rates and overrides it. Cross-checked
+ * against ccusage (Claude) and CodexBar (Codex) on the same logs.
  */
 export type TokenCounts = {
   input: number;
-  /** 5-minute cache writes, billed at 1.25x input. */
+  /** 5-minute cache writes. */
   cacheWrite: number;
-  /** 1-hour cache writes, billed at 2x input. */
+  /** 1-hour cache writes, billed above the 5-minute rate. */
   cacheWrite1h: number;
   cacheRead: number;
   output: number;
 };
 
-type Rate = {
+/** Every rate class we price, in $ per million tokens. */
+export type Rate = {
   input: number;
   output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cacheWrite1h: number;
   /**
-   * Prompts larger than this are billed at long-context rates for the whole
-   * request: input, cache read and cache write double, output is 1.5x. Absent
-   * on models with a single price band.
+   * Rates for a prompt past `over` tokens: vendors bill the whole request at
+   * the higher band. Absent on models with a single band.
    */
-  longContextOver?: number;
+  long?: { over: number } & Omit<Rate, 'long'>;
 };
+
+export type RateTable = Record<string, Rate>;
 
 const CACHE_WRITE_5M = 1.25;
 const CACHE_WRITE_1H = 2;
 const CACHE_READ = 0.1;
-const LONG_INPUT_MULTIPLIER = 2;
-const LONG_OUTPUT_MULTIPLIER = 1.5;
+const LONG_INPUT = 2;
+const LONG_OUTPUT = 1.5;
 
-const PER_MILLION: Record<string, Rate> = {
+/** Both vendors derive their cache rates from input, so one helper covers all. */
+function band(input: number, output: number): Omit<Rate, 'long'> {
+  return {
+    input,
+    output,
+    cacheRead: input * CACHE_READ,
+    cacheWrite: input * CACHE_WRITE_5M,
+    cacheWrite1h: input * CACHE_WRITE_1H,
+  };
+}
+
+function rate(input: number, output: number, longContextOver?: number): Rate {
+  const base = band(input, output);
+  if (longContextOver === undefined) return base;
+  return {
+    ...base,
+    long: { over: longContextOver, ...band(input * LONG_INPUT, output * LONG_OUTPUT) },
+  };
+}
+
+export const BUILTIN_RATES: RateTable = {
   // Anthropic — first-party API rates. Current models bill one band across
   // their whole context; the 200K band belongs to the older 1M-context models.
-  'claude-fable-5': { input: 10, output: 50 },
-  'claude-mythos-5': { input: 10, output: 50 },
-  'claude-opus-5': { input: 5, output: 25 },
-  'claude-opus-4-8': { input: 5, output: 25 },
-  'claude-opus-4-7': { input: 5, output: 25 },
-  'claude-opus-4-6': { input: 5, output: 25 },
-  'claude-opus-4-5': { input: 5, output: 25 },
-  'claude-sonnet-5': { input: 2, output: 10 },
-  'claude-sonnet-4-6': { input: 3, output: 15 },
-  'claude-sonnet-4-5': { input: 3, output: 15, longContextOver: 200_000 },
-  'claude-haiku-4-5': { input: 1, output: 5 },
+  'claude-fable-5': rate(10, 50),
+  'claude-mythos-5': rate(10, 50),
+  'claude-opus-5': rate(5, 25),
+  'claude-opus-4-8': rate(5, 25),
+  'claude-opus-4-7': rate(5, 25),
+  'claude-opus-4-6': rate(5, 25),
+  'claude-opus-4-5': rate(5, 25),
+  'claude-sonnet-5': rate(2, 10),
+  'claude-sonnet-4-6': rate(3, 15),
+  'claude-sonnet-4-5': rate(3, 15, 200_000),
+  'claude-haiku-4-5': rate(1, 5),
   // OpenAI — the rates Codex bills against, with the 272K long-context band.
-  'gpt-5.6-sol': { input: 4, output: 20, longContextOver: 272_000 },
+  'gpt-5.6-sol': rate(4, 20, 272_000),
   // The family row is what an unlisted 5.6 variant falls back to.
-  'gpt-5.6': { input: 4, output: 20, longContextOver: 272_000 },
-  'gpt-5.6-terra': { input: 2, output: 12, longContextOver: 272_000 },
-  'gpt-5.6-luna': { input: 0.2, output: 1.2, longContextOver: 272_000 },
-  'gpt-5.5': { input: 5, output: 30, longContextOver: 272_000 },
-  'gpt-5.5-pro': { input: 30, output: 180 },
-  'gpt-5.4': { input: 1.75, output: 14 },
-  'gpt-5.4-mini': { input: 0.35, output: 2.8 },
-  'gpt-5.3-codex': { input: 1.25, output: 10 },
-  'gpt-5.2': { input: 1.25, output: 10 },
-  'gpt-5.1': { input: 1.25, output: 10 },
-  'gpt-5': { input: 1.25, output: 10 },
-  'gpt-5-mini': { input: 0.25, output: 2 },
-  'gpt-5-nano': { input: 0.05, output: 0.4 },
+  'gpt-5.6': rate(4, 20, 272_000),
+  'gpt-5.6-terra': rate(2, 12, 272_000),
+  'gpt-5.6-luna': rate(0.2, 1.2, 272_000),
+  'gpt-5.5': rate(5, 30, 272_000),
+  'gpt-5.5-pro': rate(30, 180),
+  'gpt-5.4': rate(1.75, 14),
+  'gpt-5.4-mini': rate(0.35, 2.8),
+  'gpt-5.3-codex': rate(1.25, 10),
+  'gpt-5.2': rate(1.25, 10),
+  'gpt-5.1': rate(1.25, 10),
+  'gpt-5': rate(1.25, 10),
+  'gpt-5-mini': rate(0.25, 2),
+  'gpt-5-nano': rate(0.05, 0.4),
 };
 
 /**
@@ -85,56 +111,93 @@ export function normalizeModelId(raw: string): string {
 }
 
 /**
- * Vendors ship named variants of a model faster than a price table can track
- * them (`gpt-5.6-nova`, `claude-opus-5-preview`). Falling back to the family
- * the variant was cut from prices it at its base rate instead of reporting the
- * turn as free.
+ * Vendors ship named variants faster than any catalog tracks them
+ * (`gpt-5.6-nova`, `claude-opus-5-preview`). Falling back to the family the
+ * variant was cut from prices it at its base rate instead of reporting the turn
+ * as free.
  */
-function rateFor(model: string): Rate | null {
+export function rateFor(model: string, table: RateTable): Rate | null {
   let id = normalizeModelId(model);
   for (;;) {
-    const rate = PER_MILLION[id];
-    if (rate) return rate;
+    const found = table[id];
+    if (found) return found;
     const cut = id.lastIndexOf('-');
     if (cut <= 0) return null;
     id = id.slice(0, cut);
   }
 }
 
-const promptSize = (tokens: TokenCounts): number =>
+export const promptSize = (tokens: TokenCounts): number =>
   tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.cacheWrite1h;
 
-/** Priced with the cache discounts and context band the turn actually got. */
-export function priceUsd(model: string, tokens: TokenCounts): { cost: number; known: boolean } {
-  const rate = rateFor(model);
-  if (!rate) return { cost: 0, known: false };
-  const long = rate.longContextOver !== undefined && promptSize(tokens) > rate.longContextOver;
-  const perInput = (rate.input / 1_000_000) * (long ? LONG_INPUT_MULTIPLIER : 1);
-  const perOutput = (rate.output / 1_000_000) * (long ? LONG_OUTPUT_MULTIPLIER : 1);
-  const cost =
-    tokens.input * perInput
-    + tokens.cacheWrite * perInput * CACHE_WRITE_5M
-    + tokens.cacheWrite1h * perInput * CACHE_WRITE_1H
-    + tokens.cacheRead * perInput * CACHE_READ
-    + tokens.output * perOutput;
-  return { cost, known: true };
-}
-
 /**
- * What the same tokens would have cost with no cache at all — cached and
- * written tokens billed as plain input. The gap against `priceUsd` is the
- * cache saving the Usage page reports.
+ * Which price band a request fell in. Decided when the log line is parsed —
+ * it is a property of the request, not of today's rates — so cached history
+ * reprices correctly when the catalog updates.
  */
-export function fullRateUsd(model: string, tokens: TokenCounts): number {
-  const rate = rateFor(model);
-  if (!rate) return 0;
-  const long = rate.longContextOver !== undefined && promptSize(tokens) > rate.longContextOver;
-  const perInput = (rate.input / 1_000_000) * (long ? LONG_INPUT_MULTIPLIER : 1);
-  const perOutput = (rate.output / 1_000_000) * (long ? LONG_OUTPUT_MULTIPLIER : 1);
-  return promptSize(tokens) * perInput + tokens.output * perOutput;
+export function bandFor(model: string, tokens: TokenCounts, table: RateTable): 'std' | 'long' {
+  const found = rateFor(model, table);
+  if (!found?.long) return 'std';
+  return promptSize(tokens) > found.long.over ? 'long' : 'std';
 }
 
-/** True when the price table has a row for this model. */
-export function isKnownModel(model: string): boolean {
-  return rateFor(model) !== null;
+function bandRates(found: Rate, which: 'std' | 'long'): Omit<Rate, 'long'> {
+  if (which === 'long' && found.long) {
+    const { over, ...rest } = found.long;
+    void over;
+    return rest;
+  }
+  return found;
 }
+
+export type Pricer = {
+  /** Priced with the cache discounts and context band the turn actually got. */
+  cost(model: string, tokens: TokenCounts, which?: 'std' | 'long'): { cost: number; known: boolean };
+  /**
+   * What the same tokens would have cost with no cache at all — cached and
+   * written tokens billed as plain input. The gap against `cost` is the cache
+   * saving the Usage page reports.
+   */
+  fullRate(model: string, tokens: TokenCounts, which?: 'std' | 'long'): number;
+  known(model: string): boolean;
+  band(model: string, tokens: TokenCounts): 'std' | 'long';
+};
+
+/** A pricer bound to one rate table. */
+export function createPricer(table: RateTable = BUILTIN_RATES): Pricer {
+  return {
+    cost(model, tokens, which = 'std') {
+      const found = rateFor(model, table);
+      if (!found) return { cost: 0, known: false };
+      const r = bandRates(found, which);
+      const cost =
+        (tokens.input * r.input
+          + tokens.cacheWrite * r.cacheWrite
+          + tokens.cacheWrite1h * r.cacheWrite1h
+          + tokens.cacheRead * r.cacheRead
+          + tokens.output * r.output) / 1_000_000;
+      return { cost, known: true };
+    },
+    fullRate(model, tokens, which = 'std') {
+      const found = rateFor(model, table);
+      if (!found) return 0;
+      const r = bandRates(found, which);
+      return (promptSize(tokens) * r.input + tokens.output * r.output) / 1_000_000;
+    },
+    known(model) {
+      return rateFor(model, table) !== null;
+    },
+    band(model, tokens) {
+      return bandFor(model, tokens, table);
+    },
+  };
+}
+
+const builtin = createPricer();
+
+/** Convenience wrappers over the built-in table, for callers without a catalog. */
+export const priceUsd = (model: string, tokens: TokenCounts, which?: 'std' | 'long') =>
+  builtin.cost(model, tokens, which);
+export const fullRateUsd = (model: string, tokens: TokenCounts, which?: 'std' | 'long') =>
+  builtin.fullRate(model, tokens, which);
+export const isKnownModel = (model: string) => builtin.known(model);

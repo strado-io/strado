@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bytes, money, percent, shortDate, tokens, untilReset } from './format';
+import { bytes, money, percent, pricingNote, shortDate, tokens, untilReset } from './format';
 
 describe('money', () => {
   it('rounds and groups above a thousand', () => {
@@ -84,5 +84,20 @@ describe('bytes', () => {
 
   it('shows a dash when the figure is unknown', () => {
     expect(bytes(null)).toBe('—');
+  });
+});
+
+describe('pricingNote', () => {
+  it('dates the catalog it priced with', () => {
+    expect(pricingNote({ source: 'litellm', fetchedAt: '2026-09-01T10:00:00.000Z' }))
+      .toBe('LiteLLM rates · 1 Sep');
+  });
+
+  it('says when the built-in table is in force', () => {
+    expect(pricingNote({ source: 'builtin', fetchedAt: null })).toBe('built-in rate table');
+  });
+
+  it('drops an unparseable date rather than printing it', () => {
+    expect(pricingNote({ source: 'litellm', fetchedAt: 'whenever' })).toBe('LiteLLM rates');
   });
 });

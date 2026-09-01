@@ -14,6 +14,8 @@ export default defineConfig({
     // payloads the test never sent.
     env: {
       STRADO_INPROC_PTY: '1',
+      // No suite should reach the LiteLLM price catalog; tests inject rates.
+      STRADO_PRICE_CATALOG: 'off',
       STRADO_HOME: '',
       STRADO_LICENSE_REQUIRED: '',
       STRADO_SESSION_ID: '',

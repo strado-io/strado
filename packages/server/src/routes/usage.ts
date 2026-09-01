@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { createPriceCatalog } from '../services/usage/priceCatalog.js';
 import { createQuotaService } from '../services/usage/quota.js';
 import { createUsageStore, type WorktreeLabel } from '../services/usage/usageStore.js';
 import { sampleMachine } from '../services/usage/machine.js';
@@ -34,9 +35,13 @@ async function worktreeLabels(app: FastifyInstance, wsId: string): Promise<Workt
 }
 
 export async function registerUsageRoutes(app: FastifyInstance) {
+  // Rates come from the public LiteLLM catalog, cached on disk for a day and
+  // falling back to the built-in table offline.
+  const catalog = createPriceCatalog({ stateDir: app.deps.homeStateDir });
   const store = createUsageStore({
     agentHomeDir: app.deps.agentHomeDir,
     stateDir: app.deps.homeStateDir,
+    catalog,
   });
   const quota = createQuotaService({
     agentHomeDir: app.deps.agentHomeDir,

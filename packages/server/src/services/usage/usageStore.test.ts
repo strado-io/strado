@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createUsageStore } from './usageStore.js';
+import { BUILTIN_RATES } from './pricing.js';
 import { encodeProjectDir } from './claudeLogs.js';
 
 let home = '';
@@ -20,7 +21,8 @@ const claudeLine = (over: { ts?: string; model?: string; cwd?: string; id?: stri
     message: {
       id: `msg_${over.id ?? '1'}`,
       model: over.model ?? 'claude-opus-5',
-      usage: { input_tokens: 1_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 100_000, output_tokens: 2_000, ...over.usage },
+      usage: over.usage
+        ?? { input_tokens: 1_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 100_000, output_tokens: 2_000 },
     },
   });
 
@@ -60,6 +62,11 @@ const writeCodex = async (lines: string[], file = 'rollout-a.jsonl') => {
   return full;
 };
 
+/** Built-in rates, no network: the tests assert token math, not vendor prices. */
+const offlineCatalog = {
+  rates: async () => ({ table: BUILTIN_RATES, provenance: { source: 'builtin' as const, fetchedAt: null } }),
+};
+
 const labels = () => [
   { path: '/repo/wt-a', label: 'wt-a' },
   { path: '/repo/wt-b', label: 'wt-b' },
@@ -79,7 +86,7 @@ describe('createUsageStore', () => {
   it('sums both agents into totals and per-agent series', async () => {
     await writeClaude('/repo/wt-a', [claudeLine()]);
     await writeCodex(codexLines());
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const summary = await store.summary({ days: 7, worktrees: labels() });
 
@@ -94,7 +101,7 @@ describe('createUsageStore', () => {
 
   it('zero-fills days with no activity', async () => {
     await writeClaude('/repo/wt-a', [claudeLine()]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const summary = await store.summary({ days: 30, worktrees: labels() });
 
@@ -105,7 +112,7 @@ describe('createUsageStore', () => {
 
   it('drops turns older than the window', async () => {
     await writeClaude('/repo/wt-a', [claudeLine({ ts: iso(40 * DAY), id: 'old' }), claudeLine()]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const week = await store.summary({ days: 7, worktrees: labels() });
     const quarter = await store.summary({ days: 90, worktrees: labels() });
@@ -119,7 +126,7 @@ describe('createUsageStore', () => {
       claudeLine({ id: 'a', model: 'claude-opus-5' }),
       claudeLine({ id: 'b', model: 'claude-haiku-4-5' }),
     ]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const { models } = await store.summary({ days: 7, worktrees: labels() });
 
@@ -131,7 +138,7 @@ describe('createUsageStore', () => {
   it('labels known worktrees and pools the rest as unattributed', async () => {
     await writeClaude('/repo/wt-a', [claudeLine()]);
     await writeClaude('/somewhere/else', [claudeLine({ cwd: '/somewhere/else', id: 'x' })], 'other.jsonl');
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const { worktrees, totals } = await store.summary({ days: 7, worktrees: labels() });
 
@@ -141,7 +148,7 @@ describe('createUsageStore', () => {
 
   it('reports cache savings as the gap against full-rate pricing', async () => {
     await writeClaude('/repo/wt-a', [claudeLine()]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const { totals } = await store.summary({ days: 7, worktrees: labels() });
 
@@ -152,7 +159,7 @@ describe('createUsageStore', () => {
 
   it('re-reads no bytes on a second pass and returns the same numbers', async () => {
     const file = await writeClaude('/repo/wt-a', [claudeLine()]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const first = await store.summary({ days: 7, worktrees: labels() });
     const second = await store.summary({ days: 7, worktrees: labels() });
@@ -164,7 +171,7 @@ describe('createUsageStore', () => {
 
   it('picks up appended turns without recounting old ones', async () => {
     const file = await writeClaude('/repo/wt-a', [claudeLine()]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
     await store.summary({ days: 7, worktrees: labels() });
 
     await fsp.appendFile(file, `${claudeLine({ id: '2' })}\n`);
@@ -175,7 +182,7 @@ describe('createUsageStore', () => {
 
   it('rereads a file from scratch when it shrinks', async () => {
     const file = await writeClaude('/repo/wt-a', [claudeLine(), claudeLine({ id: '2' })]);
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
     await store.summary({ days: 7, worktrees: labels() });
 
     await fsp.writeFile(file, `${claudeLine({ id: '3' })}\n`, 'utf8');
@@ -186,9 +193,9 @@ describe('createUsageStore', () => {
 
   it('survives a new store instance by reloading its cache', async () => {
     await writeClaude('/repo/wt-a', [claudeLine()]);
-    await (createUsageStore({ agentHomeDir: home, stateDir })).summary({ days: 7, worktrees: labels() });
+    await (createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog })).summary({ days: 7, worktrees: labels() });
 
-    const reopened = createUsageStore({ agentHomeDir: home, stateDir });
+    const reopened = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
     const summary = await reopened.summary({ days: 7, worktrees: labels() });
 
     expect(summary.totals.tokens).toBe(103_000);
@@ -200,7 +207,7 @@ describe('createUsageStore', () => {
     const subagents = path.join(home, '.claude', 'projects', encodeProjectDir('/repo/wt-a'), 'session', 'subagents');
     await fsp.mkdir(subagents, { recursive: true });
     await fsp.writeFile(path.join(subagents, 'agent-a.jsonl'), `${claudeLine({ id: 'sub' })}\n`, 'utf8');
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const summary = await store.summary({ days: 7, worktrees: labels() });
 
@@ -210,9 +217,57 @@ describe('createUsageStore', () => {
     ]);
   });
 
+  it('reprices parsed history when the rate table changes', async () => {
+    await writeClaude('/repo/wt-a', [claudeLine()]);
+    const cheap = await createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog })
+      .summary({ days: 7, worktrees: labels() });
+
+    const doubled = {
+      rates: async () => ({
+        table: {
+          'claude-opus-5': {
+            input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5, cacheWrite1h: 20,
+          },
+        },
+        provenance: { source: 'litellm' as const, fetchedAt: '2026-09-01T00:00:00.000Z' },
+      }),
+    };
+    const expensive = await createUsageStore({ agentHomeDir: home, stateDir, catalog: doubled })
+      .summary({ days: 7, worktrees: labels() });
+
+    // Same tokens, no re-parse, twice the rates.
+    expect(expensive.bytesRead).toBe(0);
+    expect(expensive.totals.tokens).toBe(cheap.totals.tokens);
+    expect(expensive.totals.cost).toBeCloseTo(cheap.totals.cost * 2, 8);
+    expect(expensive.pricing).toEqual({ source: 'litellm', fetchedAt: '2026-09-01T00:00:00.000Z' });
+  });
+
+  it('keeps a long-context turn on its own band after a reprice', async () => {
+    await writeClaude('/repo/wt-a', [claudeLine({
+      model: 'claude-sonnet-4-5',
+      usage: { input_tokens: 300_000, cache_read_input_tokens: 0, output_tokens: 1_000 },
+    })]);
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
+
+    const first = await store.summary({ days: 7, worktrees: labels() });
+    const second = await createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog })
+      .summary({ days: 7, worktrees: labels() });
+
+    // 300K input on a 200K-threshold model: 2x input, 1.5x output.
+    expect(first.totals.cost).toBeCloseTo(300_000 * (3 / 1e6) * 2 + 1_000 * (15 / 1e6) * 1.5, 8);
+    expect(second.totals.cost).toBeCloseTo(first.totals.cost, 8);
+  });
+
+  it('reports which rate table priced the summary', async () => {
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
+
+    expect((await store.summary({ days: 7, worktrees: labels() })).pricing)
+      .toEqual({ source: 'builtin', fetchedAt: null });
+  });
+
   it('exposes the newest codex rate-limit snapshot', async () => {
     await writeCodex(codexLines());
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     await store.summary({ days: 7, worktrees: labels() });
     const snapshot = await store.codexRateLimits();
@@ -222,7 +277,7 @@ describe('createUsageStore', () => {
   });
 
   it('returns an empty summary when no agent logs exist', async () => {
-    const store = createUsageStore({ agentHomeDir: home, stateDir });
+    const store = createUsageStore({ agentHomeDir: home, stateDir, catalog: offlineCatalog });
 
     const summary = await store.summary({ days: 7, worktrees: labels() });
 

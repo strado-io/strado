@@ -17,6 +17,7 @@ const HOUR = 3_600_000;
 
 const summary = (over: Partial<UsageSummary> = {}): UsageSummary => ({
   range: { from: '2026-08-03', to: '2026-09-01' },
+  pricing: { source: 'litellm', fetchedAt: '2026-09-01T09:00:00.000Z' },
   totals: {
     cost: 3798, tokens: 4_200_000_000, cachedInput: 4_100_000_000, uncachedInput: 10_300_000,
     cacheWrite: 0, output: 15_200_000, cacheSavings: 20_701, cacheSavingsMultiple: 5.5,
@@ -103,7 +104,8 @@ describe('UsagePage', () => {
     render(<UsagePage wsId="ws-1" />);
 
     await waitFor(() => expect(screen.getByText('$3,798')).toBeInTheDocument());
-    expect(screen.getByText('* if billed at full API rate')).toBeInTheDocument();
+    expect(screen.getByText(/if billed at full API rate · LiteLLM rates · 1 Sep/))
+      .toBeInTheDocument();
     expect(screen.getByText('$3,567')).toBeInTheDocument();
     expect(screen.getByText('$230')).toBeInTheDocument();
   });

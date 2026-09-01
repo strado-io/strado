@@ -113,6 +113,15 @@ describe('GET /api/w/:ws/usage/summary', () => {
     ]);
   });
 
+  it('says which rate table priced the figures', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/w/default/usage/summary?days=7' });
+
+    const { pricing } = res.json();
+    // Offline in tests: the built-in table, with no fetch date to show.
+    expect(pricing.source).toBe('builtin');
+    expect(pricing.fetchedAt).toBeNull();
+  });
+
   it('defaults to the 30-day window', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/w/default/usage/summary' });
 

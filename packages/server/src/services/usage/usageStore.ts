@@ -2,7 +2,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { claudeProjectDirs, claudeTranscripts, readClaudeEvents, type UsageEvent } from './claudeLogs.js';
 import { codexRolloutFiles, readCodexEvents, type RateLimitSnapshot } from './codexLogs.js';
-import { fullRateUsd, isKnownModel, normalizeModelId, priceUsd } from './pricing.js';
+import { createPricer, normalizeModelId, type Pricer, type TokenCounts } from './pricing.js';
+import type { PriceCatalog, PriceProvenance } from './priceCatalog.js';
 
 export type Agent = 'claude' | 'codex';
 
@@ -38,6 +39,8 @@ export type UsageTotals = {
 
 export type UsageSummary = {
   range: { from: string; to: string };
+  /** Which rate table priced these figures. */
+  pricing: PriceProvenance;
   totals: UsageTotals;
   byAgent: Record<Agent, AgentTotals>;
   series: DayPoint[];
@@ -49,11 +52,15 @@ export type UsageSummary = {
 };
 
 /**
- * Per (date, model) totals for one log file, in a fixed tuple so a cache
- * covering months of transcripts stays small on disk:
- * [cost, fullRateCost, input, cacheWrite5m, cacheWrite1h, cacheRead, output].
+ * Per (date, model, price band) token totals for one log file, in a fixed tuple
+ * so a cache covering months of transcripts stays small on disk:
+ * [input, cacheWrite5m, cacheWrite1h, cacheRead, output].
+ *
+ * Deliberately tokens only. Money is computed when the summary is built, so a
+ * rate the catalog corrects tomorrow reprices every day already parsed instead
+ * of freezing yesterday's estimate into the cache.
  */
-type Tally = [number, number, number, number, number, number, number];
+type Tally = [number, number, number, number, number];
 
 /**
  * Buckets live under the file they came from. That is what makes a rewritten
@@ -82,7 +89,7 @@ type CacheShape = {
   skipped: number;
 };
 
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 7;
 const DAY_MS = 86_400_000;
 /** Longest window the UI offers, plus room; older days are dropped. */
 const RETAIN_DAYS = 120;
@@ -96,13 +103,18 @@ const emptyCache = (): CacheShape => ({
 
 const dayKey = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
 
-const emptyTally = (): Tally => [0, 0, 0, 0, 0, 0, 0];
+/** Marks a tally whose turns billed at the long-context band. */
+const LONG_BAND_SUFFIX = '#long';
+
+const emptyTally = (): Tally => [0, 0, 0, 0, 0];
 
 export type UsageStoreOptions = {
   /** Home dir holding `.claude` and `.codex`; `app.deps.agentHomeDir`. */
   agentHomeDir: string;
   /** Where the parse cache lives; `app.deps.homeStateDir`. */
   stateDir: string;
+  /** Rates in force, refreshed by the price catalog. */
+  catalog: PriceCatalog;
 };
 
 export type UsageStore = {
@@ -118,7 +130,7 @@ export type UsageStore = {
  * may cross months of transcripts) the only expensive one; every refresh after
  * it reads only what the agents appended since.
  */
-export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions): UsageStore {
+export function createUsageStore({ agentHomeDir, stateDir, catalog }: UsageStoreOptions): UsageStore {
   const cacheFile = path.join(stateDir, 'usage-cache.json');
   let cache: CacheShape | null = null;
   let scanning: Promise<number> | null = null;
@@ -151,18 +163,20 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
     }
   }
 
-  function add(file: FileState, event: UsageEvent): void {
+  function add(file: FileState, event: UsageEvent, pricer: Pricer): void {
     const model = normalizeModelId(event.model);
+    // A prompt past the model's long-context threshold bills the whole request
+    // at the higher band. That is a property of the request, so it is decided
+    // here and carried in the key; only the rates are looked up later.
+    const key = pricer.band(model, event.tokens) === 'long' ? `${model}${LONG_BAND_SUFFIX}` : model;
     const date = dayKey(event.ts);
     const day = file.days[date] ?? (file.days[date] = {});
-    const tally = day[model] ?? (day[model] = emptyTally());
-    tally[0] += priceUsd(model, event.tokens).cost;
-    tally[1] += fullRateUsd(model, event.tokens);
-    tally[2] += event.tokens.input;
-    tally[3] += event.tokens.cacheWrite;
-    tally[4] += event.tokens.cacheWrite1h;
-    tally[5] += event.tokens.cacheRead;
-    tally[6] += event.tokens.output;
+    const tally = day[key] ?? (day[key] = emptyTally());
+    tally[0] += event.tokens.input;
+    tally[1] += event.tokens.cacheWrite;
+    tally[2] += event.tokens.cacheWrite1h;
+    tally[3] += event.tokens.cacheRead;
+    tally[4] += event.tokens.output;
     if (!file.cwd && event.cwd) file.cwd = event.cwd;
   }
 
@@ -189,7 +203,7 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
     return { ...known, size: stat.size, mtimeMs: stat.mtimeMs };
   }
 
-  async function scanClaude(state: CacheShape): Promise<number> {
+  async function scanClaude(state: CacheShape, pricer: Pricer): Promise<number> {
     let bytes = 0;
     const root = path.join(agentHomeDir, '.claude', 'projects');
     for (const dir of await claudeProjectDirs(root)) {
@@ -199,7 +213,7 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
         const { events, offset, skipped } = await readClaudeEvents(file, next.offset);
         bytes += offset - next.offset;
         state.skipped += skipped;
-        for (const event of events) add(next, event);
+        for (const event of events) add(next, event, pricer);
         next.offset = offset;
         state.files[file] = next;
       }
@@ -207,7 +221,7 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
     return bytes;
   }
 
-  async function scanCodex(state: CacheShape): Promise<number> {
+  async function scanCodex(state: CacheShape, pricer: Pricer): Promise<number> {
     let bytes = 0;
     const root = path.join(agentHomeDir, '.codex', 'sessions');
     let newest: RateLimitSnapshot | null = state.codexRateLimits;
@@ -217,7 +231,7 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
       const read = await readCodexEvents(file, next.offset, { cwd: next.cwd, model: next.model });
       bytes += read.offset - next.offset;
       state.skipped += read.skipped;
-      for (const event of read.events) add(next, event);
+      for (const event of read.events) add(next, event, pricer);
       if (read.rateLimits && (!newest || read.rateLimits.capturedAt >= newest.capturedAt)) {
         newest = read.rateLimits;
       }
@@ -231,11 +245,11 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
   }
 
   /** One scan at a time: concurrent callers share the in-flight pass. */
-  async function scan(): Promise<number> {
+  async function scan(pricer: Pricer): Promise<number> {
     if (scanning) return scanning;
     scanning = (async () => {
       const state = await load();
-      const bytes = (await scanClaude(state)) + (await scanCodex(state));
+      const bytes = (await scanClaude(state, pricer)) + (await scanCodex(state, pricer));
       await persist(state);
       return bytes;
     })().finally(() => {
@@ -244,7 +258,14 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
     return scanning;
   }
 
-  function aggregate(state: CacheShape, days: number, worktrees: WorktreeLabel[], bytesRead: number): UsageSummary {
+  function aggregate(
+    state: CacheShape,
+    days: number,
+    worktrees: WorktreeLabel[],
+    bytesRead: number,
+    pricer: Pricer,
+    provenance: PriceProvenance,
+  ): UsageSummary {
     const now = Date.now();
     const fromMs = now - (days - 1) * DAY_MS;
     const fromDate = dayKey(fromMs);
@@ -287,8 +308,15 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
         if (date < fromDate) continue;
         const point = series.get(date);
         if (!point) continue;
-        for (const [model, tally] of Object.entries(byModel)) {
-          const [cost, atFullRate, input, write5m, write1h, cacheRead, output] = tally;
+        for (const [tallyKey, tally] of Object.entries(byModel)) {
+          const [input, write5m, write1h, cacheRead, output] = tally;
+          const band = tallyKey.endsWith(LONG_BAND_SUFFIX) ? 'long' : 'std';
+          const model = band === 'long' ? tallyKey.slice(0, -LONG_BAND_SUFFIX.length) : tallyKey;
+          const counts: TokenCounts = {
+            input, cacheWrite: write5m, cacheWrite1h: write1h, cacheRead, output,
+          };
+          const { cost } = pricer.cost(model, counts, band);
+          const atFullRate = pricer.fullRate(model, counts, band);
           const cacheWrite = write5m + write1h;
           const tokens = input + cacheWrite + cacheRead + output;
 
@@ -306,7 +334,7 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
           fullRate += atFullRate;
 
           const modelRow = models.get(model) ?? {
-            id: model, agent: file.agent, cost: 0, tokens: 0, share: 0, priced: isKnownModel(model),
+            id: model, agent: file.agent, cost: 0, tokens: 0, share: 0, priced: pricer.known(model),
           };
           modelRow.cost += cost;
           modelRow.tokens += tokens;
@@ -341,6 +369,7 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
 
     return {
       range: { from: fromDate, to: dayKey(now) },
+      pricing: provenance,
       totals,
       byAgent,
       series: [...series.values()],
@@ -353,12 +382,15 @@ export function createUsageStore({ agentHomeDir, stateDir }: UsageStoreOptions):
 
   return {
     async summary({ days, worktrees }) {
-      const bytesRead = await scan();
+      const { table, provenance } = await catalog.rates();
+      const pricer = createPricer(table);
+      const bytesRead = await scan(pricer);
       const state = await load();
-      return aggregate(state, days, worktrees, bytesRead);
+      return aggregate(state, days, worktrees, bytesRead, pricer, provenance);
     },
     async codexRateLimits() {
-      await scan();
+      const { table } = await catalog.rates();
+      await scan(createPricer(table));
       return (await load()).codexRateLimits;
     },
   };

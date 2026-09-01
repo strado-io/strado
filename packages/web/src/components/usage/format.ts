@@ -60,3 +60,14 @@ export function bytes(value: number | null): string {
   }
   return `${Math.round(value)} B`;
 }
+
+/**
+ * Where the rates came from, for the line under the cost figure. Catalog rates
+ * carry their fetch date so a stale table is visible rather than implied.
+ */
+export function pricingNote(pricing: { source: 'litellm' | 'builtin'; fetchedAt: string | null }): string {
+  if (pricing.source === 'builtin') return 'built-in rate table';
+  const fetched = pricing.fetchedAt ? new Date(pricing.fetchedAt) : null;
+  if (!fetched || Number.isNaN(fetched.getTime())) return 'LiteLLM rates';
+  return `LiteLLM rates · ${shortDate(fetched.toISOString().slice(0, 10))}`;
+}

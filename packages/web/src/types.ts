@@ -239,8 +239,16 @@ export type UsageTotals = {
   cacheSavingsMultiple: number;
 };
 
+/** Which rate table priced a summary, shown beside the cost figures. */
+export type UsagePricing = {
+  source: 'litellm' | 'builtin';
+  /** ISO timestamp of the catalog fetch; null for the built-in table. */
+  fetchedAt: string | null;
+};
+
 export type UsageSummary = {
   range: { from: string; to: string };
+  pricing: UsagePricing;
   totals: UsageTotals;
   byAgent: Record<UsageAgent, UsageAgentTotals>;
   series: UsageDayPoint[];

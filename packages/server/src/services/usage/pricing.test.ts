@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fullRateUsd, normalizeModelId, priceUsd, type TokenCounts } from './pricing.js';
+import { createPricer, fullRateUsd, normalizeModelId, priceUsd, type TokenCounts } from './pricing.js';
 
 const tokens = (over: Partial<TokenCounts> = {}): TokenCounts =>
   ({ input: 0, cacheWrite: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, ...over });
@@ -99,19 +99,39 @@ describe('priceUsd', () => {
   });
 
   it('bills a long prompt at the long-context band', () => {
-    const short = tokens({ input: 100_000, output: 1_000 });
+    const pricer = createPricer();
     const long = tokens({ input: 300_000, output: 1_000 });
-    const shortRate = priceUsd('gpt-5.6-sol', short).cost / 100_000;
-    const longCost = priceUsd('gpt-5.6-sol', long).cost;
+
+    expect(pricer.band('gpt-5.6-sol', long)).toBe('long');
     // Input doubles and output is 1.5x once the prompt passes 272K tokens.
-    expect(longCost).toBeCloseTo(300_000 * (4 / 1e6) * 2 + 1_000 * (20 / 1e6) * 1.5, 6);
-    expect(longCost / 300_000).toBeGreaterThan(shortRate);
+    expect(pricer.cost('gpt-5.6-sol', long, 'long').cost)
+      .toBeCloseTo(300_000 * (4 / 1e6) * 2 + 1_000 * (20 / 1e6) * 1.5, 6);
   });
 
   it('counts cache tokens towards the long-context threshold', () => {
-    const belowBand = priceUsd('gpt-5.6-sol', tokens({ input: 10_000, cacheRead: 100_000 })).cost;
-    const aboveBand = priceUsd('gpt-5.6-sol', tokens({ input: 10_000, cacheRead: 300_000 })).cost;
-    expect(aboveBand / belowBand).toBeGreaterThan(3);
+    const pricer = createPricer();
+
+    expect(pricer.band('gpt-5.6-sol', tokens({ input: 10_000, cacheRead: 100_000 }))).toBe('std');
+    expect(pricer.band('gpt-5.6-sol', tokens({ input: 10_000, cacheRead: 300_000 }))).toBe('long');
+  });
+
+  it('leaves models with one price band in the standard band', () => {
+    const pricer = createPricer();
+
+    expect(pricer.band('claude-opus-5', tokens({ cacheRead: 900_000 }))).toBe('std');
+    expect(pricer.cost('claude-opus-5', tokens({ input: 1_000 }), 'long').cost)
+      .toBe(pricer.cost('claude-opus-5', tokens({ input: 1_000 })).cost);
+  });
+
+  it('prices from an overriding table when one is supplied', () => {
+    const pricer = createPricer({
+      'claude-opus-5': {
+        input: 7, output: 30, cacheRead: 0.7, cacheWrite: 8.75, cacheWrite1h: 14,
+      },
+    });
+
+    expect(pricer.cost('claude-opus-5', tokens({ input: 1_000_000 })).cost).toBeCloseTo(7, 6);
+    expect(pricer.known('gpt-5.6-sol')).toBe(false);
   });
 
   it('keeps a single price band for current claude models', () => {

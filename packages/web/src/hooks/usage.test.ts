@@ -5,6 +5,7 @@ import type { UsageSummary } from '../types';
 
 const summary = (cost: number): UsageSummary => ({
   range: { from: '2026-08-03', to: '2026-09-01' },
+  pricing: { source: 'builtin', fetchedAt: null },
   totals: {
     cost, tokens: 100, cachedInput: 90, uncachedInput: 5, cacheWrite: 0,
     output: 5, cacheSavings: 1, cacheSavingsMultiple: 2,
