@@ -13,7 +13,7 @@ const profile = resolveProfile();
 applyProfileEnv(profile);
 
 const { buildApp, buildDeps } = await import('./app.js');
-const { reapOrphans } = await import('./services/vscodeWeb.js');
+const { reapOrphans, prewarmVsCodeWeb } = await import('./services/vscodeWeb.js');
 
 const PORT = profile.port;
 const HOST = '127.0.0.1';
@@ -40,6 +40,11 @@ try {
   deps.debugLog.log('server', `listen failed: ${message}`);
   process.exit(1);
 }
+
+// Boot the shared VS Code workbench now, not on first tab open — the pinned
+// build is up in ~1s and any cache warm-up download runs while the user works.
+// After listen: a failed listen exits, and must not leave a serve-web behind.
+void prewarmVsCodeWeb();
 app.log.info(`strado [${profile.name}] listening on http://${HOST}:${PORT}`);
 deps.debugLog.log(
   'server',

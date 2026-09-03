@@ -12,9 +12,10 @@ function fakeChild(pid: number) {
 function makeStore(reapable: number[] = []) {
   return {
     recorded: [] as Array<{ pid: number; port: number }>,
+    history: [] as Array<{ pid: number; port: number }>, // every record(), never pruned
     reapable: [...reapable],
     cleared: false,
-    record(e: { pid: number; port: number }) { this.recorded.push(e); },
+    record(e: { pid: number; port: number }) { this.recorded.push(e); this.history.push(e); },
     forget(pid: number) {
       this.recorded = this.recorded.filter((e) => e.pid !== pid);
       this.reapable = this.reapable.filter((p) => p !== pid);
@@ -58,6 +59,9 @@ function makeManager(overrides: Record<string, unknown> = {}) {
     daemonStore: store,
     pruneDeadIdeLocks: () => {},
     ensureTsServerMemory: () => {},
+    pinnedCommit: () => null,               // never read the real ~/.vscode*/cli cache
+    warmDelayMs: 0,
+    warmPollMs: 5,
     ...overrides,
   });
   return { mgr, spawned, killed, children, store, portStore };
@@ -150,6 +154,109 @@ describe('vscode web manager', () => {
     const { mgr, portStore } = makeManager();
     await mgr.ensure('/wt/new');
     expect(portStore.sets).toContain(5000);
+  });
+
+  it('pins serve-web to the cached commit so boot skips the update download', async () => {
+    const sha = 'a'.repeat(40);
+    const { mgr, spawned } = makeManager({ pinnedCommit: (cli: string) => (cli === 'code-insiders' ? sha : null) });
+    await mgr.ensure('/wt/a');
+    const args = spawned[0].args;
+    expect(args[args.indexOf('--commit-id') + 1]).toBe(sha);
+  });
+
+  it('passes no --commit-id when nothing is cached or the CLI is code-server', async () => {
+    const a = makeManager({ pinnedCommit: () => null });
+    await a.mgr.ensure('/wt/a');
+    expect(a.spawned[0].args).not.toContain('--commit-id');
+    const b = makeManager({ cliExists: async () => 'code-server', pinnedCommit: () => 'b'.repeat(40) });
+    await b.mgr.ensure('/wt/a');
+    expect(b.spawned[0].args).not.toContain('--commit-id');
+  });
+
+  it('after a pinned boot, warms the cache with one unpinned throwaway serve-web and kills it once ready', async () => {
+    const sha = 'a'.repeat(40);
+    let warmProbes = 0;
+    const { mgr, spawned, killed, store, children } = makeManager({
+      pinnedCommit: () => sha,
+      workbenchReady: async (url: string) => (url.includes(':5000/') ? true : ++warmProbes >= 2),
+    });
+    await mgr.ensure('/wt/a');
+    await vi.waitFor(() => expect(spawned).toHaveLength(2));
+    const warm = spawned[1];
+    expect(warm.args).toContain('serve-web');
+    expect(warm.args).not.toContain('--commit-id');       // unpinned → fetches the newest build
+    expect(warm.args[warm.args.indexOf('--port') + 1]).not.toBe('5000');
+    expect(store.history.map((e) => e.port)).toContain(5001);  // reapable if we crash mid-warm
+    await vi.waitFor(() => expect(killed).toContain(1002));
+    expect(store.recorded.map((e) => e.pid)).not.toContain(1002);
+    expect(killed).not.toContain(1001);                   // main workbench untouched
+    children[1001].exitCode = 0;                          // main dies → next ensure respawns it…
+    children[1001].emit('exit');
+    await mgr.ensure('/wt/b');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(spawned).toHaveLength(3);                      // …but does NOT warm again this session
+  });
+
+  it('closeAll kills a warm-up daemon that is still downloading', async () => {
+    const { mgr, spawned, killed, store } = makeManager({
+      pinnedCommit: () => 'a'.repeat(40),
+      workbenchReady: async (url: string) => url.includes(':5000/'), // warm never turns ready
+    });
+    await mgr.ensure('/wt/a');
+    await vi.waitFor(() => expect(spawned).toHaveLength(2));
+    await mgr.closeAll();
+    expect(killed).toEqual(expect.arrayContaining([1001, 1002]));
+    expect(store.recorded).toHaveLength(0);
+  });
+
+  it('gives up on the warm-up at the cap and still reaps it', async () => {
+    const { mgr, spawned, killed, store } = makeManager({
+      pinnedCommit: () => 'a'.repeat(40),
+      workbenchReady: async (url: string) => url.includes(':5000/'),
+      warmWaitMs: 0,
+    });
+    await mgr.ensure('/wt/a');
+    await vi.waitFor(() => expect(spawned).toHaveLength(2));
+    await vi.waitFor(() => expect(killed).toContain(1002));
+    expect(store.recorded.map((e) => e.pid)).not.toContain(1002);
+  });
+
+  it('a warm-up spawn error is contained: no crash, daemon forgotten, workbench untouched', async () => {
+    const { mgr, spawned, killed, store, children } = makeManager({
+      pinnedCommit: () => 'a'.repeat(40),
+      workbenchReady: async (url: string) => url.includes(':5000/'),
+      warmWaitMs: 60_000,
+    });
+    await mgr.ensure('/wt/a');
+    await vi.waitFor(() => expect(spawned).toHaveLength(2));
+    children[1002].emit('error', new Error('spawn EAGAIN'));   // unhandled → would kill the server
+    await vi.waitFor(() => expect(store.recorded.map((e) => e.pid)).not.toContain(1002));
+    expect(killed).not.toContain(1001);
+  });
+
+  it('does not warm when the boot was unpinned (that boot already fetched the newest build)', async () => {
+    const { mgr, spawned } = makeManager({ pinnedCommit: () => null });
+    await mgr.ensure('/wt/a');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(spawned).toHaveLength(1);
+  });
+
+  it('prewarm boots the shared workbench at app start and swallows a missing CLI', async () => {
+    const ok = makeManager({ portStore: makePortStore(6100) });   // VS Code was opened before
+    await ok.mgr.prewarm();
+    expect(ok.spawned).toHaveLength(1);
+    await ok.mgr.ensure('/wt/a');
+    expect(ok.spawned).toHaveLength(1);                   // tab open reuses the prewarmed instance
+    const none = makeManager({ cliExists: async () => null, portStore: makePortStore(6100) });
+    await expect(none.mgr.prewarm()).resolves.toBeUndefined();
+  });
+
+  it('prewarm is a no-op until the user has opened VS Code in Strado at least once', async () => {
+    // No persisted port = never opened. Booting serve-web here would pull a
+    // 650MB build (and keep a daemon alive) for a feature this user may never use.
+    const { mgr, spawned } = makeManager({ portStore: makePortStore() });
+    await mgr.prewarm();
+    expect(spawned).toHaveLength(0);
   });
 
   it('reports ready:false while serve-web serves the update placeholder, then re-probes to true', async () => {
