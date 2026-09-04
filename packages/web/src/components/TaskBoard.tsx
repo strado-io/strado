@@ -68,15 +68,20 @@ export function TaskBoard({
   const manual = prefs.groupBy === 'none' && prefs.sort === 'manual';
   const reorderable = manual && !!onReorder;
 
+  const repoName = (w: Worktree) => (w.repoId ? repoById.get(w.repoId)?.name : undefined) ?? '—';
+
   // Filter → sort → settle → group. Settled rows (done/verified) still sink
   // inside their group, as they always did on the flat board.
+  const q = query.trim();
   const visible = worktrees.filter((w) =>
-    (prefs.tile === null || attentionOfRow(w) === prefs.tile) && matchesQuery(w, query.trim()));
-  const sorted = sortRows(visible, prefs.sort, { lru: readWorktreeLru() });
+    (prefs.tile === null || attentionOfRow(w) === prefs.tile) &&
+    (matchesQuery(w, q) || (q !== '' && repoName(w).toLowerCase().includes(q.toLowerCase()))));
+  const lru = prefs.sort === 'activity' ? readWorktreeLru() : {};
+  const sorted = sortRows(visible, prefs.sort, { lru });
   const settled = [...sorted.filter((w) => !isRowSettled(w, issues)), ...sorted.filter((w) => isRowSettled(w, issues))];
   const groups = groupRows(settled, prefs.groupBy, {
     attention: attentionOfRow,
-    repoName: (w) => (w.repoId ? repoById.get(w.repoId)?.name : undefined) ?? '—',
+    repoName,
   });
   // Rows in display order across every group — what a reorder drop reads.
   const flatRows = groups.flatMap((g) => g.rows);
@@ -133,6 +138,17 @@ export function TaskBoard({
     );
   };
 
+  if (worktrees.length === 0) {
+    return (
+      <div>
+        <div style={{ minWidth: totalWidth }}>
+          <WorktreeTableHeader gridTemplate={gridTemplate} onStartResize={onStartResize} />
+          <div className="px-6 py-3 text-xs text-zinc-600">No tasks yet. Create a worktree to see it here.</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <TaskBoardSummary counts={counts} active={prefs.tile} onToggle={toggleTile} />
@@ -147,9 +163,7 @@ export function TaskBoard({
       />
       <div style={{ minWidth: totalWidth }}>
         <WorktreeTableHeader gridTemplate={gridTemplate} onStartResize={onStartResize} />
-        {worktrees.length === 0 ? (
-          <div className="px-6 py-3 text-xs text-zinc-600">No tasks yet. Create a worktree to see it here.</div>
-        ) : filtering && visible.length === 0 ? (
+        {filtering && visible.length === 0 ? (
           <div className="px-6 py-3 text-xs text-zinc-600">Nothing matches.</div>
         ) : (
           groups.map((g) => (
@@ -159,7 +173,7 @@ export function TaskBoard({
               count={g.rows.length}
               collapsed={prefs.collapsed.includes(g.key)}
               onToggle={() => toggleGroup(g.key)}
-              emptyText={g.key === 'needs-you' ? 'Nothing waiting on you' : undefined}
+              emptyText={g.key === 'needs-you' && !filtering ? 'Nothing waiting on you' : undefined}
             >
               {g.rows.map((w, i) => renderRow(w, i, g.rows))}
             </TaskGroup>

@@ -46,6 +46,8 @@ describe('TaskBoard', () => {
   it('shows an empty hint when there are no worktrees', () => {
     render(<TaskBoard {...baseProps()} worktrees={[]} />);
     expect(screen.getByText(/no tasks yet/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Filter tasks')).toBeNull();
+    expect(screen.queryByLabelText('Group by')).toBeNull();
   });
 
   it('sinks settled rows below active ones', () => {
@@ -187,5 +189,23 @@ describe('TaskBoard', () => {
       prefs={{ groupBy: 'state', sort: 'activity', tile: 'review', collapsed: [] }} />);
     expect(screen.getByText('Nothing matches.')).toBeInTheDocument();
     expect(screen.queryAllByTestId(/task-row-/)).toHaveLength(0);
+  });
+
+  it('the text filter also matches the repo name', () => {
+    const other = wt('/o', 'FD-7'); other.repoId = 'z';
+    const repos = new Map(repoById); repos.set('z', { id: 'z', name: 'Zeta' } as RepoConfig);
+    render(<TaskBoard {...baseProps()} repoById={repos} worktrees={[other, wt('/x', 'FD-1')]} />);
+    fireEvent.change(screen.getByLabelText('Filter tasks'), { target: { value: 'zeta' } });
+    expect(screen.getByTestId('task-row-/o')).toBeInTheDocument();
+    expect(screen.queryByTestId('task-row-/x')).toBeNull();
+  });
+
+  it('a filter hides the quiet needs-you text and shows only matching groups', () => {
+    render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1'), wt('/y', 'FD-2')]} />);
+    fireEvent.change(screen.getByLabelText('Filter tasks'), { target: { value: 'FD-2' } });
+    expect(screen.getByTestId('task-row-/y')).toBeInTheDocument();
+    expect(screen.queryByTestId('task-row-/x')).toBeNull();
+    expect(screen.queryByText('Nothing waiting on you')).toBeNull();
+    expect(screen.queryByText('Nothing matches.')).toBeNull();
   });
 });
