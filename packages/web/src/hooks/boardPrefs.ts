@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ATTENTION_ORDER, type Attention, type GroupBy, type SortBy } from './attention';
 
 export type BoardPrefs = {
@@ -36,8 +36,13 @@ export function readBoardPrefs(wsId: string): BoardPrefs {
 
 export function useBoardPrefs(wsId: string): [BoardPrefs, (patch: Partial<BoardPrefs>) => void] {
   const [prefs, setPrefs] = useState<BoardPrefs>(() => readBoardPrefs(wsId));
-  useEffect(() => { setPrefs(readBoardPrefs(wsId)); }, [wsId]);
+  const loadedFor = useRef(wsId);
   useEffect(() => {
+    loadedFor.current = wsId;
+    setPrefs(readBoardPrefs(wsId));
+  }, [wsId]);
+  useEffect(() => {
+    if (loadedFor.current !== wsId) return;
     try { localStorage.setItem(key(wsId), JSON.stringify(prefs)); } catch { /* storage unavailable */ }
   }, [wsId, prefs]);
   const patch = useCallback((p: Partial<BoardPrefs>) => setPrefs((cur) => ({ ...cur, ...p })), []);

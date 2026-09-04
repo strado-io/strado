@@ -24,4 +24,23 @@ describe('useBoardPrefs', () => {
     localStorage.setItem('strado.board.ws1', JSON.stringify({ groupBy: 'colour', sort: 'ticket', tile: 'bogus', collapsed: 'x' }));
     expect(readBoardPrefs('ws1')).toEqual({ ...DEFAULT_BOARD_PREFS, sort: 'ticket' });
   });
+
+  it('never writes stale prefs under a new workspace key on wsId switch', () => {
+    // Seed ws2 with known values
+    localStorage.setItem('strado.board.ws2', JSON.stringify({ groupBy: 'repo', sort: 'ticket', tile: null, collapsed: [] }));
+
+    // Render hook with ws1
+    const { result, rerender } = renderHook((props: { wsId: string }) => useBoardPrefs(props.wsId), {
+      initialProps: { wsId: 'ws1' },
+    });
+
+    // Patch ws1 to change groupBy
+    act(() => result.current[1]({ groupBy: 'none' }));
+    expect(result.current[0].groupBy).toBe('none');
+
+    // Switch to ws2 and verify its stored value was never overwritten
+    rerender({ wsId: 'ws2' });
+    expect(result.current[0].groupBy).toBe('repo');
+    expect(readBoardPrefs('ws2').groupBy).toBe('repo');
+  });
 });
