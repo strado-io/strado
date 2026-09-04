@@ -19,6 +19,7 @@ import { FeedbackDialog } from '../components/FeedbackDialog';
 import { CommandPalette } from '../components/CommandPalette';
 import { useColumnWidths } from '../hooks/useColumnWidths';
 import { useDensity } from '../hooks/useDensity';
+import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { TaskBoard } from '../components/TaskBoard';
@@ -293,6 +294,7 @@ export function Dashboard(props: {
   }, [wsId]);
   const [showPalette, setShowPalette] = useState(false);
   const [density, setDensity] = useDensity();
+  const [boardPrefs, patchBoardPrefs] = useBoardPrefs(wsId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('strado:expanded-repos') || '[]')); }
@@ -871,6 +873,8 @@ export function Dashboard(props: {
                 onStartResize={startResize}
                 density={density}
                 onReorder={handleReorder}
+                prefs={boardPrefs}
+                onPrefs={patchBoardPrefs}
                 handlers={{
                   onOpenShellTerminal: (w) => openInlineHub(w, 'shell'),
                   onSetWorkflowStatus: handleSetWorkflowStatus,
