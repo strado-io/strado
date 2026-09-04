@@ -173,4 +173,19 @@ describe('TaskBoard', () => {
     expect(rows).toEqual(['task-row-/y', 'task-row-/x']);
     localStorage.clear();
   });
+
+  it('a filter that matches nothing says so instead of the quiet needs-you text', () => {
+    render(<TaskBoard {...baseProps()} />);
+    fireEvent.change(screen.getByLabelText('Filter tasks'), { target: { value: 'zzz' } });
+    expect(screen.getByText('Nothing matches.')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing waiting on you')).toBeNull();
+    expect(screen.queryAllByTestId(/task-row-/)).toHaveLength(0);
+  });
+
+  it('a tile that matches nothing says so', () => {
+    render(<TaskBoard {...baseProps()}
+      prefs={{ groupBy: 'state', sort: 'activity', tile: 'review', collapsed: [] }} />);
+    expect(screen.getByText('Nothing matches.')).toBeInTheDocument();
+    expect(screen.queryAllByTestId(/task-row-/)).toHaveLength(0);
+  });
 });

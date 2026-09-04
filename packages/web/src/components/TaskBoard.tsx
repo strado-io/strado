@@ -80,6 +80,11 @@ export function TaskBoard({
   });
   // Rows in display order across every group — what a reorder drop reads.
   const flatRows = groups.flatMap((g) => g.rows);
+  // A tile or text query narrows the board; "no rows" then means the SEARCH
+  // found nothing, distinct from the unfiltered "nothing needs you" quiet
+  // state that the needs-you group renders on its own (it's never empty —
+  // groupRows always keeps it, even with 0 rows).
+  const filtering = prefs.tile !== null || query.trim() !== '';
 
   const toggleTile = (a: Attention) => onPrefs?.({ tile: prefs.tile === a ? null : a });
   const toggleGroup = (key: string) =>
@@ -144,7 +149,7 @@ export function TaskBoard({
         <WorktreeTableHeader gridTemplate={gridTemplate} onStartResize={onStartResize} />
         {worktrees.length === 0 ? (
           <div className="px-6 py-3 text-xs text-zinc-600">No tasks yet. Create a worktree to see it here.</div>
-        ) : flatRows.length === 0 && groups.every((g) => g.rows.length === 0 && g.key !== 'needs-you') ? (
+        ) : filtering && visible.length === 0 ? (
           <div className="px-6 py-3 text-xs text-zinc-600">Nothing matches.</div>
         ) : (
           groups.map((g) => (
