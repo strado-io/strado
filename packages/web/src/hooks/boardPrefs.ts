@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ATTENTION_ORDER, type Attention, type GroupBy, type SortBy } from './attention';
 
 export type BoardPrefs = {
@@ -35,16 +35,18 @@ export function readBoardPrefs(wsId: string): BoardPrefs {
 }
 
 export function useBoardPrefs(wsId: string): [BoardPrefs, (patch: Partial<BoardPrefs>) => void] {
-  const [prefs, setPrefs] = useState<BoardPrefs>(() => readBoardPrefs(wsId));
-  const loadedFor = useRef(wsId);
+  const [state, setState] = useState(() => ({ wsId, prefs: readBoardPrefs(wsId) }));
+
+  // Prop changed under us: reset synchronously during render so no effect ever sees
+  // prefs from another workspace. This is the documented React pattern for derived state.
+  if (state.wsId !== wsId) {
+    setState({ wsId, prefs: readBoardPrefs(wsId) });
+  }
+
   useEffect(() => {
-    loadedFor.current = wsId;
-    setPrefs(readBoardPrefs(wsId));
-  }, [wsId]);
-  useEffect(() => {
-    if (loadedFor.current !== wsId) return;
-    try { localStorage.setItem(key(wsId), JSON.stringify(prefs)); } catch { /* storage unavailable */ }
-  }, [wsId, prefs]);
-  const patch = useCallback((p: Partial<BoardPrefs>) => setPrefs((cur) => ({ ...cur, ...p })), []);
-  return [prefs, patch];
+    try { localStorage.setItem(key(state.wsId), JSON.stringify(state.prefs)); } catch { /* storage unavailable */ }
+  }, [state]);
+
+  const patch = useCallback((p: Partial<BoardPrefs>) => setState((cur) => ({ ...cur, prefs: { ...cur.prefs, ...p } })), []);
+  return [state.prefs, patch];
 }

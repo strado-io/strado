@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_BOARD_PREFS, readBoardPrefs, useBoardPrefs } from './boardPrefs';
 
 beforeEach(() => localStorage.clear());
@@ -38,9 +38,18 @@ describe('useBoardPrefs', () => {
     act(() => result.current[1]({ groupBy: 'none' }));
     expect(result.current[0].groupBy).toBe('none');
 
-    // Switch to ws2 and verify its stored value was never overwritten
+    // Spy on setItem to verify no stale write occurs under ws2's key
+    const spy = vi.spyOn(Storage.prototype, 'setItem');
     rerender({ wsId: 'ws2' });
+
+    // Verify: every write to ws2's key must have groupBy: 'repo' (never 'none' from ws1)
+    const ws2Writes = spy.mock.calls.filter(([k]) => k === 'strado.board.ws2');
+    expect(ws2Writes.every(([, v]) => JSON.parse(v as string).groupBy === 'repo')).toBe(true);
+
+    // Verify settled state
     expect(result.current[0].groupBy).toBe('repo');
     expect(readBoardPrefs('ws2').groupBy).toBe('repo');
+
+    vi.restoreAllMocks();
   });
 });
