@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type ColumnId = 'ticket' | 'workflow' | 'branch' | 'changes' | 'spent' | 'status';
+export type ColumnId = 'ticket' | 'workflow' | 'branch' | 'sessions' | 'changes' | 'spent' | 'status';
 
 export type ColumnWidths = Record<ColumnId, number>;
 
@@ -10,6 +10,7 @@ const DEFAULTS: ColumnWidths = {
   ticket: 110,
   workflow: 130,
   branch: 300,
+  sessions: 96,
   changes: 110,
   spent: 90,
   status: 88,
@@ -19,6 +20,7 @@ const MIN_WIDTH: Record<ColumnId, number> = {
   ticket: 60,
   workflow: 90,
   branch: 100,
+  sessions: 64,
   changes: 70,
   spent: 56,
   status: 76,
@@ -75,9 +77,9 @@ export function useColumnWidths() {
     window.addEventListener('mouseup', onUp);
   }, [widths]);
 
-  const gridTemplate = `${widths.ticket}px ${widths.spent}px ${widths.workflow}px minmax(${widths.branch}px, 1fr) ${widths.changes}px ${widths.status}px`;
+  const gridTemplate = `${widths.ticket}px ${widths.spent}px ${widths.workflow}px minmax(${widths.branch}px, 1fr) ${widths.sessions}px ${widths.changes}px ${widths.status}px`;
   const totalWidth =
-    widths.ticket + widths.workflow + widths.branch + widths.changes + widths.spent + widths.status;
+    widths.ticket + widths.workflow + widths.branch + widths.sessions + widths.changes + widths.spent + widths.status;
 
   return { widths, gridTemplate, totalWidth, startResize };
 }

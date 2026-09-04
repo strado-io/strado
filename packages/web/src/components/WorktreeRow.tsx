@@ -3,6 +3,9 @@ import { useTickets, ticketRef, jiraIssueUrl } from '../hooks/tickets';
 import { TicketStatusSelect } from './TicketStatusSelect';
 import { TicketHover } from './TicketHoverCard';
 import { WorkflowStatusSelect } from './WorkflowStatusSelect';
+import { attentionOf, ATTENTION_LABEL, type Attention } from '../hooks/attention';
+import { chipStatus, sessionChips } from '../hooks/sessions';
+import { SessionAvatarStack } from './sidebar/sessionAvatars';
 
 export type Density = 'comfy' | 'compact';
 
@@ -17,6 +20,8 @@ export type Props = {
   reorderable?: boolean;
   /** MR/PR summary chip for this row's branch; undefined/null hides it. */
   mr?: MergeRequest | null;
+  /** Derived attention state; the board passes it, a bare row derives its own. */
+  attention?: Attention;
   /** In-app review for a chip click; without it the chip links out to the provider. */
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   onOpenShellTerminal: (w: Worktree) => void;
@@ -69,6 +74,7 @@ export function WorktreeRow({
   repoLabel = null,
   reorderable = false,
   mr, // no default: undefined = feature off (no chip column), null = empty slot
+  attention: attentionProp,
   onOpenMr,
   onOpenShellTerminal,
   onSetWorkflowStatus,
@@ -124,6 +130,16 @@ export function WorktreeRow({
   const noteTitle = hasNote ? note.split('\n')[0]!.slice(0, 80) : 'Add note';
   const diff = worktree.diffStats;
   const hasDiff = !!diff && (diff.additions > 0 || diff.deletions > 0);
+
+  const attention = attentionProp ?? attentionOf(worktree, mr ?? null);
+  const chips = sessionChips([worktree]);
+  const statuses = chips.map(chipStatus);
+  const agentStatus = statuses.includes('waiting') ? 'waiting' : statuses.includes('working') ? 'working' : null;
+  const live = process.status === 'running' || process.status === 'starting' || process.status === 'stopping' || !!process.external;
+  // The ticket id has its own column, so a title identical to the branch (or
+  // absent) would only repeat the branch tail.
+  const taskTitle = issue?.summary ?? meta?.title ?? null;
+  const showTitle = !!taskTitle && taskTitle !== branchLabel && taskTitle !== branch;
 
   // Idle affordances stay hidden until the row is hovered; anything carrying
   // live state is always visible.
@@ -235,6 +251,7 @@ export function WorktreeRow({
           <WorkflowStatusSelect
             value={meta?.workflowStatus ?? null}
             onChange={(s) => onSetWorkflowStatus(worktree, s)}
+            placeholder={ATTENTION_LABEL[attention]}
           />
         )}
       </div>
@@ -282,7 +299,10 @@ export function WorktreeRow({
             {repoLabel}
           </span>
         )}
-        <span className="min-w-0 truncate" title={branch ?? title}>
+        {showTitle && (
+          <span className="min-w-0 truncate font-sans text-zinc-200" title={taskTitle!}>{taskTitle}</span>
+        )}
+        <span className={`min-w-0 truncate ${showTitle ? 'text-zinc-500' : ''}`} title={branch ?? title}>
           {branchLabel ?? '—'}
         </span>
         {!worktree.tracked && (
@@ -313,6 +333,26 @@ export function WorktreeRow({
               <path d="M6 4V3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v9" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
             </svg>
           </button>
+        )}
+      </div>
+      <div
+        data-testid="sessions-cell"
+        data-agent-status={agentStatus ?? 'none'}
+        className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]"
+      >
+        <SessionAvatarStack chips={chips} testId={`board-session-stack-${worktree.path}`} />
+        {agentStatus && (
+          <span
+            aria-label={agentStatus === 'waiting' ? 'An agent is waiting for you' : 'An agent is working'}
+            title={agentStatus === 'waiting' ? 'Waiting for you' : 'Working'}
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${agentStatus === 'waiting' ? 'bg-amber-400' : 'animate-pulse bg-sky-400'}`}
+          />
+        )}
+        {live && (
+          <span className={`truncate ${process.status === 'running' || process.external ? 'text-emerald-400' : 'animate-pulse text-amber-300'}`}>
+            {process.port ? `:${process.port}` : process.status === 'starting' ? 'starting…' : process.status === 'stopping' ? 'stopping…' : ''}
+            {process.external && <span className="ml-1 text-zinc-600">detected</span>}
+          </span>
         )}
       </div>
       {/* Changes doubles as the git entry point: the count opens the diff &

@@ -33,7 +33,8 @@ export function WorktreeTableHeader({
       <div className="group relative">Ticket<ResizeHandle col="ticket" onStartResize={onStartResize} /></div>
       <div className="group relative">Time spent<ResizeHandle col="spent" onStartResize={onStartResize} /></div>
       <div className="group relative">Status<ResizeHandle col="workflow" onStartResize={onStartResize} /></div>
-      <div className="group relative">Branch<ResizeHandle col="branch" onStartResize={onStartResize} /></div>
+      <div className="group relative">Task<ResizeHandle col="branch" onStartResize={onStartResize} /></div>
+      <div className="group relative">Sessions<ResizeHandle col="sessions" onStartResize={onStartResize} /></div>
       <div className="group relative">Changes<ResizeHandle col="changes" onStartResize={onStartResize} /></div>
       <div className="group relative justify-self-center" title="Dev-server run state">●</div>
     </div>

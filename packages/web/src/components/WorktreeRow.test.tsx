@@ -207,6 +207,57 @@ describe('WorktreeRow', () => {
     expect(screen.queryByRole('link', { name: 'FD-1' })).not.toBeInTheDocument();
     expect(screen.getByTitle('Not tracked in Jira')).toHaveTextContent('FD-1');
   });
+
+  it('the Task cell shows the ticket title beside the branch', () => {
+    const props = noopProps();
+    // ticketProvider: 'linear' keeps this off the 'jira:FD-1' ref that other
+    // tests in this file publish into the module-level ticket store (which
+    // is never reset between tests) — an unrelated issue would otherwise
+    // win over meta.title here.
+    props.worktree = { ...worktree, branch: 'FD-1_fix-login', meta: { ...worktree.meta, title: 'Fix login redirect', ticketProvider: 'linear' } } as any;
+    render(<WorktreeRow {...props} />);
+    expect(screen.getByText('Fix login redirect')).toBeInTheDocument();
+    expect(screen.getByText('fix-login')).toBeInTheDocument();
+  });
+
+  it('the Sessions cell stacks agent avatars and marks a waiting agent', () => {
+    const props = noopProps();
+    props.worktree = {
+      ...worktree,
+      claudeSessions: ['1', '2'], claudeStatusById: { '1': 'working', '2': 'waiting' },
+      shellSessions: ['1'],
+    } as any;
+    render(<WorktreeRow {...props} />);
+    const cell = screen.getByTestId('sessions-cell');
+    expect(cell).toHaveAttribute('data-agent-status', 'waiting');
+    expect(screen.getByRole('img', { name: /3 open sessions/ })).toBeInTheDocument();
+  });
+
+  it('the Sessions cell names the port while serving', () => {
+    const props = noopProps();
+    props.worktree = { ...worktree, process: { ...worktree.process, status: 'running', port: 5173 } } as any;
+    render(<WorktreeRow {...props} />);
+    expect(screen.getByTestId('sessions-cell')).toHaveTextContent(':5173');
+  });
+
+  it('an unset status shows the derived attention label instead of "Status"', () => {
+    const props = noopProps();
+    // ticketProvider: 'linear' — see note above; a stale 'jira:FD-1' ticket
+    // from an earlier test would otherwise render TicketStatusSelect instead
+    // of WorkflowStatusSelect.
+    props.worktree = { ...worktree, meta: { ...worktree.meta, ticketProvider: 'linear' }, claudeSessions: ['1'], claudeStatusById: { '1': 'working' } } as any;
+    render(<WorktreeRow {...props} />);
+    const select = screen.getByRole('combobox', { name: 'Workflow status' }) as HTMLSelectElement;
+    expect(select.value).toBe('');
+    expect(select.options[select.selectedIndex]!.text).toBe('Working');
+  });
+
+  it('a set status wins over the derived label', () => {
+    const props = noopProps();
+    props.worktree = { ...worktree, meta: { ...worktree.meta, workflowStatus: 'ready_for_qa', ticketProvider: 'linear' }, claudeSessions: ['1'], claudeStatusById: { '1': 'working' } } as any;
+    render(<WorktreeRow {...props} />);
+    expect((screen.getByRole('combobox', { name: 'Workflow status' }) as HTMLSelectElement).value).toBe('ready_for_qa');
+  });
 });
 
 function mrFixture(over: Partial<MergeRequest> = {}): MergeRequest {
