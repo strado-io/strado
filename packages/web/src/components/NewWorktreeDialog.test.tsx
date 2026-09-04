@@ -43,6 +43,7 @@ const repos = [
     startCommand: 'npm start',
     defaultPort: 8080,
     editor: 'code' as const,
+    cloneUrl: 'https://github.com/acme/r.git',
   },
 ];
 
@@ -215,6 +216,21 @@ describe('NewWorktreeDialog', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ runnerId: 'runner-dev-id' }));
   });
 
+  it('disables remote runners when the selected repository has no clone URL', () => {
+    render(
+      <NewWorktreeDialog
+        repos={[{ ...repos[0]!, cloneUrl: null }]}
+        worktrees={[]}
+        runners={[{ runnerId: 'runner-dev-id', name: 'runner-dev', online: true }]}
+        onCancel={() => {}}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Where' }));
+    expect(screen.getByRole('button', { name: 'runner-dev (repo has no remote)' })).toBeDisabled();
+  });
+
   // A spinner for a multi-minute clone on a runner is indistinguishable from a
   // hang, and its failure used to arrive as a generic message.
   describe('job progress', () => {
@@ -236,6 +252,8 @@ describe('NewWorktreeDialog', () => {
         />,
       );
       fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Thing' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Where' }));
+      fireEvent.click(screen.getByRole('button', { name: 'runner-dev' }));
       fireEvent.click(screen.getByRole('button', { name: /create/i }));
       await vi.waitFor(() => expect(jobHandler).not.toBeNull());
       return view;
@@ -251,6 +269,19 @@ describe('NewWorktreeDialog', () => {
       // Later steps are visible up front — that is what makes the wait legible.
       expect(screen.getByText('Cloning r on runner-dev')).toBeInTheDocument();
       expect(screen.getByText('Creating git worktree')).toBeInTheDocument();
+    });
+
+    it('switches from the setup form to the focused runner progress view', async () => {
+      onDone.mockClear();
+      await startRemoteCreate();
+      jobHandler!({ type: 'progress', data: { message: 'Checking runner-dev', data: { step: 'runner', steps: STEPS } } });
+
+      expect(await screen.findByRole('heading', { name: 'Create worktree' })).toBeInTheDocument();
+      expect(screen.getByLabelText(/^title$/i)).not.toBeVisible();
+      expect(screen.getByTestId('creation-summary')).toHaveTextContent('r / Thing');
+      expect(screen.getByTestId('creation-summary')).toHaveTextContent('source: main');
+      expect(screen.getByText(/^on runner-dev$/i)).toBeVisible();
+      expect(screen.getByText('0:00')).toBeVisible();
     });
 
     it('shows sub-detail under the step in flight', async () => {
@@ -278,6 +309,17 @@ describe('NewWorktreeDialog', () => {
       expect(await screen.findByText(/no credentials/)).toBeInTheDocument();
       // The list survives, so the failure is attributable to a step.
       expect(screen.getByText('Cloning r on runner-dev')).toBeInTheDocument();
+      expect(onDone).not.toHaveBeenCalled();
+    });
+
+    it('shows a fast failure even when no progress frame was observed', async () => {
+      onDone.mockClear();
+      await startRemoteCreate();
+      jobHandler!({ type: 'error', data: { message: 'runner failed before declaring steps' } });
+
+      expect(await screen.findByText('runner failed before declaring steps')).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
       expect(onDone).not.toHaveBeenCalled();
     });
   });

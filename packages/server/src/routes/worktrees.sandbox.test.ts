@@ -11,6 +11,7 @@ import { buildApp, buildDeps } from '../app.js';
 import type { JobContext } from '../services/jobs.js';
 import { canonicalWorktreesDir } from '../services/worktreeRoot.js';
 import { sandboxSlugFor } from '../services/sandbox/sandboxes.js';
+import { bareRepoPath, sandboxReposDir } from '../services/sandbox/bareRepo.js';
 import { hooksDir } from '../services/claudeHooks.js';
 
 // The real one builds a container image. Stubbed for the whole file; the
@@ -240,6 +241,17 @@ describe('POST /worktrees with a sandbox', () => {
     const sbxSlug = sandboxSlugFor('FD-2_sandboxed', entry!.path);
     expect(sbxSlug).toMatch(/^FD-2_sandboxed-[0-9a-f]{8}$/);
     expect(entry!.meta.sandbox).toEqual({ slug: sbxSlug });
+    // Host node_modules must never be symlinked into a sandbox: the source
+    // checkout is not mounted there, so the link would be broken (and native
+    // modules may not match the container). The sandbox owns its dependencies.
+    expect(entry!.meta.linkedFrom).toBeNull();
+    expect(entry!.meta.linkedAt).toBeNull();
+    await expect(fs.lstat(path.join(entry!.path, 'node_modules'))).rejects.toThrow();
+
+    const linkDetail = steps
+      .map((e) => e.data as { step?: string; detail?: string })
+      .find((d) => d.step === 'link' && d.detail !== undefined);
+    expect(linkDetail?.detail).toBe('skipped — install dependencies inside the sandbox');
 
     expect(ensureBaseImage).toHaveBeenCalledWith({ bin: 'podman' }, { node: '20' });
     expect(stub.calls.create).toHaveLength(1);
@@ -263,6 +275,45 @@ describe('POST /worktrees with a sandbox', () => {
     const pointer = await fs.readFile(path.join(entry!.path, '.git'), 'utf8');
     expect(pointer).toContain(path.join(home, 'sandbox', 'repos', 'react-app.git'));
     expect(entry!.path).toBe(await fs.realpath(entry!.path));
+  });
+
+  it('creates and lists worktrees when the registered repo is the hidden bare store', async () => {
+    enable(sandboxStub());
+
+    // Provision the shared bare repository once, then model the runner-native
+    // registration shape: repo.path is the hidden backing store itself, with
+    // no normal checkout of main beside it.
+    const provisioned = await create({
+      repoId: 'react-app',
+      ticketId: 'FD-BARE-1',
+      title: 'provision backing',
+      sourceBranch: 'main',
+      sourceWorktree: repo,
+    });
+    expect(provisioned.status).toBe('done');
+
+    const bare = bareRepoPath(sandboxReposDir(home), 'react-app');
+    const stores = await app.deps.registry.get('default');
+    await stores.repos.patch('react-app', { path: bare });
+
+    const final = await create({
+      repoId: 'react-app',
+      ticketId: 'FD-BARE-2',
+      title: 'from hidden backing',
+      sourceBranch: 'main',
+      // Ignored for sandbox dependency linking; a bare store has no checkout.
+      sourceWorktree: bare,
+    });
+    expect(final.status, JSON.stringify(final)).toBe('done');
+
+    const entry = await metaFor('FD-BARE-2');
+    expect(entry).toBeTruthy();
+    expect(await fs.readFile(path.join(entry!.path, '.git'), 'utf8')).toContain(bare);
+
+    const list = await app.inject({ method: 'GET', url: '/api/w/default/worktrees' });
+    const paths = (list.json().worktrees as { path: string }[]).map((w) => w.path);
+    expect(paths).toContain(entry!.path);
+    expect(paths).not.toContain(bare);
   });
 
   it('keeps the worktree and the sandbox artifacts when the build fails', async () => {
@@ -501,5 +552,51 @@ describe('sandboxed worktrees in the sidebar and on delete', () => {
 
     const list = await app.inject({ method: 'GET', url: '/api/w/default/worktrees' });
     expect((list.json().worktrees as { path: string }[]).some((r) => r.path === entry!.path)).toBe(false);
+  });
+
+  it('finds the bare-repo owner when a previous partial delete cleared sandbox metadata', async () => {
+    const entry = await metaFor('FD-8');
+    const stores = await app.deps.registry.get('default');
+
+    // Container cleanup is intentionally persisted before Git removal. A
+    // failed first attempt therefore leaves a real bare-repo worktree whose
+    // state no longer says "sandbox". Retrying used to aim at the normal clone
+    // and fail with "is not a working tree".
+    await stores.state.patch(entry!.path, { sandbox: null });
+    app.deps.sandboxSlugs.delete(entry!.path);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/w/default/worktrees/${encodeURIComponent(entry!.path)}?force=1`,
+    });
+    expect(res.statusCode).toBe(202);
+    const final = await app.deps.jobs.wait(res.json().jobId);
+    expect(final.status, JSON.stringify(final)).toBe('done');
+
+    await expect(fs.stat(entry!.path)).rejects.toThrow();
+    expect(await stores.state.get(entry!.path)).toBeNull();
+  });
+
+  it('deletes a bare-repo worktree whose create failed before state was written', async () => {
+    const entry = await metaFor('FD-8');
+    const stores = await app.deps.registry.get('default');
+
+    // Linking/finalizing used to fail after `git worktree add`, leaving the
+    // path registered in the bare repo but absent from state. Deletion may
+    // clean up the derived sandbox identity, but must not patch a record that
+    // was never written.
+    await stores.state.remove(entry!.path);
+    app.deps.sandboxSlugs.delete(entry!.path);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/w/default/worktrees/${encodeURIComponent(entry!.path)}?force=1&deleteBranch=1`,
+    });
+    expect(res.statusCode).toBe(202);
+    const final = await app.deps.jobs.wait(res.json().jobId);
+    expect(final.status, JSON.stringify(final)).toBe('done');
+
+    await expect(fs.stat(entry!.path)).rejects.toThrow();
+    expect(await stores.state.get(entry!.path)).toBeNull();
   });
 });

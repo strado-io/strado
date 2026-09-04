@@ -92,16 +92,19 @@ describe('backfillCloneUrls', () => {
       const out = await backfillCloneUrls(store, [
         { id: 'site', path: tmp } as never,
         { id: 'nowhere', path: path.join(tmp, 'missing') } as never,
+        { id: 'stale-null', path: tmp, cloneUrl: null } as never,
         { id: 'already', path: tmp, cloneUrl: 'https://example.com/a/b.git' } as never,
-      ]);
+      ], { recheckNull: true });
 
       expect(out[0]!.cloneUrl).toBe('git@github-strado:strado-io/site.git');
       // A repo with no origin records null — that is what stops this from
       // re-running `git remote` on every list forever.
       expect(out[1]!.cloneUrl).toBeNull();
+      // A previously-null value can be refreshed after the user adds origin.
+      expect(out[2]!.cloneUrl).toBe('git@github-strado:strado-io/site.git');
       // Already known: left alone, no git call, no write.
-      expect(out[2]!.cloneUrl).toBe('https://example.com/a/b.git');
-      expect(patched.map((p) => p.id).sort()).toEqual(['nowhere', 'site']);
+      expect(out[3]!.cloneUrl).toBe('https://example.com/a/b.git');
+      expect(patched.map((p) => p.id).sort()).toEqual(['nowhere', 'site', 'stale-null']);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

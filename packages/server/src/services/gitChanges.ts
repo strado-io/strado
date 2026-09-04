@@ -4,6 +4,8 @@ import path from 'node:path';
 import { exec } from '../shell.js';
 import { AppError } from '../errors.js';
 import { resolveSshAlias } from './gitProviders.js';
+import { withGitAskPass } from './gitAskPass.js';
+import { githubProjectFromCloneUrl, runnerGitCredential } from './runnerGitCredential.js';
 
 export type ChangedFile = {
   path: string;
@@ -550,7 +552,19 @@ export function createGitChangesService(): GitChangesService {
 
     async push(worktreePath, remote) {
       await assertRemote(worktreePath, remote);
-      const res = await exec('git', ['push', remote, 'HEAD'], { cwd: worktreePath, timeoutMs: 120_000 });
+      const remoteUrl = (await exec('git', ['remote', 'get-url', remote], { cwd: worktreePath })).stdout.trim();
+      const github = githubProjectFromCloneUrl(remoteUrl);
+      const credential = github
+        ? await runnerGitCredential('github.com', github.projectPath, 'write')
+        : null;
+      const run = (env?: NodeJS.ProcessEnv) => exec(
+        'git',
+        ['push', credential && github ? github.httpsUrl : remote, 'HEAD'],
+        { cwd: worktreePath, timeoutMs: 120_000, ...(env ? { env } : {}) },
+      );
+      const res = credential
+        ? await withGitAskPass({ username: credential.username, password: credential.token }, run)
+        : await run();
       return { output: (res.stderr || res.stdout).trim() };
     },
 
@@ -571,7 +585,19 @@ export function createGitChangesService(): GitChangesService {
           if (!remoteBranch || remoteBranch.startsWith('-')) {
             throw new AppError('VALIDATION', `invalid pull source: ${source}`);
           }
-          const res = await exec('git', ['pull', remote, remoteBranch], { cwd: worktreePath, timeoutMs: 120_000 });
+          const remoteUrl = (await exec('git', ['remote', 'get-url', remote], { cwd: worktreePath })).stdout.trim();
+          const github = githubProjectFromCloneUrl(remoteUrl);
+          const credential = github
+            ? await runnerGitCredential('github.com', github.projectPath, 'read')
+            : null;
+          const run = (env?: NodeJS.ProcessEnv) => exec(
+            'git',
+            ['pull', credential && github ? github.httpsUrl : remote, remoteBranch],
+            { cwd: worktreePath, timeoutMs: 120_000, ...(env ? { env } : {}) },
+          );
+          const res = credential
+            ? await withGitAskPass({ username: credential.username, password: credential.token }, run)
+            : await run();
           return { output: (res.stdout || res.stderr).trim() };
         }
       }

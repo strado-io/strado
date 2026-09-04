@@ -33,6 +33,10 @@ function AppShell() {
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' });
   const [repos, setRepos] = useState<RepoConfig[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  // Remote rows have no SSE channel into this desktop yet. Bump this after a
+  // completed remote mutation so Dashboard revalidates immediately instead of
+  // waiting for its recovery poll.
+  const [remoteRefreshKey, setRemoteRefreshKey] = useState(0);
   const upd = useUpdate();
   const mandatory = !!upd.info?.mandatory && upd.info.updateAvailable && upd.phase !== 'idle';
 
@@ -59,6 +63,7 @@ function AppShell() {
   return (
     <>
       <Dashboard
+        remoteRefreshKey={remoteRefreshKey}
         modalOpen={dialog.kind !== 'none' || mandatory}
         update={{
           // mandatory updates are handled by the blocking modal below, so the
@@ -115,7 +120,13 @@ function AppShell() {
             track('worktree_created');
             return api.worktrees.create(wsId, payload);
           }}
-          onDone={close}
+          onDone={() => {
+            // Cheap for a local create, essential for a remote one. The dialog
+            // owns which runner was selected internally, so one unconditional
+            // revalidation avoids duplicating that state in App.
+            setRemoteRefreshKey((key) => key + 1);
+            close();
+          }}
         />
       )}
       {dialog.kind === 'delete' && (
@@ -138,7 +149,10 @@ function AppShell() {
               ...opts,
             })
           }
-          onDone={close}
+          onDone={() => {
+            setRemoteRefreshKey((key) => key + 1);
+            close();
+          }}
         />
       )}
       {dialog.kind === 'menu' && (

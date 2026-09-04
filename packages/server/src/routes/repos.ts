@@ -4,6 +4,11 @@ import { RepoConfigSchema } from '../repoConfig.js';
 import { backfillCloneUrls } from '../services/repoBackfill.js';
 import { detectRepo, uniqueRepoId } from '../services/repoDetect.js';
 import { AppError } from '../errors.js';
+import { githubProjectFromCloneUrl, runnerGitCredential } from '../services/runnerGitCredential.js';
+import { ensureBareRepo, sandboxReposDir } from '../services/sandbox/bareRepo.js';
+import { matchRepo } from '../services/repoIdentity.js';
+
+const PortableRepoConfig = RepoConfigSchema.omit({ path: true, cloneUrl: true });
 
 const DetectBody = z.object({ path: z.string().min(1) });
 const CloneBody = z.object({
@@ -13,6 +18,11 @@ const CloneBody = z.object({
   // Parent directory selected by the compact clone dialog. The repository
   // name derived from the URL is appended on the server.
   parent: z.string().min(1).max(4096).optional(),
+  // A controller creating a worktree on a sandbox-capable runner already has
+  // this machine-independent config. Supplying it lets the runner register a
+  // hidden bare backing repository without first materialising a redundant
+  // main checkout solely so detectRepo can rediscover the same values.
+  config: PortableRepoConfig.optional(),
 });
 const CreateBody = z.object({
   name: z.string().trim().min(1).max(120),
@@ -23,7 +33,9 @@ export async function registerReposRoutes(app: FastifyInstance) {
   app.get('/repos', async (req) => {
     const store = req.workspace!.stores.repos;
     // Runs at most once per repo (the answer, including "no origin", is stored).
-    const repos = await backfillCloneUrls(store, await store.list());
+    // Recheck a previous null: an origin may have been added after the repo was
+    // registered, and remote-runner creation depends on seeing that change.
+    const repos = await backfillCloneUrls(store, await store.list(), { recheckNull: true });
     return { repos };
   });
 
@@ -45,8 +57,64 @@ export async function registerReposRoutes(app: FastifyInstance) {
   // instead of the user SSHing in to clone by hand.
   app.post('/repos/clone', async (req, reply) => {
     const body = CloneBody.parse(req.body);
+    const github = githubProjectFromCloneUrl(body.url);
+    const credential = github
+      ? await runnerGitCredential('github.com', github.projectPath, 'read')
+      : null;
+    const cloneUrl = credential && github ? github.httpsUrl : body.url;
+
+    // Runner provisioning for sandboxed worktrees needs Git's object store,
+    // not a second visible checkout of main. Keep the general clone endpoint's
+    // old behavior unless both conditions prove this is that internal flow:
+    // the caller supplied portable config AND this machine actually sandboxes.
+    if (body.config && app.deps.sandbox) {
+      const store = req.workspace!.stores.repos;
+      const known = await store.list();
+      const existing = matchRepo(
+        body.url,
+        known.map((repo) => ({ repo, cloneUrl: repo.cloneUrl })),
+      );
+      const repoId = existing?.id
+        ?? uniqueRepoId(body.config.id, body.url, new Set(known.map((repo) => repo.id)));
+      const bare = await ensureBareRepo({
+        reposDir: sandboxReposDir(app.deps.homeStateDir),
+        repoId,
+        cloneUrl,
+        credential: credential ? { username: credential.username, password: credential.token } : undefined,
+      });
+      if (existing) {
+        return reply.code(200).send({
+          repo: existing,
+          warnings: [],
+          alreadyRegistered: true,
+          path: bare,
+          backing: 'bare',
+        });
+      }
+      const created = await store.add({
+        ...body.config,
+        id: repoId,
+        path: bare,
+        // Store the portable URL the runner can actually use, never a
+        // controller-only SSH alias from the original RepoConfig.
+        cloneUrl: body.url,
+      });
+      return reply.code(200).send({
+        repo: created,
+        warnings: [],
+        alreadyRegistered: false,
+        path: bare,
+        backing: 'bare',
+      });
+    }
+
     const { cloneRepo } = await import('../services/repoClone.js');
-    const cloned = await cloneRepo({ url: body.url, dest: body.dest, parent: body.parent });
+    const cloned = await cloneRepo({
+      url: cloneUrl,
+      dest: body.dest,
+      parent: body.parent,
+      credential: credential ? { username: credential.username, password: credential.token } : undefined,
+    });
     const detected = await detectRepo(cloned.path);
     const known = await req.workspace!.stores.repos.list();
     if (!known.some((r) => r.path === detected.path)) {

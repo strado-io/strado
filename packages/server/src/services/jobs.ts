@@ -12,6 +12,8 @@ export type Job<T> = {
   id: string;
   kind: string;
   status: JobStatus;
+  /** Latest progress frame, retained so a late SSE subscriber can catch up. */
+  progress?: { message: string; data?: unknown };
   result?: T;
   error?: unknown;
 };
@@ -43,7 +45,9 @@ export function createJobQueue(bus: EventBus): JobQueue {
 
       const ctx: JobContext = {
         progress(message, data) {
-          emitChange(job, 'progress', { message, data });
+          const progress = { message, data };
+          job.progress = progress;
+          emitChange(job, 'progress', progress);
         },
       };
 
@@ -57,7 +61,12 @@ export function createJobQueue(bus: EventBus): JobQueue {
         .catch((err) => {
           job.status = 'error';
           job.error = err;
-          emitChange(job, 'error', toResponse(err).error);
+          const failure = toResponse(err).error;
+          // Carry the last known step on the terminal frame too. A remote
+          // follower can attach after the final progress event but before this
+          // error; without the snapshot its UI attributes the failure to the
+          // first step forever.
+          emitChange(job, 'error', job.progress ? { ...failure, progress: job.progress } : failure);
         });
 
       return job as Job<never>;

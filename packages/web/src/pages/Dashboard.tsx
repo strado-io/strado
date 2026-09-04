@@ -176,6 +176,9 @@ export function remoteAsWorktree(w: RemoteWorktree): Worktree {
 }
 
 export function Dashboard(props: {
+  /** Changes after a remote create/delete completes, forcing an immediate
+   * revalidation instead of waiting for the 20-second recovery poll. */
+  remoteRefreshKey?: number;
   /** A renderer modal owned by App is open. Native browser/DevTools views
    *  must be detached because CSS z-index cannot paint above them. */
   modalOpen?: boolean;
@@ -511,6 +514,16 @@ export function Dashboard(props: {
       if (wsRef.current === wsId) setRemoteLoading(false);
     }
   }, [wsId]);
+  const remoteRefreshKey = props.remoteRefreshKey ?? 0;
+  const appliedRemoteRefreshKey = useRef(remoteRefreshKey);
+  useEffect(() => {
+    // Skip the initial render—the normal load effect below owns it. If a
+    // mutation finishes while the local tree is still loading, leave the key
+    // unapplied so this effect retries as soon as loading settles.
+    if (state.loading || appliedRemoteRefreshKey.current === remoteRefreshKey) return;
+    appliedRemoteRefreshKey.current = remoteRefreshKey;
+    void reloadRemote();
+  }, [remoteRefreshKey, reloadRemote, state.loading]);
   useEffect(() => {
     if (state.loading) return; // never compete with the first local paint
     void reloadRemote();

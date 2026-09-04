@@ -23,6 +23,7 @@ const PROBES: Record<string, string | undefined> = {
   '/api/codex/': '/api/codex/status',
   '/api/opencode/': '/api/opencode/status',
   '/api/pi/': '/api/pi/status',
+  '/api/git/credential': '/api/git/credential',
 };
 
 let tmp: string;

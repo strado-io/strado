@@ -10,10 +10,10 @@ export function dockerfilePath(): string {
   return path.resolve(here, '../../../assets/sandbox/Dockerfile');
 }
 
-// -v3: run as the base image's node user (uid 1000) so keep-id maps the
-// bind-mounted worktree to the runner user; + system safe.directory.
+// -v4: GitHub App askpass refreshes repository tokens through the scoped host
+// broker. v3 added uid-1000 keep-id + system safe.directory.
 export function imageTag(nodeMajor: string | null): string {
-  return nodeMajor ? `strado-sandbox:node${nodeMajor}-v3` : 'strado-sandbox:base-v3';
+  return nodeMajor ? `strado-sandbox:node${nodeMajor}-v4` : 'strado-sandbox:base-v4';
 }
 
 export async function ensureBaseImage(
