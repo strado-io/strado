@@ -1,6 +1,6 @@
 {
   "name": "@strado/desktop",
-  "version": "0.1.51",
+  "version": "0.1.52",
   "private": true,
   "description": "Electron shell for Strado",
   "main": "main.cjs",
