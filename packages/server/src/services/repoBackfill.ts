@@ -8,16 +8,18 @@
 // there in .git/config, nobody ever read it.
 //
 // So read it on demand and persist the answer. `undefined` means never checked;
-// `null` means checked and there genuinely is no origin. Storing the null is
-// what stops this from re-running `git remote` on every repo list forever.
+// `null` means the last check found no origin. Callers that need a clone URL can
+// explicitly recheck null entries because users may add an origin later.
 import type { RepoConfig, RepoConfigStore } from '../repoConfig.js';
 import { readOriginUrl } from './repoDetect.js';
 
 export async function backfillCloneUrls(
   store: RepoConfigStore,
   repos: RepoConfig[],
+  opts: { recheckNull?: boolean } = {},
 ): Promise<RepoConfig[]> {
-  const pending = repos.filter((r) => r.cloneUrl === undefined);
+  const pending = repos.filter((r) =>
+    r.cloneUrl === undefined || (opts.recheckNull === true && r.cloneUrl === null));
   if (pending.length === 0) return repos;
 
   const found = new Map<string, string | null>();

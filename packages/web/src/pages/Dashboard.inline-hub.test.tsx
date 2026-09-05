@@ -176,6 +176,28 @@ describe('Dashboard sidebar hover card', () => {
     expect(hub).toHaveAttribute('data-session', '2');
   });
 
+  it('tells the hub to detach native previews while a card is showing', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(repoRow());
+    fireEvent.click(worktreeRow());
+    const hub = await screen.findByTestId('inline-hub');
+    expect(hub).toHaveAttribute('data-modal-open', 'false');
+
+    // The card floats beside the sidebar, over the hub — where a native
+    // Browser view would paint straight over it.
+    const row = worktreeRow().closest('.group')!;
+    fireEvent.pointerEnter(row);
+    act(() => { vi.advanceTimersByTime(250); });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(hub).toHaveAttribute('data-modal-open', 'true');
+
+    fireEvent.pointerLeave(row);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(hub).toHaveAttribute('data-modal-open', 'false');
+  });
+
   it('opens diff & commit from the card', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());

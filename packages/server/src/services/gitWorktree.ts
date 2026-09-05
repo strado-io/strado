@@ -43,12 +43,19 @@ export function createGitWorktreeService(): GitWorktreeService {
         if (force) args.push('--force');
         await exec('git', args);
       } catch (err) {
+        const details = err instanceof AppError && err.details && typeof err.details === 'object'
+          ? err.details as { stderr?: unknown }
+          : null;
+        const stderr = typeof details?.stderr === 'string' ? details.stderr.trim() : '';
         if (
           err instanceof AppError &&
           err.code === 'SHELL_FAILED' &&
-          /dirty|modified|uncommitted/i.test(JSON.stringify(err.details))
+          /dirty|modified|uncommitted/i.test(stderr || JSON.stringify(err.details))
         ) {
           throw new AppError('GIT_DIRTY', 'worktree has uncommitted changes', err.details);
+        }
+        if (err instanceof AppError && err.code === 'SHELL_FAILED' && stderr) {
+          throw new AppError('SHELL_FAILED', `could not remove worktree: ${stderr}`, err.details);
         }
         throw err;
       }

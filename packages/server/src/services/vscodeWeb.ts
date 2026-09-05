@@ -18,12 +18,17 @@ import {
 } from './serveWebProcess.js';
 import { pruneDeadIdeLocks as realPrune } from './ideLockfiles.js';
 import { ensureTsServerMemory as realEnsureSettings } from './vscodeSettings.js';
+import { pinnedCommit as realPinnedCommit } from './serveWebCache.js';
 
 const HOST = '127.0.0.1';
 
-function serveWebArgs(port: number): string[] {
-  return ['serve-web', '--host', HOST, '--port', String(port),
+function serveWebArgs(port: number, commit: string | null): string[] {
+  const args = ['serve-web', '--host', HOST, '--port', String(port),
     '--without-connection-token', '--accept-server-license-terms'];
+  // Pin to the cached build: without it serve-web asks the update service for
+  // the newest commit and downloads it (~650MB) before serving anything.
+  if (commit) args.push('--commit-id', commit);
+  return args;
 }
 function codeServerArgs(port: number): string[] {
   return ['--auth', 'none', '--bind-addr', `${HOST}:${port}`];
@@ -69,6 +74,8 @@ async function realWorkbenchReady(url: string): Promise<boolean> {
 export type VsCodeWebManager = {
   /** ready=false → serve-web is still serving its "downloading VS Code" placeholder */
   ensure(folder: string): Promise<{ url: string; ready: boolean }>;
+  /** boot the shared workbench now (app start) instead of on first tab open; never throws */
+  prewarm(): Promise<void>;
   drop(folder: string): Promise<void>;
   reapOrphans(): Promise<void>;
   closeAll(): Promise<void>;
@@ -107,6 +114,14 @@ type Deps = {
   readyWaitMs?: number;
   pruneDeadIdeLocks?: (pids: number[]) => void;
   ensureTsServerMemory?: (cli: string) => void;
+  /** cached serve-web build to pin via --commit-id; null → let serve-web pick */
+  pinnedCommit?: (cli: string) => string | null;
+  /** pause between the pinned workbench turning ready and the cache warm-up */
+  warmDelayMs?: number;
+  /** cap on how long the warm-up daemon may spend downloading a new build */
+  warmWaitMs?: number;
+  /** interval between warm-up readiness probes */
+  warmPollMs?: number;
   // Test hook: resolve directly to the winning CLI, skipping real spawn probing.
   cliExists?: (port: number) => Promise<string | null>;
 };
@@ -148,6 +163,13 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   const readyWaitMs = deps.readyWaitMs ?? 20_000;
   const prune = deps.pruneDeadIdeLocks ?? realPrune;
   const ensureSettings = deps.ensureTsServerMemory ?? realEnsureSettings;
+  const pinned = deps.pinnedCommit ?? realPinnedCommit;
+  const warmDelayMs = deps.warmDelayMs ?? 30_000;
+  // Generous: on a slow link a 650MB build can take a long time, and giving up
+  // every session would leave the user pinned on today's build forever.
+  // closeAll() reaps the warm-up on quit, so the cap is only a safety net.
+  const warmWaitMs = deps.warmWaitMs ?? 60 * 60_000;
+  const warmPollMs = deps.warmPollMs ?? 5_000;
 
   // ONE shared serve-web instance for the whole app. The workbench is
   // folder-agnostic (the renderer opens folders via ?folder=<path>), and a
@@ -156,24 +178,80 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   let instance: { pid: number; port: number; url: string; child: ChildProcess; ready: boolean } | null = null;
   let inflight: Promise<{ url: string; ready: boolean }> | null = null;
   let settingsSeeded = false;
+  let warmed = false;
+  let warm: { pid: number; child: ChildProcess } | null = null;
 
-  function argsFor(file: string, port: number): string[] {
-    return file === 'code-server' ? codeServerArgs(port) : serveWebArgs(port);
+  function pinFor(file: string): string | null {
+    if (file === 'code-server') return null;
+    try { return pinned(file); } catch { return null; /* unreadable cache → unpinned boot */ }
   }
 
-  async function spawnCandidate(port: number): Promise<{ file: string; child: ChildProcess } | null> {
+  function argsFor(file: string, port: number, commit: string | null): string[] {
+    return file === 'code-server' ? codeServerArgs(port) : serveWebArgs(port, commit);
+  }
+
+  // Cache warm-up. A pinned boot never asks the update service, so on its own
+  // the pin would freeze the user on today's build forever. Once the pinned
+  // workbench is up, run ONE throwaway unpinned serve-web on a scratch port:
+  // it fetches the newest build into the CLI's cache (or is instantly ready if
+  // the pin already is the newest), then we kill it. The next app launch pins
+  // to that build — the download happened while the user was working, never
+  // while they were waiting. Best-effort; failures never touch the workbench.
+  // Note the pin is the LRU *head* (most recently used), not "newest": the
+  // warm-up run is what makes the newest build the MRU entry for next launch.
+  // The running pin stays at the head or one behind it, so the CLI's own LRU
+  // pruning never evicts the build we are serving.
+  async function warmCache(file: string): Promise<void> {
+    if (warmed) return;
+    warmed = true;
+    try {
+      await new Promise((r) => setTimeout(r, warmDelayMs));
+      if (!instance) return; // app is shutting down
+      const port = await findFreePort();
+      const child = spawn(file, argsFor(file, port, null), {
+        stdio: 'ignore', detached: true, env: { ...process.env, [MARKER]: '1' },
+      });
+      // An unhandled 'error' on a ChildProcess is thrown from nextTick and
+      // would take the whole server down — the main path guards this too.
+      let dead = false;
+      child.once('error', () => { dead = true; });
+      child.once('exit', () => { dead = true; });
+      const pid = child.pid;
+      if (!pid) { try { child.kill(); } catch { /* noop */ } return; }
+      store.record({ pid, port });
+      warm = { pid, child };
+      const url = `http://${HOST}:${port}/`;
+      const deadline = Date.now() + warmWaitMs;
+      while (Date.now() < deadline && !dead && warm?.pid === pid) {
+        if (await workbenchReady(url)) break;
+        await new Promise((r) => setTimeout(r, warmPollMs));
+      }
+      reapWarm(pid);
+    } catch { /* best-effort */ }
+  }
+
+  function reapWarm(pid: number): void {
+    if (warm?.pid !== pid) return; // already reaped (closeAll)
+    warm = null;
+    killTree(pid);
+    store.forget(pid);
+  }
+
+  async function spawnCandidate(port: number): Promise<{ file: string; child: ChildProcess; commit: string | null } | null> {
     // Test override: caller declares which CLI is present.
     if (deps.cliExists) {
       const file = await deps.cliExists(port);
       if (!file) return null;
-      const child = spawn(file, argsFor(file, port), {
+      const commit = pinFor(file);
+      const child = spawn(file, argsFor(file, port, commit), {
         stdio: 'ignore', detached: true, env: { ...process.env, [MARKER]: '1' },
       });
       if (child.pid) store.record({ pid: child.pid, port });
-      return { file, child };
+      return { file, child, commit };
     }
     for (const file of CANDIDATE_FILES) {
-      const child = spawn(file, argsFor(file, port), {
+      const commit = pinFor(file);
+      const child = spawn(file, argsFor(file, port, commit), {
         stdio: 'ignore', detached: true, env: { ...process.env, [MARKER]: '1' },
       });
       // Record the instant we have a pid — before the ~400ms probe — so a crash
@@ -183,7 +261,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
         child.once('error', () => resolve(false));       // ENOENT: binary missing
         setTimeout(() => resolve(child.exitCode === null), 400); // still alive → started
       });
-      if (ok) return { file, child };
+      if (ok) return { file, child, commit };
       if (child.pid) store.forget(child.pid);            // rejected candidate — untrack
       try { child.kill(); } catch { /* noop */ }
     }
@@ -226,7 +304,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
         throw new AppError('NOT_FOUND',
           'no VS Code CLI found — install `code`/`code-insiders` (Shell Command: Install) or code-server');
       }
-      const { file, child } = spawned;
+      const { file, child, commit } = spawned;
       const pid = child.pid as number;
       const url = `http://${HOST}:${port}/`;
       instance = { pid, port, url, child, ready: false };
@@ -258,11 +336,26 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
         await new Promise((r) => setTimeout(r, 1_000));
       }
       if (instance && instance.pid === pid) instance.ready = ready;
+      if (commit) void warmCache(file);
       return { url, ready };
     })().finally(() => { inflight = null; });
 
     inflight = p;
     return p;
+  }
+
+  // Eager boot at app start so the first VS Code tab lands on a running
+  // workbench. The folder is irrelevant (one shared, folder-agnostic instance);
+  // a missing CLI or any spawn failure is simply reported later by ensure().
+  //
+  // Gated on a persisted port, i.e. VS Code has been opened in Strado before.
+  // Otherwise app launch would pull a ~650MB build and park a daemon for a
+  // feature this user may never touch; first open then behaves as before.
+  async function prewarm(): Promise<void> {
+    try {
+      if (portStore.get() === undefined) return;
+      await ensure('/');
+    } catch { /* surfaced on the real tab open */ }
   }
 
   async function drop(_folder: string): Promise<void> {
@@ -287,13 +380,14 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   async function closeAll(): Promise<void> {
     const entry = instance;
     instance = null;
+    if (warm) reapWarm(warm.pid); // detached: would outlive process.exit otherwise
     if (!entry) return;
     killTree(entry.pid);
     store.forget(entry.pid);
     prune([entry.pid]);
   }
 
-  return { ensure, drop, reapOrphans, closeAll };
+  return { ensure, prewarm, drop, reapOrphans, closeAll };
 }
 
 // HAZARD: this captures daemonFilePath() (via createVsCodeWebManager ->
@@ -308,6 +402,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
 // module-level factory of this shape may read profile-derived env at all.
 const defaultManager = createVsCodeWebManager();
 export const ensureVsCodeWeb = (folder: string) => defaultManager.ensure(folder);
+export const prewarmVsCodeWeb = () => defaultManager.prewarm();
 export const dropVsCodeWeb = (folder: string) => defaultManager.drop(folder);
 export const reapOrphans = () => defaultManager.reapOrphans();
 export const closeAll = () => defaultManager.closeAll();

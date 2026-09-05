@@ -177,9 +177,9 @@ export function NewWorktreeDialog({
   const runnerChoices = [
     { label: 'This Mac', id: '', disabled: false },
     ...runners.map((runner) => ({
-      label: `${runner.name}${runner.online ? '' : ' (offline)'}`,
+      label: `${runner.name}${!runner.online ? ' (offline)' : !selectedRepo?.cloneUrl ? ' (repo has no remote)' : ''}`,
       id: runner.runnerId,
-      disabled: !runner.online,
+      disabled: !runner.online || !selectedRepo?.cloneUrl,
     })),
   ];
   const selectedRunnerLabel = runnerChoices.find((choice) => choice.id === runnerId)?.label ?? 'This Mac';
@@ -194,6 +194,10 @@ export function NewWorktreeDialog({
     e.preventDefault();
     if (!title.trim()) {
       setError('title required');
+      return;
+    }
+    if (runnerId && !selectedRepo?.cloneUrl) {
+      setError('This repository has no git remote, so a runner cannot clone it. Add an origin remote first.');
       return;
     }
     setError(null);
@@ -222,6 +226,11 @@ export function NewWorktreeDialog({
     }
   }
 
+  const showingJob = jobId !== null;
+  const runnerName = runnerId
+    ? runners.find((runner) => runner.runnerId === runnerId)?.name ?? runnerId
+    : null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={creating ? undefined : onCancel}>
       <form
@@ -230,7 +239,14 @@ export function NewWorktreeDialog({
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="new-worktree-title" className="sr-only">New worktree</h2>
+        <h2
+          id="new-worktree-title"
+          className={showingJob ? 'px-5 pt-5 text-sm font-semibold text-zinc-100' : 'sr-only'}
+        >
+          {showingJob ? 'Create worktree' : 'New worktree'}
+        </h2>
+
+        <div hidden={showingJob}>
 
         <div className="flex min-h-16 items-center justify-between gap-4 border-b border-zinc-800 px-5 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -301,13 +317,6 @@ export function NewWorktreeDialog({
           )}
 
           {error && <div className="mb-3 rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-200">{error}</div>}
-
-          {jobId && (
-            <JobSteps
-              progress={progress}
-              where={runnerId ? runners.find((r) => r.runnerId === runnerId)?.name ?? runnerId : null}
-            />
-          )}
 
           <div className="flex items-end justify-between gap-3">
             <div className="flex min-w-0 items-center gap-1.5">
@@ -414,6 +423,34 @@ export function NewWorktreeDialog({
             </div>
           </div>
         </div>
+        </div>
+
+        {showingJob && (
+          <>
+            <div className="px-5 pb-5 pt-3">
+              <p className="mb-3 text-zinc-400" data-testid="creation-summary">
+                <span className="text-zinc-200">{selectedRepo?.name ?? repoId}</span>
+                {' / '}{title}
+                <br />
+                source: <span className="font-mono text-zinc-300">{sourceBranch}</span>
+              </p>
+              <JobSteps progress={progress} where={runnerName} />
+              {error && <div className="mt-3 rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-200">{error}</div>}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+              <button type="button" disabled={creating} className="h-9 rounded-md px-3 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-50" onClick={onCancel}>Cancel</button>
+              <button type="submit" disabled={creating} className="flex h-9 items-center gap-2 rounded-md bg-zinc-100 px-4 text-xs font-medium text-zinc-950 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40">
+                {creating && (
+                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.3" />
+                    <path d="M8 2a6 6 0 0 1 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                )}
+                {creating ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </>
+        )}
       </form>
     </div>
   );

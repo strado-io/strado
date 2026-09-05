@@ -30,10 +30,17 @@ export function RunningServers({
   if (running.length === 0) return null;
 
   const label = (w: Worktree) => w.meta?.ticketId?.trim() || w.branch || w.path.split('/').pop() || w.path;
-  // What the row says to the right of the name: the port if we have one, else
-  // whatever stage it is at — a bare ":" would read as a missing value.
+  // What the row says to the right of the name: the port if we have one (an
+  // external one falls back to its pid — a bare ":" would read as a missing
+  // value), then the one thing worth knowing beyond "up": that Strado did not
+  // start it, or that it is on its way up or down.
   const where = (w: Worktree) =>
-    w.process.port ? `:${w.process.port}` : w.process.external ? `pid ${w.process.pid ?? '?'}` : w.process.status;
+    w.process.port ? `:${w.process.port}` : w.process.external ? `pid ${w.process.pid ?? '?'}` : '';
+  const stage = (w: Worktree) =>
+    w.process.external ? 'detected'
+      : w.process.status === 'starting' ? 'starting…'
+        : w.process.status === 'stopping' ? 'stopping…'
+          : '';
 
   return (
     <div className="relative">
@@ -60,7 +67,12 @@ export function RunningServers({
                   className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left"
                 >
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-200">{label(w)}</span>
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-500">{where(w)}</span>
+                  {where(w) && (
+                    <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-500">{where(w)}</span>
+                  )}
+                  {stage(w) && (
+                    <span className="shrink-0 text-[10px] text-zinc-600">{stage(w)}</span>
+                  )}
                 </button>
                 {/* Stopping keeps the list open — you often stop several in a
                     row; opening a worktree is what dismisses it. */}

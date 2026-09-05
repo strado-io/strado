@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { AppError } from '../errors.js';
 import { exec } from '../shell.js';
+import { withGitAskPass } from './gitAskPass.js';
 
 /** Where clones land unless the caller names a directory. */
 export function defaultReposDir(): string {
@@ -49,6 +50,8 @@ export async function cloneRepo(opts: {
   /** Parent directory chosen in the UI; the URL-derived name is appended. */
   parent?: string;
   timeoutMs?: number;
+  /** In-memory HTTPS credential. It is exposed to git only through env. */
+  credential?: { username: string; password: string };
 }): Promise<CloneResult> {
   const { url, name } = parseCloneUrl(opts.url);
   const rawParent = opts.parent?.trim();
@@ -71,7 +74,7 @@ export async function cloneRepo(opts: {
   await fsp.mkdir(path.dirname(dest), { recursive: true });
 
   try {
-    await exec('git', ['clone', '--', url, dest], {
+    const run = (credentialEnv: NodeJS.ProcessEnv = {}) => exec('git', ['clone', '--', url, dest], {
       timeoutMs: opts.timeoutMs ?? 10 * 60 * 1000,
       env: {
         // CRITICAL: without these a private repo makes git sit forever waiting
@@ -82,8 +85,11 @@ export async function cloneRepo(opts: {
         GIT_ASKPASS: '',
         SSH_ASKPASS: '',
         GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new',
+        ...credentialEnv,
       },
     });
+    if (opts.credential) await withGitAskPass(opts.credential, run);
+    else await run();
   } catch (err) {
     // exec rejects on non-zero exit with git's stderr in `details`; the bare
     // "git exited 128" it carries is useless to a user, so re-map it.

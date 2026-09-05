@@ -19,6 +19,7 @@ import { FeedbackDialog } from '../components/FeedbackDialog';
 import { CommandPalette } from '../components/CommandPalette';
 import { useColumnWidths } from '../hooks/useColumnWidths';
 import { useDensity } from '../hooks/useDensity';
+import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { TaskBoard } from '../components/TaskBoard';
@@ -28,6 +29,7 @@ import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
 import { CodeReviewsPage } from '../components/CodeReviewsPage';
+import { RendererOverlayContext, useRendererOverlayRegistry } from '../contexts/RendererOverlay';
 import { UsagePage } from '../components/usage/UsagePage';
 import { useCodeReviews } from '../hooks/codeReviews';
 
@@ -176,6 +178,9 @@ export function remoteAsWorktree(w: RemoteWorktree): Worktree {
 }
 
 export function Dashboard(props: {
+  /** Changes after a remote create/delete completes, forcing an immediate
+   * revalidation instead of waiting for the 20-second recovery poll. */
+  remoteRefreshKey?: number;
   /** A renderer modal owned by App is open. Native browser/DevTools views
    *  must be detached because CSS z-index cannot paint above them. */
   modalOpen?: boolean;
@@ -290,6 +295,7 @@ export function Dashboard(props: {
   }, [wsId]);
   const [showPalette, setShowPalette] = useState(false);
   const [density, setDensity] = useDensity();
+  const [boardPrefs, patchBoardPrefs] = useBoardPrefs(wsId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('strado:expanded-repos') || '[]')); }
@@ -336,8 +342,10 @@ export function Dashboard(props: {
   // Full-screen renderer overlays can be owned here or one level up in App.
   // The Browser preview and its DevTools are native WebContentsViews, so they
   // have to be parked off-screen while any of these is visible.
+  // Smaller overlays (the sidebar's worktree hover card) register themselves.
+  const overlays = useRendererOverlayRegistry();
   const modalOpen = !!(
-    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo
+    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo || overlays.anyOpen
   );
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem('strado:onboarding-welcomed') === '1');
   const [checklistDismissed, setChecklistDismissed] = useState(
@@ -511,6 +519,16 @@ export function Dashboard(props: {
       if (wsRef.current === wsId) setRemoteLoading(false);
     }
   }, [wsId]);
+  const remoteRefreshKey = props.remoteRefreshKey ?? 0;
+  const appliedRemoteRefreshKey = useRef(remoteRefreshKey);
+  useEffect(() => {
+    // Skip the initial render—the normal load effect below owns it. If a
+    // mutation finishes while the local tree is still loading, leave the key
+    // unapplied so this effect retries as soon as loading settles.
+    if (state.loading || appliedRemoteRefreshKey.current === remoteRefreshKey) return;
+    appliedRemoteRefreshKey.current = remoteRefreshKey;
+    void reloadRemote();
+  }, [remoteRefreshKey, reloadRemote, state.loading]);
   useEffect(() => {
     if (state.loading) return; // never compete with the first local paint
     void reloadRemote();
@@ -662,6 +680,7 @@ export function Dashboard(props: {
   }
 
   return (
+    <RendererOverlayContext.Provider value={overlays.report}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       {!sidebarCollapsed && (
         <Sidebar
@@ -858,6 +877,8 @@ export function Dashboard(props: {
                 onStartResize={startResize}
                 density={density}
                 onReorder={handleReorder}
+                prefs={boardPrefs}
+                onPrefs={patchBoardPrefs}
                 handlers={{
                   onOpenShellTerminal: (w) => openInlineHub(w, 'shell'),
                   onSetWorkflowStatus: handleSetWorkflowStatus,
@@ -938,5 +959,6 @@ export function Dashboard(props: {
       )}
 
     </div>
+    </RendererOverlayContext.Provider>
   );
 }

@@ -19,8 +19,15 @@ export function JobSteps({ progress, where }: {
 }) {
   const { steps, currentIndex, detail, elapsed, done, error } = progress;
   // Nothing declared yet: the caller shows its own pending state rather than an
-  // empty box. Quick jobs finish before this ever renders.
-  if (steps.length === 0) return null;
+  // empty box. An error is the exception: even a missed progress frame must not
+  // turn a failed job into an infinite-looking spinner.
+  if (steps.length === 0) {
+    return error ? (
+      <div className="mt-3 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+        {error}
+      </div>
+    ) : null;
+  }
 
   return (
     <div className="mt-3 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2.5">

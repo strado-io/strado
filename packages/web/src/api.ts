@@ -229,6 +229,20 @@ export const api = {
     removeConfig: (host: string) =>
       request<{ ok: boolean }>(`/api/github/config/${encodeURIComponent(host)}`, { method: 'DELETE' }),
     testConfig: () => request<{ ok: boolean; accounts: number }>('/api/github/config/test', { method: 'POST' }),
+    appConnect: () =>
+      request<{ state: string; url: string; expiresAt: string }>('/api/github/app/connect', { method: 'POST' }),
+    appStatus: () =>
+      request<{
+        installations: Array<{
+          installationId: number;
+          accountLogin: string;
+          accountType: 'Organization' | 'User';
+          repositorySelection: 'all' | 'selected';
+          suspended: boolean;
+        }>;
+      }>('/api/github/app/status'),
+    appDisconnect: (installationId: number) =>
+      request<{ ok: boolean }>(`/api/github/app/disconnect/${installationId}`, { method: 'POST' }),
   },
   repos: {
     list: (wsId: string) =>

@@ -114,17 +114,21 @@ describe('startHookSocket', () => {
     ]);
   });
 
-  it('allows the codex and opencode routes, and refuses the events route no hook uses', async () => {
+  it('allows agent status and the exact Git credential broker route', async () => {
     const target = await startTarget();
     const sock = await start(target.port);
 
-    for (const p of ['/api/codex/status', '/api/opencode/status']) {
+    for (const p of ['/api/codex/status', '/api/opencode/status', '/api/git/credential']) {
       expect((await call(sock, 'POST', p, '{}')).status).toBe(200);
     }
     // Nothing answers POST /api/events — the SSE streams are GETs under
     // /events/ — so it is off the wall. hookAllowlist.test.ts pins that.
     expect((await call(sock, 'POST', '/api/events', '{}')).status).toBe(403);
-    expect(target.hits.map((h) => h.url)).toEqual(['/api/codex/status', '/api/opencode/status']);
+    expect(target.hits.map((h) => h.url)).toEqual([
+      '/api/codex/status',
+      '/api/opencode/status',
+      '/api/git/credential',
+    ]);
   });
 
   it('403s a non-status route without the target ever seeing it', async () => {

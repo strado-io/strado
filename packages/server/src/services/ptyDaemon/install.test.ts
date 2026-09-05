@@ -107,11 +107,14 @@ describe('installPtydRuntime', () => {
     expect(fs.existsSync(socketPath)).toBe(true);
   }, 15000);
 
-  it('installNode: daemon boots from the installed interpreter (AppImage survival property)', async () => {
+  it('installNode: the returned interpreter boots the daemon (AppImage survival property)', async () => {
     const { script, execPath } = installPtydRuntime({ stateDir, daemonScript, installNode: true });
-    expect(execPath).toBe(path.join(installedDir(), 'node'));
+    // Either the copy (a self-contained node) or, when a lone copy cannot run
+    // (Homebrew's node dlopens ../lib/libnode by relative rpath), the original.
+    // Both must actually boot the daemon — the old assertion pinned the copy
+    // and failed on any Mac with a Homebrew node.
+    expect([path.join(installedDir(), 'node'), process.execPath]).toContain(execPath);
     expect(fs.statSync(execPath).mode & 0o111).toBeTruthy();
-    // Boot a daemon with the installed interpreter directly and probe it.
     const sock = path.join(stateDir, 'probe.sock');
     const child = spawn(execPath, [script, `--socket=${sock}`], { stdio: ['ignore', 'ignore', 'ignore'], detached: true });
     child.unref();
@@ -131,4 +134,44 @@ describe('installPtydRuntime', () => {
       if (child.pid) { try { process.kill(child.pid, 'SIGTERM'); } catch { /* gone */ } }
     }
   }, 15000);
+
+  // A stand-in interpreter: a shell script, so the outcome of copying it is
+  // the same on every platform regardless of how the real node was built.
+  function fakeNode(body: string): string {
+    const file = path.join(stateDir, 'fake-node');
+    fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return file;
+  }
+
+  it('installNode: a relocatable interpreter is copied and the copy is what runs', () => {
+    const nodeSource = fakeNode('echo v1.2.3');
+    const { execPath } = installPtydRuntime({ stateDir, daemonScript, installNode: true, nodeSource });
+    expect(execPath).toBe(path.join(installedDir(), 'node'));
+    expect(fs.readFileSync(path.join(installedDir(), 'ptyd.version'), 'utf8')).toMatch(/:node-\d+-\d+$/);
+    expect(fs.existsSync(path.join(installedDir(), 'node.unrelocatable'))).toBe(false);
+  });
+
+  it('installNode: an interpreter whose copy cannot run falls back to the original — once', () => {
+    const nodeSource = fakeNode('exit 1');
+    const first = installPtydRuntime({ stateDir, daemonScript, installNode: true, nodeSource });
+    expect(first.execPath).toBe(nodeSource);
+    expect(fs.existsSync(path.join(installedDir(), 'node'))).toBe(false);
+    expect(fs.existsSync(path.join(installedDir(), 'node.unrelocatable'))).toBe(true);
+    // The marker must describe what is actually installed (no interpreter),
+    // or every boot would re-copy ~100MB just to discover the same thing.
+    const marker = fs.readFileSync(path.join(installedDir(), 'ptyd.version'), 'utf8');
+    expect(marker).not.toMatch(/node-/);
+    const before = fs.statSync(first.script).mtimeMs;
+    const second = installPtydRuntime({ stateDir, daemonScript, installNode: true, nodeSource });
+    expect(second.execPath).toBe(nodeSource);
+    expect(fs.statSync(second.script).mtimeMs).toBe(before);
+  });
+
+  it('installNode: a different interpreter gets a fresh try after a fallback', () => {
+    installPtydRuntime({ stateDir, daemonScript, installNode: true, nodeSource: fakeNode('exit 1') });
+    // Same path, new bytes — like an app update shipping a self-contained node.
+    const nodeSource = fakeNode('echo v2.0.0 && exit 0');
+    const { execPath } = installPtydRuntime({ stateDir, daemonScript, installNode: true, nodeSource });
+    expect(execPath).toBe(path.join(installedDir(), 'node'));
+  });
 });

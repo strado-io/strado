@@ -24,7 +24,14 @@ export function DeleteWorktreeDialog({
   const progress = useJobSteps(jobId);
   useEffect(() => {
     if (progress.done) onDone?.();
-  }, [progress.done]);
+  }, [progress.done, onDone]);
+  useEffect(() => {
+    if (!progress.error) return;
+    // Starting the HTTP request succeeded, but the background job did not.
+    // JobSteps owns the failure text; restore both Retry and Cancel so a fast
+    // remote failure cannot leave this modal permanently on "Deleting…".
+    setBusy(false);
+  }, [progress.error]);
 
   const confirm = async () => {
     setBusy(true);

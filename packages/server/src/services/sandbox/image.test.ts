@@ -4,8 +4,8 @@ import fsp from 'node:fs/promises';
 
 describe('imageTag', () => {
   it('encodes the node major', () => {
-    expect(imageTag('22')).toBe('strado-sandbox:node22-v3');
-    expect(imageTag(null)).toBe('strado-sandbox:base-v3');
+    expect(imageTag('22')).toBe('strado-sandbox:node22-v4');
+    expect(imageTag(null)).toBe('strado-sandbox:base-v4');
   });
 });
 
@@ -49,7 +49,7 @@ describe('ensureBaseImage', () => {
       return args[0] === 'image' ? { code: 1, stdout: '', stderr: 'no such image' } : { code: 0, stdout: '', stderr: '' };
     });
     const build = calls.find((a) => a[0] === 'build')!;
-    expect(build).toContain('strado-sandbox:node20-v3');
+    expect(build).toContain('strado-sandbox:node20-v4');
     expect(build.join(' ')).toContain('NODE_MAJOR=20');
   });
 

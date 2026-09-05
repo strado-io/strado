@@ -3,15 +3,15 @@ import { createPortal } from 'react-dom';
 import type { RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
-import { chipStatus, displayLabel, sessionChips, type SessionChip } from '../../hooks/sessions';
+import { chipStatus, sessionChips } from '../../hooks/sessions';
 import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor, SidebarView } from '../Sidebar';
 import { PlusIcon } from '../hub/icons';
-import { SESSION_COLOR, SessionAvatarIcon } from './sessionAvatars';
+import { SESSION_COLOR, SessionAvatarIcon, SessionAvatarStack } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { worktreeLabel, worktreeTitle } from './labels';
-import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
+import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 
 export type SidebarBodyProps = {
   wsId: string;
@@ -47,7 +47,8 @@ export type SidebarBodyProps = {
 };
 
 function isRunning(w: Worktree): boolean {
-  return w.process.status === 'running' || w.process.status === 'starting' || !!w.process.external;
+  const s = w.process.status;
+  return s === 'running' || s === 'starting' || s === 'stopping' || !!w.process.external;
 }
 function agentWorking(w: Worktree): boolean {
   return w.claudeStatus === 'working' || w.codexStatus === 'working'
@@ -157,48 +158,6 @@ function MergeRequestBadge({ worktree, mr, onOpen, testIdSuffix = worktree.path 
   );
 }
 
-// Who is open in this worktree, as overlapping faces. Names and live status
-// are the hover card's job.
-// Three is what a narrow rail can carry without crowding out the name; the
-// rest become a count, and the hover card still lists every session.
-const MAX_AVATARS = 3;
-
-function SessionAvatarStack({ chips, testId }: { chips: SessionChip[]; testId: string }) {
-  if (chips.length === 0) return null;
-  const visible = chips.slice(0, MAX_AVATARS);
-  const overflow = chips.length - visible.length;
-  return (
-    <span
-      data-testid={testId}
-      role="img"
-      aria-label={`${chips.length} open session${chips.length === 1 ? '' : 's'}: ${chips.map(displayLabel).join(', ')}`}
-      className="flex shrink-0 items-center"
-    >
-      {visible.map((chip, index) => (
-        <span
-          key={`${chip.mode}:${chip.sessionId}`}
-          data-session-avatar
-          aria-hidden
-          className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 ring-1 ring-zinc-950 ${SESSION_COLOR[chip.mode]} ${
-            index > 0 ? '-ml-1' : ''
-          }`}
-          style={{ zIndex: index + 1 }}
-        >
-          <SessionAvatarIcon chip={chip} />
-        </span>
-      ))}
-      {overflow > 0 && (
-        <span
-          data-session-overflow
-          aria-hidden
-          className="relative -ml-1 flex h-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 px-1 font-mono text-[9px] leading-none text-zinc-400 ring-1 ring-zinc-950"
-          style={{ zIndex: visible.length + 1 }}
-        >+{overflow}</span>
-      )}
-    </span>
-  );
-}
-
 function RepoIcon() {
   // book-with-bookmark repo glyph (hand-tuned SVG), always in the app's
   // primary orange (sky-* is remapped to Strado orange) — one color for every repo
@@ -219,6 +178,9 @@ function Menu({ label, items, alwaysVisible = false }: {
   alwaysVisible?: boolean;
 }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // Inside a worktree row this dismisses the row's hover card (a no-op for
+  // repo and space menus): the menu, and whatever it opens, take over.
+  const dismissHoverCard = useRowHoverCardDismiss();
   useEffect(() => {
     if (!pos) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null); };
@@ -232,6 +194,7 @@ function Menu({ label, items, alwaysVisible = false }: {
         aria-label={label}
         onClick={(e) => {
           e.stopPropagation();
+          dismissHoverCard();
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           setPos({ x: r.right, y: r.bottom });
         }}
@@ -255,7 +218,7 @@ function Menu({ label, items, alwaysVisible = false }: {
             {items.map((it) => (
               <button
                 key={it.text}
-                onClick={() => { setPos(null); it.onClick(); }}
+                onClick={() => { setPos(null); dismissHoverCard(); it.onClick(); }}
                 className={`block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-zinc-900 ${it.danger ? 'text-red-300' : 'text-zinc-200'}`}
               >
                 {it.text}

@@ -95,6 +95,33 @@ describe('GET /api/w/default/worktrees', () => {
 });
 
 describe('POST /api/w/default/worktrees', () => {
+  it('creates an unlinked worktree when the source has no node_modules', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/worktrees',
+      payload: {
+        repoId: 'react-app',
+        ticketId: 'FD-0',
+        title: 'Fresh clone',
+        sourceBranch: 'main',
+        sourceWorktree: repo,
+        env: {},
+      },
+    });
+    expect(create.statusCode).toBe(202);
+
+    const final = await app.deps.jobs.wait(create.json().jobId);
+    expect(final.status).toBe('done');
+    expect(final.result).toMatchObject({ warnings: ['SOURCE_NODE_MODULES_MISSING'] });
+
+    const stores = await app.deps.registry.get('default');
+    const tracked = (await stores.state.list()).find((w) => w.meta.ticketId === 'FD-0');
+    expect(tracked).toBeTruthy();
+    expect(tracked!.meta.linkedFrom).toBeNull();
+    expect(tracked!.meta.linkedAt).toBeNull();
+    await expect(fs.lstat(path.join(tracked!.path, 'node_modules'))).rejects.toThrow();
+  });
+
   it('creates a worktree, links node_modules, writes state', async () => {
     await fs.mkdir(path.join(repo, 'node_modules', 'lodash'), { recursive: true });
     await fs.writeFile(path.join(repo, 'package-lock.json'), '{"v":1}');
@@ -128,7 +155,7 @@ describe('POST /api/w/default/worktrees', () => {
     expect(stat.isSymbolicLink()).toBe(true);
   });
 
-  it('rejects invalid ticket id with VALIDATION job error', async () => {
+  it('accepts a lower-case free-form ticket id', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/w/default/worktrees',
@@ -142,7 +169,11 @@ describe('POST /api/w/default/worktrees', () => {
     });
     expect(res.statusCode).toBe(202);
     const final = await app.deps.jobs.wait(res.json().jobId);
-    expect(final.status).toBe('error');
+    expect(final.status).toBe('done');
+    expect(final.result).toMatchObject({
+      path: expect.stringContaining('bad-id_x'),
+      warnings: ['SOURCE_NODE_MODULES_MISSING'],
+    });
   });
 });
 

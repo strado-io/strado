@@ -25,9 +25,12 @@ const GHOST = 'bg-transparent text-zinc-600 hover:bg-zinc-900 hover:text-zinc-30
 export function WorkflowStatusSelect({
   value,
   onChange,
+  placeholder = 'Status',
 }: {
   value: WorkflowStatus | null;
   onChange: (status: WorkflowStatus | null) => void;
+  /** Text shown while unset — the board passes the derived attention label. */
+  placeholder?: string;
 }) {
   const cls = value ? STYLE[value] : GHOST;
   return (
@@ -43,7 +46,7 @@ export function WorkflowStatusSelect({
       className={`h-6 w-full max-w-[120px] cursor-pointer rounded px-1.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
     >
       <option value="" disabled hidden>
-        Status
+        {placeholder}
       </option>
       {WORKFLOW_STATUSES.map((s) => (
         <option key={s.value} value={s.value}>

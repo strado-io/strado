@@ -17,10 +17,12 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai \
     @earendil-works/pi-coding-agent \
     && corepack enable
 
-# askpass: answers git's credential prompt from env, so the push token is never
-# written to disk inside the sandbox. Username line for the token; anything else
-# (the password prompt) gets the token itself.
-RUN printf '#!/bin/sh\ncase "$1" in *sername*) echo "${GIT_HTTP_USER:-x-access-token}";; *) echo "${GITHUB_TOKEN:-$GITLAB_TOKEN}";; esac\n' \
+# askpass: legacy PAT envs remain supported. GitHub App sandboxes instead hold
+# only an HMAC worktree capability; the node helper exchanges it over the
+# bind-mounted Unix socket for a fresh repository token on every Git operation.
+COPY strado-git-broker.mjs /usr/local/bin/strado-git-broker.mjs
+RUN chmod +x /usr/local/bin/strado-git-broker.mjs && \
+    printf '#!/bin/sh\npat="${GITHUB_TOKEN:-$GITLAB_TOKEN}"\ncase "$1" in *sername*) echo "${GIT_HTTP_USER:-x-access-token}";; *) if [ -n "$pat" ]; then echo "$pat"; elif [ -n "$STRADO_GIT_BROKER_TOKEN" ]; then exec node /usr/local/bin/strado-git-broker.mjs; else exit 1; fi;; esac\n' \
     > /usr/local/bin/strado-askpass && chmod +x /usr/local/bin/strado-askpass
 
 # Trust bind-mounted repos regardless of the ownership git sees across the

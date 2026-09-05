@@ -125,6 +125,23 @@ describe('QuotaCircle', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('tells the host when the popover opens and closes', async () => {
+    // The toolbar host detaches native browser views while the popover is up —
+    // they would otherwise paint over it — so it has to know about every change.
+    const onOpenChange = vi.fn();
+    const view = render(<QuotaCircle wsId="ws-1" onOpenChange={onOpenChange} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Agent usage/ }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent usage/ }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    view.unmount();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
   it('renders nothing when no agent reports a limit', async () => {
     mocks.accounts.mockResolvedValue([]);
 

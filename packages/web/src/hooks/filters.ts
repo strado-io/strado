@@ -3,7 +3,9 @@ import type { StatusFilter } from '../components/FilterBar';
 import { hasSession } from './sessions';
 
 export function isRunning(w: Worktree): boolean {
-  return w.process.status === 'running' || w.process.status === 'starting' || !!w.process.external;
+  const s = w.process.status;
+  // 'stopping' still holds its port — it belongs in the running list until it is gone.
+  return s === 'running' || s === 'starting' || s === 'stopping' || !!w.process.external;
 }
 
 export function matchesStatus(w: Worktree, s: StatusFilter): boolean {

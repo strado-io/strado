@@ -72,12 +72,18 @@ describe('process routes', () => {
     });
     expect(start.statusCode).toBe(200);
 
-    await new Promise((r) => setTimeout(r, 500));
-    const status = await app.inject({
-      method: 'GET',
-      url: `/api/w/default/worktrees/${encodeURIComponent(worktree)}/status`,
-    });
-    expect(status.json().status).toBe('running');
+    // 'starting' until the server announces its URL on stdout (the shell is an
+    // interactive login shell, so that can take a moment) — then 'running'.
+    const statusUrl = `/api/w/default/worktrees/${encodeURIComponent(worktree)}/status`;
+    const deadline = Date.now() + 10_000;
+    let status = (await app.inject({ method: 'GET', url: statusUrl })).json();
+    while (status.status !== 'running' && Date.now() < deadline) {
+      expect(status.status).toBe('starting');
+      await new Promise((r) => setTimeout(r, 100));
+      status = (await app.inject({ method: 'GET', url: statusUrl })).json();
+    }
+    expect(status.status).toBe('running');
+    expect(status.detectedUrl).toBe('http://localhost:9555');
 
     const logs = await app.inject({
       method: 'GET',
@@ -91,6 +97,38 @@ describe('process routes', () => {
       url: `/api/w/default/worktrees/${encodeURIComponent(worktree)}/stop`,
     });
     expect(stop.statusCode).toBe(204);
+  });
+
+  it('starts a repo whose profile file is not named by the command, injecting it instead', async () => {
+    // What detection produces for any project with a .env: a DEFAULT profile
+    // and a start command that never mentions it. This used to be refused
+    // with "startCommand must contain {ENV_FILE} placeholder".
+    await fs.writeFile(path.join(worktree, '.env'), 'GREETING=hello-from-env\n');
+    await fs.writeFile(
+      path.join(worktree, 'server.js'),
+      "console.log('greeting='+process.env.GREETING);setInterval(()=>{},1e6);",
+    );
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: '/api/w/default/repos/r',
+      payload: { envProfiles: [{ name: 'DEFAULT', envFile: '.env' }], defaultEnvProfile: 'DEFAULT' },
+    });
+    expect(patched.statusCode).toBe(200);
+
+    const start = await app.inject({
+      method: 'POST',
+      url: `/api/w/default/worktrees/${encodeURIComponent(worktree)}/start`,
+    });
+    expect(start.statusCode).toBe(200);
+
+    const logsUrl = `/api/w/default/worktrees/${encodeURIComponent(worktree)}/logs?tail=50`;
+    const deadline = Date.now() + 10_000;
+    let lines: string[] = [];
+    while (!lines.some((l) => l.includes('greeting=hello-from-env')) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      lines = (await app.inject({ method: 'GET', url: logsUrl })).json().lines;
+    }
+    expect(lines.some((l) => l.includes('greeting=hello-from-env'))).toBe(true);
   });
 
   it('returns PROCESS_ALREADY_RUNNING on double start', async () => {

@@ -1,9 +1,18 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { exec } from '../../shell.js';
+import { withGitAskPass, type HttpGitCredential } from '../gitAskPass.js';
 
-const run = promisify(execFile);
+const GIT_TIMEOUT_MS = 10 * 60_000;
+
+async function git(args: string[], cwd?: string, credential?: HttpGitCredential) {
+  const run = (env?: NodeJS.ProcessEnv) => exec('git', args, {
+    ...(cwd ? { cwd } : {}),
+    timeoutMs: GIT_TIMEOUT_MS,
+    ...(env ? { env } : { env: { GIT_TERMINAL_PROMPT: '0' } }),
+  });
+  return credential ? withGitAskPass(credential, run) : run();
+}
 
 /** Where every repo's bare clone lives, under the machine's state dir. */
 export function sandboxReposDir(homeStateDir: string): string {
@@ -19,7 +28,12 @@ export function bareRepoPath(reposDir: string, repoId: string): string {
 /** One bare clone per repo, shared object store for every sandboxed worktree.
  * Lives under the runner's state dir; existing NORMAL clones are untouched
  * (spec: both shapes coexist, no migration, no flag day). */
-export async function ensureBareRepo(opts: { reposDir: string; repoId: string; cloneUrl: string }): Promise<string> {
+export async function ensureBareRepo(opts: {
+  reposDir: string;
+  repoId: string;
+  cloneUrl: string;
+  credential?: HttpGitCredential;
+}): Promise<string> {
   await fsp.mkdir(opts.reposDir, { recursive: true });
   // Resolve once, up front: on macOS (and anywhere state dirs live behind a
   // symlink) `git worktree add` canonicalizes the path it writes into the
@@ -34,14 +48,14 @@ export async function ensureBareRepo(opts: { reposDir: string; repoId: string; c
     // moment the FIRST sandboxed worktree for this repo was created — every
     // later one would silently branch from a stale origin/main. Loud on
     // failure: branching from a stale tip without saying so is the bug.
-    await run('git', ['fetch', 'origin'], { cwd: target, timeout: 10 * 60_000 });
+    await git(['fetch', 'origin'], target, opts.credential);
     return target;
   }
-  await run('git', ['clone', '--bare', opts.cloneUrl, target], { timeout: 10 * 60_000 });
+  await git(['clone', '--bare', opts.cloneUrl, target], undefined, opts.credential);
   // A bare clone has no remote-tracking fetch refspec by default; add one so
   // later fetches see origin branches the way a normal clone would.
-  await run('git', ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'], { cwd: target });
-  await run('git', ['fetch', 'origin'], { cwd: target, timeout: 10 * 60_000 });
+  await git(['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'], target);
+  await git(['fetch', 'origin'], target, opts.credential);
   return target;
 }
 
@@ -50,7 +64,7 @@ export async function addSandboxWorktree(opts: {
 }): Promise<void> {
   await fsp.mkdir(path.dirname(opts.targetPath), { recursive: true });
   const src = `origin/${opts.sourceBranch}`;
-  await run('git', ['worktree', 'add', '-b', opts.branch, opts.targetPath, src], { cwd: opts.bareRepo });
+  await git(['worktree', 'add', '-b', opts.branch, opts.targetPath, src], opts.bareRepo);
 }
 
 /** The two absolute paths a sandbox must bind-mount at IDENTICAL paths:

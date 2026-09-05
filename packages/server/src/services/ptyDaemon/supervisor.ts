@@ -3,7 +3,7 @@
 // server shutdown. Manifest file records pid+socket for adoption on the
 // next server boot.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -139,6 +139,13 @@ export interface PtydInstall {
  * only: AppImage needs it, .deb doesn't care, and macOS's app path is already
  * stable so it skips the ~100MB copy.
  *
+ * Not every interpreter survives being copied: Homebrew's `node` is a thin
+ * launcher that dlopens `../lib/libnode.*.dylib` by relative rpath, so a lone
+ * copy dies at load time and the daemon never comes up. The copy is therefore
+ * run once (`--version`) before it is trusted; a copy that cannot run is
+ * discarded, the app's own interpreter is used instead, and a sentinel keyed
+ * to that interpreter's identity stops every later boot from re-trying.
+ *
  * Skip when the installed ptyd.version matches sourceMarker(...) — version
  * PLUS the source bundle's size+mtime (and the node binary's, when installing
  * it), not version alone, since ptyd source changes usually ship without a
@@ -152,24 +159,32 @@ export function installPtydRuntime(opts: {
   stateDir: string;
   daemonScript: string;
   installNode?: boolean;
+  /** The interpreter to copy when installing one; defaults to the app's own. */
+  nodeSource?: string;
 }): PtydInstall {
   // Fail with a readable error, not a raw ENOENT from copyFileSync — the
   // existing supervisor test pins /ptyd/ in the rejection message.
   if (!fs.existsSync(opts.daemonScript)) {
     throw new Error(`installPtydRuntime: ptyd bundle missing at ${opts.daemonScript}`);
   }
-  const installNode = opts.installNode ?? process.platform === 'linux';
+  const nodeSource = opts.nodeSource ?? process.execPath;
   const binDir = path.join(opts.stateDir, 'ptyd', 'bin');
   const installedScript = path.join(binDir, 'ptyd.cjs');
   const installedNode = path.join(binDir, 'node');
   const installedVersionFile = path.join(binDir, 'ptyd.version');
+  // Written when a copy of nodeSource could not run; holds that interpreter's
+  // identity so a different (say, updated) interpreter gets a fresh try.
+  const unrelocatableFile = path.join(binDir, 'node.unrelocatable');
+  const nodeIdentity = interpreterIdentity(nodeSource);
+  let installNode = opts.installNode ?? process.platform === 'linux';
+  if (installNode && readTrimmed(unrelocatableFile) === nodeIdentity) installNode = false;
   const sourceVersion = readExpectedDaemonVersion(opts.daemonScript);
-  const marker = sourceMarker(opts.daemonScript, sourceVersion, installNode);
+  let marker = sourceMarker(opts.daemonScript, sourceVersion, installNode ? nodeSource : null);
   const result = (): PtydInstall => ({
     script: installedScript,
     // Only claim the installed interpreter once it is actually on disk —
     // otherwise a caller would spawn a path that doesn't exist.
-    execPath: installNode && fs.existsSync(installedNode) ? installedNode : process.execPath,
+    execPath: installNode && fs.existsSync(installedNode) ? installedNode : nodeSource,
   });
 
   const installedMarker = (() => {
@@ -202,9 +217,21 @@ export function installPtydRuntime(opts: {
   // is an EACCES the daemon can never recover from).
   if (installNode) {
     const tmpNode = `${installedNode}.${process.pid}.tmp`;
-    fs.copyFileSync(process.execPath, tmpNode);
+    fs.copyFileSync(nodeSource, tmpNode);
     fs.chmodSync(tmpNode, 0o755);
-    fs.renameSync(tmpNode, installedNode);
+    if (copyCanRun(tmpNode)) {
+      fs.renameSync(tmpNode, installedNode);
+    } else {
+      // A lone copy of this interpreter cannot start (dynamic libs next to
+      // the original, most likely). Run the daemon on the original instead,
+      // and remember so the next boot doesn't copy ~100MB just to find out again.
+      process.stderr.write(`[ptyd-supervisor] copy of ${nodeSource} cannot run on its own; using it in place\n`);
+      fs.rmSync(tmpNode, { force: true });
+      fs.rmSync(installedNode, { force: true });
+      if (nodeIdentity) fs.writeFileSync(unrelocatableFile, nodeIdentity);
+      installNode = false;
+      marker = sourceMarker(opts.daemonScript, sourceVersion, null);
+    }
   }
 
   // node-pty (and node-addon-api when present) resolve from the app's own
@@ -253,7 +280,8 @@ export function installPtydRuntime(opts: {
 function sourceMarker(
   daemonScript: string,
   sourceVersion: string | null,
-  installNode: boolean,
+  /** The interpreter being installed alongside, or null when it is not. */
+  nodeSource: string | null,
 ): string | null {
   if (!sourceVersion) return null;
   try {
@@ -262,14 +290,36 @@ function sourceMarker(
     // bundle re-installs even when nobody bumped package.json (the common
     // case — most ptyd changes ship without a version bump).
     let marker = `${sourceVersion}:${st.size}:${Math.floor(st.mtimeMs)}`;
-    if (installNode) {
-      const ns = fs.statSync(process.execPath);
-      marker += `:node-${ns.size}-${Math.floor(ns.mtimeMs)}`;
-    }
+    if (nodeSource) marker += `:${interpreterIdentity(nodeSource)}`;
     return marker;
   } catch {
     return null;
   }
+}
+
+/** size+mtime of an interpreter binary — what the marker and the sentinel key on. */
+function interpreterIdentity(nodeSource: string): string | null {
+  try {
+    const ns = fs.statSync(nodeSource);
+    return `node-${ns.size}-${Math.floor(ns.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
+
+function readTrimmed(file: string): string | null {
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+// Can this copied interpreter start at all? `--version` needs no script and
+// exercises exactly what breaks a non-relocatable binary: dynamic loading.
+function copyCanRun(exe: string): boolean {
+  const res = spawnSync(exe, ['--version'], { stdio: 'ignore', timeout: 15_000 });
+  return res.status === 0;
 }
 
 /** Find a module dir near the daemon script: <dir>/node_modules/<mod> walking up. */

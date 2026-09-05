@@ -5,7 +5,7 @@ import { WorktreeTableHeader } from './WorktreeTableHeader';
 describe('WorktreeTableHeader', () => {
   it('renders all column labels', () => {
     render(<WorktreeTableHeader gridTemplate="1fr" onStartResize={vi.fn()} />);
-    for (const label of ['Ticket', 'Time spent', 'Status', 'Branch', 'Changes']) {
+    for (const label of ['Ticket', 'Time spent', 'Status', 'Task', 'Sessions', 'Changes']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     // link/env/actions columns are gone — those actions live in the hub

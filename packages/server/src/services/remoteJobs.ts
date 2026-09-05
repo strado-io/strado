@@ -4,10 +4,38 @@
 // runner, make sure the repo is on it) and the worktree job the runner runs. The
 // client should see ONE list of steps, so this consumes the runner's own
 // `/events/jobs/:id` stream and re-emits into the local job.
+import { AppError, ErrorCode, type ErrorCodeName } from '../errors.js';
+
 export type RemoteJobEvent =
   | { type: 'progress'; message: string; step?: string }
   | { type: 'done' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; code: ErrorCodeName; details?: unknown; step?: string };
+
+function remoteErrorCode(value: unknown): ErrorCodeName {
+  return typeof value === 'string' && value in ErrorCode
+    ? value as ErrorCodeName
+    : 'SHELL_FAILED';
+}
+
+/** Add the useful part of a failed remote command to the user-facing error.
+ * Command details remain structured as well, but clients should not have to
+ * understand AppError internals merely to learn why Git refused an operation. */
+function remoteErrorMessage(payload: Record<string, unknown>): string {
+  const base =
+    (typeof payload.message === 'string' && payload.message) ||
+    (typeof payload.error === 'string' && payload.error) ||
+    'the runner reported a failure';
+  const details = payload.details;
+  if (!details || typeof details !== 'object') return base;
+  const stderr = 'stderr' in details && typeof details.stderr === 'string'
+    ? details.stderr.trim()
+    : '';
+  if (!stderr || base.includes(stderr)) return base;
+  // Keep the tail where Git writes the actual fatal reason, and bound what a
+  // remote process can make the desktop render in one error message.
+  const tail = stderr.split('\n').slice(-8).join('\n').slice(-2_000);
+  return `${base}: ${tail}`;
+}
 
 /** Parse an SSE byte stream into events, tolerating chunk boundaries mid-frame. */
 export async function* parseSse(
@@ -77,12 +105,22 @@ export async function followRemoteJob(
       return;
     } else if (event === 'error') {
       terminal = true;
-      const message =
-        (typeof payload.message === 'string' && payload.message) ||
-        (typeof payload.error === 'string' && payload.error) ||
-        'the runner reported a failure';
-      onEvent({ type: 'error', message });
-      throw new Error(message);
+      const code = remoteErrorCode(payload.code);
+      const message = remoteErrorMessage(payload);
+      const progress = payload.progress && typeof payload.progress === 'object'
+        ? payload.progress as { data?: unknown }
+        : null;
+      const progressData = progress?.data && typeof progress.data === 'object'
+        ? progress.data as { step?: unknown }
+        : null;
+      onEvent({
+        type: 'error',
+        message,
+        code,
+        details: payload.details,
+        step: typeof progressData?.step === 'string' ? progressData.step : undefined,
+      });
+      throw new AppError(code, message, payload.details);
     }
   }
   if (!terminal) {

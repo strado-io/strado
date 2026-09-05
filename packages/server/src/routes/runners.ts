@@ -354,6 +354,11 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
             runner: { runnerId: r.runnerId, name: r.name, online: true, error: null },
             worktrees: worktrees.worktrees.flatMap((w) => {
               const remoteRepo = w.repoId ? byId.get(w.repoId) : undefined;
+              // A runner's repository checkout is provisioning infrastructure,
+              // not a user-created worktree. Older runners still report it;
+              // filter it here so upgrading the desktop removes the duplicate
+              // `main` row even before that runner is upgraded.
+              if (remoteRepo && remoteRepo.path === w.path) return [];
               // null = we can't tell which local repo this belongs to, so the
               // UI groups it under a repo folder built from the remote name.
               const localRepoId = matchRepo(remoteRepo?.cloneUrl, locals);
@@ -368,9 +373,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
                 branch: w.branch,
                 head: w.head,
                 remoteRepoId: w.repoId,
-                // A repo's main working tree is not a worktree you can remove;
-                // the delete route refuses it, so the UI must not offer it.
-                isRepoRoot: !!remoteRepo && remoteRepo.path === w.path,
+                isRepoRoot: false,
                 cloneUrl: remoteRepo?.cloneUrl ?? null,
                 localRepoId,
                 remoteRepoName:
@@ -436,9 +439,12 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
       await followRemoteJob(
         `${httpBase}/events/jobs/${encodeURIComponent(jobId)}?ticket=${ticket}`,
         (evt) => {
-          if (evt.type !== 'progress') return;
-          if (evt.step && ['stop', 'unlink', 'remove'].includes(evt.step)) step(evt.step);
-          else if (evt.message) step.detail(evt.message);
+          if (evt.type === 'progress') {
+            if (evt.step && ['stop', 'unlink', 'remove'].includes(evt.step)) step(evt.step);
+            else if (evt.message) step.detail(evt.message);
+          } else if (evt.type === 'error' && evt.step && ['stop', 'unlink', 'remove'].includes(evt.step)) {
+            step(evt.step);
+          }
         },
       );
       return { runnerId: body.runnerId, path: body.path };
@@ -468,7 +474,9 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
     runnerId: z.string().min(1).max(64),
     /** LOCAL repo id — the runner's own id for the same repo is resolved here. */
     repoId: z.string().min(1),
-    ticketId: z.string().min(1),
+    // Tickets are optional in the creation UI; a title-only worktree is valid
+    // locally and must remain valid when the selected machine is a runner.
+    ticketId: z.string(),
     ticketProvider: z.enum(['jira', 'linear']).optional(),
     title: z.string().min(1),
     // Branch names cross machines; paths don't, so there is deliberately no
@@ -491,7 +499,11 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
     const { ws } = z.object({ ws: z.string().min(1) }).parse(req.params);
     const body = RemoteCreate.parse(req.body);
     const stores = await app.deps.registry.get(ws);
-    const localRepo = (await backfillCloneUrls(stores.repos, await stores.repos.list())).find((r) => r.id === body.repoId);
+    const localRepo = (await backfillCloneUrls(
+      stores.repos,
+      await stores.repos.list(),
+      { recheckNull: true },
+    )).find((r) => r.id === body.repoId);
     if (!localRepo) throw new AppError('VALIDATION', `no repo ${body.repoId} in this workspace`);
     if (!localRepo.cloneUrl) {
       // The whole mechanism rests on the runner cloning the repo itself. Without
@@ -536,7 +548,29 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
       const cloned = await runnerFetch<{ repo: { id: string }; alreadyRegistered: boolean; path: string }>(
         body.runnerId,
         `/api/w/${encodeURIComponent(remoteWsId)}/repos/clone`,
-        { method: 'POST', body: { url: cloneUrl }, timeoutMs: 10 * 60_000 },
+        {
+          method: 'POST',
+          body: {
+            url: cloneUrl,
+            // Paths are machine-local. Everything else is portable and avoids
+            // a redundant checkout+detect cycle on sandbox-capable runners.
+            config: {
+              id: localRepo.id,
+              name: localRepo.name,
+              projectSubdir: localRepo.projectSubdir,
+              startCommand: localRepo.startCommand,
+              defaultPort: localRepo.defaultPort,
+              ...(localRepo.fixedPort !== undefined ? { fixedPort: localRepo.fixedPort } : {}),
+              editor: localRepo.editor,
+              ...(localRepo.openUrl !== undefined ? { openUrl: localRepo.openUrl } : {}),
+              ...(localRepo.envProfiles !== undefined ? { envProfiles: localRepo.envProfiles } : {}),
+              ...(localRepo.defaultEnvProfile !== undefined
+                ? { defaultEnvProfile: localRepo.defaultEnvProfile }
+                : {}),
+            },
+          },
+          timeoutMs: 10 * 60_000,
+        },
       );
       if (cloned.alreadyRegistered) step.detail('already on this runner');
 

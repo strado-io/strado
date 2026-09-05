@@ -18,6 +18,9 @@ import {
   pullRequestCommits, commitChanges as githubCommitChanges,
   postPullRequestReview, postPullRequestLineComment, createPullRequest, mergePullRequest,
 } from '../services/github.js';
+import { createCloudApi } from '../services/cloudApi.js';
+import { runnerGitCredential } from '../services/runnerGitCredential.js';
+import { resolveSandboxGitBrokerToken } from '../services/sandboxGitBroker.js';
 
 async function originUrl(repoPath: string): Promise<string | null> {
   try {
@@ -85,6 +88,7 @@ export async function resolveProviderAliased(
 
 // Machine-level: credentials are per machine, not per workspace (mirrors Jira).
 export async function registerGitProviderConfigRoutes(app: FastifyInstance) {
+  const { token: accountToken, cloud } = createCloudApi();
   app.get('/api/gitlab/config', async () => {
     const cfg = await readGitlabConfig();
     return { hosts: Object.keys(cfg) }; // never returns tokens
@@ -130,6 +134,51 @@ export async function registerGitProviderConfigRoutes(app: FastifyInstance) {
     await removeGithubHost(key);
     return { ok: true };
   });
+
+  // GitHub.com uses a GitHub App installation. The local server contributes
+  // only the Strado device token; GitHub secrets and installation tokens stay
+  // in the cloud broker and never enter the renderer or github.json.
+  app.post('/api/github/app/connect', async () => {
+    const token = await accountToken();
+    return cloud<{ state: string; url: string; expiresAt: string }>('/v1/integrations/github/connect', {
+      method: 'POST',
+      body: { token },
+    });
+  });
+
+  app.get('/api/github/app/status', async () => {
+    const token = await accountToken();
+    return cloud<{
+      installations: Array<{
+        installationId: number;
+        accountLogin: string;
+        accountType: 'Organization' | 'User';
+        repositorySelection: 'all' | 'selected';
+        suspended: boolean;
+      }>;
+    }>('/v1/integrations/github/status', { method: 'POST', body: { token } });
+  });
+
+  app.post<{ Params: { installationId: string } }>('/api/github/app/disconnect/:installationId', async (req) => {
+    const installationId = z.coerce.number().int().positive().safe().parse(req.params.installationId);
+    const token = await accountToken();
+    return cloud<{ ok: true }>('/v1/integrations/github/disconnect', {
+      method: 'POST',
+      body: { token, installationId },
+    });
+  });
+
+  // Reachable from a sandbox only through hookSocket's exact allowlist entry.
+  // The opaque token is HMAC-bound to one existing worktree + GitHub project;
+  // callers never get to choose an owner/repository in this request.
+  app.post('/api/git/credential', async (req, reply) => {
+    const body = z.object({ brokerToken: z.string().min(32).max(4096) }).parse(req.body);
+    const target = await resolveSandboxGitBrokerToken(body.brokerToken);
+    if (!target) return reply.code(403).send({ error: 'invalid sandbox Git credential token' });
+    const credential = await runnerGitCredential('github.com', target.projectPath, 'write');
+    if (!credential) return reply.code(404).send({ error: 'repository is not connected through the GitHub App' });
+    return credential;
+  });
 }
 
 type ProviderTarget =
@@ -155,9 +204,15 @@ async function resolveProviderTarget(
     new Set(Object.keys(ghCfg).map((k) => k.split('/')[0] ?? k)),
   );
   if (!resolved) return { kind: 'absent' };
-  const token = resolved.provider === 'gitlab'
+  let token = resolved.provider === 'gitlab'
     ? gitlabHostToken(glCfg, resolved.host)
     : githubTokenFor(ghCfg, resolved.host, resolved.projectPath.split('/')[0] ?? '');
+  // A runner does not need a PAT copied onto it. Mint a fresh repository token
+  // for review/API actions just as the clone path does. Desktop/local mode has
+  // no runner identity, so its existing PAT behavior is unchanged.
+  if (!token && resolved.provider === 'github' && resolved.host === 'github.com') {
+    token = (await runnerGitCredential(resolved.host, resolved.projectPath, 'write'))?.token ?? null;
+  }
   if (!token) return { kind: 'needsAuth', provider: resolved.provider };
   return { kind: 'ok', ...resolved, token };
 }

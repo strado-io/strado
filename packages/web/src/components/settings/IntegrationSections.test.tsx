@@ -10,17 +10,14 @@ afterEach(() => {
 });
 
 describe('integration connection status', () => {
-  it('shows a connected GitHub account', async () => {
+  it('lists a PAT host under the enterprise fallback and can test it', async () => {
+    vi.spyOn(api.github, 'appStatus').mockResolvedValue({ installations: [] });
     vi.spyOn(api.github, 'config').mockResolvedValue({ hosts: ['github.com/strado-io'] });
     const testConfig = vi.spyOn(api.github, 'testConfig').mockResolvedValue({ ok: true, accounts: 1 });
     render(<GithubSection />);
 
-    expect(await screen.findByText('Connected')).toBeInTheDocument();
-    expect(screen.getByText('github.com/strado-io')).toBeInTheDocument();
-    expect(screen.queryByText(/^GitHub$/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Personal access token')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '+ Add account' }));
-    expect(screen.getByLabelText('Personal access token')).toBeInTheDocument();
+    expect(await screen.findByText('github.com/strado-io')).toBeInTheDocument();
+    expect(screen.getByText(/enterprise server or manual pat fallback/i).closest('details')).not.toHaveAttribute('open');
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
     await waitFor(() => expect(testConfig).toHaveBeenCalled());
     expect(await screen.findByText('Connection is working.')).toBeInTheDocument();

@@ -8,6 +8,8 @@ import { findFreePort } from '../ports.js';
 import { AppError } from '../errors.js';
 import { detectNodeModules, NodeModulesStatus } from '../services/nodeModulesStatus.js';
 import { findExternalProcesses, hasChildProcess } from '../services/externalProcess.js';
+import { isLive, type ProcStatus } from '../services/processManager.js';
+import { resolveProfile } from '../profile.js';
 import { addGitExclude } from '../services/gitExclude.js';
 import { stepReporter } from '../services/jobSteps.js';
 import { detectSandboxManifest } from '../services/sandbox/detect.js';
@@ -17,6 +19,8 @@ import { sandboxSlugFor } from '../services/sandbox/sandboxes.js';
 import { hooksDir } from '../services/claudeHooks.js';
 import { canonicalWorktreesDir, findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
+import { githubProjectFromCloneUrl, runnerGitCredential } from '../services/runnerGitCredential.js';
+import { issueSandboxGitBrokerToken } from '../services/sandboxGitBroker.js';
 
 export type WorktreeRow = {
   path: string;
@@ -87,6 +91,34 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
     );
   }
 
+  // Worktree state is useful metadata, but Git remains the authority for which
+  // repository owns a checkout. In particular, a sandbox container can be
+  // removed before `git worktree remove` succeeds; that deliberately clears
+  // meta.sandbox, while the checkout is still registered in the bare clone.
+  // A retry must therefore inspect both repositories instead of falling back
+  // to the normal clone solely because the sandbox metadata is gone.
+  async function gitOwnerOfWorktree(
+    repoPath: string,
+    repoId: string,
+    target: string,
+  ): Promise<{ repoPath: string; bare: boolean } | null> {
+    const bare = await bareRepoFor(repoId);
+    const sameAsBare = bare !== null && path.resolve(repoPath) === path.resolve(bare);
+    const candidates = sameAsBare
+      ? [{ repoPath: bare, bare: true }]
+      : [
+          { repoPath, bare: false },
+          ...(bare ? [{ repoPath: bare, bare: true }] : []),
+        ];
+    const normalizedTarget = path.resolve(target);
+    const lists = await Promise.all(candidates.map(async (candidate) => ({
+      candidate,
+      worktrees: await app.deps.git.list(candidate.repoPath).catch(() => []),
+    })));
+    return lists.find(({ worktrees }) =>
+      worktrees.some((worktree) => path.resolve(worktree.path) === normalizedTarget))?.candidate ?? null;
+  }
+
   app.get('/worktrees', async (req) => {
     const { repos, state } = req.workspace!.stores;
     const repoList = await repos.list();
@@ -113,8 +145,9 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           // so a sandboxed worktree is an ordinary row in the sidebar — the
           // sandbox is a property of a worktree, not a separate list.
           const bare = await bareRepoFor(repo.id);
+          const repoPathIsBare = bare !== null && path.resolve(repo.path) === path.resolve(bare);
           const [normal, sandboxed] = await Promise.all([
-            app.deps.git.list(repo.path),
+            repoPathIsBare ? Promise.resolve([]) : app.deps.git.list(repo.path),
             bare
               ? app.deps.git.list(bare).catch((err) => {
                   req.log.warn({ repoId: repo.id, bare, err }, 'skipping bare repo: git worktree list failed');
@@ -149,11 +182,6 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
     const flat = perRepo
       .filter((e): e is NonNullable<typeof e> => e !== null)
       .flatMap((e) => e.list.map((w) => ({ repo: e.repo, w })));
-
-    const probeTargets = flat.map(({ repo, w }) => ({
-      worktreePath: w.path,
-      projectSubdir: repo.projectSubdir,
-    }));
 
     // Per-worktree node_modules + diff stats are independent read-only probes;
     // fan them all out at once instead of awaiting each in a chain. Promise.all
@@ -212,12 +240,27 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
     // listing one workspace never drops another workspace's watchers.
     app.deps.activityWatch.ensure(rows.map((r) => r.path));
 
-    const external = await findExternalProcesses(probeTargets, app.deps.proc.ownedPids());
+    // Dev servers started outside Strado (an agent's `npm run dev`, say).
+    // Knowing each worktree's configured port lets the probe pick the app
+    // port over HMR/inspector side channels; our own HTTP and CDP ports can
+    // never be a worktree's dev server.
+    const profile = resolveProfile();
+    const probeTargets = flat.map(({ repo, w }, i) => ({
+      worktreePath: w.path,
+      projectSubdir: repo.projectSubdir,
+      port: (rows[i]?.meta as { port?: number | null } | null)?.port ?? repo.defaultPort ?? null,
+    }));
+    const external = await findExternalProcesses(probeTargets, app.deps.proc.ownedPids(), {
+      ignorePorts: new Set([profile.port, profile.cdpPort]),
+    });
     for (const row of rows) {
       const hit = external.get(row.path);
       if (!hit) continue;
-      const proc = row.process as { status?: string };
-      if (proc?.status === 'running' || proc?.status === 'starting') continue;
+      const proc = row.process as { status?: ProcStatus };
+      // A managed process that is up, coming up or on its way down owns the
+      // row — re-detecting a stopping server as "external" would make Stop
+      // look like it did nothing.
+      if (proc?.status && isLive(proc.status)) continue;
       row.process = {
         status: 'running',
         pid: hit.pid,
@@ -296,12 +339,19 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         // developer's normal checkout: the container has to mount the git dir
         // too, and mounting a whole clone (with every other worktree in it)
         // would defeat the isolation. Existing normal clones are untouched.
+        const github = repo.cloneUrl ? githubProjectFromCloneUrl(repo.cloneUrl) : null;
+        const githubCredential = github
+          ? await runnerGitCredential('github.com', github.projectPath, 'read')
+          : null;
         const bareRepo = await ensureBareRepo({
           reposDir: sandboxReposDir(app.deps.homeStateDir),
           repoId: repo.id,
           // A repo registered from a local path has no remote; the clone itself
           // is a perfectly good origin to bare-clone from.
-          cloneUrl: repo.cloneUrl ?? repo.path,
+          cloneUrl: githubCredential && github ? github.httpsUrl : repo.cloneUrl ?? repo.path,
+          credential: githubCredential
+            ? { username: githubCredential.username, password: githubCredential.token }
+            : undefined,
         });
         await addSandboxWorktree({
           bareRepo,
@@ -327,19 +377,44 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         : body.sourceWorktree;
 
       step('link');
-      const link = await app.deps.link.link({
-        sourceProjectDir,
-        targetProjectDir,
-        replace: false,
-      });
+      let linkedFrom: string | null = null;
+      let linkedAt: string | null = null;
+      let linkWarnings: string[] = [];
+      if (sandboxed) {
+        // The sandbox mounts the new worktree and its bare git directory only.
+        // A symlink to the runner's source checkout would therefore be broken
+        // inside the container, and host-built native modules may be ABI-
+        // incompatible anyway. Dependencies belong to the isolated worktree.
+        linkWarnings = ['NODE_MODULES_ISOLATED'];
+        step.detail('skipped — install dependencies inside the sandbox');
+      } else {
+        try {
+          const link = await app.deps.link.link({
+            sourceProjectDir,
+            targetProjectDir,
+            replace: false,
+          });
+          linkedFrom = body.sourceWorktree;
+          linkedAt = new Date().toISOString();
+          linkWarnings = link.warnings;
+        } catch (err) {
+          if (!(err instanceof AppError) || err.code !== 'SOURCE_MISSING') throw err;
+          // A freshly cloned runner repo normally has no node_modules yet.
+          // Reusing dependencies is an optimization, not a prerequisite for a
+          // valid git worktree, so leave it unlinked and let the user/agent run
+          // the repository's normal install command there.
+          linkWarnings = ['SOURCE_NODE_MODULES_MISSING'];
+          step.detail('skipped — source has no node_modules; install dependencies in this worktree');
+        }
+      }
 
       step('finalize');
       await state.upsert(targetWorktree, {
         repoId: repo.id,
         ticketId: body.ticketId,
         title: body.title,
-        linkedFrom: body.sourceWorktree,
-        linkedAt: new Date().toISOString(),
+        linkedFrom,
+        linkedAt,
         port,
         env: body.env ?? {},
         lastStartedAt: null,
@@ -351,9 +426,9 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
       // and is usable, so a sandbox failure must not hide it from the UI.
       app.deps.bus.emit('worktrees', {
         type: 'worktree.updated',
-        data: { path: targetWorktree, warnings: link.warnings },
+        data: { path: targetWorktree, warnings: linkWarnings },
       });
-      app.deps.debugLog.log('server', `worktree created: ${targetWorktree}${link.warnings.length ? ` (warnings: ${link.warnings.join('; ')})` : ''}`);
+      app.deps.debugLog.log('server', `worktree created: ${targetWorktree}${linkWarnings.length ? ` (warnings: ${linkWarnings.join('; ')})` : ''}`);
 
       if (sandbox && sandboxRuntime) {
         step('sandbox-detect');
@@ -389,12 +464,25 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
             }
             await sandbox.remove(sandboxSlug);
           }
+          let sandboxEnv = { ...(body.sandboxEnv ?? {}) };
+          const github = repo.cloneUrl ? githubProjectFromCloneUrl(repo.cloneUrl) : null;
+          if (github && app.deps.sandboxSocketPath && !sandboxEnv.GITHUB_TOKEN) {
+            const brokerToken = await issueSandboxGitBrokerToken(targetWorktree, github.projectPath);
+            if (brokerToken) {
+              sandboxEnv = {
+                ...sandboxEnv,
+                GIT_ASKPASS: '/usr/local/bin/strado-askpass',
+                GIT_HTTP_USER: 'x-access-token',
+                STRADO_GIT_BROKER_TOKEN: brokerToken,
+              };
+            }
+          }
           await sandbox.create({
             worktreePath: targetWorktree,
             slug: sandboxSlug,
             image,
             port,
-            env: body.sandboxEnv ?? {},
+            env: sandboxEnv,
             socketPath: app.deps.sandboxSocketPath,
             // The claude/codex hook scripts, mounted at the same absolute
             // path inside: installClaudeHooks writes the HOST path into the
@@ -421,7 +509,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         }
       }
 
-      return { path: targetWorktree, warnings: link.warnings, port };
+      return { path: targetWorktree, warnings: linkWarnings, port };
     });
 
     return reply.code(202).send({ jobId: job.id });
@@ -445,11 +533,27 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           { id: 'unlink', label: 'Unlinking node_modules' },
           { id: 'remove', label: 'Removing worktree' },
         ]);
-        // A sandboxed worktree is registered in the repo's BARE clone, so every
-        // git call below has to be aimed there — the normal clone has never
-        // heard of it and would fail with "is not a working tree".
-        const sandboxSlug = (await state.get(target))?.sandbox?.slug ?? null;
-        const gitRepoPath = (sandboxSlug ? await bareRepoFor(repo.id) : null) ?? repo.path;
+        // A sandboxed worktree is registered in the repo's BARE clone. Resolve
+        // ownership from Git itself so retries still work after a partial
+        // delete has cleared the sandbox metadata.
+        const savedState = await state.get(target);
+        const gitOwner = await gitOwnerOfWorktree(repo.path, repo.id, target);
+        const targetExists = await fsp.lstat(target).then(() => true, () => false);
+        if (!gitOwner && targetExists) {
+          step('remove');
+          throw new AppError(
+            'SHELL_FAILED',
+            `could not remove worktree: ${target} exists but is not registered in either the normal or sandbox Git repository`,
+          );
+        }
+        const bare = await bareRepoFor(repo.id);
+        const gitRepoPath = gitOwner?.repoPath
+          ?? (savedState?.sandbox?.slug && bare ? bare : repo.path);
+        // If the state was cleared by an earlier partial delete, the bare-repo
+        // ownership is enough to recover the deterministic container slug and
+        // finish any remaining cleanup safely.
+        const sandboxSlug = savedState?.sandbox?.slug
+          ?? (gitOwner?.bare ? sandboxSlugFor(path.basename(target), target) : null);
 
         step('stop');
         await app.deps.proc.stop(target);
@@ -471,7 +575,11 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
             // it points every terminal in this worktree at a container that
             // no longer exists, and the next boot re-hydrates the dead slug
             // from state.
-            await state.patch(target, { sandbox: null });
+            // A create can fail after `git worktree add` but before the
+            // finalize step writes state. Such an orphan is still a valid
+            // bare-repo worktree and must remain deletable; there is simply no
+            // persisted sandbox identity to clear in that case.
+            if (savedState) await state.patch(target, { sandbox: null });
             app.deps.sandboxSlugs.delete(target);
           } else {
             app.deps.debugLog.log('server', `sandbox ${sandboxSlug} is labelled for ${owner}, not ${target}; leaving it alone`);
@@ -480,23 +588,27 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
 
         step('unlink');
         const projectDir = repo.projectSubdir ? path.join(target, repo.projectSubdir) : target;
-        await app.deps.link.unlink(projectDir).catch((err) => {
-          if (err.code !== 'NOT_SYMLINK') throw err;
-        });
+        if (targetExists) {
+          await app.deps.link.unlink(projectDir).catch((err) => {
+            if (err.code !== 'NOT_SYMLINK') throw err;
+          });
+        }
 
         step('remove');
-        await app.deps.git.remove({
-          repoPath: gitRepoPath,
-          targetPath: target,
-          force: req.query.force === '1',
-        });
+        if (gitOwner) {
+          await app.deps.git.remove({
+            repoPath: gitRepoPath,
+            targetPath: target,
+            force: req.query.force === '1',
+          });
+        }
         if (sandboxSlug && app.deps.sandbox) {
           // The env file outlives the container it was written for; left behind
           // it would be handed to whatever next claims this slug.
           await fsp.rm(app.deps.sandbox.envFilePath(sandboxSlug), { force: true });
         }
 
-        if (req.query.deleteBranch === '1') {
+        if (req.query.deleteBranch === '1' && gitOwner) {
           const meta = await state.get(target);
           const branch =
             meta?.title ? buildWorktreeSlug(meta.ticketId ?? '', meta.title) : null;

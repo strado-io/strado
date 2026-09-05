@@ -12,6 +12,7 @@ import { buildApp, buildDeps } from '../app.js';
 let tmp: string;
 let home: string;
 let prevHome: string | undefined;
+let prevInprocPty: string | undefined;
 let app: Awaited<ReturnType<typeof buildApp>>;
 
 const RUNNER_HTTP_BASE = 'https://fake-runner.test';
@@ -32,7 +33,9 @@ beforeEach(async () => {
     }),
   );
   prevHome = process.env.STRADO_HOME;
+  prevInprocPty = process.env.STRADO_INPROC_PTY;
   process.env.STRADO_HOME = home;
+  process.env.STRADO_INPROC_PTY = '1';
 
   const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'state') });
   app = await buildApp(deps);
@@ -42,6 +45,8 @@ afterEach(async () => {
   await app.close();
   if (prevHome === undefined) delete process.env.STRADO_HOME;
   else process.env.STRADO_HOME = prevHome;
+  if (prevInprocPty === undefined) delete process.env.STRADO_INPROC_PTY;
+  else process.env.STRADO_INPROC_PTY = prevInprocPty;
   vi.unstubAllGlobals();
   await fs.rm(tmp, { recursive: true, force: true });
 });
@@ -103,6 +108,29 @@ function stubRunnerApis(o: {
 }
 
 describe('GET /api/w/:ws/remote-worktrees', () => {
+  it('hides the runner repository root and returns only real worktrees', async () => {
+    const stores = await app.deps.registry.get('default');
+    await stores.repos.add(repoConfig('r-local', 'https://github.com/o/local.git'));
+    stubRunnerApis({
+      repos: [{ id: 'local', path: '/home/strado/repos/local', cloneUrl: 'https://github.com/o/local.git' }],
+      worktrees: [
+        { path: '/home/strado/repos/local', repoId: 'local', branch: 'main', head: 'abc' },
+        { path: '/home/strado/.strado/worktrees/local/feature', repoId: 'local', branch: 'feature', head: 'def' },
+      ],
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/w/default/remote-worktrees' });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { worktrees: { path: string; isRepoRoot: boolean }[] };
+    expect(body.worktrees).toEqual([
+      expect.objectContaining({
+        path: '/home/strado/.strado/worktrees/local/feature',
+        isRepoRoot: false,
+      }),
+    ]);
+  });
+
   it('keeps a worktree matched in the asked-about workspace, with its repo name', async () => {
     const stores = await app.deps.registry.get('default');
     await stores.repos.add(repoConfig('r-local', 'https://github.com/o/local.git'));
@@ -164,5 +192,28 @@ describe('GET /api/w/:ws/remote-worktrees', () => {
     const body = res.json() as { worktrees: { localRepoId: string | null; remoteRepoName: string | null }[] };
     expect(body.worktrees).toHaveLength(1);
     expect(body.worktrees[0]).toMatchObject({ localRepoId: null, remoteRepoName: 'bare-repo' });
+  });
+});
+
+describe('POST /api/w/:ws/remote-worktrees', () => {
+  it('accepts a blank ticket and reports the actual missing-remote problem', async () => {
+    const stores = await app.deps.registry.get('default');
+    await stores.repos.add(repoConfig('local-only', null));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/remote-worktrees',
+      payload: {
+        runnerId: 'runner-1',
+        repoId: 'local-only',
+        ticketId: '',
+        title: 'Title-only worktree',
+        sourceBranch: 'main',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/has no git remote/i);
+    expect(res.json().error.message).not.toBe('invalid request body');
   });
 });

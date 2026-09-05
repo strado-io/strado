@@ -70,12 +70,18 @@ export async function registerEventRoutes(app: FastifyInstance) {
       const id = req.params.jobId;
       openStream(reply);
       const existing = app.deps.jobs.get(id);
+      // Job creation and the first progress frame commonly happen before the
+      // browser has opened this EventSource. Replaying the latest frame keeps
+      // fast failures legible instead of delivering an error with no step list.
+      if (existing?.progress) writeEvent(reply, 'progress', existing.progress);
       if (existing && (existing.status === 'done' || existing.status === 'error')) {
         // Match the live event shape: a raw Error serializes to {}, hiding the
         // reason — send the structured { code, message } instead so clients
         // that subscribe after a fast failure still see why it failed.
-        const data =
-          existing.status === 'done' ? existing.result : toResponse(existing.error).error;
+        const failure = toResponse(existing.error).error;
+        const data = existing.status === 'done'
+          ? existing.result
+          : existing.progress ? { ...failure, progress: existing.progress } : failure;
         writeEvent(reply, existing.status, data);
         reply.raw.end();
         return reply;

@@ -31,17 +31,24 @@ vi.mock('../api', () => ({
 }));
 vi.mock('./TerminalView', () => ({ TerminalView: () => <div data-testid="inline-hub" /> }));
 
+import { api } from '../api';
 import { Dashboard } from './Dashboard';
 
 const noop = vi.fn();
-function renderDashboard() {
-  return render(
+function dashboard(remoteRefreshKey = 0) {
+  return (
     <Dashboard
+      remoteRefreshKey={remoteRefreshKey}
       onNewWorktree={noop} onShowLogs={noop}
       onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
       onCloseOverlays={noop} onDeleteWorktree={noop}
       update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
-    />,
+    />
+  );
+}
+function renderDashboard(remoteRefreshKey = 0) {
+  return render(
+    dashboard(remoteRefreshKey),
   );
 }
 
@@ -50,6 +57,7 @@ describe('Dashboard runner loading state', () => {
     localStorage.clear();
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
     resolveRemote = null;
+    vi.mocked(api.runners.remoteWorktrees).mockClear();
   });
   afterEach(() => { resolveRemote = null; });
 
@@ -81,5 +89,17 @@ describe('Dashboard runner loading state', () => {
     await act(async () => {}); // ws-b local load lands; its remote fetch hangs
 
     expect(screen.getByText('Checking runners…')).toBeInTheDocument();
+  });
+
+  it('revalidates remote rows immediately when the refresh key changes', async () => {
+    const view = renderDashboard(0);
+    await act(async () => {});
+    await act(async () => { resolveRemote!({ runners: [], worktrees: [] }); });
+    expect(api.runners.remoteWorktrees).toHaveBeenCalledTimes(1);
+
+    view.rerender(dashboard(1));
+    await act(async () => {});
+
+    expect(api.runners.remoteWorktrees).toHaveBeenCalledTimes(2);
   });
 });
