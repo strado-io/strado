@@ -240,6 +240,17 @@ describe('WorktreeRow', () => {
     expect(screen.getByTestId('sessions-cell')).toHaveTextContent(':5173');
   });
 
+  it('an unset status reads "Status" when the board already groups by state', () => {
+    // The group header names the state; repeating it in every row is noise.
+    const props = noopProps();
+    // 'linear' provider: earlier tests publish a jira:FD-1 issue into the
+    // module-level ticket store, which would swap in TicketStatusSelect.
+    props.worktree = { ...worktree, meta: { ...worktree.meta, ticketProvider: 'linear' }, claudeSessions: ['1'], claudeStatusById: { '1': 'working' } } as any;
+    render(<WorktreeRow {...props} statusHint={false} />);
+    const select = screen.getByRole('combobox', { name: 'Workflow status' }) as HTMLSelectElement;
+    expect(select.options[select.selectedIndex]!.text).toBe('Status');
+  });
+
   it('an unset status shows the derived attention label instead of "Status"', () => {
     const props = noopProps();
     // ticketProvider: 'linear' — see note above; a stale 'jira:FD-1' ticket

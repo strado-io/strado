@@ -22,6 +22,11 @@ export type Props = {
   mr?: MergeRequest | null;
   /** Derived attention state; the board passes it, a bare row derives its own. */
   attention?: Attention;
+  /**
+   * Show the derived state as the status cell's placeholder. Off when the
+   * board already groups by state — the group header names it once.
+   */
+  statusHint?: boolean;
   /** In-app review for a chip click; without it the chip links out to the provider. */
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   onOpenShellTerminal: (w: Worktree) => void;
@@ -75,6 +80,7 @@ export function WorktreeRow({
   reorderable = false,
   mr, // no default: undefined = feature off (no chip column), null = empty slot
   attention: attentionProp,
+  statusHint = true,
   onOpenMr,
   onOpenShellTerminal,
   onSetWorkflowStatus,
@@ -220,7 +226,7 @@ export function WorktreeRow({
             {ticketId}
           </span>
         ) : (
-          <span className="truncate">{ticketId}</span>
+          <span className={hasTicket ? 'truncate' : 'text-zinc-800'}>{ticketId}</span>
         )}
       </div>
       <div className="min-w-0 truncate font-mono text-[11px]">
@@ -251,7 +257,7 @@ export function WorktreeRow({
           <WorkflowStatusSelect
             value={meta?.workflowStatus ?? null}
             onChange={(s) => onSetWorkflowStatus(worktree, s)}
-            placeholder={ATTENTION_LABEL[attention]}
+            placeholder={statusHint ? ATTENTION_LABEL[attention] : 'Status'}
           />
         )}
       </div>

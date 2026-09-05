@@ -90,6 +90,12 @@ export function TaskBoard({
   // state that the needs-you group renders on its own (it's never empty —
   // groupRows always keeps it, even with 0 rows).
   const filtering = prefs.tile !== null || query.trim() !== '';
+  // A header naming the only group on screen is a band between the columns
+  // and the data. Show headers once two groups have rows; the always-present
+  // needs-you group counts only when it has rows or is the sole thing to show.
+  const populated = groups.filter((g) => g.rows.length > 0);
+  const showHeaders = prefs.groupBy !== 'none' && (populated.length > 1 || (populated.length === 0 && !filtering));
+  const shown = showHeaders ? groups : populated.length > 0 ? populated : groups;
 
   const toggleTile = (a: Attention) => onPrefs?.({ tile: prefs.tile === a ? null : a });
   const toggleGroup = (key: string) =>
@@ -132,6 +138,7 @@ export function TaskBoard({
           reorderable={reorderable}
           mr={mrByPath.get(w.path) ?? null}
           attention={attentionOfRow(w)}
+          statusHint={prefs.groupBy !== 'state'}
           {...handlers}
         />
       </div>
@@ -151,25 +158,29 @@ export function TaskBoard({
 
   return (
     <div>
-      <TaskBoardSummary counts={counts} active={prefs.tile} onToggle={toggleTile} />
-      <TaskBoardToolbar
-        groupBy={prefs.groupBy}
-        sort={prefs.sort}
-        query={query}
-        onGroupBy={(g) => onPrefs?.({ groupBy: g, ...(g !== 'none' && prefs.sort === 'manual' ? { sort: 'activity' } : {}) })}
-        onSort={(s) => onPrefs?.({ sort: s })}
-        onQuery={setQuery}
-        trailing={toolbarTrailing}
-      />
+      {/* One quiet line: what needs attention on the left, how the list is
+          arranged on the right. Everything below it is data. */}
+      <div data-testid="board-bar" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2">
+        <TaskBoardSummary counts={counts} active={prefs.tile} onToggle={toggleTile} />
+        <TaskBoardToolbar
+          groupBy={prefs.groupBy}
+          sort={prefs.sort}
+          query={query}
+          onGroupBy={(g) => onPrefs?.({ groupBy: g, ...(g !== 'none' && prefs.sort === 'manual' ? { sort: 'activity' } : {}) })}
+          onSort={(s) => onPrefs?.({ sort: s })}
+          onQuery={setQuery}
+          trailing={toolbarTrailing}
+        />
+      </div>
       <div style={{ minWidth: totalWidth }}>
         <WorktreeTableHeader gridTemplate={gridTemplate} onStartResize={onStartResize} />
         {filtering && visible.length === 0 ? (
           <div className="px-6 py-3 text-xs text-zinc-600">Nothing matches.</div>
         ) : (
-          groups.map((g) => (
+          shown.map((g) => (
             <TaskGroup
               key={g.key}
-              label={g.label}
+              label={showHeaders ? g.label : ''}
               count={g.rows.length}
               collapsed={prefs.collapsed.includes(g.key)}
               onToggle={() => toggleGroup(g.key)}

@@ -107,10 +107,15 @@ describe('TaskBoard', () => {
     (waiting as any).claudeStatusById = { '1': 'waiting' };
     render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1'), waiting]} />);
     const groups = screen.getAllByRole('button', { expanded: true });
-    expect(groups.map((g) => g.textContent)).toEqual(['›Needs you1', '›Idle1']);
+    expect(groups.map((g) => g.textContent)).toEqual(['Needs you1', 'Idle1']);
     expect(screen.getByTestId('task-group-Needs you')).toContainElement(screen.getByTestId('task-row-/w'));
 
-    render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1')]} />);
+    // Quiet state: once the board is big enough to carry headers (two
+    // populated groups), an empty needs-you group still says so. With a
+    // single group the chips line ("Needs you 0") already answers it.
+    const running = wt('/r', 'FD-2');
+    (running as any).process = { ...running.process, status: 'running', port: 3000 };
+    render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1'), running]} />);
     expect(screen.getAllByText('Nothing waiting on you').length).toBeGreaterThan(0);
   });
 
@@ -138,14 +143,19 @@ describe('TaskBoard', () => {
     const repos = new Map(repoById); repos.set('z', { id: 'z', name: 'Zeta' } as RepoConfig);
     render(<TaskBoard {...baseProps()} repoById={repos} worktrees={[other, wt('/x')]}
       prefs={{ groupBy: 'repo', sort: 'activity', tile: null, collapsed: [] }} />);
-    expect(screen.getAllByRole('button', { expanded: true }).map((g) => g.textContent)).toEqual(['›React1', '›Zeta1']);
+    expect(screen.getAllByRole('button', { expanded: true }).map((g) => g.textContent)).toEqual(['React1', 'Zeta1']);
   });
 
   it('a collapsed group hides its rows and reports the toggle', () => {
     const onPrefs = vi.fn();
-    render(<TaskBoard {...baseProps()} onPrefs={onPrefs}
+    // Two populated groups, so headers (and therefore collapsing) are in play.
+    const waiting = wt('/w', 'FD-3');
+    (waiting as any).claudeSessions = ['1'];
+    (waiting as any).claudeStatusById = { '1': 'waiting' };
+    render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1'), waiting]} onPrefs={onPrefs}
       prefs={{ groupBy: 'state', sort: 'activity', tile: null, collapsed: ['idle'] }} />);
     expect(screen.queryByTestId('task-row-/x')).toBeNull();
+    expect(screen.getByTestId('task-row-/w')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Idle/ }));
     expect(onPrefs).toHaveBeenCalledWith({ collapsed: [] });
   });
@@ -166,6 +176,32 @@ describe('TaskBoard', () => {
     expect(screen.queryAllByLabelText('Drag to reorder')).toHaveLength(0);
     fireEvent.change(screen.getByLabelText('Group by'), { target: { value: 'none' } });
     expect(onPrefs).toHaveBeenCalledWith({ groupBy: 'none' });
+  });
+
+  it('drops the group header when only one group would render', () => {
+    // Grouped by state with every row idle: the needs-you group is empty and
+    // the idle group is the only one with rows — a header naming the one
+    // group on screen is just a band between the columns and the data.
+    render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1')]} />);
+    expect(screen.queryByRole('button', { expanded: true })).toBeNull();
+    expect(screen.queryByText('Nothing waiting on you')).toBeNull();
+    expect(screen.getByTestId('task-row-/x')).toBeInTheDocument();
+  });
+
+  it('keeps group headers as soon as two groups have rows', () => {
+    const waiting = wt('/w', 'FD-3');
+    (waiting as any).claudeSessions = ['1'];
+    (waiting as any).claudeStatusById = { '1': 'waiting' };
+    render(<TaskBoard {...baseProps()} worktrees={[wt('/x', 'FD-1'), waiting]} />);
+    expect(screen.getAllByRole('button', { expanded: true })).toHaveLength(2);
+  });
+
+  it('the summary chips and the controls share one line', () => {
+    render(<TaskBoard {...baseProps()} />);
+    const bar = screen.getByTestId('board-bar');
+    expect(bar).toContainElement(screen.getByTestId('tile-needs-you'));
+    expect(bar).toContainElement(screen.getByLabelText('Filter tasks'));
+    expect(bar).toContainElement(screen.getByLabelText('Group by'));
   });
 
   it('activity sort puts the most recently opened worktree first', () => {

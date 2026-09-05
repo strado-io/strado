@@ -5,6 +5,13 @@ import { TaskBoardSummary } from './TaskBoardSummary';
 const counts = { 'needs-you': 2, review: 1, working: 3, running: 1, idle: 7 } as const;
 
 describe('TaskBoardSummary', () => {
+  it('renders as inline text chips, not boxed tiles', () => {
+    render(<TaskBoardSummary counts={{ ...counts }} active={null} onToggle={() => {}} />);
+    const chip = screen.getByTestId('tile-needs-you');
+    expect(chip.className).not.toMatch(/border/);
+    expect(chip.className).not.toMatch(/uppercase/);
+  });
+
   it('shows the four actionable tiles with counts, in priority order', () => {
     render(<TaskBoardSummary counts={{ ...counts }} active={null} onToggle={() => {}} />);
     const tiles = screen.getAllByRole('button');

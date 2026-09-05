@@ -7,12 +7,12 @@ export type ColumnWidths = Record<ColumnId, number>;
 const STORAGE_KEY = 'strado:column-widths';
 
 const DEFAULTS: ColumnWidths = {
-  ticket: 110,
+  ticket: 96,
   workflow: 130,
   branch: 300,
   sessions: 96,
   changes: 110,
-  spent: 90,
+  spent: 76,
   status: 88,
 };
 
