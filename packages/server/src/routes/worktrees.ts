@@ -8,6 +8,8 @@ import { findFreePort } from '../ports.js';
 import { AppError } from '../errors.js';
 import { detectNodeModules, NodeModulesStatus } from '../services/nodeModulesStatus.js';
 import { findExternalProcesses, hasChildProcess } from '../services/externalProcess.js';
+import { isLive, type ProcStatus } from '../services/processManager.js';
+import { resolveProfile } from '../profile.js';
 import { addGitExclude } from '../services/gitExclude.js';
 import { stepReporter } from '../services/jobSteps.js';
 import { detectSandboxManifest } from '../services/sandbox/detect.js';
@@ -181,11 +183,6 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
       .filter((e): e is NonNullable<typeof e> => e !== null)
       .flatMap((e) => e.list.map((w) => ({ repo: e.repo, w })));
 
-    const probeTargets = flat.map(({ repo, w }) => ({
-      worktreePath: w.path,
-      projectSubdir: repo.projectSubdir,
-    }));
-
     // Per-worktree node_modules + diff stats are independent read-only probes;
     // fan them all out at once instead of awaiting each in a chain. Promise.all
     // preserves order, so rows keep their original repo/worktree ordering.
@@ -243,12 +240,27 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
     // listing one workspace never drops another workspace's watchers.
     app.deps.activityWatch.ensure(rows.map((r) => r.path));
 
-    const external = await findExternalProcesses(probeTargets, app.deps.proc.ownedPids());
+    // Dev servers started outside Strado (an agent's `npm run dev`, say).
+    // Knowing each worktree's configured port lets the probe pick the app
+    // port over HMR/inspector side channels; our own HTTP and CDP ports can
+    // never be a worktree's dev server.
+    const profile = resolveProfile();
+    const probeTargets = flat.map(({ repo, w }, i) => ({
+      worktreePath: w.path,
+      projectSubdir: repo.projectSubdir,
+      port: (rows[i]?.meta as { port?: number | null } | null)?.port ?? repo.defaultPort ?? null,
+    }));
+    const external = await findExternalProcesses(probeTargets, app.deps.proc.ownedPids(), {
+      ignorePorts: new Set([profile.port, profile.cdpPort]),
+    });
     for (const row of rows) {
       const hit = external.get(row.path);
       if (!hit) continue;
-      const proc = row.process as { status?: string };
-      if (proc?.status === 'running' || proc?.status === 'starting') continue;
+      const proc = row.process as { status?: ProcStatus };
+      // A managed process that is up, coming up or on its way down owns the
+      // row — re-detecting a stopping server as "external" would make Stop
+      // look like it did nothing.
+      if (proc?.status && isLive(proc.status)) continue;
       row.process = {
         status: 'running',
         pid: hit.pid,

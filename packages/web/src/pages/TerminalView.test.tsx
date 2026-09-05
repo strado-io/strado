@@ -1409,6 +1409,80 @@ describe('TerminalView', () => {
     expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
   });
 
+  it('run button says what the server is doing: starting, serving on a port, stopping', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+
+    // Spawned, nothing listening yet — and still cancellable.
+    pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
+    const starting = screen.getByLabelText('Stop dev server');
+    expect(starting).toHaveTextContent('Starting…');
+    expect(starting).not.toBeDisabled();
+
+    pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
+    expect(screen.getByLabelText('Stop dev server')).toHaveTextContent('Stop :3000');
+
+    fireEvent.click(screen.getByLabelText('Stop dev server'));
+    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
+    // The kill can take seconds; the button must not pretend it is done.
+    pushSse({ path: baseWorktree.path, process: { status: 'stopping', port: 3000 } });
+    const stopping = screen.getByLabelText('Stop dev server');
+    expect(stopping).toHaveTextContent('Stopping…');
+    expect(stopping).toBeDisabled();
+
+    pushSse({ path: baseWorktree.path, process: { status: 'stopped', port: 3000, exitCode: 0 } });
+    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a start the server refuses is shown, not swallowed', async () => {
+    procStart.mockRejectedValue(new Error('empty startCommand'));
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('empty startCommand');
+    // The button itself is still a Run button — nothing started.
+    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
+
+    // A later successful start clears the complaint.
+    procStart.mockResolvedValue({});
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+    pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a crash is named as one, with the exit code, and Run is offered again', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
+    pushSse({ path: baseWorktree.path, process: { status: 'crashed', port: 3000, exitCode: 137 } });
+
+    const btn = screen.getByLabelText('Start dev server');
+    expect(btn).toHaveTextContent('Crashed');
+    expect(screen.getByRole('alert')).toHaveTextContent('exit code 137');
+    fireEvent.click(btn);
+    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
+  });
+
   it('shows the env-profile dropdown for repos that define profiles and switches via the API', async () => {
     reposList.mockResolvedValue([
       {

@@ -312,7 +312,7 @@ export function WorktreeSettingsDialog({
                       className={`${inputCls} font-mono`}
                     />
                     <span className="mt-1.5 block text-[11px] text-zinc-600">
-                      Leave empty to use the repository command{profiles.length > 0 ? '; use {ENV_FILE} to include the selected profile' : ''}.
+                      Leave empty to use the repository command{profiles.length > 0 ? ". The selected profile's variables are injected at start; write {ENV_FILE} where the command should receive the file itself" : ''}.
                     </span>
                   </label>
 

@@ -29,6 +29,7 @@ import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
 import { CodeReviewsPage } from '../components/CodeReviewsPage';
+import { RendererOverlayContext, useRendererOverlayRegistry } from '../contexts/RendererOverlay';
 import { UsagePage } from '../components/usage/UsagePage';
 import { useCodeReviews } from '../hooks/codeReviews';
 
@@ -341,8 +342,10 @@ export function Dashboard(props: {
   // Full-screen renderer overlays can be owned here or one level up in App.
   // The Browser preview and its DevTools are native WebContentsViews, so they
   // have to be parked off-screen while any of these is visible.
+  // Smaller overlays (the sidebar's worktree hover card) register themselves.
+  const overlays = useRendererOverlayRegistry();
   const modalOpen = !!(
-    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo
+    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo || overlays.anyOpen
   );
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem('strado:onboarding-welcomed') === '1');
   const [checklistDismissed, setChecklistDismissed] = useState(
@@ -677,6 +680,7 @@ export function Dashboard(props: {
   }
 
   return (
+    <RendererOverlayContext.Provider value={overlays.report}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       {!sidebarCollapsed && (
         <Sidebar
@@ -955,5 +959,6 @@ export function Dashboard(props: {
       )}
 
     </div>
+    </RendererOverlayContext.Provider>
   );
 }

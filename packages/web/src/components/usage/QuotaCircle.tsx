@@ -30,10 +30,28 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
  * A dial in the worktree toolbar: how close the nearest agent limit is, without
  * leaving the tab. Clicking it opens the same quota cards the Usage page shows.
  */
-export function QuotaCircle({ wsId, onOpenUsage }: { wsId: string; onOpenUsage?: () => void }) {
+export function QuotaCircle({ wsId, onOpenUsage, onOpenChange }: {
+  wsId: string;
+  onOpenUsage?: () => void;
+  /**
+   * Fires with every open/close of the popover (and false on unmount). The
+   * host needs it because the popover is plain DOM, and a native Browser view
+   * in the same tab would paint straight over it unless told to step aside.
+   */
+  onOpenChange?: (open: boolean) => void;
+}) {
   const accounts = useQuotaAccounts(wsId);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+
+  useEffect(() => {
+    onOpenChangeRef.current?.(open);
+    // Going away while open (the dial can vanish if every limit disappears)
+    // must not leave the host believing the popover is still up.
+    return () => { if (open) onOpenChangeRef.current?.(false); };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

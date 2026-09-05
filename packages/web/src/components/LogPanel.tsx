@@ -40,7 +40,8 @@ export function LogPanel({ worktree, onClose }: { worktree: Worktree; onClose: (
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950"
+      // z-20: above the hub's split panes (z-10), below its menus and dialogs.
+      className="fixed bottom-0 left-0 right-0 z-20 border-t border-zinc-800 bg-zinc-950"
       style={{ height }}
     >
       <div

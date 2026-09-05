@@ -38,7 +38,7 @@ export type WorktreeMeta = {
 };
 
 export type ProcInfo = {
-  status: 'idle' | 'starting' | 'running' | 'stopped' | 'crashed';
+  status: 'idle' | 'starting' | 'running' | 'stopping' | 'stopped' | 'crashed';
   pid: number | null;
   startedAt: string | null;
   port: number | null;

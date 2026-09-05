@@ -11,7 +11,7 @@ import { PlusIcon } from '../hub/icons';
 import { SESSION_COLOR, SessionAvatarIcon, SessionAvatarStack } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { worktreeLabel, worktreeTitle } from './labels';
-import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
+import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 
 export type SidebarBodyProps = {
   wsId: string;
@@ -47,7 +47,8 @@ export type SidebarBodyProps = {
 };
 
 function isRunning(w: Worktree): boolean {
-  return w.process.status === 'running' || w.process.status === 'starting' || !!w.process.external;
+  const s = w.process.status;
+  return s === 'running' || s === 'starting' || s === 'stopping' || !!w.process.external;
 }
 function agentWorking(w: Worktree): boolean {
   return w.claudeStatus === 'working' || w.codexStatus === 'working'
@@ -177,6 +178,9 @@ function Menu({ label, items, alwaysVisible = false }: {
   alwaysVisible?: boolean;
 }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // Inside a worktree row this dismisses the row's hover card (a no-op for
+  // repo and space menus): the menu, and whatever it opens, take over.
+  const dismissHoverCard = useRowHoverCardDismiss();
   useEffect(() => {
     if (!pos) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null); };
@@ -190,6 +194,7 @@ function Menu({ label, items, alwaysVisible = false }: {
         aria-label={label}
         onClick={(e) => {
           e.stopPropagation();
+          dismissHoverCard();
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           setPos({ x: r.right, y: r.bottom });
         }}
@@ -213,7 +218,7 @@ function Menu({ label, items, alwaysVisible = false }: {
             {items.map((it) => (
               <button
                 key={it.text}
-                onClick={() => { setPos(null); it.onClick(); }}
+                onClick={() => { setPos(null); dismissHoverCard(); it.onClick(); }}
                 className={`block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-zinc-900 ${it.danger ? 'text-red-300' : 'text-zinc-200'}`}
               >
                 {it.text}

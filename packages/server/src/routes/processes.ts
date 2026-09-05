@@ -7,6 +7,7 @@ import { assertPathUnder } from '../paths.js';
 import { evictPortListeners, findExternalProcesses } from '../services/externalProcess.js';
 import { defaultShell } from '../services/platform.js';
 import { resolveStartCommand } from '../services/startCommand.js';
+import { resolveStartEnv } from '../services/startEnv.js';
 
 export async function registerProcessRoutes(app: FastifyInstance) {
   // Starting on an occupied port used to leave the new process to crash on
@@ -38,11 +39,12 @@ export async function registerProcessRoutes(app: FastifyInstance) {
         throw new AppError('VALIDATION', 'empty startCommand');
       }
 
-      const { command: startCommand, profile: resolvedProfile } = resolveStartCommand(
+      const { command: startCommand, profile: resolvedProfile, envFile, interpolated } = resolveStartCommand(
         repo,
         meta?.activeEnvProfile ?? null,
         meta?.startCommand ?? null,
       );
+      const env = await resolveStartEnv({ cwd, envFile, interpolated, worktreeEnv: meta?.env ?? {} });
 
       await freePort(port, target);
 
@@ -52,7 +54,7 @@ export async function registerProcessRoutes(app: FastifyInstance) {
         cwd,
         command: shell,
         args: ['-ilc', startCommand],
-        env: meta?.env ?? {},
+        env,
         port,
       });
 
@@ -106,7 +108,8 @@ export async function registerProcessRoutes(app: FastifyInstance) {
       if (wasRunning) {
         const port = meta.port ?? repo.defaultPort;
         const cwd = repo.projectSubdir ? path.join(target, repo.projectSubdir) : target;
-        const { command: startCommand } = resolveStartCommand(repo, profile, meta.startCommand ?? null);
+        const { command: startCommand, envFile, interpolated } = resolveStartCommand(repo, profile, meta.startCommand ?? null);
+        const env = await resolveStartEnv({ cwd, envFile, interpolated, worktreeEnv: meta.env ?? {} });
         await freePort(port, target);
         const shell = defaultShell();
         await app.deps.proc.start({
@@ -114,7 +117,7 @@ export async function registerProcessRoutes(app: FastifyInstance) {
           cwd,
           command: shell,
           args: ['-ilc', startCommand],
-          env: meta.env ?? {},
+          env,
           port,
         });
         await state.patch(target, { lastStartedAt: new Date().toISOString() });
@@ -155,8 +158,9 @@ export async function registerProcessRoutes(app: FastifyInstance) {
       if (!repo) throw new AppError('NOT_FOUND', `no repo owns ${target}`);
       assertPathUnder(target, [repo.path, ...worktreeRootsFor(app.deps.homeStateDir, repo)]);
 
+      const meta = await req.workspace!.stores.state.get(target);
       const found = await findExternalProcesses(
-        [{ worktreePath: target, projectSubdir: repo.projectSubdir }],
+        [{ worktreePath: target, projectSubdir: repo.projectSubdir, port: meta?.port ?? repo.defaultPort ?? null }],
         app.deps.proc.ownedPids(),
       );
       const hit = found.get(target);

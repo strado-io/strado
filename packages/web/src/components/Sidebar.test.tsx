@@ -906,6 +906,26 @@ describe('worktree hover card', () => {
     expect(onWorktreeSettings).toHaveBeenCalledWith(worktree);
   });
 
+  it('dismisses the card when the row ⋯ menu takes over', () => {
+    const worktree = busy();
+    const onWorktreeSettings = vi.fn();
+    wrap(<Sidebar {...base} worktrees={[worktree]} onWorktreeSettings={onWorktreeSettings}
+      expandedRepos={new Set(['r1'])} />);
+    hoverRow();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // The menu opens over the row; a preview card beside it is just clutter.
+    fireEvent.click(screen.getByLabelText('FD-1 actions'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    // Picking Settings opens a modal whose backdrop swallows pointer events,
+    // so nothing downstream could ever close a card left behind here.
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(onWorktreeSettings).toHaveBeenCalledWith(worktree);
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('closes once the cursor leaves both the row and the card', () => {
     wrap(<Sidebar {...base} worktrees={[busy()]} expandedRepos={new Set(['r1'])} />);
     const row = hoverRow();

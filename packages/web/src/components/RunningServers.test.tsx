@@ -40,7 +40,33 @@ describe('RunningServers', () => {
     expect(screen.getByText('FD-1')).toBeInTheDocument();
     expect(screen.getByText(':5173')).toBeInTheDocument();
     // no port detected yet — say so rather than print a bare colon
-    expect(screen.getByText('starting')).toBeInTheDocument();
+    expect(screen.getByText('starting…')).toBeInTheDocument();
+  });
+
+  it('tells a server we started from one it merely detected, and one on its way down', () => {
+    render(
+      <RunningServers
+        worktrees={[
+          wt('/a', { status: 'running', port: 5173 }, 'FD-1'),
+          wt('/b', { status: 'idle', external: true, pid: 4242, port: 8080 }, 'FD-2'),
+          wt('/c', { status: 'stopping', port: 3000 }, 'FD-3'),
+        ]}
+        {...handlers()}
+      />,
+    );
+    const chip = screen.getByRole('button', { name: /running dev servers/i });
+    expect(chip).toHaveTextContent('3');
+    fireEvent.click(chip);
+    // Detected servers were not started by Strado; the row must not look like
+    // something the Run button did.
+    const detected = screen.getByText('FD-2').closest('.group')!;
+    expect(detected).toHaveTextContent(':8080');
+    expect(detected).toHaveTextContent('detected');
+    const stopping = screen.getByText('FD-3').closest('.group')!;
+    expect(stopping).toHaveTextContent(':3000');
+    expect(stopping).toHaveTextContent('stopping…');
+    const ours = screen.getByText('FD-1').closest('.group')!;
+    expect(ours).not.toHaveTextContent('detected');
   });
 
   it('opens the worktree when its row is clicked', () => {

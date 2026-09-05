@@ -2,14 +2,23 @@ import { spawn, ChildProcess } from 'node:child_process';
 import type { EventBus } from '../events/bus.js';
 import type { DebugLog } from './debugLog.js';
 import { AppError } from '../errors.js';
-import { evictPortListeners, pgidOf, pidsOnPort } from './externalProcess.js';
+import { evictPortListeners, listeningPortsOfGroup, pgidOf, pidsOnPort } from './externalProcess.js';
 
 // Short, greppable tag for the combined debug log (the key is a full path).
 function logTag(key: string): string {
   return `${key.split('/').pop() || key} dev`;
 }
 
-export type ProcStatus = 'idle' | 'starting' | 'running' | 'stopped' | 'crashed';
+// starting: spawned, nothing listening yet. running: a port is being served.
+// stopping: stop requested, the process has not exited yet (still holds its
+// port). The two transitional states exist so the UI can say what is going on
+// instead of flipping straight from Run to Stop and back.
+export type ProcStatus = 'idle' | 'starting' | 'running' | 'stopping' | 'stopped' | 'crashed';
+
+/** Holds (or is about to hold / still holds) a port. */
+export function isLive(status: ProcStatus): boolean {
+  return status === 'starting' || status === 'running' || status === 'stopping';
+}
 
 export type ProcInfo = {
   status: ProcStatus;
@@ -32,6 +41,11 @@ export type StartOptions = {
 
 const RING_LIMIT = 5_000;
 const URL_PATTERN = /(https?:\/\/[\w.-]+(?::\d+)?(?:\/[\w./?=&%+#-]*)?)/;
+// How often a starting process is probed for a listening port, and how long
+// before we give up waiting and call it running anyway — a worker with no
+// HTTP port would otherwise sit on "Starting" forever.
+const READY_POLL_MS = 500;
+const READY_TIMEOUT_MS = 60_000;
 
 type Entry = {
   info: ProcInfo;
@@ -40,6 +54,8 @@ type Entry = {
   lastOpts?: StartOptions;
   // one automatic EADDRINUSE eviction+retry per user-initiated start
   addrRetried?: boolean;
+  // the current start's readiness poll; cleared on ready/exit
+  readyTimer?: ReturnType<typeof setTimeout> | null;
 };
 
 export type ProcessManager = {
@@ -86,18 +102,68 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
       const match = line.match(URL_PATTERN);
       if (match && entry.info.port && line.includes(String(entry.info.port))) {
         entry.info.detectedUrl = match[1] ?? null;
-        bus.emit('worktrees', {
-          type: 'worktree.updated',
-          data: { path: key, process: { ...entry.info } },
-        });
+        // Printing its URL is as good as a bound socket: it is serving.
+        if (entry.info.status === 'starting') markRunning(entry, key);
+        else emitProcess(entry, key);
       }
     }
+  }
+
+  function emitProcess(entry: Entry, key: string, extra: Record<string, unknown> = {}) {
+    bus.emit('worktrees', {
+      type: 'worktree.updated',
+      data: { path: key, ...extra, process: { ...entry.info } },
+    });
+  }
+
+  function clearReadyTimer(entry: Entry) {
+    if (entry.readyTimer) clearTimeout(entry.readyTimer);
+    entry.readyTimer = null;
+  }
+
+  function markRunning(entry: Entry, key: string, port?: number) {
+    if (entry.info.status !== 'starting') return;
+    clearReadyTimer(entry);
+    if (port !== undefined) entry.info.port = port;
+    entry.info.status = 'running';
+    emitProcess(entry, key);
+  }
+
+  // Poll the child's process group for a LISTEN socket. The first port to
+  // appear flips the state to running; when the group binds several, the
+  // configured one wins, else the lowest (app ports sit below HMR/inspector).
+  function watchReadiness(entry: Entry, key: string, child: ChildProcess, configuredPort: number) {
+    const startedAt = Date.now();
+    const tick = async () => {
+      entry.readyTimer = null;
+      if (entry.child !== child || entry.info.status !== 'starting' || !child.pid) return;
+      const ports = await listeningPortsOfGroup(child.pid);
+      if (entry.child !== child || entry.info.status !== 'starting') return;
+      if (ports.length > 0) {
+        markRunning(entry, key, ports.includes(configuredPort) ? configuredPort : ports[0]);
+        return;
+      }
+      if (Date.now() - startedAt >= READY_TIMEOUT_MS) {
+        push(entry, 'stderr', `[strado] nothing listening after ${READY_TIMEOUT_MS / 1000}s — assuming the process is up`, key);
+        markRunning(entry, key);
+        return;
+      }
+      entry.readyTimer = setTimeout(tick, READY_POLL_MS);
+    };
+    entry.readyTimer = setTimeout(tick, READY_POLL_MS);
   }
 
   async function stop(key: string): Promise<void> {
     const entry = entries.get(key);
     if (!entry || !entry.child || !entry.child.pid) return;
-    entry.info.status = 'stopped';
+    if (entry.info.status === 'stopping') {
+      // A second Stop while the first is in flight just waits for the same exit.
+      await new Promise<void>((resolve) => entry.child!.once('exit', () => resolve()));
+      return;
+    }
+    clearReadyTimer(entry);
+    entry.info.status = 'stopping';
+    emitProcess(entry, key);
     try {
       process.kill(-entry.child.pid, 'SIGTERM');
     } catch {
@@ -130,8 +196,7 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
       const pgid = await pgidOf(pid);
       for (const [otherKey, other] of entries) {
         if (otherKey === key || other.info.pid === null) continue;
-        const live = other.info.status === 'running' || other.info.status === 'starting';
-        if (live && other.info.pid === pgid) await stop(otherKey);
+        if (isLive(other.info.status) && other.info.pid === pgid) await stop(otherKey);
       }
     }
     await evictPortListeners(port);
@@ -140,7 +205,7 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
 
   async function start(opts: StartOptions, isRetry = false): Promise<void> {
       const entry = ensure(opts.key);
-      if (entry.info.status === 'running' || entry.info.status === 'starting') {
+      if (isLive(entry.info.status)) {
         throw new AppError('PROCESS_ALREADY_RUNNING', `process already running for ${opts.key}`);
       }
       entry.lastOpts = opts;
@@ -158,10 +223,7 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
         detectedUrl: null,
         exitCode: null,
       };
-      bus.emit('worktrees', {
-        type: 'worktree.updated',
-        data: { path: opts.key, process: { ...entry.info } },
-      });
+      emitProcess(entry, opts.key);
 
       debugLog?.log(logTag(opts.key), `start${isRetry ? ' (retry)' : ''}: ${opts.command} ${opts.args.join(' ')} — port ${opts.port}`);
       const child = spawn(opts.command, opts.args, {
@@ -172,11 +234,10 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
       });
       entry.child = child;
       entry.info.pid = child.pid ?? null;
-      entry.info.status = 'running';
-      bus.emit('worktrees', {
-        type: 'worktree.updated',
-        data: { path: opts.key, process: { ...entry.info } },
-      });
+      // Still 'starting': a pid is not a server. The readiness watch (or a URL
+      // in the output) promotes it to running once something is listening.
+      emitProcess(entry, opts.key);
+      watchReadiness(entry, opts.key, child, opts.port);
 
       child.stdout?.on('data', (b) => {
         for (const line of b.toString().split(/\r?\n/)) {
@@ -189,18 +250,14 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
         }
       });
       child.on('exit', (code, signal) => {
-        const wasIntentional = entry.info.status === 'stopped';
+        const wasIntentional = entry.info.status === 'stopping' || entry.info.status === 'stopped';
+        clearReadyTimer(entry);
         entry.info.exitCode = code;
         entry.info.pid = null;
         entry.child = null;
-        if (!wasIntentional) {
-          entry.info.status = code === 0 ? 'stopped' : 'crashed';
-        }
+        entry.info.status = wasIntentional || code === 0 ? 'stopped' : 'crashed';
         debugLog?.log(logTag(opts.key), `exit: status=${entry.info.status} code=${code ?? 'null'} signal=${signal ?? 'null'}`);
-        bus.emit('worktrees', {
-          type: 'worktree.updated',
-          data: { path: opts.key, signal, process: { ...entry.info } },
-        });
+        emitProcess(entry, opts.key, { signal });
         if (wasIntentional || code === 0 || entry.addrRetried) return;
         const tail = entry.buffer.slice(-80).join('\n');
         const addr = tail.match(/EADDRINUSE[^\n]*?:(\d+)/);
@@ -232,13 +289,12 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
     isRunning(key) {
       const entry = entries.get(key);
       if (!entry) return false;
-      return entry.info.status === 'running' || entry.info.status === 'starting';
+      return isLive(entry.info.status);
     },
     runningOnPort(port) {
       const keys: string[] = [];
       for (const [key, entry] of entries) {
-        const live = entry.info.status === 'running' || entry.info.status === 'starting';
-        if (live && entry.info.port === port) keys.push(key);
+        if (isLive(entry.info.status) && entry.info.port === port) keys.push(key);
       }
       return keys;
     },

@@ -731,8 +731,13 @@ export function TerminalView({
       status: worktree.process?.status ?? 'idle',
       port: worktree.process?.port,
       detectedUrl: worktree.process?.detectedUrl,
+      exitCode: worktree.process?.exitCode,
     },
   }));
+  // Why the last Run/Stop click did nothing — the request failed (no start
+  // command, say). Per worktree; cleared by the next click or by the server
+  // reporting a start.
+  const [runError, setRunError] = useState<{ path: string; message: string } | null>(null);
 
   // Repo configs (env profiles) and the user's in-panel profile switches.
   const [reposById, setReposById] = useState<Record<string, RepoConfig>>({});
@@ -1008,6 +1013,9 @@ export function TerminalView({
   const [pendingHandoffs, setPendingHandoffs] = useState<Record<string, string>>({});
   // "+" on the session-tab row: pick which session type to open.
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  // The agent-usage popover lives in the toolbar; like the menus it must
+  // detach the native Browser view, which otherwise paints over it.
+  const [usageOpen, setUsageOpen] = useState(false);
   const addMenuRef = useRef(false);
   addMenuRef.current = addMenu !== null;
   // "More" menu popover holding the per-worktree header controls.
@@ -1082,6 +1090,7 @@ export function TerminalView({
               status: row.process?.status ?? 'idle',
               port: row.process?.port,
               detectedUrl: row.process?.detectedUrl,
+              exitCode: row.process?.exitCode,
             };
           }
           return next;
@@ -1204,12 +1213,16 @@ export function TerminalView({
     if (remote) return;
     return subscribeWorktrees((evt) => {
       const path = evt.data.path;
-      const proc = evt.data.process as { status?: string; port?: number | null; detectedUrl?: string | null } | undefined;
+      const proc = evt.data.process as { status?: string; port?: number | null; detectedUrl?: string | null; exitCode?: number | null } | undefined;
       if (proc) {
         setProcs((prev) => ({
           ...prev,
           [path]: { status: 'idle', ...prev[path], ...proc },
         }));
+        // The server took the start: whatever the last click complained about is moot.
+        if (proc.status === 'starting' || proc.status === 'running') {
+          setRunError((cur) => (cur?.path === path ? null : cur));
+        }
       }
       const shellSessions = Array.isArray(evt.data.shellSessions) ? evt.data.shellSessions : null;
       const claudeSessions = Array.isArray(evt.data.claudeSessions) ? (evt.data.claudeSessions as string[]) : null;
@@ -2762,7 +2775,21 @@ export function TerminalView({
           )}
           {(() => {
             const p = procs[active.path] ?? { status: 'idle' as const };
+            // starting counts as busy so a start that hangs can still be cancelled;
+            // stopping does not — a second Stop has nothing to add.
             const busy = p.status === 'running' || p.status === 'starting';
+            const stopping = p.status === 'stopping';
+            const crashed = p.status === 'crashed';
+            const runLabel = p.status === 'starting' ? 'Starting…'
+              : p.status === 'running' ? (p.port ? `Stop :${p.port}` : 'Stop')
+                : stopping ? 'Stopping…'
+                  : crashed ? 'Crashed'
+                    : 'Run';
+            const runNote = runError?.path === active.path
+              ? runError.message
+              : crashed
+                ? `exit code ${p.exitCode ?? '?'}`
+                : null;
             // On a runner the port belongs to the runner's loopback, so name both
             // ends: the local port is the one that actually opens in a browser,
             // and it usually differs (3000 is normally taken here already).
@@ -2841,27 +2868,55 @@ export function TerminalView({
                     ))}
                   </select>
                 )}
-                <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} />
+                <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
                 <button
                   className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
                     p.status === 'running'
                       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
                       : p.status === 'starting'
                         ? 'animate-pulse border-amber-500/30 bg-amber-500/10 text-amber-300'
-                        : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
+                        : stopping
+                          ? 'animate-pulse border-zinc-700 bg-zinc-900 text-zinc-400'
+                          : crashed
+                            ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
+                            : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
                   }`}
+                  disabled={stopping}
                   onClick={() => {
+                    if (stopping) return;
+                    const path = active.path;
+                    setRunError((cur) => (cur?.path === path ? null : cur));
                     const call = busy
-                      ? api.worktrees.stop(localWsId, active.path)
-                      : api.worktrees.start(localWsId, active.path);
-                    call.catch(() => undefined); // SSE reflects the real outcome
+                      ? api.worktrees.stop(localWsId, path)
+                      : api.worktrees.start(localWsId, path);
+                    // SSE carries the process states; a refused request has no
+                    // SSE and would otherwise be a click that did nothing.
+                    call.catch((err: unknown) => {
+                      setRunError({ path, message: (err as Error).message || 'request failed' });
+                    });
                   }}
-                  title={`${busy ? 'Stop' : 'Start'} dev server — ${p.status}${detail ? ` (${detail})` : ''}`}
-                  aria-label={busy ? 'Stop dev server' : 'Start dev server'}
+                  title={`${busy || stopping ? 'Stop' : 'Start'} dev server — ${p.status}${detail ? ` (${detail})` : ''}`}
+                  aria-label={busy || stopping ? 'Stop dev server' : 'Start dev server'}
                 >
-                  {busy ? <StopIcon /> : <PlayIcon />}
-                  <span>{p.status === 'starting' ? 'Starting' : busy ? 'Stop' : 'Run'}</span>
+                  {busy || stopping ? <StopIcon /> : <PlayIcon />}
+                  <span>{runLabel}</span>
                 </button>
+                {runNote && (
+                  <span
+                    role="alert"
+                    title={runNote}
+                    className="flex max-w-[260px] shrink-0 items-center gap-1.5 self-start py-1 text-[11px] text-red-300"
+                  >
+                    <span className="truncate">{runNote}</span>
+                    {crashed && !remote && (
+                      <button
+                        type="button"
+                        onClick={() => setShowLogs(true)}
+                        className="shrink-0 rounded border border-red-500/30 px-1 text-[10px] text-red-200 hover:bg-red-500/10"
+                      >Logs</button>
+                    )}
+                  </span>
+                )}
               </>
             );
           })()}
@@ -3244,7 +3299,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || handoffDialog);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || handoffDialog);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
