@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AccountSection } from './AccountSection';
+import { AgentsSection } from './agents/AgentsSection';
 import { AppearanceSection } from './AppearanceSection';
 import { IntegrationsSection, type IntegrationId } from './IntegrationsSection';
 import { OrganizationSection } from './OrganizationSection';
@@ -10,7 +11,7 @@ import { RunnersPanel } from '../RunnersPanel';
 import { useEntitlements } from '../../hooks/entitlements';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'runners' | 'integrations' | IntegrationId | 'privacy';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -101,6 +102,7 @@ const GROUPS: NavGroup[] = [
     title: 'Workspace',
     items: [{ id: 'workspaces', label: 'Workspaces' }],
   },
+  { title: 'Agents', items: [{ id: 'agents', label: 'Coding agents' }] },
   { title: 'Infrastructure', items: [{ id: 'runners', label: 'Runners' }] },
   { title: 'Connections', items: [{ id: 'integrations', label: 'Integrations' }] },
   { title: 'System', items: [{ id: 'privacy', label: 'Privacy' }] },
@@ -231,6 +233,7 @@ export function SettingsModal({
             {active === 'organization' && <OrganizationSection />}
             {active === 'appearance' && <AppearanceSection />}
             {active === 'workspaces' && <WorkspaceManagementSection />}
+            {active === 'agents' && <AgentsSection />}
             {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel />)}
             {active === 'integrations' && (
               <IntegrationsSection

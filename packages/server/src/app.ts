@@ -324,9 +324,12 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   const { registerHealthRoutes } = await import('./routes/health.js');
   await registerHealthRoutes(app);
 
-  // Self-hosted runner management (proxies strado-api with the stored token)
+  // Self-hosted runner management (proxies strado-api with the stored token).
+  // Returns its runnerFetch client (ticket cache + relay fetch) so a later
+  // route module can forward requests to a remote host's own API through the
+  // same cache, instead of building a second one.
   const { registerRunnerRoutes } = await import('./routes/runners.js');
-  await registerRunnerRoutes(app);
+  const runnerFetch = await registerRunnerRoutes(app);
 
   // Org membership (proxies strado-api with the stored token)
   const { registerOrgRoutes } = await import('./routes/org.js');
@@ -405,6 +408,12 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerActivityRoutes(app);
   const { registerEnvCheckRoutes } = await import('./routes/envCheck.js');
   await registerEnvCheckRoutes(app);
+  // Coding agent config (MCP, skills, model, permissions) per agent.
+  // Device-global, like envCheck above. Reuses the runnerFetch instance
+  // captured at registerRunnerRoutes above to forward requests naming a
+  // remote host, rather than building a second relay client.
+  const { registerAgentConfigRoutes } = await import('./routes/agentConfig.js');
+  await registerAgentConfigRoutes(app, { runnerFetch });
   const { registerCodexStatusRoutes } = await import('./routes/codexStatus.js');
   await registerCodexStatusRoutes(app);
   const { registerOpencodeStatusRoutes } = await import('./routes/opencodeStatus.js');

@@ -17,6 +17,9 @@ export const ErrorCode = {
   // A container with the name we need exists but belongs to another worktree.
   // Never resolved by forcing: removing it would destroy that worktree's work.
   SANDBOX_CONFLICT: 'SANDBOX_CONFLICT',
+  // A config file exists but does not parse. We refuse to patch it — a write
+  // would have to guess at the user's intent for the broken region.
+  CONFIG_UNPARSEABLE: 'CONFIG_UNPARSEABLE',
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;
@@ -36,6 +39,7 @@ const httpStatusByCode: Record<ErrorCodeName, number> = {
   FEEDBACK_SEND_FAILED: 502,
   CLOUD_UNREACHABLE: 502,
   SANDBOX_CONFLICT: 409,
+  CONFIG_UNPARSEABLE: 409,
 };
 
 export class AppError extends Error {

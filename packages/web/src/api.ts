@@ -115,6 +115,52 @@ export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
 
+// Local copy of the server's agentConfig wire shape (packages/server/src/services/agentConfig/types.ts) —
+// this package must never import from packages/server.
+export type SurfaceKind =
+  | 'mcp-list' | 'skill-list' | 'plugin-list' | 'hook-list'
+  | 'permissions' | 'kv' | 'enum' | 'toggle' | 'markdown' | 'raw';
+
+export type SurfaceValue = {
+  id: string;
+  label: string;
+  group: string;
+  kind: SurfaceKind;
+  readOnly: boolean;
+  options?: string[];
+  value: unknown;
+  inheritedValue?: unknown;
+  // Set when THIS scope's own file failed to parse.
+  error?: string;
+  // Set when the *global* file failed while computing inheritance (project
+  // scope only) — distinct from `error`. A project surface can be
+  // legitimately unset with no error of its own while the user's global
+  // config is corrupt; the UI must be able to say so separately.
+  inheritedError?: string;
+  source: 'set' | 'inherited' | 'unset';
+  file: string;
+  exists: boolean;
+};
+
+// `installed` (the agent's CLI exists) and `supported` (Strado has a
+// descriptor for it, so the panel can actually manage its config) are
+// independent — see routes/agentConfig.ts on the server, whose shape this
+// mirrors. An agent can be installed but unsupported (Codex, today).
+export type AgentSummary = { id: string; label: string; installed: boolean; supported: boolean; files: string[] };
+export type AgentScope = 'global' | 'project';
+export type AgentReadOpts = { scope: AgentScope; worktree?: string; host?: string };
+
+// Built manually (not via URLSearchParams) so a worktree path with a space
+// encodes to %20 — the same as the encodeURIComponent path segments and
+// query params used elsewhere in this file — rather than URLSearchParams'
+// '+', which would round-trip differently from its sibling functions below.
+function agentQuery(opts: AgentReadOpts): string {
+  const parts = [`scope=${encodeURIComponent(opts.scope)}`];
+  if (opts.worktree) parts.push(`worktree=${encodeURIComponent(opts.worktree)}`);
+  if (opts.host && opts.host !== 'local') parts.push(`host=${encodeURIComponent(opts.host)}`);
+  return parts.join('&');
+}
+
 export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 export type Handoff = {
   id: string;
@@ -616,6 +662,47 @@ export const api = {
     get: () => request<Profile>('/api/profile'),
     save: (patch: Partial<Profile>) =>
       request<Profile>('/api/profile', { method: 'PUT', body: JSON.stringify(patch) }),
+  },
+  // Settings → Coding agents. Unlike `runners` below — every one of whose
+  // calls takes an explicit `runnerId` path segment and has no notion of
+  // "this machine" at all — `host` here is optional: 'local' and undefined
+  // both mean THIS machine and must never be sent as a query param; only a
+  // real runner id is.
+  agentConfig: {
+    agents: (host?: string) =>
+      request<{ agents: AgentSummary[] }>(
+        `/api/agent-config/agents${host && host !== 'local' ? `?host=${encodeURIComponent(host)}` : ''}`,
+      ),
+    read: (agent: string, opts: AgentReadOpts) =>
+      request<{ agent: string; scope: AgentScope; surfaces: SurfaceValue[] }>(
+        `/api/agent-config/${encodeURIComponent(agent)}?${agentQuery(opts)}`,
+      ),
+    patch: (agent: string, body: { surfaceId: string; scope: AgentScope; worktree?: string; value: unknown }, host?: string) =>
+      request<{ agent: string; scope: AgentScope; surfaces: SurfaceValue[] }>(
+        `/api/agent-config/${encodeURIComponent(agent)}${host && host !== 'local' ? `?host=${encodeURIComponent(host)}` : ''}`,
+        { method: 'PATCH', body: JSON.stringify(body) },
+      ),
+    raw: (agent: string, file: string, opts: { worktree?: string; host?: string } = {}) =>
+      request<{ file: string; text: string }>(
+        `/api/agent-config/${encodeURIComponent(agent)}/raw?file=${encodeURIComponent(file)}` +
+          (opts.worktree ? `&worktree=${encodeURIComponent(opts.worktree)}` : '') +
+          (opts.host && opts.host !== 'local' ? `&host=${encodeURIComponent(opts.host)}` : ''),
+      ),
+    saveRaw: (agent: string, file: string, text: string, opts: { worktree?: string; host?: string } = {}) =>
+      request<{ file: string; saved: boolean }>(
+        `/api/agent-config/${encodeURIComponent(agent)}/raw` +
+          (opts.host && opts.host !== 'local' ? `?host=${encodeURIComponent(opts.host)}` : ''),
+        { method: 'PUT', body: JSON.stringify({ file, text }) },
+      ),
+    // Removes one skill directory at the given scope (moved into
+    // `.backups` server-side, never destroyed — see dirDriver.remove).
+    // Directory surfaces have no JSON key to PATCH, so this is a dedicated
+    // route rather than `patch` with `surfaceId: 'skills'`.
+    removeSkill: (agent: string, name: string, opts: AgentReadOpts) =>
+      request<{ agent: string; scope: AgentScope; surfaces: SurfaceValue[] }>(
+        `/api/agent-config/${encodeURIComponent(agent)}/skills/${encodeURIComponent(name)}?${agentQuery(opts)}`,
+        { method: 'DELETE' },
+      ),
   },
   // The model API key runs on runners. The GET only ever discloses presence and
   // the last four — the server never returns the key itself.
