@@ -29,6 +29,9 @@ export type Props = {
   statusHint?: boolean;
   /** In-app review for a chip click; without it the chip links out to the provider. */
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
+  /** Open escalation count for this worktree; undefined hides the slot, null/0 renders it empty. */
+  escalations?: number | null;
+  onOpenEscalations?: (w: Worktree) => void;
   onOpenShellTerminal: (w: Worktree) => void;
   onSetWorkflowStatus: (w: Worktree, status: WorkflowStatus | null) => void;
   onOpenNote: (w: Worktree) => void;
@@ -82,6 +85,8 @@ export function WorktreeRow({
   attention: attentionProp,
   statusHint = true,
   onOpenMr,
+  escalations,
+  onOpenEscalations,
   onOpenShellTerminal,
   onSetWorkflowStatus,
   onOpenNote,
@@ -294,6 +299,21 @@ export function WorktreeRow({
                   </span>
                 )}
               </a>
+            )}
+          </span>
+        )}
+        {escalations !== undefined && (
+          <span data-testid="escalation-slot" className="flex min-w-[2.5rem] shrink-0 justify-start">
+            {(escalations ?? 0) > 0 && (
+              <button
+                type="button"
+                aria-label={`${escalations} open escalation${escalations === 1 ? '' : 's'}`}
+                title={`${escalations} open escalation${escalations === 1 ? '' : 's'}`}
+                onClick={(e) => { e.stopPropagation(); onOpenEscalations?.(worktree); }}
+                className="shrink-0 rounded bg-amber-900/40 px-1.5 py-0.5 font-sans text-[10px] font-semibold tabular-nums text-amber-300 hover:bg-amber-900/60"
+              >
+                ⚑ {escalations}
+              </button>
             )}
           </span>
         )}

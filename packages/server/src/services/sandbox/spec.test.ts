@@ -18,7 +18,7 @@ describe('sandboxBuildSpec', () => {
     expect(script).toContain('exec podman exec -it');
     // session identity forwarded INTO the container: --env KEY copies the
     // value from the podman client process env, which sessionEnv populated
-    for (const k of ['STRADO_SESSION_ID', 'STRADO_SESSION_MODE', 'STRADO_WORKTREE', 'STRADO_STATUS_PORT', 'STRADO_SERVER', 'STRADO_SERVER_SOCKET', 'STRADO_AGENT_BIN_DIR', 'STRADO_SHELL_BOOTSTRAP']) {
+    for (const k of ['STRADO_SESSION_ID', 'STRADO_SESSION_MODE', 'STRADO_WORKTREE', 'STRADO_STATUS_PORT', 'STRADO_SERVER', 'STRADO_SERVER_SOCKET', 'STRADO_AGENT_BIN_DIR', 'STRADO_SHELL_BOOTSTRAP', 'STRADO_CLAUDE_HOOK', 'STRADO_AGENT_ID', 'STRADO_SCOPE_ID', 'STRADO_AGENT_TOKEN']) {
       expect(script).toContain(`--env ${k}`);
     }
     expect(script).toContain('--env STRADO_INNER_SHELL=/bin/bash');

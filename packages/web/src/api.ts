@@ -94,6 +94,74 @@ export type JiraTransitionDto = {
   toCategory: JiraIssueDto['category'];
 };
 
+export type EscalationDto = {
+  id: string;
+  scopeId: string;
+  from: { agentId: string; executionId: string };
+  to: string;
+  title: string;
+  body: string;
+  context: Array<{ kind: string; value: string; label?: string }>;
+  taskId: string | null;
+  status: 'open' | 'resolved' | 'dismissed';
+  resolution: string | null;
+  resolvedBy: string | null;
+  createdAt: number;
+  resolvedAt: number | null;
+  expiresAt: number | null;
+};
+export type IntercomTaskDto = {
+  id: string;
+  scopeId: string;
+  title: string;
+  body: string;
+  ticketKey: string | null;
+  worktreePath: string | null;
+  dependsOn: string[];
+  status: 'open' | 'claimed' | 'done' | 'cancelled';
+  createdBy: { agentId: string };
+  claimedBy: { agentId: string } | null;
+  createdAt: number;
+  updatedAt: number;
+  claimedAt: number | null;
+  doneAt: number | null;
+};
+export type PeerDto = {
+  agentId: string;
+  alias: string | null;
+  mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
+  worktreePath: string;
+  sessionId: string;
+  lifecycle: string;
+  live: boolean;
+};
+
+export type ForkStatusDto = 'summarising' | 'queued' | 'delivered' | 'accepted' | 'failed' | 'cancelled';
+export type ForkTargetDto =
+  | { kind: 'peer'; agentId: string }
+  | { kind: 'new'; mode: AgentMode; worktreePath: string; agentId: string | null };
+export type ForkDto = {
+  id: string;
+  scopeId: string;
+  from: { agentId: string; executionId: string };
+  source: { agentId: string; worktreePath: string; mode: string; sessionId: string };
+  target: ForkTargetDto;
+  notes: string;
+  taskId: string | null;
+  summarySource: 'agent' | 'diary' | 'none' | null;
+  summary: string | null;
+  status: ForkStatusDto;
+  summaryMessageId: string | null;
+  messageId: string | null;
+  packageBytes: number | null;
+  error: string | null;
+  createdAt: number;
+  summaryDeadline: number | null;
+  deliveredAt: number | null;
+  acceptedAt: number | null;
+};
+export type ForkCreateInput = { source: string; to?: string; newTab?: { mode: AgentMode }; notes: string; taskId?: string };
+
 export type TicketProviderId = 'jira' | 'linear';
 export type TicketIssueDto = JiraIssueDto & { provider: TicketProviderId; url: string };
 export type TicketSprintDto = { id: string; name: string; state: 'active' | 'future'; startDate: string | null; endDate: string | null };
@@ -234,6 +302,36 @@ export const api = {
         body: JSON.stringify(input),
       }),
     testConfig: () => request<{ ok: boolean; accountName: string }>('/api/jira/config/test', { method: 'POST' }),
+  },
+  intercom: {
+    peers: (wsId: string) => request<{ peers: PeerDto[] }>(`${wsBase(wsId)}/intercom/peers`).then((b) => b.peers),
+    escalations: {
+      list: (wsId: string, status?: EscalationDto['status']) =>
+        request<{ escalations: EscalationDto[] }>(`${wsBase(wsId)}/intercom/escalations${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.escalations),
+      resolve: (wsId: string, id: string, resolution: string) =>
+        request<{ escalation: EscalationDto }>(`${wsBase(wsId)}/intercom/escalations/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) }).then((b) => b.escalation),
+      dismiss: (wsId: string, id: string) =>
+        request<{ escalation: EscalationDto }>(`${wsBase(wsId)}/intercom/escalations/${encodeURIComponent(id)}/dismiss`, { method: 'POST', body: '{}' }).then((b) => b.escalation),
+    },
+    tasks: {
+      list: (wsId: string, status?: IntercomTaskDto['status']) =>
+        request<{ tasks: IntercomTaskDto[] }>(`${wsBase(wsId)}/intercom/tasks${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.tasks),
+      create: (wsId: string, input: { title: string; body?: string; ticketKey?: string; worktreePath?: string }) =>
+        request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks`, { method: 'POST', body: JSON.stringify(input) }).then((b) => b.task),
+      assign: (wsId: string, id: string, agent: string) =>
+        request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/assign`, { method: 'POST', body: JSON.stringify({ agent }) }).then((b) => b.task),
+      release: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/release`, { method: 'POST', body: '{}' }).then((b) => b.task),
+      done: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' }).then((b) => b.task),
+      cancel: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.task),
+    },
+    forks: {
+      list: (wsId: string, status?: ForkStatusDto) =>
+        request<{ forks: ForkDto[] }>(`${wsBase(wsId)}/intercom/forks${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.forks),
+      create: (wsId: string, input: ForkCreateInput) =>
+        request<{ fork: ForkDto }>(`${wsBase(wsId)}/intercom/forks`, { method: 'POST', body: JSON.stringify(input) }).then((b) => b.fork),
+      cancel: (wsId: string, id: string) =>
+        request<{ fork: ForkDto }>(`${wsBase(wsId)}/intercom/forks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.fork),
+    },
   },
   tickets: {
     providers: () => request<{ providers: Array<{ provider: TicketProviderId; configured: boolean; label: string }> }>('/api/tickets/providers').then((b) => b.providers),

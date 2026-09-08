@@ -3,7 +3,7 @@ import type { MergeRequest, RepoConfig, WorkflowStatus, Worktree } from '../type
 import { useWorkspace } from '../hooks/useWorkspace';
 import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
-import { api, type AgentMode } from '../api';
+import { api, type AgentMode, type ForkCreateInput } from '../api';
 import { subscribeWorktrees } from '../eventStream';
 import { useCapabilities } from '../hooks/capabilities';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
@@ -46,6 +46,10 @@ import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPa
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
 import { HandoffDialog } from '../components/HandoffDialog';
+import { ForkDialog } from '../components/ForkDialog';
+import { EscalationBanner } from '../components/EscalationBanner';
+import { useIntercom } from '../contexts/IntercomContext';
+import { escalationForTab, peerForTab } from '../hooks/intercom';
 
 type Tab = {
   path: string;
@@ -517,6 +521,8 @@ export function TerminalView({
   onOpenUsage,
   openSeq = 0,
   modalOpen = false,
+  onOpenIntercom,
+  onForked,
 }: {
   worktree: Worktree;
   onClose: () => void;
@@ -540,6 +546,12 @@ export function TerminalView({
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
+  /** Open the intercom panel focused on one escalation — the hub's banner
+   *  answers questions through the same panel the board's badge opens. */
+  onOpenIntercom?: (escalationId: string) => void;
+  /** A fork was just created from a tab in this hub — the board opens the
+   *  intercom drawer on its Forks tab, focused on the new row. */
+  onForked?: (forkId: string) => void;
 }) {
   const { workspace } = useWorkspace();
   const { showTime, showStatus } = useHubDisplayPreferences();
@@ -635,6 +647,13 @@ export function TerminalView({
   );
   const activeRef = useRef(active);
   activeRef.current = active;
+  // The open question (if any) belonging to the focused tab's session. Intercom
+  // is a LOCAL registry: a runner's agents never register here, so a remote hub
+  // would only ever match by coincidence — skip it entirely.
+  const intercom = useIntercom();
+  const banner = remote || active.remote
+    ? undefined
+    : escalationForTab(intercom, { path: active.path, mode: active.mode, id: active.id });
   // Remember the selection so the next mount of this worktree's hub (every
   // sidebar switch remounts it) lands on the same tab.
   useEffect(() => {
@@ -1004,6 +1023,13 @@ export function TerminalView({
   const [renaming, setRenaming] = useState<{ path: string; mode: NamedSessionMode; id: string; value: string } | null>(null);
   const [handoffDialog, setHandoffDialog] = useState<{
     source: { path: string; mode: AgentMode; sessionId: string };
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
+  // A fork asks the source agent for a summary server-side, so the dialog only
+  // needs the source peer's identity — never a target session of its own.
+  const [forkDialog, setForkDialog] = useState<{
+    source: { agentId: string; mode: AgentMode; worktreePath: string; alias: string | null };
     busy: boolean;
     error: string | null;
   } | null>(null);
@@ -2370,6 +2396,22 @@ export function TerminalView({
     }
   };
 
+  // Unlike a handoff, the hub allocates nothing here: the server summarises,
+  // delivers and (for a new tab) opens the target. All we do is report the id
+  // so the board can open the drawer on the row that just appeared.
+  const submitFork = async (input: ForkCreateInput) => {
+    const dialog = forkDialog;
+    if (!dialog) return;
+    setForkDialog({ ...dialog, busy: true, error: null });
+    try {
+      const fork = await intercom.createFork(input);
+      setForkDialog(null);
+      onForked?.(fork.id);
+    } catch (err) {
+      setForkDialog((current) => current ? { ...current, busy: false, error: (err as Error).message } : current);
+    }
+  };
+
   // Apply an explicit open request from the parent (such as a notification)
   // that lands while THIS worktree's hub is already open — the
   // initial mount is already handled by the seeded `active`/`groups` state,
@@ -2626,6 +2668,7 @@ export function TerminalView({
         );
       })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {banner && <EscalationBanner escalation={banner} onAnswer={(id) => onOpenIntercom?.(id)} />}
         <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
           {sidebarCollapsed && (
             <button
@@ -2773,6 +2816,26 @@ export function TerminalView({
               Handoff
             </button>
           )}
+          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode' || active.mode === 'pi') && (() => {
+            // Only a tab that has registered with the intercom has an agent id
+            // to fork FROM, so the button waits for the peer to show up.
+            const peer = peerForTab(intercom, { path: active.path, mode: active.mode, id: active.id });
+            return (
+              <button
+                type="button"
+                disabled={!peer}
+                onClick={() => peer && setForkDialog({
+                  source: { agentId: peer.agentId, mode: active.mode as AgentMode, worktreePath: active.path, alias: peer.alias },
+                  busy: false,
+                  error: null,
+                })}
+                title={peer ? 'Fork this thread to another agent or a new tab' : 'This tab has not registered with the intercom yet'}
+                className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Fork
+              </button>
+            );
+          })()}
           {(() => {
             const p = procs[active.path] ?? { status: 'idle' as const };
             // starting counts as busy so a start that hangs can still be cancelled;
@@ -3299,7 +3362,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || handoffDialog);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || handoffDialog || forkDialog);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3594,6 +3657,19 @@ export function TerminalView({
             error={handoffDialog.error}
             onSubmit={(target, notes) => void submitHandoff(target, notes)}
             onCancel={() => { if (!handoffDialog.busy) setHandoffDialog(null); }}
+          />
+        </div>
+      )}
+      {forkDialog && (
+        <div onClick={(event) => event.stopPropagation()}>
+          <ForkDialog
+            source={forkDialog.source}
+            peers={intercom.peers}
+            tasks={intercom.tasks}
+            busy={forkDialog.busy}
+            error={forkDialog.error}
+            onSubmit={(input) => void submitFork(input)}
+            onCancel={() => { if (!forkDialog.busy) setForkDialog(null); }}
           />
         </div>
       )}

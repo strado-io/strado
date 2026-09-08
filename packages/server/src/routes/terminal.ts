@@ -1,34 +1,17 @@
 import { FastifyInstance } from 'fastify';
 import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
-import { installClaudeHooks, installOpencodePlugin, codexNotifyScriptPath, piExtensionPath } from '../services/claudeHooks.js';
+import { installClaudeHooks, installOpencodePlugin, piExtensionPath } from '../services/claudeHooks.js';
+import { agentLaunchCommand, agentSpawnSpec, codexConfigFlags, withAgentSpawnLock } from '../services/agentSpawn.js';
+import { installClaudeMcp } from '../services/claudeMcp.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { defaultShell } from '../services/platform.js';
 import { handoffPrompt, type HandoffRecord } from '../services/handoffStore.js';
+import { peekLines } from '../services/terminalText.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
   | { type: 'resize'; cols: number; rows: number };
-
-// Best-effort plain-text view of a pty buffer for hover previews only. This
-// rendered output is deliberately never used by agent handoffs.
-function peekLines(buffer: string, max: number): string[] {
-  const text = buffer
-    // OSC sequences (titles, hyperlinks), then CSI/other escapes
-    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
-    .replace(/\x1b\[[0-9;?]*[0-9A-Za-z]/g, '')
-    .replace(/\x1b[()][0-9A-Za-z]/g, '')
-    .replace(/\x1b[=>]/g, '')
-    // carriage-return overwrites: keep what the terminal would show
-    .replace(/^.*\r(?!\n)/gm, '')
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
-  return text
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .slice(-max)
-    .map((line) => (line.length > 200 ? `${line.slice(0, 200)}…` : line));
-}
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -37,33 +20,19 @@ function shellQuote(value: string): string {
 export function agentCommand(
   mode: 'claude' | 'codex' | 'opencode' | 'pi',
   sessionId: string,
-  codexNotify: string,
+  codexFlags: string,
   handoff?: HandoffRecord,
 ): string {
   if (handoff) {
     const prompt = shellQuote(handoffPrompt(handoff));
     if (mode === 'claude') return `claude -- ${prompt}`;
-    if (mode === 'codex') return `codex -c '${codexNotify}' -- ${prompt}`;
+    if (mode === 'codex') return `codex ${codexFlags} -- ${prompt}`;
     if (mode === 'opencode') return `opencode --prompt ${prompt}`;
     // `--` ends option parsing, so the prompt reaches pi as a first message.
     // No `-c`: a handoff target is always a fresh conversation.
     return `pi -e "${piExtensionPath()}" -- ${prompt}`;
   }
-  if (mode === 'codex') {
-    return sessionId === '1'
-      ? `codex -c '${codexNotify}' resume --last || codex -c '${codexNotify}'`
-      : `codex -c '${codexNotify}'`;
-  }
-  if (mode === 'opencode') return sessionId === '1' ? 'opencode --continue || opencode' : 'opencode';
-  if (mode === 'pi') {
-    // Pi has no ambient hook config to write — its status extension is loaded
-    // by path, so every launch carries `-e`. Same primary-session rule.
-    const piExtension = piExtensionPath();
-    return sessionId === '1'
-      ? `pi -c -e "${piExtension}" || pi -e "${piExtension}"`
-      : `pi -e "${piExtension}"`;
-  }
-  return 'claude';
+  return agentLaunchCommand(mode, sessionId, codexFlags);
 }
 
 export async function registerTerminalRoutes(app: FastifyInstance) {
@@ -189,35 +158,31 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         : mode === 'opencode' ? opencodeKey(target, sessionId)
         : mode === 'pi' ? piKey(target, sessionId)
         : claudeKey(target, sessionId);
-      // Codex has no hooks API; its `notify` config calls our hook script on
-      // agent-turn-complete so we can show a "waiting for input" status.
-      const codexPort = Number(process.env.PORT ?? 7777);
-      const codexNotify = `notify=["node","${codexNotifyScriptPath()}","${codexPort}","${target}"]`;
+      // Codex has no hooks API and Strado never writes its config.toml: the
+      // notify hook and the strado MCP server both ride on -c overrides.
+      const codexFlags = codexConfigFlags(target);
       // Only the primary session resumes the directory's last conversation —
       // a second tab resuming the SAME conversation as the first would have
-      // both sessions fighting over one thread, so extras start fresh.
-      const agentCmd = mode === 'shell' ? '' : agentCommand(mode, sessionId, codexNotify, handoff);
-      // Start a login shell first, then let the bootstrap load the interactive
-      // profile and prepend Strado's launchers AFTER it. User rc files commonly
-      // prepend nvm/Homebrew paths, which otherwise hide the Codex launcher.
-      // Sandboxes override the inner shell to bash.
-      const shellCmd = 'exec "$STRADO_SHELL_BOOTSTRAP"';
+      // both sessions fighting over one thread, so extras start fresh. That
+      // rule, the login-shell bootstrap and the per-mode command all live in
+      // services/agentSpawn.ts now, so a fork opening a tab with no client
+      // attached spawns exactly what this route does. Only the handoff prompt
+      // stays here: it belongs to the feature another branch removes.
       const spec =
-        mode === 'shell'
-          ? { file: defaultShell(), args: ['-l', '-c', shellCmd] }
-          : mode === 'codex'
-            ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
-            : mode === 'opencode'
-              ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
-              : mode === 'pi' || handoff
-                ? { file: defaultShell(), args: ['-l', '-c', agentCmd] }
-                : undefined;
+        handoff && mode !== 'shell'
+          ? { file: defaultShell(), args: ['-l', '-c', agentCommand(mode, sessionId, codexFlags, handoff)] }
+          : agentSpawnSpec(mode, sessionId, target);
 
       if (mode === 'claude' || mode === 'shell') {
         try {
-          await installClaudeHooks(target, Number(process.env.PORT ?? 7777));
+          await installClaudeHooks(target);
         } catch {
           // hook install is best-effort; never block the terminal
+        }
+        try {
+          await installClaudeMcp(target);
+        } catch (err) {
+          app.deps.debugLog.log('mcp', `claude MCP registration failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       if (mode === 'opencode' || mode === 'shell') {
@@ -237,11 +202,19 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       };
 
       try {
-        if (handoff && app.deps.terminal.status(sessionKey).status === 'running') {
-          return fail('handoff target session is already running');
-        }
-        await app.deps.terminal.ensure(sessionKey, target, spec, size);
-        if (handoff) await stores.handoffs.accept(handoff.id);
+        await withAgentSpawnLock(app.deps.terminal, target, mode, async () => {
+          if (handoff && app.deps.terminal.status(sessionKey).status === 'running') {
+            throw new Error('handoff target session is already running');
+          }
+          // A registry failure must not stop an ordinary terminal opening.
+          try {
+            if (wsId) await app.deps.agents.register({ key: sessionKey, cwd: target, scopeId: wsId });
+          } catch (err) {
+            app.log.warn({ err }, 'agent register failed');
+          }
+          await app.deps.terminal.ensure(sessionKey, target, spec, size);
+          if (handoff) await stores.handoffs.accept(handoff.id);
+        });
       } catch (err) {
         return fail(`could not start session: ${(err as Error).message}`);
       }
@@ -262,6 +235,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       });
 
       const unsubExit = app.deps.terminal.onExit(sessionKey, (code) => {
+        void app.deps.agents.release(sessionKey); // idempotent; app-level exit also calls it
         if (mode === 'claude') app.deps.claudeStatus.clear(target, sessionId);
         if (mode === 'codex') app.deps.codexStatus.clear(target, sessionId);
         if (mode === 'opencode') app.deps.opencodeStatus.clear(target, sessionId);
@@ -286,12 +260,14 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         try { msg = JSON.parse(raw.toString()); } catch { return; }
         if (msg.type === 'data') {
           app.deps.terminal.write(sessionKey, msg.data);
+          app.deps.ptyActivity.noteInput(sessionKey);
           // Keystrokes are the activity heartbeat behind the Time spent column.
           app.deps.activity.touch(target);
           // Codex has no prompt-submit hook; treat Enter as "turn started".
           // The notify hook flips it to waiting when the turn completes.
           if (mode === 'codex' && msg.data.includes('\r')) {
             app.deps.codexStatus.set(target, 'working', sessionId);
+            app.deps.intercomPush.turnStarted(sessionKey);
           }
           // A Shell-scoped launcher registers Codex as waiting while its TUI
           // is open. Codex has no prompt-submit hook, so Enter is the turn

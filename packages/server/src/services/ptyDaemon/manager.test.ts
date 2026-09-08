@@ -140,6 +140,26 @@ describe('DaemonTerminalManager', () => {
     manager.kill(key);
   }, 15000);
 
+  it('merges extraEnv over sessionEnv for the spawned process', async () => {
+    const withExtra = await createDaemonTerminalManager({
+      stateDir,
+      daemonScript,
+      extraEnv: () => ({ STRADO_AGENT_ID: 'x' }),
+    });
+    const key = '/tmp/extraenv\0shell';
+    try {
+      await withExtra.ensure(key, '/tmp', {
+        file: '/bin/sh',
+        args: ['-c', 'echo "$STRADO_AGENT_ID"; sleep 5'],
+      });
+      await vwait(() => withExtra.snapshot(key).includes('x'));
+      expect(withExtra.snapshot(key)).toContain('x');
+    } finally {
+      withExtra.kill(key);
+      withExtra.destroy();
+    }
+  }, 15000);
+
   it('routes both the built-in spec and an override through wrapSpec', async () => {
     // Same contract as the in-process manager: the sandbox wrapper must see
     // the mode-specific override specs (shell/codex/opencode), not just the
@@ -171,6 +191,18 @@ describe('DaemonTerminalManager', () => {
       wrapped.destroy();
     }
   }, 20000);
+
+  it('status() reports running (pid null) while an open is in flight, not exited', async () => {
+    // A second attach racing the first ensure() must see the spawn as already
+    // in progress (so the registry's isRunning() tiebreaker does not mint a
+    // fresh token for a process that is about to come up with the old one).
+    const key = '/tmp\0shell';
+    const p = manager.ensure(key, '/tmp', shSpec);
+    expect(manager.status(key)).toEqual({ status: 'running', pid: null, exitCode: null });
+    await p;
+    expect(manager.status(key).status).toBe('running');
+    manager.kill(key);
+  }, 15000);
 
   it('ensure() re-arms after the daemon dies and reconnect gave up', async () => {
     const key = '/tmp\0shell';

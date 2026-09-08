@@ -18,7 +18,7 @@ import { TaskGroup } from './TaskGroup';
 
 export type RowHandlers = Pick<
   WorktreeRowProps,
-  'onOpenShellTerminal' | 'onSetWorkflowStatus' | 'onOpenNote' | 'onOpenDiff' | 'onStart' | 'onStop' | 'onKillExternal' | 'onOpenSettings' | 'onOpenMr'
+  'onOpenShellTerminal' | 'onSetWorkflowStatus' | 'onOpenNote' | 'onOpenDiff' | 'onStart' | 'onStop' | 'onKillExternal' | 'onOpenSettings' | 'onOpenMr' | 'onOpenEscalations'
 >;
 
 export type Props = {
@@ -31,6 +31,8 @@ export type Props = {
   density: Density;
   onReorder?: (contextRows: Worktree[], draggedPath: string, targetPath: string, place: 'before' | 'after') => void;
   handlers: RowHandlers;
+  /** Open escalation counts keyed by worktree path; undefined turns the badge slot off for every row. */
+  escalationsByPath?: Record<string, number>;
   prefs?: BoardPrefs;
   onPrefs?: (patch: Partial<BoardPrefs>) => void;
   /** Right-aligned toolbar content (the running-servers chip). */
@@ -44,7 +46,7 @@ export type Props = {
  * sorted view — the only view where a hand-placed order means anything.
  */
 export function TaskBoard({
-  wsId, worktrees, repoById, gridTemplate, totalWidth, onStartResize, density, handlers, onReorder,
+  wsId, worktrees, repoById, gridTemplate, totalWidth, onStartResize, density, handlers, onReorder, escalationsByPath,
   prefs = DEFAULT_BOARD_PREFS, onPrefs, toolbarTrailing,
 }: Props) {
   const [dropHint, setDropHint] = useState<{ path: string; place: 'before' | 'after' } | null>(null);
@@ -137,6 +139,7 @@ export function TaskBoard({
           repoLabel={repoChanged ? repo?.name ?? null : null}
           reorderable={reorderable}
           mr={mrByPath.get(w.path) ?? null}
+          escalations={escalationsByPath ? (escalationsByPath[w.path] ?? 0) : undefined}
           attention={attentionOfRow(w)}
           statusHint={prefs.groupBy !== 'state'}
           {...handlers}

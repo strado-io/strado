@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node 20.x or 22+ (`.nvmrc` pins 20; the web test suite auto-adapts to newer Node)
+- Node 24+ (`.nvmrc` pins 24; the server's intercom uses node:sqlite, which needs 22.13+)
 - git 2.40+
 - macOS (Apple Silicon) or Linux x64 for desktop packaging
 

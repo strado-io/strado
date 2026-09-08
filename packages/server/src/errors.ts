@@ -20,6 +20,20 @@ export const ErrorCode = {
   // A config file exists but does not parse. We refuse to patch it — a write
   // would have to guess at the user's intent for the broken region.
   CONFIG_UNPARSEABLE: 'CONFIG_UNPARSEABLE',
+  // Intercom routes: a missing, unknown, or replaced agent token. Distinct from
+  // VALIDATION so clients can tell "re-register" from "bad input".
+  UNAUTHENTICATED: 'UNAUTHENTICATED',
+  // Generic uniqueness conflict (an alias already taken in the scope). NOT a
+  // replacement for SANDBOX_CONFLICT, which has its own UI handling.
+  CONFLICT: 'CONFLICT',
+  // Intercom: the scope has hit its cap of unacknowledged messages. Callers
+  // back off; nothing about the request itself was wrong.
+  BACKPRESSURE: 'BACKPRESSURE',
+  // Intercom disabled at boot (node:sqlite missing or the file unopenable).
+  // Every other part of the server keeps working.
+  UNAVAILABLE: 'UNAVAILABLE',
+  // Intercom: a sandboxed tab asked for a tab outside its own worktree.
+  FORBIDDEN: 'FORBIDDEN',
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;
@@ -40,6 +54,11 @@ const httpStatusByCode: Record<ErrorCodeName, number> = {
   CLOUD_UNREACHABLE: 502,
   SANDBOX_CONFLICT: 409,
   CONFIG_UNPARSEABLE: 409,
+  UNAUTHENTICATED: 401,
+  CONFLICT: 409,
+  BACKPRESSURE: 429,
+  UNAVAILABLE: 503,
+  FORBIDDEN: 403,
 };
 
 export class AppError extends Error {

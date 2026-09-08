@@ -16,15 +16,44 @@ import http from 'node:http';
 import path from 'node:path';
 import type { Socket } from 'node:net';
 
-/** Method + path pairs a sandboxed hook may reach. Every entry is a POST on
- * purpose — a hook reports, it never reads. `prefix` entries keep their
- * trailing slash, also on purpose: the match has to land on a segment
- * boundary, or `/api/codexevil` would pass as `/api/codex`. */
+/** Method + path pairs a sandboxed hook may reach. Every entry answers behind
+ * its own bearer token, never the socket's own authority — a hook reports, or
+ * (for the intercom) an agent reads/acts only as itself: its own inbox, its
+ * own peer list, a peer tab it names. `prefix` entries keep their trailing
+ * slash, also on purpose: the match has to land on a segment boundary, or
+ * `/api/codexevil` would pass as `/api/codex`. */
 export const ALLOW: { method: string; path: string; prefix: boolean }[] = [
   { method: 'POST', path: '/api/claude/status', prefix: false },
   { method: 'POST', path: '/api/codex/', prefix: true },
   { method: 'POST', path: '/api/opencode/', prefix: true },
   { method: 'POST', path: '/api/pi/', prefix: true },
+  // Intercom (step 4): hook delivery + confirm, and the reply hint's send.
+  { method: 'POST', path: '/api/intercom/hook', prefix: false },
+  { method: 'POST', path: '/api/intercom/hook/confirm', prefix: false },
+  { method: 'POST', path: '/api/intercom/messages', prefix: false },
+  // Intercom (step 4b): peers read another tab's turn diary. The only GET on
+  // the wall until step 6 added two more below.
+  { method: 'GET', path: '/api/intercom/diary', prefix: false },
+  // Intercom (step 6): the `strado` CLI (pull, ack, peers) and the shell
+  // adapters an agent tab calls from inside its sandbox (run, read).
+  { method: 'POST', path: '/api/intercom/pull', prefix: false },
+  { method: 'POST', path: '/api/intercom/messages/', prefix: true },
+  { method: 'GET', path: '/api/intercom/peers', prefix: false },
+  { method: 'POST', path: '/api/intercom/shell/run', prefix: false },
+  { method: 'GET', path: '/api/intercom/tabs/', prefix: true },
+  // Intercom (step 8): shared tasks and escalations. Workspace-wide by
+  // design, so no per-worktree boundary check applies to these rows.
+  { method: 'POST', path: '/api/intercom/tasks', prefix: false },
+  { method: 'GET', path: '/api/intercom/tasks', prefix: false },
+  { method: 'POST', path: '/api/intercom/tasks/', prefix: true },
+  { method: 'POST', path: '/api/intercom/escalations', prefix: false },
+  { method: 'GET', path: '/api/intercom/escalations/', prefix: true },
+  { method: 'POST', path: '/api/intercom/escalations/', prefix: true },
+  // Intercom (step 9a): an agent opens or reads a cross-agent fork from
+  // inside its own sandbox; the route itself enforces the worktree boundary
+  // on `newTab`.
+  { method: 'POST', path: '/api/intercom/forks', prefix: false },
+  { method: 'GET', path: '/api/intercom/forks/', prefix: true },
   // Unlike status posts, this returns a secret. The request must carry a
   // worktree-scoped HMAC broker token; the forwarded route validates it before
   // minting a one-hour, one-repository GitHub credential.

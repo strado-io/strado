@@ -113,7 +113,7 @@ sessionized with a 15-minute idle gap — no timers, no worklogs to remember.
 
 ## Requirements
 
-- Node 20+, git 2.40+
+- Node 24+, git 2.40+
 - Worktrees live under `~/.strado/worktrees/<repoId>` (created automatically
   for new worktrees).
 

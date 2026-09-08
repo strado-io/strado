@@ -132,10 +132,12 @@ assertSelfContainedNode(bundledNode);
 step('compile cmdwatch');
 run('cc', ['-O2', '-framework', 'ApplicationServices', 'packages/desktop/cmdwatch.c', '-o', path.join(PACK, 'bin', 'strado-cmdwatch')]);
 
-step('bundle desktop main/preload + preview MCP (minified)');
+step('bundle desktop main/preload + strado MCP (minified)');
 run('npx', ['esbuild', 'packages/desktop/main.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', '--external:electron', `--outfile=${path.join(PACK, 'app', 'main.cjs')}`]);
 run('npx', ['esbuild', 'packages/desktop/preload.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', '--external:electron', `--outfile=${path.join(PACK, 'app', 'preload.cjs')}`]);
-run('npx', ['esbuild', 'packages/desktop/preview-mcp.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', `--outfile=${path.join(PACK, 'bin', 'preview-mcp.cjs')}`]);
+run('npx', ['esbuild', 'packages/server/hooks/strado-mcp.mjs', '--bundle', '--minify', '--platform=node', '--format=cjs', `--outfile=${path.join(PACK, 'bin', 'strado-mcp.cjs')}`]);
+// One-release shim: configs still naming the old strado-preview server keep working.
+fs.writeFileSync(path.join(PACK, 'bin', 'preview-mcp.cjs'), "require('./strado-mcp.cjs');\n");
 const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 fs.writeFileSync(
   path.join(PACK, 'app', 'package.json'),
