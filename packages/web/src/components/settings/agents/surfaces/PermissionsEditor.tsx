@@ -52,7 +52,7 @@ export function PermissionsEditor({ surface, onStage }: SurfaceProps) {
               {rules.map((rule) => (
                 <span
                   key={rule}
-                  className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300"
+                  className="flex min-w-0 items-center gap-1 break-all rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300"
                 >
                   {rule}
                   {!readOnly && (
@@ -75,7 +75,7 @@ export function PermissionsEditor({ surface, onStage }: SurfaceProps) {
                   value={drafts[key]}
                   onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                   placeholder="Tool(pattern)"
-                  className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-zinc-500 focus:outline-none"
+                  className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-zinc-500 focus:outline-none"
                 />
                 <button
                   type="button"

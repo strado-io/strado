@@ -67,9 +67,16 @@ export function HookList({ surface, onChange }: SurfaceProps) {
                 return (
                   <div
                     key={hi}
-                    className="flex items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs"
+                    className="flex items-center justify-between gap-2 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs"
                   >
-                    <span className="truncate font-mono text-zinc-300">{hook.command}</span>
+                    <details className="min-w-0 flex-1">
+                      <summary className="cursor-pointer truncate font-mono text-zinc-300" title={hook.command}>
+                        {hook.command}
+                      </summary>
+                      <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-zinc-400">
+                        {hook.command}
+                      </pre>
+                    </details>
                     {managed ? (
                       <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
                         managed by Strado

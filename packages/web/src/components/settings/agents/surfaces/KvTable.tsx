@@ -43,15 +43,16 @@ export function KvTable({ surface, onStage }: SurfaceProps) {
       <InheritedBadge surface={surface} overridden={overridden} onOverride={activate} onReset={reset} />
       {entries.length === 0 && <p className="text-xs text-zinc-500">No entries.</p>}
       {entries.map(([key, val]) => (
-        <div key={key} className="flex items-center gap-2 text-xs">
-          <span className="min-w-[8rem] font-mono text-zinc-300">{key}</span>
+        <div key={key} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-xs">
+          <span className="col-span-2 break-all font-mono text-[11px] text-zinc-400">{key}</span>
           {readOnly ? (
-            <span className="font-mono text-zinc-500">{val}</span>
+            <span className="break-all font-mono text-zinc-500">{val}</span>
           ) : (
             <input
+              aria-label={`Value for ${key}`}
               value={val}
               onChange={(e) => stage({ ...pairs, [key]: e.target.value })}
-              className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100 focus:border-zinc-500 focus:outline-none"
+              className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100 focus:border-zinc-500 focus:outline-none"
             />
           )}
           {!readOnly && (
@@ -71,20 +72,20 @@ export function KvTable({ surface, onStage }: SurfaceProps) {
         </div>
       ))}
       {!readOnly && (
-        <div className="flex items-center gap-2 text-xs">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-xs">
           <input
             aria-label={`New ${surface.label} key`}
             placeholder="KEY"
             value={newKey}
             onChange={(e) => setNewKey(e.target.value)}
-            className="min-w-[8rem] rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100 focus:border-zinc-500 focus:outline-none"
+            className="col-span-2 min-w-0 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100 focus:border-zinc-500 focus:outline-none"
           />
           <input
             aria-label={`New ${surface.label} value`}
             placeholder="value"
             value={newValue}
             onChange={(e) => setNewValue(e.target.value)}
-            className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100 focus:border-zinc-500 focus:outline-none"
+            className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100 focus:border-zinc-500 focus:outline-none"
           />
           <button
             type="button"

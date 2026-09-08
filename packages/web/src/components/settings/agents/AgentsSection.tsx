@@ -61,9 +61,21 @@ type SurfacesState =
   | { status: 'error'; message: string; offline: boolean }
   | { status: 'ready'; surfaces: SurfaceValue[] };
 
+const GROUP_HELP: Record<string, string> = {
+  MCP: 'Connect your agent to tools and external services.',
+  'Model & behavior': 'Choose how your agent thinks, responds and looks.',
+  Permissions: 'Control which tools can run and when your agent asks first.',
+  Environment: 'Set variables available to your coding agent.',
+  Hooks: 'Manage commands that run when agent events occur.',
+  Plugins: 'Enable or disable extensions and manage their marketplaces.',
+  Skills: 'Manage reusable instructions that give your agent specific capabilities.',
+  Instructions: 'Give your agent persistent guidance for its work.',
+};
+
 export function AgentsSection() {
   const workspace = useContext(WorkspaceContext);
 
+  const [category, setCategory] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [active, setActive] = useState<string | null>(null);
@@ -219,6 +231,8 @@ export function AgentsSection() {
     return [...byGroup.entries()];
   }, [state]);
 
+  const selectedCategory = groups.some(([name]) => name === category) ? category : groups[0]?.[0];
+
   // List surfaces (mcp-list, skill-list, plugin-list, hook-list) commit a
   // row's edit the instant it happens — `onChange` on the widget.
   const commit = useCallback(
@@ -348,16 +362,16 @@ export function AgentsSection() {
   }, [active, rawEditor, worktree, host, load, closeRawEditor]);
 
   return (
-    <div className="flex max-w-3xl flex-col gap-4">
+    <div className="flex w-full min-w-0 max-w-3xl flex-col gap-5">
       <div>
-        <h2 className="text-base font-semibold text-zinc-100">Coding agents</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-zinc-100">Coding agents</h2>
         <p className="text-xs text-zinc-500">
           Manage MCP servers, skills, plugins and permissions for each coding agent.
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+      <div className="flex flex-wrap items-start gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs text-zinc-400">
           Host
           <select
             aria-label="Host"
@@ -374,7 +388,7 @@ export function AgentsSection() {
           </select>
         </label>
 
-        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+        <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs text-zinc-400">
           Scope
           <select
             aria-label="Scope"
@@ -393,13 +407,13 @@ export function AgentsSection() {
         </label>
 
         {scope === 'project' && (
-          <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs text-zinc-400">
             Worktree
             <select
               aria-label="Worktree"
               value={worktree ?? ''}
               onChange={(e) => setWorktree(e.target.value || undefined)}
-              className="min-w-[14rem] rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
+              className="w-full min-w-0 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
             >
               <option value="">Select a worktree…</option>
               {worktrees.map((w) => (
@@ -412,7 +426,7 @@ export function AgentsSection() {
         )}
       </div>
 
-      <div role="tablist" aria-label="Coding agent" className="flex gap-1 border-b border-zinc-800">
+      <div role="tablist" aria-label="Coding agent" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {agents.map((a) => (
           <button
             key={a.id}
@@ -422,13 +436,16 @@ export function AgentsSection() {
             disabled={!isSelectable(a)}
             title={disabledReason(a) ?? undefined}
             onClick={() => setActive(a.id)}
-            className={`px-3 py-2 text-sm transition ${
+            className={`min-w-0 rounded-lg border px-3 py-3 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 ${
               active === a.id
-                ? 'border-b-2 border-sky-500 text-zinc-100'
-                : 'text-zinc-500 hover:text-zinc-300'
-            } disabled:cursor-not-allowed disabled:opacity-40`}
+                ? 'border-sky-500/60 bg-sky-500/10 text-zinc-100'
+                : 'border-zinc-800 bg-zinc-900/30 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+            } disabled:cursor-not-allowed`}
           >
-            {a.label}
+            <span className="block truncate font-medium">{a.label}</span>
+            <span className={`mt-1 block text-[10px] ${isSelectable(a) ? 'text-sky-400' : 'text-zinc-500'}`}>
+              {isSelectable(a) ? 'Available' : a.installed ? 'Not supported yet' : 'Not installed'}
+            </span>
           </button>
         ))}
       </div>
@@ -457,7 +474,21 @@ export function AgentsSection() {
           )}
 
           {state.status === 'ready' && (
-            <div className="flex flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-4">
+              <nav aria-label="Agent settings categories" className="sticky top-0 z-10 flex flex-wrap gap-1.5 bg-zinc-950 py-2">
+                {groups.map(([name, items]) => {
+                  const pending = items.some((item) => Object.prototype.hasOwnProperty.call(dirty, item.id));
+                  return (
+                    <button key={name} type="button" aria-pressed={selectedCategory === name}
+                      onClick={() => setCategory(name)}
+                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 ${selectedCategory === name ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
+                      {name}
+                      {pending && <span aria-label="Unsaved changes" className="h-1.5 w-1.5 rounded-full bg-amber-400" />}
+                    </button>
+                  );
+                })}
+              </nav>
+              {groups.length === 0 && <p className="rounded-lg border border-dashed border-zinc-800 p-6 text-center text-sm text-zinc-400">No settings are available for this agent in this scope.</p>}
               {saveError && (
                 <div className="rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
                   {saveError}
@@ -477,31 +508,44 @@ export function AgentsSection() {
                 const groupDirtyCount = groupSurfaces.filter((s) =>
                   Object.prototype.hasOwnProperty.call(dirty, s.id),
                 ).length;
+                const immediateKinds = ['mcp-list', 'plugin-list', 'skill-list', 'hook-list'];
+                const hasImmediateChanges = groupSurfaces.some((s) => !s.readOnly && immediateKinds.includes(s.kind));
+                const hasStagedChanges = groupSurfaces.some((s) => !s.readOnly && !immediateKinds.includes(s.kind));
+                const saveHint = hasImmediateChanges
+                  ? hasStagedChanges ? 'List actions save immediately. Other edits require Save.' : 'Changes in this list save immediately.'
+                  : hasStagedChanges ? 'Edit the fields, then select Save to apply your changes.' : 'These settings are read-only.';
                 return (
-                  <section key={group} className="flex flex-col gap-2">
+                  <section key={group} aria-label={group} hidden={selectedCategory !== group}
+                    className={selectedCategory === group ? 'flex min-w-0 flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-900/20 p-4' : 'hidden'}>
                     <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <h3 className="text-sm font-medium text-zinc-200">{group}</h3>
-                        {sharedFile && <p className="font-mono text-[11px] text-zinc-500">{sharedFile}</p>}
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-zinc-100">{group}</h3>
+                        {GROUP_HELP[group] && <p className="mt-1 text-xs leading-relaxed text-zinc-400">{GROUP_HELP[group]}</p>}
+                        {sharedFile && (
+                          <details className="mt-2 text-[11px] text-zinc-500">
+                            <summary className="cursor-pointer hover:text-zinc-300">Configuration file</summary>
+                            <p className="mt-1 break-all font-mono">{sharedFile}</p>
+                          </details>
+                        )}
                       </div>
                       {groupDirtyCount > 0 && (
                         <button
                           type="button"
                           disabled={savingGroup === group}
                           onClick={() => saveGroup(groupSurfaces)}
-                          className="shrink-0 rounded border border-sky-800 px-2.5 py-1 text-xs text-sky-200 hover:bg-sky-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="shrink-0 rounded-lg bg-sky-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {savingGroup === group ? 'Saving…' : 'Save'}
                         </button>
                       )}
                     </div>
-                    <div className="flex flex-col gap-2">
+                    <div className="flex min-w-0 flex-col gap-5">
                       {groupSurfaces.map((surface) => {
                         const Widget = widgetFor(surface.kind);
                         return (
-                          <div key={surface.id} data-testid={`surface-${surface.id}`} className="flex flex-col gap-1.5">
+                          <div key={surface.id} data-testid={`surface-${surface.id}`} className="flex min-w-0 flex-col gap-2">
                             <span className="text-xs text-zinc-400">{surface.label}</span>
-                            {!sharedFile && <p className="font-mono text-[11px] text-zinc-500">{surface.file}</p>}
+                            {!sharedFile && <p className="break-all font-mono text-[11px] text-zinc-500">{surface.file}</p>}
                             {surface.error && (
                               <div className="flex flex-col gap-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
                                 <span>
@@ -524,7 +568,7 @@ export function AgentsSection() {
                             )}
                             {rawEditor?.surfaceId === surface.id && (
                               <div className="flex flex-col gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs">
-                                <p className="font-mono text-[11px] text-zinc-500">{rawEditor.file}</p>
+                                <p className="break-all font-mono text-[11px] text-zinc-500">{rawEditor.file}</p>
                                 <p className="text-amber-300">
                                   This file's raw contents may include credentials such as API keys — edit
                                   carefully.
@@ -609,6 +653,10 @@ export function AgentsSection() {
                           </div>
                         );
                       })}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 pt-3 text-[11px] text-zinc-500">
+                      <span>{groupDirtyCount > 0 ? `${groupDirtyCount} unsaved ${groupDirtyCount === 1 ? 'change' : 'changes'}` : saveHint}</span>
+                      {groupDirtyCount > 0 && <span className="text-amber-400">Save this section before leaving settings</span>}
                     </div>
                   </section>
                 );

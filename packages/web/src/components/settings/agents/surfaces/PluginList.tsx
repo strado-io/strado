@@ -27,15 +27,15 @@ export function PluginList({ surface, onChange }: SurfaceProps) {
       {entries.map(([id, enabled]) => (
         <div
           key={id}
-          className="flex items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs"
+          className="flex items-center justify-between gap-2 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs"
         >
-          <label className="flex items-center gap-2 text-zinc-200">
+          <label className="flex min-w-0 items-center gap-2 break-all text-zinc-200">
             <input
               type="checkbox"
               checked={Boolean(enabled)}
               disabled={readOnly}
               onChange={(e) => void onChange({ ...plugins, [id]: e.target.checked })}
-              className="h-3.5 w-3.5 rounded border-zinc-700 bg-zinc-900"
+              className="h-3.5 w-3.5 shrink-0 accent-sky-500 rounded border-zinc-700 bg-zinc-900"
             />
             {id}
           </label>

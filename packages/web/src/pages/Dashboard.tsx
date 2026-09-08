@@ -14,7 +14,7 @@ import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
-import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
+import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import { FeedbackDialog } from '../components/FeedbackDialog';
 import { CommandPalette } from '../components/CommandPalette';
 import { useColumnWidths } from '../hooks/useColumnWidths';
@@ -682,6 +682,7 @@ export function Dashboard(props: {
   return (
     <RendererOverlayContext.Provider value={overlays.report}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
+      <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
       {!sidebarCollapsed && (
         <Sidebar
           repos={state.repos}
@@ -896,6 +897,7 @@ export function Dashboard(props: {
         </div>
         )}
       </main>
+      </div>
 
       {showPalette && (
         <CommandPalette
@@ -926,7 +928,7 @@ export function Dashboard(props: {
       )}
 
       {settingsSection && (
-        <SettingsModal
+        <SettingsPage
           key={settingsSection}
           section={settingsSection}
           onClose={() => setSettingsSection(null)}

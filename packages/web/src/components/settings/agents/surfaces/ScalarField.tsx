@@ -39,14 +39,14 @@ export function ScalarField({ surface, onStage }: SurfaceProps) {
 
   if (surface.kind === 'toggle') {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <input
           type="checkbox"
           aria-label={surface.label}
           checked={Boolean(value)}
           disabled={readOnly}
           onChange={(e) => stage(e.target.checked)}
-          className="h-4 w-4 rounded border-zinc-700 bg-zinc-900"
+          className="h-4 w-4 accent-sky-500 rounded border-zinc-700 bg-zinc-900"
         />
         <InheritedBadge surface={surface} overridden={overridden} onOverride={activate} onReset={reset} />
       </div>
@@ -63,14 +63,14 @@ export function ScalarField({ surface, onStage }: SurfaceProps) {
   const options = surface.options ?? [];
   if (options.length === 0) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <input
           type="text"
           aria-label={surface.label}
           value={typeof value === 'string' ? value : ''}
           disabled={readOnly}
           onChange={(e) => stage(e.target.value)}
-          className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
+          className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
         />
         <InheritedBadge surface={surface} overridden={overridden} onOverride={activate} onReset={reset} />
       </div>
@@ -78,7 +78,7 @@ export function ScalarField({ surface, onStage }: SurfaceProps) {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <select
         aria-label={surface.label}
         value={typeof value === 'string' ? value : ''}

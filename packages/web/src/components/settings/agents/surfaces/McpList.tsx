@@ -33,14 +33,14 @@ export function McpList({ surface, onChange }: SurfaceProps) {
         return (
           <div
             key={name}
-            className="flex items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs"
+            className="flex items-center justify-between gap-2 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs"
           >
-            <div className="flex flex-col gap-0.5">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-zinc-200">{name}</span>
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="break-all font-medium text-zinc-200">{name}</span>
                 <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">{transport}</span>
               </div>
-              <span className="truncate font-mono text-zinc-500">
+              <span className="break-all font-mono text-[11px] leading-relaxed text-zinc-500">
                 {transport === 'remote' ? server.url : [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')}
               </span>
               {/* Never render env VALUES here — they may hold API keys. */}

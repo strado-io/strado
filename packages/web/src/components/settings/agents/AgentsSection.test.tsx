@@ -46,6 +46,28 @@ beforeEach(() => {
 });
 
 describe('AgentsSection', () => {
+  it('keeps staged edits when switching categories and marks the pending category', async () => {
+    vi.mocked(api.agentConfig.read).mockResolvedValue({
+      agent: 'claude', scope: 'global', surfaces: [
+        ...surfaces,
+        { ...surfaces[0], id: 'instructions', label: 'Instructions', group: 'Instructions', kind: 'markdown', value: '' },
+      ] as never,
+    });
+    render(<AgentsSection />);
+    const theme = await screen.findByLabelText('Theme');
+    await userEvent.clear(theme);
+    await userEvent.type(theme, 'light');
+    const categories = within(screen.getByRole('navigation', { name: 'Agent settings categories' }));
+    await userEvent.click(categories.getByRole('button', { name: 'Instructions' }));
+    expect(screen.queryByRole('textbox', { name: 'Theme' })).not.toBeInTheDocument();
+    expect(categories.getByRole('button', { name: /Model & behavior/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(categories.getByLabelText('Unsaved changes')).toBeInTheDocument();
+    await userEvent.click(categories.getByRole('button', { name: /Model & behavior/ }));
+    expect(screen.getByRole('textbox', { name: 'Theme' })).toHaveValue('light');
+    expect(screen.getByText('1 unsaved change')).toBeVisible();
+    expect(api.agentConfig.patch).not.toHaveBeenCalled();
+  });
+
   it('renders a tab per agent and selects the first installed one', async () => {
     render(<AgentsSection />);
     expect(await screen.findByRole('tab', { name: /Claude/ })).toHaveAttribute('aria-selected', 'true');

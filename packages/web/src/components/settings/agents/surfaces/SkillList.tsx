@@ -29,10 +29,10 @@ export function SkillList({ surface, onRemoveSkill }: SurfaceProps) {
       {entries.map((entry) => (
         <div
           key={entry.name}
-          className="flex items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs"
+          className="flex items-center justify-between gap-2 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs"
         >
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-zinc-200">{entry.name}</span>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="break-all font-medium text-zinc-200">{entry.name}</span>
             {!entry.hasSkillMd && (
               <span className="rounded bg-amber-950/40 px-1.5 py-0.5 text-[10px] text-amber-300">no SKILL.md</span>
             )}

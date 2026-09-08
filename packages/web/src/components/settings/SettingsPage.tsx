@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AccountSection } from './AccountSection';
 import { AgentsSection } from './agents/AgentsSection';
 import { AppearanceSection } from './AppearanceSection';
@@ -59,6 +59,9 @@ function SettingsNavIcon({ id }: { id: SettingsSection | 'feedback' }) {
         <path d="M3 9h18M9 9v12" />
       </svg>
     );
+  }
+  if (id === 'agents') {
+    return <svg {...props}><rect x="4" y="7" width="16" height="13" rx="3" /><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" /></svg>;
   }
   if (id === 'runners') {
     return (
@@ -135,7 +138,7 @@ function ProUpsell({ name }: { name: string }) {
   );
 }
 
-export function SettingsModal({
+export function SettingsPage({
   section = 'profile',
   onClose,
   onJiraConnected,
@@ -146,6 +149,9 @@ export function SettingsModal({
   onJiraConnected?: () => void;
   onOpenFeedback?: () => void;
 }) {
+  const [search, setSearch] = useState('');
+  const backButton = useRef<HTMLButtonElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const initialIntegration = isIntegration(section) ? section : 'github';
   const [active, setActive] = useState<SettingsSection>(isIntegration(section) ? 'integrations' : section);
   const { features } = useEntitlements();
@@ -153,6 +159,28 @@ export function SettingsModal({
     const f = SECTION_FEATURE[id];
     return f != null && !features[f];
   };
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    backButton.current?.focus();
+    return () => previousFocus?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (content.current) content.current.scrollTop = 0;
+  }, [active]);
+
+  const query = search.trim().toLowerCase();
+  const keywords: Partial<Record<SettingsSection, string>> = {
+    agents: 'mcp skills plugins permissions hooks models coding agents',
+    integrations: 'github gitlab jira linear connections',
+    appearance: 'theme font colors',
+    profile: 'account name license',
+  };
+  const visibleGroups = GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => `${group.title} ${item.label} ${keywords[item.id] ?? ''}`.toLowerCase().includes(query)),
+  })).filter((group) => group.items.length > 0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -163,14 +191,23 @@ export function SettingsModal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="flex h-[640px] max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <nav aria-label="Settings" className="w-52 shrink-0 overflow-y-auto border-r border-zinc-800 bg-zinc-950/80 p-3">
-          <div className="mb-4 px-2 pt-1 text-sm font-semibold text-zinc-200">Settings</div>
-          {GROUPS.map((group) => (
+    <div className="fixed inset-0 z-50 flex bg-zinc-950 text-zinc-200" data-testid="settings-page">
+        <nav aria-label="Settings" className="flex w-44 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/50 sm:w-56 lg:w-64">
+          <div className="shrink-0 p-3 pb-4 sm:p-5">
+            <button ref={backButton} type="button" onClick={onClose}
+              className="mb-5 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14" /></svg>
+              Back to app
+            </button>
+            <label className="flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/50 px-2.5 py-2 focus-within:border-zinc-500">
+              <svg className="shrink-0 text-zinc-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+              <input aria-label="Search settings" placeholder="Search settings…" value={search} onChange={(event) => setSearch(event.target.value)}
+                className="w-full min-w-0 bg-transparent text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none" />
+            </label>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
+          {visibleGroups.length === 0 && <p className="px-2 py-4 text-xs text-zinc-500" role="status">No matching settings.</p>}
+          {visibleGroups.map((group) => (
             <div key={group.title} className="mb-4">
               <div className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-600">
                 {group.title}
@@ -178,8 +215,9 @@ export function SettingsModal({
               {group.items.map((item) => (
                 <button
                   key={item.id}
+                  aria-current={active === item.id ? 'page' : undefined}
                   onClick={() => setActive(item.id)}
-                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition ${
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm transition ${
                     active === item.id
                       ? 'bg-zinc-800 text-zinc-100'
                       : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
@@ -209,16 +247,10 @@ export function SettingsModal({
               </span>
             </button>
           )}
+          </div>
         </nav>
-        <div className="relative flex-1 overflow-y-auto px-7 py-6">
-          <button
-            aria-label="Close settings"
-            onClick={onClose}
-            className="absolute right-4 top-4 rounded p-1 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
-          >
-            ✕
-          </button>
-          <div data-testid="settings-pane" data-section={active}>
+        <main ref={content} aria-label="Settings content" className="min-w-0 flex-1 overflow-y-auto px-5 py-8 sm:px-10 sm:py-12 lg:px-16">
+          <div className="mx-auto w-full max-w-3xl" data-testid="settings-pane" data-section={active}>
             {active === 'profile' && (
               <div className="max-w-2xl">
                 <div className="mb-6 pr-10">
@@ -244,8 +276,7 @@ export function SettingsModal({
             )}
             {active === 'privacy' && <PrivacySection />}
           </div>
-        </div>
-      </div>
+        </main>
     </div>
   );
 }
