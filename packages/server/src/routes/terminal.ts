@@ -2,38 +2,14 @@ import { FastifyInstance } from 'fastify';
 import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { installClaudeHooks, installOpencodePlugin, piExtensionPath } from '../services/claudeHooks.js';
-import { agentLaunchCommand, agentSpawnSpec, codexConfigFlags, withAgentSpawnLock } from '../services/agentSpawn.js';
+import { agentSpawnSpec, withAgentSpawnLock } from '../services/agentSpawn.js';
 import { installClaudeMcp } from '../services/claudeMcp.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
-import { defaultShell } from '../services/platform.js';
-import { handoffPrompt, type HandoffRecord } from '../services/handoffStore.js';
 import { peekLines } from '../services/terminalText.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
   | { type: 'resize'; cols: number; rows: number };
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-export function agentCommand(
-  mode: 'claude' | 'codex' | 'opencode' | 'pi',
-  sessionId: string,
-  codexFlags: string,
-  handoff?: HandoffRecord,
-): string {
-  if (handoff) {
-    const prompt = shellQuote(handoffPrompt(handoff));
-    if (mode === 'claude') return `claude -- ${prompt}`;
-    if (mode === 'codex') return `codex ${codexFlags} -- ${prompt}`;
-    if (mode === 'opencode') return `opencode --prompt ${prompt}`;
-    // `--` ends option parsing, so the prompt reaches pi as a first message.
-    // No `-c`: a handoff target is always a fresh conversation.
-    return `pi -e "${piExtensionPath()}" -- ${prompt}`;
-  }
-  return agentLaunchCommand(mode, sessionId, codexFlags);
-}
 
 export async function registerTerminalRoutes(app: FastifyInstance) {
   // Hover peek: last lines of a session buffer as plain text.
@@ -72,7 +48,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       }
     },
   );
-  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; handoff?: string; cols?: string; rows?: string } }>(
+  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; cols?: string; rows?: string } }>(
     '/ws/terminal',
     { websocket: true },
     async (connection, req) => {
@@ -127,21 +103,6 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         return fail('invalid path');
       }
 
-      let handoff: HandoffRecord | undefined;
-      if (req.query.handoff) {
-        const found = await stores.handoffs.get(req.query.handoff);
-        if (!found || found.workspaceId !== wsId || found.worktreePath !== target) {
-          return fail('handoff not found');
-        }
-        if (found.target.mode !== mode || found.target.sessionId !== sessionId) {
-          return fail('handoff target does not match this session');
-        }
-        // An accepted handoff on a reconnect is an ordinary reattach: its
-        // initial prompt was already supplied when this pty was spawned.
-        if (found.status === 'ready') handoff = found;
-        else if (found.status !== 'accepted') return fail(`handoff is ${found.status}`);
-      }
-
       // Setup is complete — remove the buffer handler and wire up the real one.
       socket.off('message', bufferHandler);
 
@@ -158,20 +119,13 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         : mode === 'opencode' ? opencodeKey(target, sessionId)
         : mode === 'pi' ? piKey(target, sessionId)
         : claudeKey(target, sessionId);
-      // Codex has no hooks API and Strado never writes its config.toml: the
-      // notify hook and the strado MCP server both ride on -c overrides.
-      const codexFlags = codexConfigFlags(target);
       // Only the primary session resumes the directory's last conversation —
       // a second tab resuming the SAME conversation as the first would have
       // both sessions fighting over one thread, so extras start fresh. That
       // rule, the login-shell bootstrap and the per-mode command all live in
       // services/agentSpawn.ts now, so a fork opening a tab with no client
-      // attached spawns exactly what this route does. Only the handoff prompt
-      // stays here: it belongs to the feature another branch removes.
-      const spec =
-        handoff && mode !== 'shell'
-          ? { file: defaultShell(), args: ['-l', '-c', agentCommand(mode, sessionId, codexFlags, handoff)] }
-          : agentSpawnSpec(mode, sessionId, target);
+      // attached spawns exactly what this route does.
+      const spec = agentSpawnSpec(mode, sessionId, target);
 
       if (mode === 'claude' || mode === 'shell') {
         try {
@@ -203,9 +157,6 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
 
       try {
         await withAgentSpawnLock(app.deps.terminal, target, mode, async () => {
-          if (handoff && app.deps.terminal.status(sessionKey).status === 'running') {
-            throw new Error('handoff target session is already running');
-          }
           // A registry failure must not stop an ordinary terminal opening.
           try {
             if (wsId) await app.deps.agents.register({ key: sessionKey, cwd: target, scopeId: wsId });
@@ -213,7 +164,6 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
             app.log.warn({ err }, 'agent register failed');
           }
           await app.deps.terminal.ensure(sessionKey, target, spec, size);
-          if (handoff) await stores.handoffs.accept(handoff.id);
         });
       } catch (err) {
         return fail(`could not start session: ${(err as Error).message}`);

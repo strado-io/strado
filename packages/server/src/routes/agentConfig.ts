@@ -79,8 +79,7 @@ export async function registerAgentConfigRoutes(
   { runnerFetch }: AgentConfigRouteOpts,
 ): Promise<void> {
   // The user's real home — never STRADO_HOME (~/.strado, this app's own state
-  // dir). `agentHomeDir` is the same test seam handoffs.ts already reads
-  // provider conversation stores from (see app.ts's Deps), overridable via
+  // dir). `agentHomeDir` is shared with usage tracking and is overridable via
   // buildDeps({ agentHomeDir }) in tests.
   const home = () => app.deps.agentHomeDir;
 

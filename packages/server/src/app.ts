@@ -530,8 +530,6 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerClaudeSessionsRoutes(scoped);
     const { registerUsageRoutes } = await import('./routes/usage.js');
     await registerUsageRoutes(scoped);
-    const { registerHandoffRoutes } = await import('./routes/handoffs.js');
-    await registerHandoffRoutes(scoped);
     const { registerAgentScopedRoutes } = await import('./routes/agents.js');
     await registerAgentScopedRoutes(scoped);
     const { registerIntercomScopedRoutes } = await import('./routes/intercom.js');

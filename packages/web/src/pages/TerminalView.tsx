@@ -45,7 +45,6 @@ import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
-import { HandoffDialog } from '../components/HandoffDialog';
 import { ForkDialog } from '../components/ForkDialog';
 import { EscalationBanner } from '../components/EscalationBanner';
 import { useIntercom } from '../contexts/IntercomContext';
@@ -1021,11 +1020,6 @@ export function TerminalView({
   // finds the sessions still running on the runner.
   const [remoteShells, setRemoteShells] = useState<Record<string, RemoteShell[]>>(() => readRemoteShells());
   const [renaming, setRenaming] = useState<{ path: string; mode: NamedSessionMode; id: string; value: string } | null>(null);
-  const [handoffDialog, setHandoffDialog] = useState<{
-    source: { path: string; mode: AgentMode; sessionId: string };
-    busy: boolean;
-    error: string | null;
-  } | null>(null);
   // A fork asks the source agent for a summary server-side, so the dialog only
   // needs the source peer's identity — never a target session of its own.
   const [forkDialog, setForkDialog] = useState<{
@@ -1033,10 +1027,6 @@ export function TerminalView({
     busy: boolean;
     error: string | null;
   } | null>(null);
-  // A ready handoff is attached to exactly one freshly allocated target tab.
-  // The server consumes it atomically on the first socket connection, so a
-  // later reconnect cannot inject the kickoff prompt twice.
-  const [pendingHandoffs, setPendingHandoffs] = useState<Record<string, string>>({});
   // "+" on the session-tab row: pick which session type to open.
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   // The agent-usage popover lives in the toolbar; like the menus it must
@@ -2333,71 +2323,8 @@ export function TerminalView({
     });
   };
 
-  const submitHandoff = async (targetMode: AgentMode, notes: string) => {
-    const dialog = handoffDialog;
-    const g = activeGroup;
-    if (!dialog || !g) return;
-    setHandoffDialog({ ...dialog, busy: true, error: null });
-
-    const targetOpen =
-      targetMode === 'claude' ? g.claudeOpen
-      : targetMode === 'codex' ? g.codexOpen
-      : targetMode === 'opencode' ? g.opencodeOpen
-      : g.piOpen;
-    const serverIds =
-      targetMode === 'claude' ? g.serverClaudeIds
-      : targetMode === 'codex' ? g.serverCodexIds
-      : targetMode === 'opencode' ? g.serverOpencodeIds
-      : g.serverPiIds;
-    const localIds =
-      targetMode === 'claude' ? g.localClaudeIds
-      : targetMode === 'codex' ? g.localCodexIds
-      : targetMode === 'opencode' ? g.localOpencodeIds
-      : g.localPiIds;
-    const used = [...(targetOpen ? ['1'] : []), ...serverIds, ...localIds];
-    let n = 1;
-    while (used.includes(String(n))) n++;
-    const targetId = String(n);
-
-    try {
-      const { handoff } = await api.worktrees.createHandoff(localWsId, dialog.source.path, {
-        source: { mode: dialog.source.mode, sessionId: dialog.source.sessionId },
-        target: { mode: targetMode, sessionId: targetId },
-        notes,
-      });
-      closedAgentsRef.current![targetMode].delete(dialog.source.path);
-      rememberClosedAgent(targetMode, dialog.source.path, false);
-      setPendingHandoffs((prev) => ({ ...prev, [`${targetMode}:${targetId}`]: handoff.id }));
-      setGroups((prev) => prev.map((group) => {
-        if (group.path !== dialog.source.path) return group;
-        if (targetMode === 'claude') {
-          return targetId === '1'
-            ? { ...group, claudeOpen: true }
-            : { ...group, localClaudeIds: sortIds([...group.localClaudeIds, targetId]) };
-        }
-        if (targetMode === 'codex') {
-          return targetId === '1'
-            ? { ...group, codexOpen: true }
-            : { ...group, localCodexIds: sortIds([...group.localCodexIds, targetId]) };
-        }
-        if (targetMode === 'opencode') {
-          return targetId === '1'
-            ? { ...group, opencodeOpen: true }
-            : { ...group, localOpencodeIds: sortIds([...group.localOpencodeIds, targetId]) };
-        }
-        return targetId === '1'
-          ? { ...group, piOpen: true }
-          : { ...group, localPiIds: sortIds([...group.localPiIds, targetId]) };
-      }));
-      setActive({ path: dialog.source.path, mode: targetMode, id: targetId });
-      setHandoffDialog(null);
-    } catch (err) {
-      setHandoffDialog((current) => current ? { ...current, busy: false, error: (err as Error).message } : current);
-    }
-  };
-
-  // Unlike a handoff, the hub allocates nothing here: the server summarises,
-  // delivers and (for a new tab) opens the target. All we do is report the id
+  // The hub allocates nothing here: the server summarises, delivers and (for
+  // a new tab) opens the target. All we do is report the id
   // so the board can open the drawer on the row that just appeared.
   const submitFork = async (input: ForkCreateInput) => {
     const dialog = forkDialog;
@@ -2802,20 +2729,6 @@ export function TerminalView({
             <PlusIcon />
           </button>
           </div>
-          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode' || active.mode === 'pi') && (
-            <button
-              type="button"
-              onClick={() => setHandoffDialog({
-                source: { path: active.path, mode: active.mode as AgentMode, sessionId: active.id },
-                busy: false,
-                error: null,
-              })}
-              title="Continue this task with another agent"
-              className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100"
-            >
-              Handoff
-            </button>
-          )}
           {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode' || active.mode === 'pi') && (() => {
             // Only a tab that has registered with the intercom has an agent id
             // to fork FROM, so the button waits for the peer to show up.
@@ -3340,7 +3253,6 @@ export function TerminalView({
                     tab={tab as PtyTab}
                     focused={focused}
                     visible={placed}
-                    handoffId={pendingHandoffs[paneKey]}
                     onFocus={() => { if (!focused) setActive(tab); }}
                   />
                 </div>
@@ -3362,7 +3274,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || handoffDialog || forkDialog);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || forkDialog);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3644,19 +3556,6 @@ export function TerminalView({
               (active.path === worktree.path ? worktree : ({ path: active.path } as Worktree))
             }
             onClose={() => setShowDiff(false)}
-          />
-        </div>
-      )}
-      {handoffDialog && (
-        <div onClick={(event) => event.stopPropagation()}>
-          <HandoffDialog
-            source={{ mode: handoffDialog.source.mode, sessionId: handoffDialog.source.sessionId }}
-            opencodeInstalled={opencodeInstalled}
-            piInstalled={piInstalled}
-            busy={handoffDialog.busy}
-            error={handoffDialog.error}
-            onSubmit={(target, notes) => void submitHandoff(target, notes)}
-            onCancel={() => { if (!handoffDialog.busy) setHandoffDialog(null); }}
           />
         </div>
       )}
