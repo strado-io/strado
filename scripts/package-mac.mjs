@@ -83,6 +83,11 @@ run('npx', [
   'esbuild', 'packages/server/dist/index.js',
   '--bundle', '--minify', '--platform=node', '--format=esm',
   '--external:node-pty',
+  // jsonc-parser's CJS entry is a UMD wrapper that calls require() through a
+  // factory parameter, which esbuild cannot follow — the './impl/*' requires
+  // survived into 0.1.53's bundle and the server died on MODULE_NOT_FOUND
+  // at launch. Point the bundler at the package's ESM build instead.
+  '--alias:jsonc-parser=jsonc-parser/lib/esm/main.js',
   // CJS externals under an ESM bundle need a require shim
   `--banner:js=import{createRequire}from'node:module';const require=createRequire(import.meta.url);`,
   `--outfile=${path.join(PACK, 'server', 'server.js')}`,
