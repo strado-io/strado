@@ -94,6 +94,74 @@ export type JiraTransitionDto = {
   toCategory: JiraIssueDto['category'];
 };
 
+export type EscalationDto = {
+  id: string;
+  scopeId: string;
+  from: { agentId: string; executionId: string };
+  to: string;
+  title: string;
+  body: string;
+  context: Array<{ kind: string; value: string; label?: string }>;
+  taskId: string | null;
+  status: 'open' | 'resolved' | 'dismissed';
+  resolution: string | null;
+  resolvedBy: string | null;
+  createdAt: number;
+  resolvedAt: number | null;
+  expiresAt: number | null;
+};
+export type IntercomTaskDto = {
+  id: string;
+  scopeId: string;
+  title: string;
+  body: string;
+  ticketKey: string | null;
+  worktreePath: string | null;
+  dependsOn: string[];
+  status: 'open' | 'claimed' | 'done' | 'cancelled';
+  createdBy: { agentId: string };
+  claimedBy: { agentId: string } | null;
+  createdAt: number;
+  updatedAt: number;
+  claimedAt: number | null;
+  doneAt: number | null;
+};
+export type PeerDto = {
+  agentId: string;
+  alias: string | null;
+  mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
+  worktreePath: string;
+  sessionId: string;
+  lifecycle: string;
+  live: boolean;
+};
+
+export type ForkStatusDto = 'summarising' | 'queued' | 'delivered' | 'accepted' | 'failed' | 'cancelled';
+export type ForkTargetDto =
+  | { kind: 'peer'; agentId: string }
+  | { kind: 'new'; mode: AgentMode; worktreePath: string; agentId: string | null };
+export type ForkDto = {
+  id: string;
+  scopeId: string;
+  from: { agentId: string; executionId: string };
+  source: { agentId: string; worktreePath: string; mode: string; sessionId: string };
+  target: ForkTargetDto;
+  notes: string;
+  taskId: string | null;
+  summarySource: 'agent' | 'diary' | 'none' | null;
+  summary: string | null;
+  status: ForkStatusDto;
+  summaryMessageId: string | null;
+  messageId: string | null;
+  packageBytes: number | null;
+  error: string | null;
+  createdAt: number;
+  summaryDeadline: number | null;
+  deliveredAt: number | null;
+  acceptedAt: number | null;
+};
+export type ForkCreateInput = { source: string; to?: string; newTab?: { mode: AgentMode }; notes: string; taskId?: string };
+
 export type TicketProviderId = 'jira' | 'linear';
 export type TicketIssueDto = JiraIssueDto & { provider: TicketProviderId; url: string };
 export type TicketSprintDto = { id: string; name: string; state: 'active' | 'future'; startDate: string | null; endDate: string | null };
@@ -115,22 +183,53 @@ export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
 
-export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
-export type Handoff = {
+// Local copy of the server's agentConfig wire shape (packages/server/src/services/agentConfig/types.ts) —
+// this package must never import from packages/server.
+export type SurfaceKind =
+  | 'mcp-list' | 'skill-list' | 'plugin-list' | 'hook-list'
+  | 'permissions' | 'kv' | 'enum' | 'toggle' | 'markdown' | 'raw';
+
+export type SurfaceValue = {
   id: string;
-  workspaceId: string;
-  worktreePath: string;
-  taskLabel: string;
-  source: { mode: AgentMode; sessionId: string };
-  target: { mode: AgentMode; sessionId: string };
-  status: 'ready' | 'accepted' | 'cancelled';
-  notes: string;
-  conversation: Array<{ role: 'user' | 'assistant'; content: string }>;
-  contextSource: 'claude-history' | 'codex-history' | 'opencode-history' | 'none';
-  repository: { branch: string; head: string; status: string[]; diffStat: string };
-  createdAt: string;
-  acceptedAt: string | null;
+  label: string;
+  group: string;
+  kind: SurfaceKind;
+  readOnly: boolean;
+  options?: string[];
+  value: unknown;
+  inheritedValue?: unknown;
+  // Set when THIS scope's own file failed to parse.
+  error?: string;
+  // Set when the *global* file failed while computing inheritance (project
+  // scope only) — distinct from `error`. A project surface can be
+  // legitimately unset with no error of its own while the user's global
+  // config is corrupt; the UI must be able to say so separately.
+  inheritedError?: string;
+  source: 'set' | 'inherited' | 'unset';
+  file: string;
+  exists: boolean;
 };
+
+// `installed` (the agent's CLI exists) and `supported` (Strado has a
+// descriptor for it, so the panel can actually manage its config) are
+// independent — see routes/agentConfig.ts on the server, whose shape this
+// mirrors. An agent can be installed but unsupported (Codex, today).
+export type AgentSummary = { id: string; label: string; installed: boolean; supported: boolean; files: string[] };
+export type AgentScope = 'global' | 'project';
+export type AgentReadOpts = { scope: AgentScope; worktree?: string; host?: string };
+
+// Built manually (not via URLSearchParams) so a worktree path with a space
+// encodes to %20 — the same as the encodeURIComponent path segments and
+// query params used elsewhere in this file — rather than URLSearchParams'
+// '+', which would round-trip differently from its sibling functions below.
+function agentQuery(opts: AgentReadOpts): string {
+  const parts = [`scope=${encodeURIComponent(opts.scope)}`];
+  if (opts.worktree) parts.push(`worktree=${encodeURIComponent(opts.worktree)}`);
+  if (opts.host && opts.host !== 'local') parts.push(`host=${encodeURIComponent(opts.host)}`);
+  return parts.join('&');
+}
+
+export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 
 export const api = {
   terminal: {
@@ -188,6 +287,36 @@ export const api = {
         body: JSON.stringify(input),
       }),
     testConfig: () => request<{ ok: boolean; accountName: string }>('/api/jira/config/test', { method: 'POST' }),
+  },
+  intercom: {
+    peers: (wsId: string) => request<{ peers: PeerDto[] }>(`${wsBase(wsId)}/intercom/peers`).then((b) => b.peers),
+    escalations: {
+      list: (wsId: string, status?: EscalationDto['status']) =>
+        request<{ escalations: EscalationDto[] }>(`${wsBase(wsId)}/intercom/escalations${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.escalations),
+      resolve: (wsId: string, id: string, resolution: string) =>
+        request<{ escalation: EscalationDto }>(`${wsBase(wsId)}/intercom/escalations/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) }).then((b) => b.escalation),
+      dismiss: (wsId: string, id: string) =>
+        request<{ escalation: EscalationDto }>(`${wsBase(wsId)}/intercom/escalations/${encodeURIComponent(id)}/dismiss`, { method: 'POST', body: '{}' }).then((b) => b.escalation),
+    },
+    tasks: {
+      list: (wsId: string, status?: IntercomTaskDto['status']) =>
+        request<{ tasks: IntercomTaskDto[] }>(`${wsBase(wsId)}/intercom/tasks${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.tasks),
+      create: (wsId: string, input: { title: string; body?: string; ticketKey?: string; worktreePath?: string }) =>
+        request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks`, { method: 'POST', body: JSON.stringify(input) }).then((b) => b.task),
+      assign: (wsId: string, id: string, agent: string) =>
+        request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/assign`, { method: 'POST', body: JSON.stringify({ agent }) }).then((b) => b.task),
+      release: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/release`, { method: 'POST', body: '{}' }).then((b) => b.task),
+      done: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' }).then((b) => b.task),
+      cancel: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.task),
+    },
+    forks: {
+      list: (wsId: string, status?: ForkStatusDto) =>
+        request<{ forks: ForkDto[] }>(`${wsBase(wsId)}/intercom/forks${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.forks),
+      create: (wsId: string, input: ForkCreateInput) =>
+        request<{ fork: ForkDto }>(`${wsBase(wsId)}/intercom/forks`, { method: 'POST', body: JSON.stringify(input) }).then((b) => b.fork),
+      cancel: (wsId: string, id: string) =>
+        request<{ fork: ForkDto }>(`${wsBase(wsId)}/intercom/forks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.fork),
+    },
   },
   tickets: {
     providers: () => request<{ providers: Array<{ provider: TicketProviderId; configured: boolean; label: string }> }>('/api/tickets/providers').then((b) => b.providers),
@@ -370,28 +499,6 @@ export const api = {
       request<{ branch: string; dirty: boolean; ahead: number; behind: number }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/refresh-git`,
         { method: 'POST' },
-      ),
-    createHandoff: (
-      wsId: string,
-      p: string,
-      payload: {
-        source: { mode: AgentMode; sessionId: string };
-        target: { mode: AgentMode; sessionId: string };
-        notes: string;
-      },
-    ) =>
-      request<{ handoff: Handoff; prompt: string }>(
-        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs`,
-        { method: 'POST', body: JSON.stringify(payload) },
-      ),
-    handoffs: (wsId: string, p: string) =>
-      request<{ handoffs: Handoff[] }>(
-        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs`,
-      ).then((body) => body.handoffs),
-    cancelHandoff: (wsId: string, p: string, id: string) =>
-      request<void>(
-        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/handoffs/${encodeURIComponent(id)}`,
-        { method: 'DELETE' },
       ),
     upload: (wsId: string, p: string, file: { name: string; dataBase64: string }) =>
       request<{ path: string }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/upload`, {
@@ -616,6 +723,47 @@ export const api = {
     get: () => request<Profile>('/api/profile'),
     save: (patch: Partial<Profile>) =>
       request<Profile>('/api/profile', { method: 'PUT', body: JSON.stringify(patch) }),
+  },
+  // Settings → Coding agents. Unlike `runners` below — every one of whose
+  // calls takes an explicit `runnerId` path segment and has no notion of
+  // "this machine" at all — `host` here is optional: 'local' and undefined
+  // both mean THIS machine and must never be sent as a query param; only a
+  // real runner id is.
+  agentConfig: {
+    agents: (host?: string) =>
+      request<{ agents: AgentSummary[] }>(
+        `/api/agent-config/agents${host && host !== 'local' ? `?host=${encodeURIComponent(host)}` : ''}`,
+      ),
+    read: (agent: string, opts: AgentReadOpts) =>
+      request<{ agent: string; scope: AgentScope; surfaces: SurfaceValue[] }>(
+        `/api/agent-config/${encodeURIComponent(agent)}?${agentQuery(opts)}`,
+      ),
+    patch: (agent: string, body: { surfaceId: string; scope: AgentScope; worktree?: string; value: unknown }, host?: string) =>
+      request<{ agent: string; scope: AgentScope; surfaces: SurfaceValue[] }>(
+        `/api/agent-config/${encodeURIComponent(agent)}${host && host !== 'local' ? `?host=${encodeURIComponent(host)}` : ''}`,
+        { method: 'PATCH', body: JSON.stringify(body) },
+      ),
+    raw: (agent: string, file: string, opts: { worktree?: string; host?: string } = {}) =>
+      request<{ file: string; text: string }>(
+        `/api/agent-config/${encodeURIComponent(agent)}/raw?file=${encodeURIComponent(file)}` +
+          (opts.worktree ? `&worktree=${encodeURIComponent(opts.worktree)}` : '') +
+          (opts.host && opts.host !== 'local' ? `&host=${encodeURIComponent(opts.host)}` : ''),
+      ),
+    saveRaw: (agent: string, file: string, text: string, opts: { worktree?: string; host?: string } = {}) =>
+      request<{ file: string; saved: boolean }>(
+        `/api/agent-config/${encodeURIComponent(agent)}/raw` +
+          (opts.host && opts.host !== 'local' ? `?host=${encodeURIComponent(opts.host)}` : ''),
+        { method: 'PUT', body: JSON.stringify({ file, text }) },
+      ),
+    // Removes one skill directory at the given scope (moved into
+    // `.backups` server-side, never destroyed — see dirDriver.remove).
+    // Directory surfaces have no JSON key to PATCH, so this is a dedicated
+    // route rather than `patch` with `surfaceId: 'skills'`.
+    removeSkill: (agent: string, name: string, opts: AgentReadOpts) =>
+      request<{ agent: string; scope: AgentScope; surfaces: SurfaceValue[] }>(
+        `/api/agent-config/${encodeURIComponent(agent)}/skills/${encodeURIComponent(name)}?${agentQuery(opts)}`,
+        { method: 'DELETE' },
+      ),
   },
   // The model API key runs on runners. The GET only ever discloses presence and
   // the last four — the server never returns the key itself.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeKey, codexKey, opencodeKey, parseSessionKey, piKey, sessionEnv, sessionsPayload, shellKey } from '../../src/services/terminalManager';
+import { claudeKey, codexKey, opencodeKey, parseSessionKey, piKey, sessionKeyFor, sessionEnv, sessionsPayload, shellKey } from '../../src/services/terminalManager';
 
 describe('opencodeKey', () => {
   it('uses the legacy suffix-only key for opencode id 1', () => {
@@ -156,6 +156,24 @@ describe('parseSessionKey', () => {
   it('round-trips through claudeKey', () => {
     for (const id of ['1', '2', '7']) {
       expect(parseSessionKey(claudeKey('/x', id))).toEqual({ path: '/x', mode: 'claude', id });
+    }
+  });
+});
+
+describe('sessionKeyFor', () => {
+  it('maps each mode to its key helper, honouring the id-1 special cases', () => {
+    expect(sessionKeyFor('claude', '/wt', '1')).toBe(claudeKey('/wt', '1'));
+    expect(sessionKeyFor('claude', '/wt', '2')).toBe(claudeKey('/wt', '2'));
+    expect(sessionKeyFor('codex', '/wt', '1')).toBe(codexKey('/wt', '1'));
+    expect(sessionKeyFor('opencode', '/wt', '3')).toBe(opencodeKey('/wt', '3'));
+    expect(sessionKeyFor('pi', '/wt', '1')).toBe(piKey('/wt', '1'));
+    expect(sessionKeyFor('shell', '/wt', '2')).toBe(shellKey('/wt', '2'));
+  });
+
+  it('files a shell-hosted agent (id "shell:N") under the Shell tab key for every mode', () => {
+    for (const mode of ['claude', 'codex', 'opencode', 'pi', 'shell'] as const) {
+      expect(sessionKeyFor(mode, '/wt', 'shell:1')).toBe(shellKey('/wt', '1'));
+      expect(sessionKeyFor(mode, '/wt', 'shell:4')).toBe(shellKey('/wt', '4'));
     }
   });
 });

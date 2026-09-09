@@ -1,6 +1,23 @@
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// TerminalView reads intercom state for the focused tab's escalation banner;
+// these tests mount it without the provider, so stub a quiet, "loaded" context.
+// `intercomStub` is mutable so the banner tests below can seed one escalation.
+const intercomStub = vi.hoisted(() => ({
+  escalations: [] as unknown[],
+  peers: [] as unknown[],
+}));
+const createFork = vi.hoisted(() => vi.fn());
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({
+    escalations: intercomStub.escalations, tasks: [], forks: [], peers: intercomStub.peers, loaded: true, error: null,
+    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
+    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+    createFork: (...a: unknown[]) => createFork(...a), cancelFork: vi.fn(),
+  }),
+}));
+
 // --- Mock xterm so jsdom (no canvas) can run ---
 const onDataHandlers: Array<(d: string) => void> = [];
 const termWrite = vi.fn();
@@ -62,10 +79,6 @@ const setEnvProfile = vi.fn().mockResolvedValue({});
 const procLogs = vi.fn().mockResolvedValue({ lines: ['boot line'] });
 const wtPatch = vi.fn().mockResolvedValue({});
 const envCheck = vi.fn().mockResolvedValue([]);
-const createHandoff = vi.fn().mockResolvedValue({
-  handoff: { id: 'handoff-1', target: { mode: 'codex', sessionId: '1' } },
-  prompt: 'continue',
-});
 const kbFiles = vi.fn().mockResolvedValue({ files: [], truncated: false });
 const kbFile = vi.fn().mockResolvedValue({ content: '', size: 0, mtimeMs: 0 });
 const runnersList = vi.fn().mockResolvedValue({ runners: [] });
@@ -95,7 +108,6 @@ vi.mock('../api', () => ({
       upload: vi.fn(),
       list: (...a: unknown[]) => worktreesList(...a),
       mergeRequests: (...a: unknown[]) => mergeRequests(...a),
-      createHandoff: (...a: unknown[]) => createHandoff(...a),
       git: {
         changes: (...a: unknown[]) => gitChanges(...a),
         branches: vi.fn().mockResolvedValue({ branches: [] }),
@@ -179,12 +191,11 @@ beforeEach(() => {
   procLogs.mockReset().mockResolvedValue({ lines: ['boot line'] });
   wtPatch.mockReset().mockResolvedValue({});
   envCheck.mockReset().mockResolvedValue([]);
-  createHandoff.mockReset().mockResolvedValue({
-    handoff: { id: 'handoff-1', target: { mode: 'codex', sessionId: '1' } },
-    prompt: 'continue',
-  });
   kbFiles.mockReset().mockResolvedValue({ files: [], truncated: false });
   kbFile.mockReset().mockResolvedValue({ content: '', size: 0, mtimeMs: 0 });
+  intercomStub.escalations = [];
+  intercomStub.peers = [];
+  createFork.mockReset().mockResolvedValue({ id: 'F1', status: 'summarising' });
   sseHandler = null;
   (globalThis as any).WebSocket = FakeWS;
   (globalThis as any).ResizeObserver = class { observe() {} disconnect() {} };
@@ -193,49 +204,59 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllMocks(); });
 
 describe('TerminalView', () => {
-  it('creates a handoff and starts a fresh target session with its packet id', async () => {
-    render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Handoff' }));
-    expect(screen.getByRole('dialog', { name: 'Continue with another agent' })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Anything the next agent must know/), {
-      target: { value: 'Continue with the failing parser case' },
+  // Forking needs the tab's registered peer id, which only the intercom knows.
+  describe('forking the focused agent tab', () => {
+    const sourcePeer = {
+      agentId: 'claude-1@repo', alias: null, mode: 'claude', worktreePath: worktree.path,
+      sessionId: '1', lifecycle: 'idle', live: true,
+    };
+    const targetPeer = {
+      agentId: 'shell-1@repo', alias: 'bob', mode: 'shell', worktreePath: worktree.path,
+      sessionId: '1', lifecycle: 'idle', live: true,
+    };
+
+    it('leaves Fork disabled until the focused agent tab has registered as a peer', () => {
+      intercomStub.peers = [];
+      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} />);
+      expect(screen.getByRole('button', { name: 'Fork' })).toBeDisabled();
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with Codex' }));
 
-    await vi.waitFor(() => expect(createHandoff).toHaveBeenCalledWith(
-      'default',
-      worktree.path,
-      {
-        source: { mode: 'claude', sessionId: '1' },
-        target: { mode: 'codex', sessionId: '1' },
-        notes: 'Continue with the failing parser case',
-      },
-    ));
-    await vi.waitFor(() => expect(FakeWS.instances.some((ws) =>
-      ws.url.includes('mode=codex') && ws.url.includes('handoff=handoff-1'),
-    )).toBe(true));
-  });
+    it('opens the dialog on the tab\'s peer, then closes it and reports the fork id', async () => {
+      intercomStub.peers = [sourcePeer, targetPeer];
+      createFork.mockResolvedValue({ id: 'F7', status: 'summarising' });
+      const onForked = vi.fn();
+      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onForked={onForked} />);
 
-  it('hands a Claude tab off to a fresh Pi session when pi is installed', async () => {
-    envCheck.mockResolvedValue([{ id: 'pi', found: true }]);
-    render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Handoff' }));
-    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Pi' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Pi' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with Pi' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Fork' }));
+      const dialog = screen.getByRole('dialog', { name: 'Fork to…' });
+      fireEvent.change(within(dialog).getByRole('textbox', { name: /notes for the target/i }), {
+        target: { value: 'carry on' },
+      });
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Fork' }));
+      });
 
-    await vi.waitFor(() => expect(createHandoff).toHaveBeenCalledWith(
-      'default',
-      worktree.path,
-      {
-        source: { mode: 'claude', sessionId: '1' },
-        target: { mode: 'pi', sessionId: '1' },
-        notes: '',
-      },
-    ));
-    await vi.waitFor(() => expect(FakeWS.instances.some((ws) =>
-      ws.url.includes('mode=pi') && ws.url.includes('handoff=handoff-1'),
-    )).toBe(true));
+      expect(createFork).toHaveBeenCalledWith({ source: 'claude-1@repo', to: 'shell-1@repo', notes: 'carry on' });
+      await vi.waitFor(() => expect(screen.queryByRole('dialog', { name: 'Fork to…' })).not.toBeInTheDocument());
+      expect(onForked).toHaveBeenCalledWith('F7');
+    });
+
+    it('keeps the dialog open and shows the error when the fork fails', async () => {
+      intercomStub.peers = [sourcePeer, targetPeer];
+      createFork.mockRejectedValue(new Error('target gone'));
+      const onForked = vi.fn();
+      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onForked={onForked} />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Fork' }));
+      const dialog = screen.getByRole('dialog', { name: 'Fork to…' });
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Fork' }));
+      });
+
+      await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('target gone'));
+      expect(screen.getByRole('dialog', { name: 'Fork to…' })).toBeInTheDocument();
+      expect(onForked).not.toHaveBeenCalled();
+    });
   });
 
   it('offers Browser in the new-session menu only inside Electron', () => {
@@ -1751,6 +1772,50 @@ describe('TerminalView', () => {
     expect(screen.queryByPlaceholderText('Commit message')).not.toBeInTheDocument();
     // the terminal panel underneath stays open
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  // A blocked agent is invisible once its terminal scrolls on, so the hub
+  // itself says who is waiting — for the FOCUSED tab only.
+  describe('the focused tab\'s escalation banner', () => {
+    const peer = {
+      agentId: 'a1', alias: 'claude-1', worktreePath: worktree.path,
+      mode: 'claude', sessionId: '1',
+    };
+    const escalation = { id: 'E7', from: { agentId: 'a1' }, to: 'human', status: 'open', title: 'Drop the column?', createdAt: 1 };
+
+    it('names the escalation and opens the intercom panel on it', async () => {
+      intercomStub.peers = [peer];
+      intercomStub.escalations = [escalation];
+      const onOpenIntercom = vi.fn();
+      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onOpenIntercom={onOpenIntercom} />);
+
+      expect(screen.getByRole('status')).toHaveTextContent('Waiting on you: Drop the column?');
+      fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
+      expect(onOpenIntercom).toHaveBeenCalledWith('E7');
+    });
+
+    it('stays hidden when the escalation belongs to another tab', () => {
+      intercomStub.peers = [{ ...peer, sessionId: '2' }];
+      intercomStub.escalations = [escalation];
+      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onOpenIntercom={vi.fn()} />);
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    // Intercom is a LOCAL registry — a runner's agents never register in it, so
+    // a path/mode/session match there would be a coincidence, not this agent.
+    it('never shows for a remote hub', () => {
+      const remoteWt = {
+        ...worktree,
+        remote: { runnerId: 'r1', runnerName: 'runner', wsBase: 'wss://r1.example', wsId: 'default' },
+      } as unknown as Worktree;
+      runnerRpc.mockResolvedValue({ repos: [], worktrees: [] });
+      intercomStub.peers = [peer];
+      intercomStub.escalations = [escalation];
+      render(<TerminalView worktree={remoteWt} mode="claude" onClose={() => {}} onOpenIntercom={vi.fn()} />);
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
   });
 
   // Clicking a runner's worktree opens THIS hub, not a separate surface — one

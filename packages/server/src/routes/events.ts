@@ -9,6 +9,11 @@ function openStream(reply: FastifyReply) {
     'cache-control': 'no-cache',
     connection: 'keep-alive',
   });
+  // Node buffers the head until the first body write; an SSE client's
+  // connection promise (fetch(), EventSource) does not settle until it sees
+  // it, and here that could be as late as this stream's first real event —
+  // possibly never. Force it onto the wire now.
+  reply.raw.flushHeaders();
 }
 
 function writeEvent(reply: FastifyReply, event: string, data: unknown) {
@@ -63,6 +68,25 @@ export async function registerEventRoutes(app: FastifyInstance) {
       return reply;
     },
   );
+
+  // Step 8: task and escalation events; step 9a adds `fork.*`; `peer.*` (a tab
+  // registered or died, ids only) lets the UI refresh its roster. Never
+  // `message.*`, which stays private to the sender/recipient's own pull/hook.
+  // `ws` filters to one workspace; omitted, every workspace's events stream.
+  app.get<{ Querystring: { ws?: string } }>('/events/intercom', async (req, reply) => {
+    openStream(reply);
+    const ws = typeof req.query?.ws === 'string' && req.query.ws.length > 0 ? req.query.ws : null;
+    const unsubscribe = app.deps.bus.on('intercom', (evt) => {
+      const type = String(evt.type);
+      if (!type.startsWith('task.') && !type.startsWith('escalation.') && !type.startsWith('fork.') && !type.startsWith('peer.')) return;
+      const data = evt.data as { scopeId?: unknown };
+      if (ws !== null && data.scopeId !== ws) return;
+      writeEvent(reply, type, evt.data);
+    });
+    const beat = setInterval(() => reply.raw.write(': heartbeat\n\n'), HEARTBEAT_MS);
+    req.raw.on('close', () => { clearInterval(beat); unsubscribe(); reply.raw.end(); });
+    return reply;
+  });
 
   app.get<{ Params: { jobId: string } }>(
     '/events/jobs/:jobId',

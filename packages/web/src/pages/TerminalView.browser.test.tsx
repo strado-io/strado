@@ -1,6 +1,16 @@
 import { act, render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// TerminalView reads intercom state for the focused tab's escalation banner;
+// these tests mount it without the provider, so stub a quiet, "loaded" context.
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({
+    escalations: [], tasks: [], peers: [], loaded: true, error: null,
+    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
+    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+  }),
+}));
+
 // window.strado must exist BEFORE TerminalView is imported: isElectron is a
 // module-level const, and the Browser tab surfaces only inside Electron.
 const { previewMock, devtoolsMock } = vi.hoisted(() => {

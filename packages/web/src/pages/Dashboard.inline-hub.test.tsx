@@ -8,6 +8,15 @@ vi.mock('../hooks/useWorkspace', () => ({
     switchTo: vi.fn(),
   }),
 }));
+// Dashboard now reads intercom state for the escalation badge/notification;
+// these tests don't exercise Intercom, so stub a quiet, "loaded" context.
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({
+    escalations: [], tasks: [], peers: [], loaded: true, error: null,
+    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
+    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+  }),
+}));
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
@@ -112,9 +121,8 @@ describe('Dashboard inline hub', () => {
   it('opens the workspace-level code reviews page from the sidebar', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    // Tasks has no empty toolbar when there are no running servers or sidebar
-    // controls, so the table begins at the top of the content area.
-    expect(document.querySelector('[data-filter-bar]')).not.toBeInTheDocument();
+    // Intercom is a workspace action in Tasks, even with no running servers.
+    expect(screen.getByRole('button', { name: 'Open intercom' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Code reviews'));
     expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();

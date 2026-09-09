@@ -9,7 +9,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { startHookSocket } from './hookSocket.js';
+import { isAllowed, startHookSocket } from './hookSocket.js';
 
 type Hit = {
   method: string;
@@ -273,5 +273,52 @@ describe('startHookSocket', () => {
     const sock = await start(addr.port);
 
     expect((await call(sock, 'POST', '/api/claude/status', '{}')).status).toBe(502);
+  });
+});
+
+describe('intercom routes through the hook socket', () => {
+  it('allows the hook-facing routes plus the step 6 CLI, shell-adapter, and step 8 task/escalation rows, and nothing else under /api/intercom', () => {
+    // Step 4/4b: hook delivery, confirm, send, and the turn diary.
+    expect(isAllowed('POST', '/api/intercom/hook')).toBe(true);
+    expect(isAllowed('POST', '/api/intercom/hook/confirm')).toBe(true);
+    expect(isAllowed('POST', '/api/intercom/messages')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/hook')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/hookx')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/messages')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/diary')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/diary?agent=claude-1%40repo&limit=5')).toBe(true); // the query string is not part of the match
+    expect(isAllowed('GET', '/api/intercom/diary%2Fx')).toBe(false);                              // a percent escape in the PATH is refused
+    expect(isAllowed('POST', '/api/intercom/diary')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/diary/x')).toBe(false);
+    // Step 6: the `strado` CLI's pull/ack/peers, and the shell adapters.
+    expect(isAllowed('POST', '/api/intercom/pull')).toBe(true);
+    expect(isAllowed('POST', '/api/intercom/messages/abc/ack')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/peers')).toBe(true);
+    expect(isAllowed('POST', '/api/intercom/shell/run')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/tabs/claude-1@repo/read')).toBe(true);
+    // Still off the wall: wrong verb, or a path shape none of the rows match.
+    expect(isAllowed('POST', '/api/intercom/peers')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/shell/run')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/tabs/x/read')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/tabsx/read')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/messagesx/ack')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/pull')).toBe(false);
+    // step 8
+    expect(isAllowed('POST', '/api/intercom/tasks')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/tasks')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/tasks?status=open&mine=1')).toBe(true);
+    expect(isAllowed('POST', '/api/intercom/tasks/01ARZ3NDEKTSV4RRFFQ69G5FAV/claim')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/tasks/01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/escalations')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/escalations/01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(true);
+    expect(isAllowed('POST', '/api/intercom/escalations/01ARZ3NDEKTSV4RRFFQ69G5FAV/resolve')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/escalations')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/tasksx')).toBe(false);
+
+    expect(isAllowed('POST', '/api/intercom/forks')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(true);
+    expect(isAllowed('GET', '/api/intercom/forks')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV/cancel')).toBe(false);
+    expect(isAllowed('POST', '/api/intercom/forksx')).toBe(false);
   });
 });

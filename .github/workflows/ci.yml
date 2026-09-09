@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 24 }
       - run: npm install
       - run: npm run build
       - run: npm run test -w packages/ptyd
@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 24 }
       - run: npm install
       - run: node scripts/package-mac.mjs
       - uses: actions/upload-artifact@v4
@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 24 }
       - run: npm install
       - run: node scripts/package-linux.mjs
       - uses: actions/upload-artifact@v4

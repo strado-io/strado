@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 24 }
       - run: npm install
 
       - name: Import signing identity
@@ -93,7 +93,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 24 }
       - run: npm install
       # Native node-pty and the pinned Node runtime can't be cross-compiled from
       # macOS — but this runner IS linux x64, so no separate build box is needed.

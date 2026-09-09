@@ -8,6 +8,15 @@ vi.mock('../hooks/useWorkspace', () => ({
     switchTo: vi.fn(),
   }),
 }));
+// Dashboard now reads intercom state for the escalation badge/notification;
+// these tests don't exercise Intercom, so stub a quiet, "loaded" context.
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({
+    escalations: [], tasks: [], peers: [], loaded: true, error: null,
+    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
+    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+  }),
+}));
 vi.mock('../api', () => ({
   api: {
     repos: { list: vi.fn().mockImplementation(() => new Promise(() => {})) },

@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, createEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { WorktreeRow, formatActiveTime } from './WorktreeRow';
 import { publishTickets } from '../hooks/tickets';
@@ -208,6 +209,23 @@ describe('WorktreeRow', () => {
     expect(screen.getByTitle('Not tracked in Jira')).toHaveTextContent('FD-1');
   });
 
+  it('shows an amber escalation badge with the count and opens the panel without opening the shell', async () => {
+    const onOpenEscalations = vi.fn();
+    const onOpenShellTerminal = vi.fn();
+    render(<WorktreeRow {...noopProps()} escalations={2} onOpenEscalations={onOpenEscalations} onOpenShellTerminal={onOpenShellTerminal} />);
+    const badge = screen.getByRole('button', { name: '2 open escalations' });
+    expect(badge.className).toMatch(/amber/);
+    await userEvent.click(badge);
+    expect(onOpenEscalations).toHaveBeenCalledWith(worktree);
+    expect(onOpenShellTerminal).not.toHaveBeenCalled();
+  });
+
+  it('renders no badge slot when the feature is off and an empty slot when the count is zero', () => {
+    const { rerender } = render(<WorktreeRow {...noopProps()} />);
+    expect(screen.queryByTestId('escalation-slot')).toBeNull();
+    rerender(<WorktreeRow {...noopProps()} escalations={0} />);
+    expect(screen.getByTestId('escalation-slot')).toBeEmptyDOMElement();
+  });
   it('the Task cell shows the ticket title beside the branch', () => {
     const props = noopProps();
     // ticketProvider: 'linear' keeps this off the 'jira:FD-1' ref that other

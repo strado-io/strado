@@ -94,6 +94,12 @@ function createNativeWatcher(
           // (rare, coalesced events) counts as a beat — better a false beat
           // than a missed one.
           watcher = fs.watch(p, { recursive: true }, (_event, filename) => {
+            // FSEvents reports the watched directory's own metadata under its
+            // basename — as 'change' for an mtime bump, and as a late 'rename'
+            // when the directory was created just before the watch started
+            // (a slow CI runner sees that one). Neither is activity. Preserve
+            // events for a real child with that same name.
+            if (filename === path.basename(p) && !fs.existsSync(path.join(p, filename))) return;
             if (typeof filename === 'string' && filename && hasIgnoredSegment(filename)) return;
             beat(p);
           });

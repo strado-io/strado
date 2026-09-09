@@ -30,6 +30,15 @@ import { startHookSocket } from './services/sandbox/hookSocket.js';
 import { createLastActivityTracker, startParkSweep } from './services/sandbox/park.js';
 import { resolveProfile } from './profile.js';
 import { createAgentSessionRegistry, type AgentSessionRegistry } from './services/agentSessionRegistry.js';
+import { createAgentRegistry, type AgentRegistry } from './services/agentRegistry.js';
+import { createDisabledIntercomStore, createIntercomStore, INTERCOM_CHANNEL, type IntercomStore } from './services/intercomStore.js';
+import { createTurnDiary, type TurnDiary } from './services/turnDiary.js';
+import { createPtyActivity, type PtyActivity } from './services/ptyActivity.js';
+import { createIntercomPush, type IntercomPush } from './services/intercomPush.js';
+import { createShellRunner, type ShellRunner } from './services/shellRunner.js';
+import { agentSpawnInstallers, spawnAgentTab } from './services/agentSpawn.js';
+import { createForkService, type ForkService } from './services/forkService.js';
+import { PUSH_ENV } from './services/intercomSchema.js';
 
 export type Deps = {
   workspaces: WorkspaceConfigStore;
@@ -46,6 +55,24 @@ export type Deps = {
   opencodeStatus: ClaudeStatusStore;
   piStatus: ClaudeStatusStore;
   agentSessions: AgentSessionRegistry;
+  // Intercom step 1: agent identity, executions, tokens, aliases. Built before the
+  // terminal managers so it can hand them an env record at spawn.
+  agents: AgentRegistry;
+  // Intercom step 3: the durable inbox. Fail-soft — a Node without
+  // node:sqlite, or an unopenable file, yields a disabled store whose routes
+  // answer 503 while everything else in the server keeps working.
+  intercom: IntercomStore;
+  // Intercom step 4b: per-turn diary extracted from harness transcripts on the
+  // status posts. Read-only for peers; never pushed into a context.
+  turnDiary: TurnDiary;
+  // Intercom step 5: per-PTY quiet clocks and the push-a-nudge service. The
+  // pusher writes ONE line into an idle Claude tab; the hook path delivers.
+  ptyActivity: PtyActivity;
+  intercomPush: IntercomPush;
+  shellRunner: ShellRunner;
+  // Intercom step 9a: cross-agent fork — the summary ask, the diary fallback,
+  // the packaged hand-over and the new-tab spawn behind it.
+  forks: ForkService;
   // Provider-native conversation stores live under the user's home. Kept
   // separate from homeStateDir (~/.strado) and overridable in tests.
   agentHomeDir: string;
@@ -137,6 +164,48 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   // so the binding is optional and onTerminalExit bails out while it's unset
   // (reading it before assignment would be a TDZ ReferenceError).
   let terminal: TerminalManager | undefined;
+  // Assigned once the intercom pusher is created below, further down than
+  // onTerminalExit is defined — same reason `terminal` above is optional.
+  let intercomPush: IntercomPush | undefined;
+  let shellRunner: ShellRunner | undefined;
+  // Built right away — it only needs homeStateDir and bus — and specifically
+  // BEFORE agents.reconcile() below: reconcile can drop executions whose
+  // session died while the server was down, and the onDropped callback must
+  // have a real store to release their task claims into, or those claims
+  // never get released (the sweep does not release claims, only expire rows).
+  let intercom: IntercomStore | undefined;
+  const intercomFile = path.join(homeStateDir, 'intercom.sqlite');
+  try {
+    intercom = await createIntercomStore({ file: intercomFile, bus });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[intercom] disabled: could not open ${intercomFile}: ${reason}`);
+    intercom = createDisabledIntercomStore(reason);
+  }
+  const liveIntercom: IntercomStore = intercom;
+  // `terminal` is assigned further down; the registry reads it lazily so it
+  // can be constructed first and handed to the managers.
+  const agents = await createAgentRegistry({
+    executionsFile: path.join(homeStateDir, 'agent-executions.json'),
+    namesFile: path.join(homeStateDir, 'agent-names.json'),
+    terminal: () => terminal ?? null,
+    statuses: () => ({ claude: claudeStatus, codex: codexStatus, opencode: opencodeStatus, pi: piStatus }),
+    bus,
+    // Declared below (a const); only ever called from list(), long after boot.
+    quiet: (key) => ptyActivity.quiet(key),
+    onDropped: (dropped) => {
+      const store = intercom;
+      if (!store) return;
+      for (const { execution, agentStillLive } of dropped) {
+        try {
+          store.releaseClaimsOf(execution.executionId);
+          if (!agentStillLive) store.retargetOpenAsksTo(execution.scopeId, execution.agentId);
+        } catch (err) {
+          debugLog.log('intercom', `release on drop failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    },
+  });
   const onTerminalData = createAgentOutputBeats({
     touch: (p) => activity.touch(p),
     agentStatus: (mode, p) =>
@@ -157,7 +226,9 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const sandboxActivity = createLastActivityTracker();
   const sandboxLastActivity = (worktreePath: string): number | null => sandboxActivity.get(worktreePath);
   const forgetSandboxActivity = (worktreePath: string): void => sandboxActivity.forget(worktreePath);
+  const ptyActivity = createPtyActivity();
   const onData = (key: string) => {
+    ptyActivity.noteOutput(key);
     sandboxActivity.touch(parseSessionKey(key).path);
     onTerminalData(key);
   };
@@ -165,6 +236,11 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   // WS already closed) must refresh that worktree's session badges, so the
   // palette/dashboard don't keep showing a dead agent as live.
   const onTerminalExit = (key: string) => {
+    // Idempotent; the terminal route's own exit handler may also call it.
+    void agents.release(key);
+    ptyActivity.forget(key);
+    intercomPush?.forget(key);
+    shellRunner?.forget(key);
     if (!terminal) return; // manager still constructing — sessions can't have UI subscribers yet
     const { path: p } = parseSessionKey(key);
     const live = terminal.liveSessions().filter((s) => s.path === p);
@@ -228,14 +304,65 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   // manager — used by the test suite and as a break-glass fallback.
   terminal =
     process.env.STRADO_INPROC_PTY === '1'
-      ? createTerminalManager(undefined, onData, onTerminalExit, wrapSpec)
+      ? createTerminalManager(undefined, onData, onTerminalExit, wrapSpec, agents.envFor)
       : await createDaemonTerminalManager({
           stateDir: homeStateDir,
           daemonScript: resolvePtydScript(),
           onData,
           onExit: onTerminalExit,
           wrapSpec,
+          extraEnv: agents.envFor,
         });
+  // ptyd kept sessions alive across our restart; align the registry with
+  // what is actually running before any route can observe it. The intercom
+  // store already exists (see above), so onDropped can release claims for
+  // whatever reconcile() drops right here.
+  await agents.reconcile();
+  const agentHomeDir = options.agentHomeDir ?? os.homedir();
+  const turnDiary = createTurnDiary({
+    agents, agentSessions, intercom: liveIntercom, homeDir: agentHomeDir,
+    log: (message, err) => debugLog.log('intercom', `${message}: ${err instanceof Error ? err.message : String(err)}`),
+  });
+  const liveTerminal: TerminalManager = terminal;
+  intercomPush = createIntercomPush({
+    agents,
+    intercom: liveIntercom,
+    terminal: () => liveTerminal,
+    activity: ptyActivity,
+    bus,
+    enabled: () => process.env[PUSH_ENV] !== '0',
+    log: (message, err) => debugLog.log('intercom', `${message}: ${err instanceof Error ? err.message : String(err)}`),
+  });
+  shellRunner = createShellRunner({
+    terminal: () => liveTerminal,
+    activity: ptyActivity,
+    bus,
+    log: (message, err) => debugLog.log('intercom', `${message}: ${err instanceof Error ? err.message : String(err)}`),
+  });
+  const livePush: IntercomPush = intercomPush;
+  // Intercom step 9a. `spawn` is bound here rather than inside the service so
+  // the service stays free of the terminal route's install/hook concerns.
+  const forks = createForkService({
+    store: liveIntercom,
+    agents,
+    sessions: agentSessions,
+    push: () => livePush,
+    bus,
+    spawn: (input) => spawnAgentTab({
+      terminal: liveTerminal,
+      agents,
+      bus,
+      installers: () => agentSpawnInstallers(input.mode, input.worktreePath,
+        (message, err) => debugLog.log('mcp', `${message}: ${err instanceof Error ? err.message : String(err)}`)),
+    }, input),
+    log: (message, err) => debugLog.log('intercom', err === undefined ? message : `${message}: ${err instanceof Error ? err.message : String(err)}`),
+  });
+  // Arrival trigger: a message queued for an idle Claude tab is pushed at once.
+  bus.on(INTERCOM_CHANNEL, (evt) => {
+    if (evt.type !== 'message.queued') return;
+    const data = evt.data as { scopeId?: unknown; to?: unknown };
+    if (typeof data.scopeId === 'string' && typeof data.to === 'string') void intercomPush.consider(data.scopeId, data.to, 'arrival');
+  });
   return {
     workspaces,
     registry,
@@ -251,7 +378,14 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     opencodeStatus,
     piStatus,
     agentSessions,
-    agentHomeDir: options.agentHomeDir ?? os.homedir(),
+    agents,
+    intercom: liveIntercom,
+    turnDiary,
+    ptyActivity,
+    intercomPush,
+    shellRunner,
+    forks,
+    agentHomeDir,
     gitChanges: createGitChangesService(),
     activity,
     // File saves (any editor) beat the activity clock; worktree paths are
@@ -291,6 +425,21 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
 
   app.decorate('deps', deps);
 
+  // Expiry + retention: once at boot, then hourly. unref'd so a test's or a
+  // CLI's event loop is never held open by it.
+  const runSweep = (): void => {
+    try {
+      deps.intercom.sweep();
+    } catch (err) {
+      app.log.warn({ err }, 'intercom sweep failed');
+    }
+    // Resume queued deliveries and summary deadlines left behind by a restart.
+    void deps.forks.sweepStale().catch((err) => app.log.warn({ err }, 'intercom fork sweep failed'));
+  };
+  runSweep();
+  const sweepTimer = setInterval(runSweep, 60 * 60 * 1000);
+  sweepTimer.unref();
+
   // Idle parking: only on a runner with a working sandbox runtime — a
   // desktop has no containers to park. A worktree with any live terminal
   // session is never a parking candidate, regardless of how stale its
@@ -312,6 +461,19 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await closeVsCodeWeb();
     // Leaves no socket file behind for the next boot to trip over.
     await deps.closeSandboxSocket?.();
+    clearInterval(sweepTimer);
+    try {
+      deps.intercom.close();
+    } catch (err) {
+      app.log.warn({ err }, 'intercom close failed');
+    }
+    // Last: @fastify/websocket's own onClose (registered after this hook,
+    // so it runs first) closes every open ws connection, which drives each
+    // session's exit handler and a fire-and-forget agents.release(key) —
+    // see onTerminalExit above and routes/terminal.ts's onExit. Those writes
+    // land in the registry's serialize queue; wait for them here so nothing
+    // still holds a handle into a caller's tmp dir after app.close() resolves.
+    await deps.agents.flush();
   });
 
   // The license gate. Registered before every route below, so nothing
@@ -324,9 +486,12 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   const { registerHealthRoutes } = await import('./routes/health.js');
   await registerHealthRoutes(app);
 
-  // Self-hosted runner management (proxies strado-api with the stored token)
+  // Self-hosted runner management (proxies strado-api with the stored token).
+  // Returns its runnerFetch client (ticket cache + relay fetch) so a later
+  // route module can forward requests to a remote host's own API through the
+  // same cache, instead of building a second one.
   const { registerRunnerRoutes } = await import('./routes/runners.js');
-  await registerRunnerRoutes(app);
+  const runnerFetch = await registerRunnerRoutes(app);
 
   // Org membership (proxies strado-api with the stored token)
   const { registerOrgRoutes } = await import('./routes/org.js');
@@ -365,8 +530,10 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerClaudeSessionsRoutes(scoped);
     const { registerUsageRoutes } = await import('./routes/usage.js');
     await registerUsageRoutes(scoped);
-    const { registerHandoffRoutes } = await import('./routes/handoffs.js');
-    await registerHandoffRoutes(scoped);
+    const { registerAgentScopedRoutes } = await import('./routes/agents.js');
+    await registerAgentScopedRoutes(scoped);
+    const { registerIntercomScopedRoutes } = await import('./routes/intercom.js');
+    await registerIntercomScopedRoutes(scoped);
     const { registerGitProviderWorktreeRoutes } = await import('./routes/gitProvider.js');
     await registerGitProviderWorktreeRoutes(scoped);
   }, { prefix: '/api/w/:wsId' });
@@ -374,6 +541,15 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // Events routes stay outside the prefix scope
   const { registerEventRoutes } = await import('./routes/events.js');
   await registerEventRoutes(app);
+
+  // Token-scoped agent routes stay outside the prefix scope — they resolve
+  // their own scope from the bearer token, not a wsId path param.
+  const { registerAgentRoutes } = await import('./routes/agents.js');
+  await registerAgentRoutes(app);
+
+  // Intercom routes: same token model as /api/agents/me, outside the prefix.
+  const { registerIntercomRoutes } = await import('./routes/intercom.js');
+  await registerIntercomRoutes(app);
 
   // VS Code web server control — workspace-agnostic, outside the prefix scope
   const { registerVsCodeRoutes } = await import('./routes/vscode.js');
@@ -405,6 +581,12 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerActivityRoutes(app);
   const { registerEnvCheckRoutes } = await import('./routes/envCheck.js');
   await registerEnvCheckRoutes(app);
+  // Coding agent config (MCP, skills, model, permissions) per agent.
+  // Device-global, like envCheck above. Reuses the runnerFetch instance
+  // captured at registerRunnerRoutes above to forward requests naming a
+  // remote host, rather than building a second relay client.
+  const { registerAgentConfigRoutes } = await import('./routes/agentConfig.js');
+  await registerAgentConfigRoutes(app, { runnerFetch });
   const { registerCodexStatusRoutes } = await import('./routes/codexStatus.js');
   await registerCodexStatusRoutes(app);
   const { registerOpencodeStatusRoutes } = await import('./routes/opencodeStatus.js');
