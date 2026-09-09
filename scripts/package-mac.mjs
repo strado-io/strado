@@ -184,6 +184,13 @@ if (SIGNING) {
 }
 run('npx', builderArgs);
 
+// Boot the assembled app's server with its own bundled Node before anything
+// is signed or uploaded. 0.1.53 packaged, signed, notarized and published a
+// server.js that could not load — nothing between esbuild and the user ever
+// ran it. Fails the build on a non-starting bundle.
+step('smoke: the packaged server boots and answers /api/health');
+run('node', ['scripts/smoke-packaged-server.mjs', path.join(ROOT, 'release', 'mac-arm64', 'Strado.app', 'Contents', 'Resources')]);
+
 if (SIGNING) {
   // Trust nothing about the pipeline above: prove the artifact on disk is
   // what a stranger's Gatekeeper will accept, and kill the build if not.
