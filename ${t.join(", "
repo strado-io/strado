@@ -1,0 +1,1049 @@
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+
+// src/server.ts
+var import_node_fs3 = __toESM(require("node:fs"), 1);
+var import_node_net = __toESM(require("node:net"), 1);
+var import_node_os = __toESM(require("node:os"), 1);
+var import_node_path = __toESM(require("node:path"), 1);
+var import_node_child_process2 = __toESM(require("node:child_process"), 1);
+
+// src/protocol.ts
+var PROTOCOL_VERSION = 1;
+var MAX_FRAME = 64 * 1024 * 1024;
+function encodeFrame(msg, payload) {
+  const header = Buffer.from(JSON.stringify(msg), "utf8");
+  const payloadLen = payload?.byteLength ?? 0;
+  const buf = Buffer.allocUnsafe(8 + header.byteLength + payloadLen);
+  buf.writeUInt32BE(4 + header.byteLength + payloadLen, 0);
+  buf.writeUInt32BE(header.byteLength, 4);
+  header.copy(buf, 8);
+  if (payload) payload.copy(buf, 8 + header.byteLength);
+  return buf;
+}
+var FrameDecoder = class {
+  chunks = [];
+  buffered = 0;
+  push(chunk) {
+    this.chunks.push(chunk);
+    this.buffered += chunk.byteLength;
+    if (this.buffered >= 4) {
+      const head = this.peek(4);
+      const totalLen = head.readUInt32BE(0);
+      if (totalLen > MAX_FRAME) throw new Error(`frame too large: ${totalLen}`);
+    }
+  }
+  drain() {
+    const out = [];
+    for (; ; ) {
+      if (this.buffered < 4) return out;
+      const totalLen = this.peek(4).readUInt32BE(0);
+      if (this.buffered < 4 + totalLen) return out;
+      const frame = this.take(4 + totalLen).subarray(4);
+      const headerLen = frame.readUInt32BE(0);
+      if (headerLen > frame.byteLength - 4) throw new Error("malformed frame: header overruns");
+      const header = frame.subarray(4, 4 + headerLen);
+      const payload = frame.subarray(4 + headerLen);
+      let message;
+      try {
+        message = JSON.parse(header.toString("utf8"));
+      } catch {
+        throw new Error("malformed frame: bad JSON header");
+      }
+      out.push({ message, payload: payload.byteLength > 0 ? Buffer.from(payload) : null });
+    }
+  }
+  peek(n) {
+    if (this.chunks.length === 1 && this.chunks[0].byteLength >= n) return this.chunks[0];
+    this.chunks = [Buffer.concat(this.chunks)];
+    return this.chunks[0];
+  }
+  take(n) {
+    const all = this.peek(n);
+    const taken = all.subarray(0, n);
+    this.chunks = [all.subarray(n)];
+    this.buffered -= n;
+    return taken;
+  }
+};
+
+// src/pty.ts
+var import_node_fs = __toESM(require("node:fs"), 1);
+var import_node_tty = __toESM(require("node:tty"), 1);
+var import_node_child_process = __toESM(require("node:child_process"), 1);
+var nodePty = __toESM(require("node-pty"), 1);
+var KILL_GRACE_MS = 2e3;
+function validateDims(cols, rows) {
+  if (!Number.isInteger(cols) || cols <= 0) throw new Error(`invalid cols: ${cols}`);
+  if (!Number.isInteger(rows) || rows <= 0) throw new Error(`invalid rows: ${rows}`);
+}
+function signalGroupKill(pid) {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+    }
+  }
+}
+function escalatingKill(pid, sighup, isExited) {
+  sighup();
+  setTimeout(() => {
+    if (!isExited()) signalGroupKill(pid);
+  }, KILL_GRACE_MS);
+}
+function spawnPty(meta) {
+  validateDims(meta.cols, meta.rows);
+  let stat;
+  try {
+    stat = import_node_fs.default.statSync(meta.cwd);
+  } catch (err) {
+    const e = err;
+    if (e.code === "ENOENT") throw new Error(`cwd does not exist: ${meta.cwd}`);
+    throw new Error(`cwd not accessible: ${meta.cwd} (${e.code ?? e.message})`);
+  }
+  if (!stat.isDirectory()) throw new Error(`cwd is not a directory: ${meta.cwd}`);
+  const term = nodePty.spawn(meta.shell, meta.argv, {
+    name: "xterm-256color",
+    cols: meta.cols,
+    rows: meta.rows,
+    cwd: meta.cwd,
+    env: meta.env,
+    // Raw bytes for fidelity — decoding happens exactly once, in the server.
+    encoding: null
+  });
+  let exited = false;
+  let exitCode = null;
+  const exitCbs = [];
+  let cols = meta.cols;
+  let rows = meta.rows;
+  term.onExit(({ exitCode: code }) => {
+    if (exited) return;
+    exited = true;
+    exitCode = code ?? null;
+    for (const cb of exitCbs) cb(exitCode);
+  });
+  const adapter = {
+    get pid() {
+      return term.pid;
+    },
+    get cols() {
+      return cols;
+    },
+    get rows() {
+      return rows;
+    },
+    write(data) {
+      term.write(data);
+    },
+    resize(c, r) {
+      validateDims(c, r);
+      if (exited) return;
+      try {
+        term.resize(c, r);
+      } catch {
+        return;
+      }
+      cols = c;
+      rows = r;
+    },
+    kill() {
+      escalatingKill(term.pid, () => {
+        try {
+          term.kill();
+        } catch {
+        }
+      }, () => exited);
+    },
+    killNow() {
+      signalGroupKill(term.pid);
+    },
+    onData(cb) {
+      term.onData((d) => cb(typeof d === "string" ? Buffer.from(d, "utf8") : d));
+    },
+    onExit(cb) {
+      if (exited) {
+        cb(exitCode);
+        return;
+      }
+      exitCbs.push(cb);
+    },
+    pause() {
+      if (!exited) term.pause();
+    },
+    resume() {
+      if (!exited) term.resume();
+    },
+    getMasterFd() {
+      const fd = term.fd;
+      if (typeof fd !== "number" || !Number.isInteger(fd) || fd < 0) {
+        throw new Error(
+          `node-pty master fd unavailable (got ${typeof fd}). fd handoff depends on UnixTerminal's public fd getter \u2014 keep node-pty pinned or update pty.ts.`
+        );
+      }
+      return fd;
+    }
+  };
+  try {
+    adapter.getMasterFd();
+  } catch (err) {
+    try {
+      term.kill("SIGKILL");
+    } catch {
+    }
+    throw err;
+  }
+  return adapter;
+}
+function adoptFromFd(opts) {
+  const { pid, fd } = opts;
+  if (!Number.isInteger(fd) || fd < 0) throw new Error(`invalid fd: ${fd}`);
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error(`invalid pid: ${pid}`);
+  validateDims(opts.cols, opts.rows);
+  if (!import_node_tty.default.isatty(fd)) throw new Error(`fd ${fd} is not a tty`);
+  let cols = opts.cols;
+  let rows = opts.rows;
+  let exited = false;
+  let exitCode = null;
+  let disposed = false;
+  const exitCbs = [];
+  const reader = new import_node_tty.default.ReadStream(fd);
+  const livenessTimer = setInterval(() => {
+    if (!isPidAlive(pid)) fireExit();
+  }, 1e3);
+  livenessTimer.unref();
+  function fireExit() {
+    if (exited) return;
+    exited = true;
+    exitCode = null;
+    clearInterval(livenessTimer);
+    try {
+      reader.destroy();
+    } catch {
+    }
+    for (const cb of exitCbs) cb(exitCode);
+  }
+  reader.on("end", fireExit);
+  reader.on("error", (err) => {
+    if (err.code === "EAGAIN") return;
+    fireExit();
+  });
+  const writeQueue = [];
+  let writing = false;
+  const drainWrites = () => {
+    if (writing) return;
+    writing = true;
+    const step = () => {
+      if (exited || disposed || writeQueue.length === 0) {
+        writing = false;
+        return;
+      }
+      const head = writeQueue[0];
+      import_node_fs.default.write(fd, head, 0, head.byteLength, (err, written) => {
+        if (err) {
+          if (err.code === "EAGAIN") {
+            setImmediate(step);
+            return;
+          }
+          writeQueue.length = 0;
+          writing = false;
+          return;
+        }
+        if (written >= head.byteLength) writeQueue.shift();
+        else writeQueue[0] = head.subarray(written);
+        setImmediate(step);
+      });
+    };
+    step();
+  };
+  return {
+    get pid() {
+      return pid;
+    },
+    get cols() {
+      return cols;
+    },
+    get rows() {
+      return rows;
+    },
+    write(data) {
+      if (exited || disposed) return;
+      writeQueue.push(data);
+      drainWrites();
+    },
+    resize(c, r) {
+      validateDims(c, r);
+      if (exited || disposed) return;
+      const res = import_node_child_process.default.spawnSync("stty", ["cols", String(c), "rows", String(r)], {
+        stdio: [fd, "ignore", "ignore"],
+        timeout: 1e3
+      });
+      if (!res.error && res.status === 0) {
+        cols = c;
+        rows = r;
+      }
+    },
+    kill() {
+      escalatingKill(pid, () => {
+        try {
+          process.kill(pid, "SIGHUP");
+        } catch {
+        }
+      }, () => exited);
+    },
+    killNow() {
+      signalGroupKill(pid);
+    },
+    onData(cb) {
+      reader.on("data", (chunk) => cb(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk));
+    },
+    onExit(cb) {
+      if (exited) {
+        cb(exitCode);
+        return;
+      }
+      exitCbs.push(cb);
+    },
+    pause() {
+      if (!exited && !disposed) reader.pause();
+    },
+    resume() {
+      if (!exited && !disposed) reader.resume();
+    },
+    getMasterFd() {
+      if (disposed || exited) throw new Error("adopted pty disposed");
+      return fd;
+    },
+    closeLocal() {
+      if (disposed) return;
+      disposed = true;
+      clearInterval(livenessTimer);
+      try {
+        reader.destroy();
+      } catch {
+      }
+    }
+  };
+}
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
+// src/store.ts
+var DEFAULT_BUFFER_CAP = 256 * 1024;
+var SessionStore = class {
+  sessions = /* @__PURE__ */ new Map();
+  bufferCap;
+  constructor(opts = {}) {
+    this.bufferCap = opts.bufferCap ?? DEFAULT_BUFFER_CAP;
+  }
+  add(id, pty) {
+    const existing = this.sessions.get(id);
+    if (existing && !existing.exited) throw new Error(`session exists: ${id}`);
+    const session = { id, pty, buffer: [], bufferBytes: 0, exited: false, exitCode: null };
+    this.sessions.set(id, session);
+    return session;
+  }
+  get(id) {
+    return this.sessions.get(id);
+  }
+  delete(id) {
+    this.sessions.delete(id);
+  }
+  all() {
+    return this.sessions.values();
+  }
+  appendOutput(session, chunk) {
+    session.buffer.push(chunk);
+    session.bufferBytes += chunk.byteLength;
+    while (session.bufferBytes > this.bufferCap && session.buffer.length > 0) {
+      const head = session.buffer[0];
+      const excess = session.bufferBytes - this.bufferCap;
+      if (head.byteLength <= excess) {
+        session.buffer.shift();
+        session.bufferBytes -= head.byteLength;
+      } else {
+        session.buffer[0] = head.subarray(excess);
+        session.bufferBytes -= excess;
+      }
+    }
+  }
+  replay(session) {
+    return Buffer.concat(session.buffer);
+  }
+};
+
+// src/snapshot.ts
+var import_node_fs2 = __toESM(require("node:fs"), 1);
+var SNAPSHOT_VERSION = 1;
+function writeSnapshot(filePath, snapshot) {
+  const header = {
+    type: "handoff-header",
+    version: snapshot.version,
+    sessionCount: snapshot.sessions.length
+  };
+  const parts = [encodeFrame(header)];
+  for (const s of snapshot.sessions) {
+    const msg = { type: "handoff-session", id: s.id, pid: s.pid, cols: s.cols, rows: s.rows, fdIndex: s.fdIndex };
+    parts.push(encodeFrame(msg, s.buffer.byteLength > 0 ? s.buffer : void 0));
+  }
+  const tmp = `${filePath}.tmp`;
+  import_node_fs2.default.writeFileSync(tmp, Buffer.concat(parts), { mode: 384 });
+  import_node_fs2.default.renameSync(tmp, filePath);
+}
+function readSnapshot(filePath) {
+  const raw = import_node_fs2.default.readFileSync(filePath);
+  const dec = new FrameDecoder();
+  dec.push(raw);
+  const frames = dec.drain();
+  const header = frames[0]?.message;
+  if (!header || header.type !== "handoff-header") {
+    throw new Error(`malformed handoff snapshot at ${filePath}: missing header frame`);
+  }
+  if (header.version !== SNAPSHOT_VERSION) {
+    throw new Error(`unsupported snapshot version ${header.version} at ${filePath}`);
+  }
+  if (header.sessionCount !== frames.length - 1) {
+    throw new Error(`malformed handoff snapshot at ${filePath}: header session count ${header.sessionCount} \u2260 ${frames.length - 1} frames`);
+  }
+  const sessions = [];
+  for (let i = 1; i < frames.length; i++) {
+    const m = frames[i].message;
+    if (m.type !== "handoff-session" || typeof m.id !== "string" || typeof m.pid !== "number" || typeof m.cols !== "number" || typeof m.rows !== "number" || typeof m.fdIndex !== "number") {
+      throw new Error(`malformed handoff snapshot at ${filePath}: bad session frame ${i}`);
+    }
+    sessions.push({ id: m.id, pid: m.pid, cols: m.cols, rows: m.rows, fdIndex: m.fdIndex, buffer: frames[i].payload ?? Buffer.alloc(0) });
+  }
+  return { version: SNAPSHOT_VERSION, sessions };
+}
+function clearSnapshot(filePath) {
+  try {
+    import_node_fs2.default.unlinkSync(filePath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+}
+
+// src/server.ts
+var PAUSE_THRESHOLD = 1 * 1024 * 1024;
+var DESTROY_THRESHOLD = 8 * 1024 * 1024;
+function socketAnswers(socketPath, timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const probe = import_node_net.default.connect(socketPath);
+    const timer = setTimeout(() => {
+      probe.destroy();
+      resolve(false);
+    }, timeoutMs);
+    probe.once("connect", () => {
+      clearTimeout(timer);
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+var PtydServer = class {
+  server;
+  store;
+  conns = /* @__PURE__ */ new Set();
+  opts;
+  upgradeInFlight = null;
+  /** The conn that asked for the upgrade — its reply must flush before exit. */
+  pendingUpgradeConn = null;
+  /**
+   * Latched the instant a successor acks: the sessions (and, from the
+   * socket-released signal onward, the socket path) belong to it, not us.
+   * Everything after this point is wind-down only.
+   */
+  handedOff = false;
+  constructor(opts) {
+    this.opts = opts;
+    this.store = new SessionStore({ bufferCap: opts.bufferCap });
+    this.server = import_node_net.default.createServer((socket) => this.onConnection(socket));
+  }
+  async listen() {
+    import_node_fs3.default.mkdirSync(import_node_path.default.dirname(this.opts.socketPath), { recursive: true });
+    if (import_node_fs3.default.existsSync(this.opts.socketPath) && await socketAnswers(this.opts.socketPath)) {
+      throw new Error(`live daemon already owns ${this.opts.socketPath}; refusing to steal it`);
+    }
+    try {
+      import_node_fs3.default.unlinkSync(this.opts.socketPath);
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+    await new Promise((resolve, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(this.opts.socketPath, () => {
+        this.server.off("error", reject);
+        resolve();
+      });
+    });
+    import_node_fs3.default.chmodSync(this.opts.socketPath, 384);
+    this.server.on("error", (err) => {
+      process.stderr.write(`[ptyd] server error: ${err.stack ?? err}
+`);
+    });
+  }
+  async close(opts = {}) {
+    const killSessions = this.handedOff ? false : opts.killSessions ?? true;
+    for (const c of this.conns) c.socket.destroy();
+    this.conns.clear();
+    if (killSessions) {
+      for (const s of this.store.all()) {
+        if (!s.exited) s.pty.killNow();
+      }
+    }
+    if (this.server.listening) {
+      await new Promise((resolve) => this.server.close(() => resolve()));
+    }
+    if (killSessions) {
+      try {
+        import_node_fs3.default.unlinkSync(this.opts.socketPath);
+      } catch {
+      }
+    }
+  }
+  send(conn, msg, payload) {
+    const { socket } = conn;
+    if (socket.destroyed) return;
+    socket.write(encodeFrame(msg, payload));
+    if (socket.writableLength > DESTROY_THRESHOLD) socket.destroy();
+  }
+  onConnection(socket) {
+    const conn = {
+      socket,
+      decoder: new FrameDecoder(),
+      negotiated: false,
+      subscriptions: /* @__PURE__ */ new Set(),
+      pausedSessions: /* @__PURE__ */ new Set()
+    };
+    this.conns.add(conn);
+    socket.on("drain", () => this.resumePaused(conn));
+    socket.on("data", (chunk) => {
+      let frames;
+      try {
+        conn.decoder.push(chunk);
+        frames = conn.decoder.drain();
+      } catch (err) {
+        this.send(conn, { type: "error", message: err.message, code: "EPROTO" });
+        socket.destroy();
+        return;
+      }
+      for (const frame of frames) {
+        try {
+          this.dispatch(conn, frame.message, frame.payload);
+        } catch (err) {
+          process.stderr.write(`[ptyd] dispatch error: ${err.stack ?? err}
+`);
+        }
+      }
+    });
+    const drop = () => {
+      this.conns.delete(conn);
+      this.resumePaused(conn);
+    };
+    socket.on("close", drop);
+    socket.on("error", drop);
+  }
+  dispatch(conn, msg, payload) {
+    if (!conn.negotiated) {
+      if (msg.type !== "hello" || !msg.protocols.includes(PROTOCOL_VERSION)) {
+        this.send(conn, { type: "error", message: "expected hello (protocol 1)", code: msg.type === "hello" ? "EVERSION" : "EPROTO" });
+        conn.socket.destroy();
+        return;
+      }
+      conn.negotiated = true;
+      this.send(conn, {
+        type: "hello-ack",
+        protocol: PROTOCOL_VERSION,
+        daemonVersion: this.opts.daemonVersion,
+        daemonPid: process.pid
+      });
+      return;
+    }
+    if (this.handedOff && (msg.type === "open" || msg.type === "input" || msg.type === "resize" || msg.type === "close")) {
+      this.send(conn, {
+        type: "error",
+        message: "daemon is handing off; retry against the successor",
+        code: "EPROTO"
+      });
+      return;
+    }
+    switch (msg.type) {
+      case "open": {
+        const existing = this.store.get(msg.id);
+        if (existing && !existing.exited) {
+          this.send(conn, { type: "open-err", id: msg.id, message: `session exists: ${msg.id}` });
+          return;
+        }
+        let pty = null;
+        try {
+          pty = spawnPty(msg.meta);
+          const session = this.store.add(msg.id, pty);
+          this.wireSession(session);
+          this.send(conn, { type: "open-ack", id: msg.id, pid: pty.pid });
+        } catch (err) {
+          pty?.killNow();
+          this.send(conn, { type: "open-err", id: msg.id, message: err.message });
+        }
+        return;
+      }
+      case "input": {
+        const s = this.store.get(msg.id);
+        if (s && !s.exited && payload) s.pty.write(payload);
+        return;
+      }
+      case "resize": {
+        const s = this.store.get(msg.id);
+        if (s && !s.exited) {
+          try {
+            s.pty.resize(msg.cols, msg.rows);
+          } catch {
+          }
+        }
+        return;
+      }
+      case "close": {
+        const s = this.store.get(msg.id);
+        if (s && !s.exited) s.pty.kill();
+        return;
+      }
+      case "list": {
+        const sessions = [];
+        for (const s of this.store.all()) {
+          if (s.exited) continue;
+          const live = s;
+          sessions.push({ id: s.id, pid: live.pty.pid, cols: live.pty.cols, rows: live.pty.rows });
+        }
+        this.send(conn, { type: "list-reply", sessions });
+        return;
+      }
+      case "subscribe": {
+        const s = this.store.get(msg.id);
+        if (!s) {
+          this.send(conn, { type: "error", message: `no session: ${msg.id}`, code: "ENOENT" });
+          return;
+        }
+        conn.subscriptions.add(msg.id);
+        if (msg.replay) {
+          const buf = this.store.replay(s);
+          if (buf.byteLength > 0) this.send(conn, { type: "output", id: msg.id }, buf);
+        }
+        return;
+      }
+      case "unsubscribe": {
+        conn.subscriptions.delete(msg.id);
+        return;
+      }
+      case "prepare-upgrade": {
+        this.pendingUpgradeConn = conn;
+        void this.prepareUpgrade().then((result) => this.send(conn, { type: "upgrade-prepared", result })).catch(
+          (err) => this.send(conn, {
+            type: "upgrade-prepared",
+            result: { ok: false, reason: `prepareUpgrade threw: ${err.message}` }
+          })
+        );
+        return;
+      }
+      default: {
+        this.send(conn, { type: "error", message: `unknown op: ${msg.type}`, code: "EPROTO" });
+      }
+    }
+  }
+  wireSession(session) {
+    session.pty.onData((chunk) => {
+      this.store.appendOutput(session, chunk);
+      let congested = false;
+      for (const c of this.conns) {
+        if (!c.subscriptions.has(session.id)) continue;
+        this.send(c, { type: "output", id: session.id }, chunk);
+        if (!c.socket.destroyed && c.socket.writableLength > PAUSE_THRESHOLD) {
+          c.pausedSessions.add(session.id);
+          congested = true;
+        }
+      }
+      if (congested) session.pty.pause();
+    });
+    session.pty.onExit((code) => {
+      session.exited = true;
+      session.exitCode = code;
+      if (this.store.get(session.id) !== session) return;
+      for (const c of this.conns) {
+        if (!c.negotiated) continue;
+        this.send(c, { type: "exit", id: session.id, code });
+        c.subscriptions.delete(session.id);
+        c.pausedSessions.delete(session.id);
+      }
+      this.store.delete(session.id);
+    });
+  }
+  resumePaused(conn) {
+    for (const id of conn.pausedSessions) {
+      conn.pausedSessions.delete(id);
+      let heldElsewhere = false;
+      for (const other of this.conns) {
+        if (other !== conn && other.pausedSessions.has(id)) {
+          heldElsewhere = true;
+          break;
+        }
+      }
+      if (heldElsewhere) continue;
+      const s = this.store.get(id);
+      if (s && !s.exited) s.pty.resume();
+    }
+  }
+  /**
+   * Phase 2 handoff (sender): spawn the NEW bundle at our own script path,
+   * hand it the live PTY master fds via stdio inheritance, await its IPC
+   * ack, then exit without killing sessions. On any failure the successor
+   * is killed, the snapshot removed, and we keep serving — sessions are
+   * never at risk from a failed handoff.
+   */
+  async prepareUpgrade() {
+    if (this.upgradeInFlight) return this.upgradeInFlight;
+    const attempt = this.doPrepareUpgrade();
+    this.upgradeInFlight = attempt;
+    let result;
+    try {
+      result = await attempt;
+    } catch (err) {
+      this.upgradeInFlight = null;
+      throw err;
+    }
+    if (!result.ok) this.upgradeInFlight = null;
+    return result;
+  }
+  async doPrepareUpgrade() {
+    const live = [...this.store.all()].filter((s) => !s.exited);
+    const FD_BASE = 4;
+    const stdio = ["ignore", "inherit", "inherit", "ipc"];
+    const sessions = [];
+    const paused = [];
+    const resumeAll = () => {
+      for (const s of paused) {
+        if (!s.exited) s.pty.resume();
+      }
+    };
+    try {
+      live.forEach((s, i) => {
+        stdio.push(s.pty.getMasterFd());
+        sessions.push({
+          id: s.id,
+          pid: s.pty.pid,
+          cols: s.pty.cols,
+          rows: s.pty.rows,
+          fdIndex: FD_BASE + i,
+          buffer: this.store.replay(s)
+        });
+        s.pty.pause();
+        paused.push(s);
+      });
+    } catch (err) {
+      resumeAll();
+      return { ok: false, reason: `master fd collection failed: ${err.message}` };
+    }
+    const snapshotPath = import_node_path.default.join(import_node_os.default.tmpdir(), `ptyd-handoff-${process.pid}-${Date.now()}.snap`);
+    try {
+      writeSnapshot(snapshotPath, { version: 1, sessions });
+    } catch (err) {
+      try {
+        import_node_fs3.default.unlinkSync(`${snapshotPath}.tmp`);
+      } catch {
+      }
+      resumeAll();
+      return { ok: false, reason: `snapshot write failed: ${err.message}` };
+    }
+    const scriptPath = process.argv[1];
+    if (!scriptPath) {
+      resumeAll();
+      clearSnapshot(snapshotPath);
+      return { ok: false, reason: "process.argv[1] empty \u2014 cannot self-spawn" };
+    }
+    process.stderr.write(
+      `[ptyd] prepare-upgrade: spawning successor ${scriptPath} (sessions=${sessions.length})
+`
+    );
+    let child;
+    try {
+      child = import_node_child_process2.default.spawn(
+        process.execPath,
+        [...process.execArgv, scriptPath, "--handoff", `--snapshot=${snapshotPath}`, `--socket=${this.opts.socketPath}`],
+        { stdio, detached: false }
+      );
+    } catch (err) {
+      resumeAll();
+      clearSnapshot(snapshotPath);
+      return { ok: false, reason: `successor spawn failed: ${err.message}` };
+    }
+    const result = await waitForHandoffAck(child);
+    if (!result.ok) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+      }
+      resumeAll();
+      clearSnapshot(snapshotPath);
+      return result;
+    }
+    this.handedOff = true;
+    this.server.close();
+    try {
+      child.send({ type: "socket-released" }, () => {
+      });
+    } catch {
+    }
+    setImmediate(() => {
+      this.finalizeHandoff().catch(
+        (err) => process.stderr.write(`[ptyd] finalizeHandoff failed: ${err.stack ?? err}
+`)
+      );
+    });
+    return result;
+  }
+  async finalizeHandoff() {
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    const c = this.pendingUpgradeConn;
+    if (c && !c.socket.destroyed && c.socket.writableLength > 0) {
+      await new Promise((r) => {
+        const t = setTimeout(r, 500);
+        c.socket.once("drain", () => {
+          clearTimeout(t);
+          r();
+        });
+      });
+    }
+    await this.close({ killSessions: false });
+    setTimeout(() => process.exit(0), 50).unref();
+  }
+  /**
+   * Phase 2 handoff (receiver): rebuild the store from the snapshot, taking
+   * each session's master fd from our inherited stdio at `fdIndex`. All-or-
+   * nothing: on any failure, close only OUR inherited copies and rethrow —
+   * the predecessor keeps ownership and keeps serving.
+   */
+  adoptSnapshot(snapshot) {
+    const adopted = [];
+    try {
+      for (const s of snapshot.sessions) {
+        if (!Number.isInteger(s.fdIndex) || s.fdIndex < 4) throw new Error(`invalid fdIndex ${s.fdIndex}`);
+        const pty = adoptFromFd({ fd: s.fdIndex, pid: s.pid, cols: s.cols, rows: s.rows });
+        try {
+          const session = this.store.add(s.id, pty);
+          adopted.push(session);
+          if (s.buffer.byteLength > 0) this.store.appendOutput(session, s.buffer);
+          this.wireSession(session);
+        } catch (err) {
+          pty.closeLocal?.();
+          throw err;
+        }
+      }
+    } catch (err) {
+      for (const session of adopted) {
+        session.pty.closeLocal?.();
+        this.store.delete(session.id);
+      }
+      throw err;
+    }
+  }
+  /**
+   * Successor bind: the predecessor's close() runs an instant before our
+   * listen(), so retry both EADDRINUSE and our own steal-guard's refusal
+   * (its socket may still answer while winding down) for up to timeoutMs.
+   */
+  async listenWithRetry(timeoutMs = 5e3) {
+    const start = Date.now();
+    let lastErr = null;
+    while (Date.now() - start < timeoutMs) {
+      try {
+        await this.listen();
+        return;
+      } catch (err) {
+        lastErr = err;
+        const code = err.code;
+        const stealRefusal = err.message?.includes("refusing to steal");
+        if (code !== "EADDRINUSE" && !stealRefusal) throw err;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    throw lastErr ?? new Error("listenWithRetry timed out");
+  }
+};
+var HANDOFF_ACK_TIMEOUT_MS = 5e3;
+function waitForHandoffAck(child, timeoutMs = HANDOFF_ACK_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (r) => {
+      if (settled) return;
+      settled = true;
+      child.removeListener("message", onMessage);
+      child.removeListener("exit", onExit);
+      child.removeListener("error", onError);
+      child.removeListener("disconnect", onDisconnect);
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const onMessage = (raw) => {
+      const msg = raw;
+      if (msg?.type === "upgrade-ack") {
+        if (typeof msg.successorPid !== "number" || !Number.isInteger(msg.successorPid) || msg.successorPid <= 0) {
+          settle({ ok: false, reason: `successor sent invalid ack pid: ${String(msg.successorPid)}` });
+          return;
+        }
+        settle({ ok: true, successorPid: msg.successorPid });
+      } else if (msg?.type === "upgrade-nak") {
+        settle({ ok: false, reason: msg.reason ?? "successor sent nak" });
+      }
+    };
+    const onExit = (code, signal) => {
+      settle({ ok: false, reason: `successor exited before ack (code=${code} signal=${signal})` });
+    };
+    const onError = (err) => {
+      settle({ ok: false, reason: `successor spawn error before ack: ${err.message}` });
+    };
+    const onDisconnect = () => {
+      settle({ ok: false, reason: "successor IPC disconnected before ack" });
+    };
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+    child.on("error", onError);
+    child.on("disconnect", onDisconnect);
+    const timer = setTimeout(() => {
+      settle({ ok: false, reason: `successor ack timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+  });
+}
+
+// src/main.ts
+var DAEMON_VERSION = "0.2.0";
+function arg(name) {
+  const prefix = `--${name}=`;
+  const hit = process.argv.find((a) => a.startsWith(prefix));
+  return hit?.slice(prefix.length);
+}
+async function main() {
+  if (process.argv.includes("--handoff")) {
+    await runHandoffReceiver();
+    return;
+  }
+  await runFresh();
+}
+async function runFresh() {
+  const socketPath = arg("socket");
+  if (!socketPath) throw new Error("--socket=PATH is required");
+  const rawBuf = arg("buffer-bytes");
+  const bufferCap = rawBuf ? Number.parseInt(rawBuf, 10) : void 0;
+  if (bufferCap !== void 0 && (!Number.isFinite(bufferCap) || bufferCap <= 0)) {
+    throw new Error(`--buffer-bytes must be a positive integer, got: ${rawBuf}`);
+  }
+  const server = new PtydServer({ socketPath, daemonVersion: DAEMON_VERSION, bufferCap });
+  await server.listen();
+  process.stderr.write(`[ptyd] listening on ${socketPath} (v${DAEMON_VERSION}, pid=${process.pid})
+`);
+  wireShutdown(server);
+}
+async function runHandoffReceiver() {
+  const log = (msg) => process.stderr.write(`[ptyd handoff-recv pid=${process.pid}] ${msg}
+`);
+  const snapshotPath = arg("snapshot");
+  const socketPath = arg("socket");
+  if (!snapshotPath) throw new Error("--snapshot=PATH is required in handoff mode");
+  if (!socketPath) throw new Error("--socket=PATH is required in handoff mode");
+  if (typeof process.send !== "function") {
+    throw new Error("handoff receiver requires an IPC channel");
+  }
+  log(`snapshot=${snapshotPath} socket=${socketPath} v${DAEMON_VERSION}`);
+  const nak = (reason) => {
+    log(`NAK: ${reason}`);
+    const msg = { type: "upgrade-nak", reason };
+    process.send?.(msg);
+    setTimeout(() => process.exit(1), 50).unref();
+  };
+  let snapshot;
+  try {
+    snapshot = readSnapshot(snapshotPath);
+  } catch (err) {
+    nak(`snapshot read failed: ${err.message}`);
+    return;
+  }
+  log(`read snapshot: sessions=${snapshot.sessions.length}`);
+  const server = new PtydServer({ socketPath, daemonVersion: DAEMON_VERSION });
+  try {
+    server.adoptSnapshot(snapshot);
+  } catch (err) {
+    nak(`adopt failed: ${err.message}`);
+    return;
+  }
+  log("adopted; sending upgrade-ack");
+  const ack = { type: "upgrade-ack", successorPid: process.pid };
+  process.send?.(ack);
+  log("waiting for socket release");
+  await new Promise((resolve) => {
+    if (process.connected !== true) return resolve();
+    const onMsg = (raw) => {
+      if (raw?.type === "socket-released") done();
+    };
+    const done = () => {
+      process.removeListener("message", onMsg);
+      resolve();
+    };
+    process.on("message", onMsg);
+    process.once("disconnect", done);
+    setTimeout(done, 1e3).unref();
+  });
+  log("binding socket");
+  await server.listenWithRetry();
+  clearSnapshot(snapshotPath);
+  process.stderr.write(
+    `[ptyd] (handoff successor) listening on ${socketPath} (v${DAEMON_VERSION}, pid=${process.pid}, sessions=${snapshot.sessions.length})
+`
+  );
+  wireShutdown(server);
+}
+function wireShutdown(server) {
+  let shuttingDown = false;
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[ptyd] received ${signal}, shutting down (killing sessions)
+`);
+    void server.close().finally(() => process.exit(0));
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
+main().catch((err) => {
+  process.stderr.write(`[ptyd] fatal: ${err.stack ?? err}
+`);
+  process.exit(1);
+});
