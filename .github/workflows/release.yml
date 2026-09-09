@@ -80,6 +80,16 @@ jobs:
           node scripts/package-mac.mjs
           rm -f "$RUNNER_TEMP/AuthKey.p8"
 
+      # package-mac.mjs already smoked release/mac-arm64/Strado.app; this runs the
+      # same launch against the DMG's own bytes, which is what users download.
+      - name: Smoke-test the server inside the DMG
+        run: |
+          MNT="$RUNNER_TEMP/dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" \
+            "release/Strado-${{ needs.create-release.outputs.version }}-arm64.dmg"
+          node scripts/smoke-packaged-server.mjs "$MNT/Strado.app/Contents/Resources"
+          hdiutil detach "$MNT"
+
       - name: Upload DMG
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
@@ -98,6 +108,12 @@ jobs:
       # Native node-pty and the pinned Node runtime can't be cross-compiled from
       # macOS — but this runner IS linux x64, so no separate build box is needed.
       - run: node scripts/package-linux.mjs
+      # Same launch against the AppImage's own contents (no FUSE needed to extract).
+      - name: Smoke-test the server inside the AppImage
+        run: |
+          V="${{ needs.create-release.outputs.version }}"
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/release/Strado-$V.AppImage" --appimage-extract >/dev/null
+          node "$GITHUB_WORKSPACE/scripts/smoke-packaged-server.mjs" "$RUNNER_TEMP/squashfs-root/resources"
       - name: Upload AppImage + deb
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |

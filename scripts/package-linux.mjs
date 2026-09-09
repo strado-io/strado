@@ -126,6 +126,13 @@ step('electron-builder → AppImage + .deb (x64, unsigned)');
 // publish mode and demands GH_TOKEN. Releases go through the private runbook.
 run('npx', ['electron-builder', '--config', 'electron-builder.yml', '--linux', 'AppImage', 'deb', '--x64', '--publish', 'never']);
 
+// Boot the assembled app's server with its own bundled Node before anything
+// is signed or uploaded. 0.1.53 packaged, signed, notarized and published a
+// server.js that could not load — nothing between esbuild and the user ever
+// ran it. Fails the build on a non-starting bundle.
+step('smoke: the packaged server boots and answers /api/health');
+run('node', ['scripts/smoke-packaged-server.mjs', path.join(ROOT, 'release', 'linux-unpacked', 'resources')]);
+
 console.log('\n\x1b[32m✓ artifacts in release/\x1b[0m');
 
 for (const f of fs.readdirSync(path.join(ROOT, 'release'))) {
