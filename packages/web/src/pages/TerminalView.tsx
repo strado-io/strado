@@ -1376,49 +1376,6 @@ export function TerminalView({
   // cached per-folder for the panel's lifetime.
   const [vscodeUrls, setVscodeUrls] = useState<Record<string, string>>({});
   const [vscodeError, setVscodeError] = useState<string | null>(null);
-  useEffect(() => {
-    if (active.mode !== 'vscode' || vscodeUrls[active.path]) return;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const path = active.path;
-    setVscodeError(null);
-    // ready:false = serve-web is still downloading a VS Code update and would
-    // serve a raw placeholder page — keep OUR loading overlay and re-poll.
-    const attempt = () => {
-      api.vscode
-        .open(path)
-        .then(async (r) => {
-          if (!alive) return;
-          if (r.ready === false) { timer = setTimeout(attempt, 3000); return; }
-          // VS Code 1.136+ sends SAMEORIGIN/frame-ancestors headers. Electron
-          // relaxes them only after this exact loopback origin is registered;
-          // await the IPC so the first iframe navigation cannot race it.
-          if (window.strado?.vscodeOrigin) {
-            let allowed = false;
-            try {
-              allowed = await window.strado.vscodeOrigin(r.url);
-            } catch (error) {
-              // During local development Vite can reload the new preload/web
-              // bundle while Electron main is still the previous build, which
-              // has no IPC handler yet. Make the required restart actionable.
-              if (/No handler registered for 'strado:vscode-origin'/i.test(String(error))) {
-                throw new Error('Restart Strado Dev to finish enabling the VS Code embed');
-              }
-              throw error;
-            }
-            if (!allowed) throw new Error('VS Code returned an unsupported embed URL');
-          }
-          if (!alive) return;
-          setVscodeUrls((m) => ({ ...m, [path]: r.url }));
-        })
-        .catch((e) => alive && setVscodeError(e instanceof Error ? e.message : String(e)));
-    };
-    attempt();
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [active.mode, active.path, vscodeUrls]);
 
 
   // Phase 2: the hub is scoped to one worktree — render only its own group.
@@ -1435,7 +1392,6 @@ export function TerminalView({
   // ---------- split panes (Cmd+D / Cmd+Shift+D) ----------
   const isPtyMode = (m: Tab['mode']): m is PtyTab['mode'] =>
     m !== 'vscode' && m !== 'browser' && m !== 'kb';
-  const isDockMode = (m: Tab['mode']) => m !== 'vscode';
   // Resolve against the actual strip rather than reparsing the key. Besides
   // keeping remote runner identity exact, this lets Browser and Knowledge Base
   // leaves participate in the same layout tree as PTY sessions.
@@ -1462,17 +1418,14 @@ export function TerminalView({
   // or the active dockable tab as an implicit single pane. A tab removed from a
   // split is deliberately outside `layout`, so selecting it gives it the full
   // surface while the remaining tiled layout stays available from its tabs.
-  const activePaneKey = isDockMode(active.mode) ? tabKeyOf(active) : null;
-  const activeLayoutIndex = activePaneKey
-    ? layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey))
-    : -1;
+  const activePaneKey = tabKeyOf(active);
+  const activeLayoutIndex = layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey));
   const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]! : null;
-  const paneTree: PaneNode | null =
-    layout
-      ? layout
-      : activePaneKey
-        ? { kind: 'leaf', key: activePaneKey }
-        : null;
+  const paneTree: PaneNode = layout ?? { kind: 'leaf', key: activePaneKey };
+  // VS Code is an iframe leaf like any other dockable tab. It is "shown" when
+  // its leaf is in the rendered tree — as the full tab or docked in a split.
+  const vscodePaneKey = tabKeyOf({ mode: 'vscode', id: '1' });
+  const vscodeShown = active.path === worktree.path && hasLeaf(paneTree, vscodePaneKey);
   // Mount a PTY surface the first time its tab/group is shown, then retain it
   // until the tab closes. The flat persistent layer below prevents switching
   // groups from tearing down xterm and reconnecting its WebSocket.
@@ -1483,11 +1436,9 @@ export function TerminalView({
   for (const key of mountedPtyKeysRef.current) {
     if (!livePtyKeys.has(key)) mountedPtyKeysRef.current.delete(key);
   }
-  if (paneTree) {
-    for (const key of leafKeys(paneTree)) {
-      const tab = keyToTab(worktree.path, key);
-      if (tab && isPtyMode(tab.mode)) mountedPtyKeysRef.current.add(key);
-    }
+  for (const key of leafKeys(paneTree)) {
+    const tab = keyToTab(worktree.path, key);
+    if (tab && isPtyMode(tab.mode)) mountedPtyKeysRef.current.add(key);
   }
 
   const commitLayoutAt = (layoutIndex: number, node: PaneNode | null) => {
@@ -1513,8 +1464,7 @@ export function TerminalView({
     if (!isPtyMode(active.mode) || active.path !== worktree.path) return;
     const newTab = allocSession(active.mode);
     if (!newTab) return;
-    const base: PaneNode = paneTree ?? { kind: 'leaf', key: tabKeyOf(active) };
-    commitLayoutAt(activeLayoutIndex, splitLeaf(base, tabKeyOf(active), tabKeyOf(newTab), dir));
+    commitLayoutAt(activeLayoutIndex, splitLeaf(paneTree, tabKeyOf(active), tabKeyOf(newTab), dir));
     setActive(newTab);
   };
   const splitPaneRef = useRef(splitPane);
@@ -1637,10 +1587,10 @@ export function TerminalView({
   // layer, then align over their tree leaf. This is essential for Browser's
   // native WebContentsView bounds and prevents the KB's selected document,
   // filter and scroll state from resetting whenever layout focus changes.
-  const paneTreeSignature = paneTree ? JSON.stringify(paneTree) : '';
+  const paneTreeSignature = JSON.stringify(paneTree);
   useEffect(() => {
     const surface = paneSurfaceRef.current;
-    if (!surface || !paneTree) {
+    if (!surface) {
       setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
@@ -1698,6 +1648,51 @@ export function TerminalView({
       ? { position: 'absolute', left: rect.left, top: rect.top, width: rect.width, height: rect.height }
       : undefined;
   };
+  // Boot the workbench as soon as its pane is on screen — as the full tab or
+  // docked beside a terminal — so a restored split never shows a blank leaf.
+  useEffect(() => {
+    if (!vscodeShown || vscodeUrls[worktree.path]) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const path = worktree.path;
+    setVscodeError(null);
+    // ready:false = serve-web is still downloading a VS Code update and would
+    // serve a raw placeholder page — keep OUR loading overlay and re-poll.
+    const attempt = () => {
+      api.vscode
+        .open(path)
+        .then(async (r) => {
+          if (!alive) return;
+          if (r.ready === false) { timer = setTimeout(attempt, 3000); return; }
+          // VS Code 1.136+ sends SAMEORIGIN/frame-ancestors headers. Electron
+          // relaxes them only after this exact loopback origin is registered;
+          // await the IPC so the first iframe navigation cannot race it.
+          if (window.strado?.vscodeOrigin) {
+            let allowed = false;
+            try {
+              allowed = await window.strado.vscodeOrigin(r.url);
+            } catch (error) {
+              // During local development Vite can reload the new preload/web
+              // bundle while Electron main is still the previous build, which
+              // has no IPC handler yet. Make the required restart actionable.
+              if (/No handler registered for 'strado:vscode-origin'/i.test(String(error))) {
+                throw new Error('Restart Strado Dev to finish enabling the VS Code embed');
+              }
+              throw error;
+            }
+            if (!allowed) throw new Error('VS Code returned an unsupported embed URL');
+          }
+          if (!alive) return;
+          setVscodeUrls((m) => ({ ...m, [path]: r.url }));
+        })
+        .catch((e) => alive && setVscodeError(e instanceof Error ? e.message : String(e)));
+    };
+    attempt();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [vscodeShown, worktree.path, vscodeUrls]);
   // Diffstat for the active worktree, shown on the Changes toggle. The hub is
   // scoped to one worktree, so the active tab is normally this worktree — read
   // the `worktree` prop, which Dashboard keeps fresh (its 15s poll of the
@@ -1859,15 +1854,28 @@ export function TerminalView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGroup, active, ordered]);
-  // Announce when the VS Code iframe is the active tab: the shell then
-  // intercepts the window's Cmd+Arrow keys (the cross-origin iframe would
-  // otherwise swallow them and the switcher could never open).
+  // Announce while a VS Code iframe is on screen (full tab or docked pane):
+  // the shell then intercepts the window's Cmd+Arrow keys (the cross-origin
+  // iframe would otherwise swallow them and the switcher could never open).
   useEffect(() => {
     const bridge = window.strado;
     if (!bridge?.hotkeyScope) return;
-    bridge.hotkeyScope(active.mode === 'vscode');
+    bridge.hotkeyScope(vscodeShown);
     return () => bridge.hotkeyScope?.(false);
-  }, [active.mode]);
+  }, [vscodeShown]);
+  // Clicks inside the cross-origin iframe never reach this document, so track
+  // pane focus via the window blur that fires when focus moves into a frame.
+  useEffect(() => {
+    if (!vscodeShown) return;
+    const onBlur = () => {
+      const el = document.activeElement;
+      if (el instanceof HTMLIFrameElement && el.dataset.vscodePath === worktree.path && active.mode !== 'vscode') {
+        setActive({ path: worktree.path, mode: 'vscode', id: '1' });
+      }
+    };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [vscodeShown, worktree.path, active.mode]);
   // Card previews load once per open: terminal tails + browser thumbnail.
   const switcherOpen = switcher !== null;
   useEffect(() => {
@@ -1920,7 +1928,7 @@ export function TerminalView({
   const [, bumpTabOrder] = useReducer((n: number) => n + 1, 0);
   // Sessions die from anywhere (✕, kill, server exit): drop their panes; a
   // tree collapsing to a single leaf clears the stored layout.
-  const tabKeysJoined = tabs.filter((t) => isDockMode(t.tab.mode)).map((t) => tabKeyOf(t.tab)).join(',');
+  const tabKeysJoined = tabs.map((t) => tabKeyOf(t.tab)).join(',');
   useEffect(() => {
     if (layouts.length === 0) return;
     const valid = new Set(tabKeysJoined.split(',').filter(Boolean));
@@ -1968,7 +1976,7 @@ export function TerminalView({
 
   const paneDropAt = (draggedKey: string, x: number, y: number) => {
     const dragged = keyToTab(worktree.path, draggedKey);
-    if (!dragged || !isDockMode(dragged.mode)) return null;
+    if (!dragged) return null;
     for (const [targetKey, el] of paneLeafElsRef.current) {
       const rect = el.getBoundingClientRect();
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
@@ -2468,7 +2476,7 @@ export function TerminalView({
     // Panes: drop this tab's leaf immediately; when it was the focused pane,
     // move focus to a surviving sibling so the split doesn't strand focus.
     const currentLayouts = paneLayoutsRef.current[worktree.path] ?? [];
-    const containingIndex = isDockMode(tab.mode) && tab.path === worktree.path
+    const containingIndex = tab.path === worktree.path
       ? currentLayouts.findIndex((candidate) => hasLeaf(candidate, tabKeyOf(tab)))
       : -1;
     if (containingIndex >= 0) {
@@ -3229,29 +3237,35 @@ export function TerminalView({
           {groups
             .filter((g) => g.vscodeOpen && vscodeUrls[g.path])
             .map((g) => {
-              const shown = active.mode === 'vscode' && active.path === g.path;
+              const shown = g.path === worktree.path && vscodeShown;
+              const placement = dockedSurfaceStyle(vscodePaneKey);
+              const placed = shown && !!placement;
               return (
                 <iframe
                   key={g.path}
+                  data-vscode-path={g.path}
                   src={`${vscodeUrls[g.path] ?? ''}?folder=${encodeURIComponent(g.path)}`}
-                  title={shown ? 'VS Code' : `VS Code — ${g.path}`}
-                  className={shown ? 'h-full w-full border-0 bg-zinc-950' : 'hidden'}
+                  title={placed ? 'VS Code' : `VS Code — ${g.path}`}
+                  className={placed ? 'z-10 border-0 bg-zinc-950' : 'hidden'}
+                  style={placement}
                   allow="clipboard-read; clipboard-write"
                 />
               );
             })}
-          {active.mode === 'vscode' && !vscodeUrls[active.path] && (
-            vscodeError ? (
-              <div className="p-4 text-sm text-zinc-500">VS Code web failed to start: {vscodeError}</div>
-            ) : (
-              // same loading treatment as the terminal tabs — the server holds
-              // the URL back while serve-web downloads/boots the workbench, so
-              // this overlay covers the whole warm-up
-              <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-4">
-                <span className="animate-pulse text-zinc-400"><VsCodeIcon size={36} /></span>
-                <span className="text-sm text-zinc-500">Starting VS Code…</span>
-              </div>
-            )
+          {vscodeShown && !vscodeUrls[worktree.path] && (
+            <div className="z-10 overflow-hidden bg-zinc-950" style={dockedSurfaceStyle(vscodePaneKey)}>
+              {vscodeError ? (
+                <div className="p-4 text-sm text-zinc-500">VS Code web failed to start: {vscodeError}</div>
+              ) : (
+                // same loading treatment as the terminal tabs — the server holds
+                // the URL back while serve-web downloads/boots the workbench, so
+                // this overlay covers the whole warm-up
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4">
+                  <span className="animate-pulse text-zinc-400"><VsCodeIcon size={36} /></span>
+                  <span className="text-sm text-zinc-500">Starting VS Code…</span>
+                </div>
+              )}
+            </div>
           )}
           {/* PTY tabs are mounted lazily on first view and then kept alive in
               this flat layer. The pane tree supplies geometry only, so moving
@@ -3261,7 +3275,7 @@ export function TerminalView({
             .filter(({ tab }) => isPtyMode(tab.mode) && mountedPtyKeysRef.current.has(tabKeyOf(tab)))
             .map(({ tab }) => {
               const paneKey = tabKeyOf(tab);
-              const shown = !!paneTree && hasLeaf(paneTree, paneKey);
+              const shown = hasLeaf(paneTree, paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               const focused = placed && sameTab(active, tab);
@@ -3293,7 +3307,7 @@ export function TerminalView({
               .map(({ g, bid }) => {
                 const pk = previewKey(g.path, bid);
                 const paneKey = tabKeyOf({ mode: 'browser', id: bid });
-                const shown = g.path === worktree.path && !!paneTree && hasLeaf(paneTree, paneKey);
+                const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
                 const placement = dockedSurfaceStyle(paneKey);
                 const placed = shown && !!placement;
                 const url = resolvedBrowserUrl(pk, g.path);
@@ -3489,7 +3503,7 @@ export function TerminalView({
             .flatMap((g) => [...(g.kbOpen ? ['1'] : []), ...g.kbIds.filter((id) => id !== '1')].map((id) => ({ g, id })))
             .map(({ g, id }) => {
               const paneKey = tabKeyOf({ mode: 'kb', id });
-              const shown = g.path === worktree.path && !!paneTree && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted so the selected doc and scroll position survive
@@ -3531,11 +3545,8 @@ export function TerminalView({
                 </div>
               );
             })}
-        <div
-          data-testid="xterm-pane"
-          className={active.mode === 'vscode' ? 'hidden' : 'relative h-full w-full'}
-        >
-          {paneTree && renderPane(paneTree, [])}
+        <div data-testid="xterm-pane" className="relative h-full w-full">
+          {renderPane(paneTree, [])}
         </div>
         {mrReview && (
           // stopPropagation: clicks in the modal (including its backdrop-close

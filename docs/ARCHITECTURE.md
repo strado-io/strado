@@ -163,7 +163,7 @@ switching worktrees remounts it), `DiffView` (full-screen overlay), settings and
 workspace modals.
 
 The hub's tab modes: `shell` / `claude` / `codex` / `opencode` / `pi` (pty over WS), `vscode`
-(iframe, kept mounted-but-hidden), `browser` (Electron WebContentsView overlay,
+(iframe, kept mounted-but-hidden, dockable into split panes like any tab), `browser` (Electron WebContentsView overlay,
 multi-tab, DevTools dock bottom/right/window), `kb`. Tab icon = identity, tab **color =
 status**. Drag-reorder is pointer-based with DOM transforms (HTML5 DnD rejected).
 Active tab restore never silently spawns an agent.
