@@ -504,6 +504,17 @@ if (!gotLock) {
   });
   // Native folder picker for "Add repo" — returns the chosen absolute path,
   // or null on cancel.
+  // Settings → Sessions: the app's own processes next to the daemon's pty
+  // sessions. workingSetSize is KB; percentCPUUsage is since the last call.
+  ipcMain.handle('strado:app-metrics', () =>
+    app.getAppMetrics().map((m) => ({
+      pid: m.pid,
+      type: m.type,
+      name: m.name,
+      cpu: m.cpu?.percentCPUUsage ?? 0,
+      memoryKb: m.memory?.workingSetSize ?? 0,
+    })),
+  );
   ipcMain.handle('strado:pick-directory', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const res = await dialog.showOpenDialog(win ?? undefined, {

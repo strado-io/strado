@@ -1,4 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
+import type { SessionMetrics } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -573,6 +574,13 @@ export const api = {
       request<{ content: string; size: number; mtimeMs: number }>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/kb/file?file=${encodeURIComponent(file)}`,
       ),
+  },
+  // Machine-wide pty sessions (not workspace-scoped: the daemon outlives
+  // worktrees, and orphans are the point of the page).
+  sessions: {
+    metrics: () => request<SessionMetrics>('/api/sessions/metrics'),
+    kill: (key: string) =>
+      request<void>(`/api/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
   },
   vscode: {
     // Ensures the shared VS Code web server is running; returns its base URL.

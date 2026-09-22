@@ -42,7 +42,7 @@ function manifestPath(stateDir: string): string {
   return path.join(stateDir, 'ptyd', 'manifest.json');
 }
 
-function readManifest(stateDir: string): Manifest | null {
+export function readManifest(stateDir: string): Manifest | null {
   try {
     const raw = fs.readFileSync(manifestPath(stateDir), 'utf8');
     const m = JSON.parse(raw) as Manifest;

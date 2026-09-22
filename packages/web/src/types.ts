@@ -282,3 +282,23 @@ export type MachineSample = {
   loadAvg: number[];
   uptimeSec: number;
 };
+
+// Settings → Sessions: every pty the daemon holds, machine-wide, with the
+// CPU/memory of the process tree under it (GET /api/sessions/metrics).
+export type SessionMetric = {
+  /** TerminalManager key; what DELETE /api/sessions/:key takes. */
+  key: string;
+  path: string;
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi';
+  id: string;
+  pid: number | null;
+  cpu: number;
+  rssBytes: number;
+  processes: number;
+};
+export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
+export type SessionMetrics = {
+  sampledAt: number;
+  app: { server: AppProcMetric; daemon: AppProcMetric | null };
+  sessions: SessionMetric[];
+};

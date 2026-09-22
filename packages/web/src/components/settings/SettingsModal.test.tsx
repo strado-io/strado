@@ -13,6 +13,9 @@ vi.mock('../../api', () => ({
     gitlab: { config: vi.fn().mockResolvedValue({ hosts: [] }) },
     github: { config: vi.fn().mockResolvedValue({ hosts: [] }) },
     workspaces: { list: vi.fn().mockResolvedValue({ activeWorkspaceId: 'default', workspaces: [] }) },
+    sessions: { metrics: vi.fn().mockResolvedValue({ sampledAt: 0, app: { server: { pid: 1, cpu: 0, rssBytes: 0 }, daemon: null }, sessions: [] }), kill: vi.fn() },
+    worktrees: { list: vi.fn().mockResolvedValue([]) },
+    repos: { list: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -93,5 +96,16 @@ describe('SettingsModal', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.click(screen.getByLabelText('Close settings'));
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens the Sessions view from the System group', async () => {
+    render(
+      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
+        <SettingsModal onClose={() => {}} />
+      </WorkspaceContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'sessions');
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
   });
 });

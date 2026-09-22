@@ -54,6 +54,9 @@ interface Window {
     // Allow the exact localhost VS Code serve-web origin to be framed by this
     // dashboard webContents. Resolves before the iframe is mounted.
     vscodeOrigin?: (url: string) => Promise<boolean>;
+    // Electron's own process metrics (main/renderer/gpu/utility) for the
+    // Settings → Sessions view; absent on older shells and in a browser
+    appMetrics?: () => Promise<Array<{ pid: number; type: string; name?: string; cpu: number; memoryKb: number }>>;
     // native folder picker for "Add repo" — absent on older shells;
     // resolves to the chosen absolute path or null if cancelled
     pickDirectory?: () => Promise<string | null>;

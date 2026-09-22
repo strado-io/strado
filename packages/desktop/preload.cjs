@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('strado', {
   // Register the exact localhost VS Code origin before mounting its iframe.
   // Main then relaxes only that origin's frame-blocking response headers.
   vscodeOrigin: (url) => ipcRenderer.invoke('strado:vscode-origin', url),
+  // Electron's per-process CPU/memory for the Settings → Sessions view.
+  appMetrics: () => ipcRenderer.invoke('strado:app-metrics'),
   // Native folder picker for "Add repo"; resolves to the chosen absolute
   // path, or null if the user cancels.
   pickDirectory: () => ipcRenderer.invoke('strado:pick-directory'),

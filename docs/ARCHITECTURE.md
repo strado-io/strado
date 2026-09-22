@@ -104,7 +104,8 @@ any other import, then builds the dependency graph (`workspaces`, `registry`, ev
 
 **API surface (abridged):**
 
-- Root: `/api/health`, `/api/capabilities`, `/api/workspaces*`, `/api/runners*`,
+- Root: `/api/health`, `/api/capabilities`, `/api/sessions/*` (machine-wide pty sessions +
+  process-tree usage, Settings → Sessions), `/api/workspaces*`, `/api/runners*`,
   `/api/terminal/peek`, `WS /ws/terminal`, `/api/{claude,codex,opencode,pi}/status`,
   `/api/activity/beat`, `/api/vscode`, `/api/jira/*`, `/api/{gitlab,github}/config`,
   `/api/license*`, `/api/auth/{start,poll,signout}`, `/api/update-check`,
