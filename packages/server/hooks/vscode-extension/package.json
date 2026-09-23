@@ -1,8 +1,8 @@
 {
   "name": "strado-window",
   "displayName": "Strado",
-  "description": "Lets Strado attribute this VS Code window's processes to its worktree in Settings \u2192 Sessions.",
-  "version": "0.1.1",
+  "description": "Lets Strado attribute this VS Code window's processes to its worktree in Settings \u2192 Sessions, and turns off Restricted Mode for Strado's worktrees (unless you set it yourself).",
+  "version": "0.1.2",
   "publisher": "strado",
   "private": true,
   "engines": {

@@ -10,6 +10,10 @@ const ext = require(`${stradoExtensionSource()}/extension.js`) as {
     fetch: typeof fetch; pid: number; folder: () => string | null; server: string; intervalMs?: number;
     setInterval?: typeof setInterval; clearInterval?: typeof clearInterval;
   }): { start(): Promise<void>; stop(): Promise<void> };
+  disableWorkspaceTrust(cfg: {
+    inspect(): { globalValue?: boolean } | undefined;
+    update(value: boolean): Promise<void>;
+  }): Promise<boolean>;
 };
 
 describe('strado-window extension reporter', () => {
@@ -34,4 +38,25 @@ describe('strado-window extension reporter', () => {
     const failing = ext.createReporter({ fetch: fetchMock, pid: 1, folder: () => '/wt', server: 'http://x', setInterval: (() => 0) as unknown as typeof setInterval, clearInterval: () => {} });
     await expect(failing.start()).resolves.toBeUndefined();
   });
+
+describe('strado-window turns off Restricted Mode for the embedded workbench', () => {
+  it('sets security.workspace.trust.enabled=false once, when the user never chose', async () => {
+    const update = vi.fn(async () => {});
+    expect(await ext.disableWorkspaceTrust({ inspect: () => ({}), update })).toBe(true);
+    expect(update).toHaveBeenCalledWith(false);
+  });
+
+  it('respects an explicit user choice either way', async () => {
+    for (const globalValue of [true, false]) {
+      const update = vi.fn(async () => {});
+      expect(await ext.disableWorkspaceTrust({ inspect: () => ({ globalValue }), update })).toBe(false);
+      expect(update).not.toHaveBeenCalled();
+    }
+  });
+
+  it('never throws when the update is refused', async () => {
+    const update = vi.fn(async () => { throw new Error('nope'); });
+    expect(await ext.disableWorkspaceTrust({ inspect: () => ({}), update })).toBe(false);
+  });
+});
 });
