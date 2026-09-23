@@ -111,3 +111,21 @@ describe('VS Code window reports', () => {
   }, 20_000);
 });
 
+describe('closing a VS Code tab ends its window', () => {
+  it('DELETE /api/vscode kills the extension-host tree that reported that folder', async () => {
+    // VS Code keeps a disconnected window's extension host alive for hours
+    // (reconnection grace), so closing the tab alone frees nothing.
+    const { spawn } = await import('node:child_process');
+    const host = spawn('/bin/sh', ['-c', 'sleep 60 & wait'], { stdio: 'ignore' });
+    const folder = path.join(tmp, 'wt-close');
+    await new Promise((r) => setTimeout(r, 200)); // let the child sleep spawn
+    await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: host.pid, folder } });
+    const exited = new Promise<void>((r) => host.once('exit', () => r()));
+    const res = await app.inject({ method: 'DELETE', url: '/api/vscode', payload: { folder } });
+    expect(res.statusCode).toBe(200);
+    await Promise.race([exited, new Promise((_, rej) => setTimeout(() => rej(new Error('host still alive')), 3000))]);
+    const after = await app.inject({ method: 'GET', url: '/api/sessions/metrics' });
+    expect(after.json().vscodeWindows.some((w: { path: string }) => w.path === folder)).toBe(false);
+  }, 20_000);
+});
+

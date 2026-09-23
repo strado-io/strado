@@ -10,6 +10,7 @@ import { api } from '../../api';
 import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
+import { closeVscodeTab } from '../../pages/vscodeTabClose';
 import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
 
 const POLL_MS = 5_000;
@@ -242,10 +243,11 @@ export function SessionsSection() {
     });
   // Same teardown the hub's ✕ does: drop the native view, then forget the tab
   // so the strip (which listens for the storage event) removes it.
-  // Closing the tab unmounts the iframe; the window disconnects and its
-  // extension host exits on its own shortly after.
+  // Same close the hub's ✕ does: forget the tab (the strip listens) and tell
+  // the server, which ends that window's extension host — VS Code would
+  // otherwise keep it, and its memory, alive for hours.
   const closeVscode = (row: Extract<SessionRow, { kind: 'vscode' }>) =>
-    run(row.key, async () => { rememberVscodeTab(row.path, false); });
+    run(row.key, async () => { closeVscodeTab(row.path); });
   const closeBrowser = (row: Extract<SessionRow, { kind: 'browser' }>) =>
     run(row.key, async () => {
       await window.strado?.preview?.('close', row.key);

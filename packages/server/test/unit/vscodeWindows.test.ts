@@ -33,4 +33,15 @@ describe('vscode window registry', () => {
     reg.report(100, '/wt/c');
     expect(reg.list()).toEqual([{ pid: 100, folder: '/wt/c' }]);
   });
+
+  it('closeFolder kills and forgets every window showing that folder', async () => {
+    const reg = createVsCodeWindowRegistry({ isAlive: () => true, now: () => 0 });
+    reg.report(100, '/wt/a');
+    reg.report(200, '/wt/b');
+    const killed: number[] = [];
+    const n = await reg.closeFolder('/wt/a', async (pid) => { killed.push(pid); });
+    expect(n).toBe(1);
+    expect(killed).toEqual([100]);
+    expect(reg.list()).toEqual([{ pid: 200, folder: '/wt/b' }]);
+  });
 });

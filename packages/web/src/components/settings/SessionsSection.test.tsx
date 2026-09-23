@@ -6,9 +6,11 @@ const kill = vi.hoisted(() => vi.fn());
 const worktreesList = vi.hoisted(() => vi.fn());
 const reposList = vi.hoisted(() => vi.fn());
 const stopVscode = vi.hoisted(() => vi.fn());
+const vscodeClose = vi.hoisted(() => vi.fn());
 vi.mock('../../api', () => ({
   api: {
     sessions: { metrics, kill, stopVscode },
+    vscode: { close: vscodeClose },
     worktrees: { list: worktreesList },
     repos: { list: reposList },
   },
@@ -56,6 +58,7 @@ beforeEach(() => {
   metrics.mockReset().mockResolvedValue(sample());
   kill.mockReset().mockResolvedValue(undefined);
   stopVscode.mockReset().mockResolvedValue(undefined);
+  vscodeClose.mockReset().mockResolvedValue({ ok: true });
   localStorage.clear();
   worktreesList.mockReset().mockResolvedValue([
     { path: WT, repoId: 'fleetx-react-app', branch: 'master', meta: { ticketId: null, title: null } },
@@ -184,5 +187,7 @@ describe('SessionsSection', () => {
     expect(within(row).getByText('2.0%')).toBeInTheDocument();
     fireEvent.click(within(row).getByRole('button', { name: /close vs code in master/i }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]')).toEqual([ORPHAN]));
+    // and the server ends that window's extension host (the hub may not be mounted)
+    expect(vscodeClose).toHaveBeenCalledWith(WT);
   });
 });

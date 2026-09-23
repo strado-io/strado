@@ -15,7 +15,12 @@ export async function registerVsCodeRoutes(app: FastifyInstance) {
   // One serve-web daemon per worktree folder, reaped on close.
   app.post('/api/vscode', async (req) => ensureVsCodeWeb(requireFolder(req.body)));
   app.delete('/api/vscode', async (req) => {
-    await dropVsCodeWeb(requireFolder(req.body));
+    const folder = requireFolder(req.body);
+    await dropVsCodeWeb(folder);
+    // The tab closed, so its window is gone for good. VS Code would keep that
+    // window's extension host (and its TypeScript servers) alive for its
+    // reconnection grace — hours — holding the memory. End it now.
+    await vscodeWindows.closeFolder(folder);
     return { ok: true };
   });
 
