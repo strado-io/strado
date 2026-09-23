@@ -2429,6 +2429,37 @@ export function TerminalView({
     void requestCloseTab(activeRef.current);
   };
 
+  // VS Code and Browser tabs are client-side state mirrored in localStorage.
+  // Settings → Sessions closes them by writing storage; run the normal close
+  // for any tab here that storage no longer lists, so the strip updates live.
+  const closeTabRef = useRef<(tab: Tab) => void>(() => {});
+  const groupsForSyncRef = useRef(groups);
+  groupsForSyncRef.current = groups;
+  useEffect(() => {
+    const sync = () => {
+      const g = groupsForSyncRef.current.find((x) => x.path === worktree.path);
+      if (!g) return;
+      if (g.vscodeOpen && !readVscodeTabs().has(g.path)) {
+        closeTabRef.current({ path: g.path, mode: 'vscode', id: '1' });
+      }
+      if (isElectron) {
+        if (g.browserOpen && !readBrowserTabs().has(g.path)) {
+          closeTabRef.current({ path: g.path, mode: 'browser', id: '1' });
+        }
+        const stored = new Set(readBrowserTabIds()[g.path] ?? []);
+        for (const id of g.browserIds) {
+          if (id !== '1' && !stored.has(id)) closeTabRef.current({ path: g.path, mode: 'browser', id });
+        }
+      }
+    };
+    window.addEventListener('strado:vscode-tabs', sync);
+    window.addEventListener('strado:browser-tabs', sync);
+    return () => {
+      window.removeEventListener('strado:vscode-tabs', sync);
+      window.removeEventListener('strado:browser-tabs', sync);
+    };
+  }, [worktree.path]);
+
   const closeTab = (tab: Tab) => {
     // Closing a runner shell ATTACHED to a local hub DETACHES — it never
     // kills the pty. That session is the thing the user came for (it outlives
@@ -2606,6 +2637,7 @@ export function TerminalView({
       }),
     );
   };
+  closeTabRef.current = closeTab;
 
   return (
     <div

@@ -335,3 +335,18 @@ describe('docked DevTools tab switching', () => {
     expect(devtoolsMock.mock.calls.some((c) => c[0] === 'dock')).toBe(false);
   });
 });
+
+describe('browser tab closed elsewhere', () => {
+  it('drops the Browser tab when Settings → Sessions closes it, without a reload', async () => {
+    const P = worktree.path;
+    localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
+    render(
+      <TerminalView worktree={{ ...worktree, hasShellSession: true, shellSessions: ['1'] } as Worktree} mode="shell" onClose={() => {}} />,
+    );
+    expect(screen.getByText('Browser')).toBeInTheDocument();
+    const { rememberBrowserTab } = await import('../hooks/browserTabs');
+    act(() => rememberBrowserTab(P, false));
+    await vi.waitFor(() => expect(screen.queryByText('Browser')).not.toBeInTheDocument());
+  });
+});
+

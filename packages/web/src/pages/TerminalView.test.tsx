@@ -1337,6 +1337,22 @@ describe('TerminalView', () => {
     expect(screen.queryByText('VS Code')).not.toBeInTheDocument();
   });
 
+  it('drops the VS Code tab when it is closed elsewhere (Settings → Sessions), without a reload', async () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="vscode"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('VS Code')).toBeInTheDocument();
+    const { rememberVscodeTab } = await import('../hooks/vscodeTabs');
+    act(() => rememberVscodeTab(baseWorktree.path, false));
+    await vi.waitFor(() => expect(screen.queryByText('VS Code')).not.toBeInTheDocument());
+    // focus falls back to a surviving tab
+    expect(screen.getByText('Shell')).toBeInTheDocument();
+  });
+
   it('registers the VS Code origin with Electron before mounting the iframe', async () => {
     let finishRegistration: (allowed: boolean) => void = () => {};
     const vscodeOrigin = vi.fn(() => new Promise<boolean>((resolve) => {

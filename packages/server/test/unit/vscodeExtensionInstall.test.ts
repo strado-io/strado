@@ -19,6 +19,9 @@ describe('installStradoExtension', () => {
     // host), never in the browser's web worker.
     expect(pkg.extensionKind).toEqual(['workspace']);
     expect(pkg.main).toBe('./extension.js');
+    // Restricted Mode (an untrusted folder) disables extensions that do not
+    // opt in — those windows would never be attributed.
+    expect(pkg.capabilities?.untrustedWorkspaces?.supported).toBe(true);
   });
 
   it('removes older copies so an upgrade does not leave two versions active', () => {
