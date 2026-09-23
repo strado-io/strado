@@ -336,7 +336,7 @@ export function SessionsSection() {
 
           <table className="w-full border-separate border-spacing-0 overflow-hidden rounded-lg border border-zinc-800">
             <thead>
-              <tr className="text-left text-[11px] font-medium text-zinc-500">
+              <tr className="text-left text-[11px] font-medium text-zinc-500 [&>th]:border-b [&>th]:border-zinc-800 [&>th]:bg-zinc-900/50">
                 <th className="px-3 py-2 font-medium">Name</th>
                 <th className="px-2 py-2 text-right font-medium">CPU</th>
                 <th className="px-2 py-2 text-right font-medium">Memory</th>
@@ -347,15 +347,15 @@ export function SessionsSection() {
 
             {showApp && (
               <tbody data-testid="sessions-group-strado">
-                <tr className="bg-zinc-900/30">
-                  <td className="border-t border-zinc-800 px-3 py-2">
+                <tr className="[&>td]:border-t [&>td]:border-zinc-800 [&>td]:bg-zinc-900/30">
+                  <td className="px-3 py-2">
                     <button type="button" onClick={() => toggle('strado')} aria-expanded={stradoOpen}
                       aria-label={`${stradoOpen ? 'Collapse' : 'Expand'} Strado`}
-                      className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                      title="The app, its server, the terminal daemon and the shared VS Code workbench"
+                      className="flex items-center gap-2 whitespace-nowrap text-sm font-medium text-zinc-100">
                       <Chevron open={stradoOpen} />
                       <KindIcon kind="app" />
                       <span>Strado</span>
-                      <span className="text-xs font-normal text-zinc-500">app, server and VS Code</span>
                     </button>
                   </td>
                   <UsageCells usage={appTotal} max={maxRss} label="Strado" strong
@@ -363,7 +363,7 @@ export function SessionsSection() {
                       { kind: 'app', bytes: appTotal.rssBytes - (metrics.app.vscode?.rssBytes ?? 0) },
                       { kind: 'vscode', bytes: metrics.app.vscode?.rssBytes ?? 0 },
                     ]} />
-                  <td className="border-t border-zinc-800" />
+                  <td />
                 </tr>
                 {stradoOpen && app.map((r) => (
                   <tr key={r.id} data-testid={`sessions-row-${r.id}`} className="group hover:bg-zinc-900/40">
@@ -388,7 +388,7 @@ export function SessionsSection() {
             {shown.length === 0 && (
               <tbody>
                 <tr>
-                  <td colSpan={5} className="border-t border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">
+                  <td colSpan={5} className="px-3 py-6 text-center text-xs text-zinc-500">
                     {kindFilter || query
                       ? 'Nothing matches. Clear the filter to see every session.'
                       : 'No terminal sessions. Open a Claude, shell or Codex tab and it appears here.'}
@@ -402,11 +402,11 @@ export function SessionsSection() {
               const all = g.worktrees.reduce((a, w) => a + w.sessions.length, 0);
               return (
                 <tbody key={g.id} data-testid={`sessions-group-${g.id}`}>
-                  <tr className="bg-zinc-900/30">
-                    <td className="border-t border-zinc-800 px-3 py-2">
+                  <tr className="[&>td]:border-t [&>td]:border-zinc-800 [&>td]:bg-zinc-900/30">
+                    <td className="px-3 py-2">
                       <button type="button" onClick={() => toggle(g.id)} aria-expanded={open}
                         aria-label={`${open ? 'Collapse' : 'Expand'} ${g.orphan ? 'Other' : g.label}`}
-                        className="flex min-w-0 items-center gap-2 text-sm font-medium text-zinc-100">
+                        className="flex min-w-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-zinc-100">
                         <Chevron open={open} />
                         {g.orphan ? (
                           <span aria-hidden className="flex h-5 w-5 items-center justify-center text-zinc-500">
@@ -423,7 +423,7 @@ export function SessionsSection() {
                       )}
                     </td>
                     <UsageCells usage={g.usage} max={maxRss} label={g.label} strong parts={partsOf(g.byKind)} />
-                    <td className="border-t border-zinc-800 px-2 py-1 text-right">
+                    <td className="px-2 py-1 text-right">
                       {g.orphan && (
                         <span className="group">
                           <ActionButton label="End all" confirmLabel={`End ${all}`} busy={busy === `group:${g.id}`}
