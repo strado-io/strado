@@ -77,4 +77,15 @@ describe('buildSessionMetrics', () => {
     expect(out.app.daemon).toBeNull();
     expect(out.sessions[0]).toMatchObject({ pid: null, cpu: 0, rssBytes: 0, processes: 0 });
   });
+
+  it('reports the shared VS Code serve-web tree under app.vscode, null when not running', () => {
+    const procs = parsePsOutput(PS);
+    const withIt = buildSessionMetrics({
+      live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: 100, now: 0,
+    });
+    // 100 → 200 → 201, plus 400
+    expect(withIt.app.vscode).toEqual({ pid: 100, cpu: 14.7, rssBytes: 270000 * 1024, processes: 4 });
+    const without = buildSessionMetrics({ live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: null, now: 0 });
+    expect(without.app.vscode).toBeNull();
+  });
 });

@@ -56,7 +56,8 @@ interface Window {
     vscodeOrigin?: (url: string) => Promise<boolean>;
     // Electron's own process metrics (main/renderer/gpu/utility) for the
     // Settings → Sessions view; absent on older shells and in a browser
-    appMetrics?: () => Promise<Array<{ pid: number; type: string; name?: string; cpu: number; memoryKb: number }>>;
+    // `preview` = the Browser preview key when that renderer is a preview view
+    appMetrics?: () => Promise<Array<{ pid: number; type: string; name?: string; cpu: number; memoryKb: number; preview?: string }>>;
     // native folder picker for "Add repo" — absent on older shells;
     // resolves to the chosen absolute path or null if cancelled
     pickDirectory?: () => Promise<string | null>;

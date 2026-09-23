@@ -54,6 +54,7 @@ describe('GET /api/sessions/metrics', () => {
     expect(body.app.server.rssBytes).toBeGreaterThan(0);
     // The suite runs the in-process manager (STRADO_INPROC_PTY=1): no daemon.
     expect(body.app.daemon).toBeNull();
+    expect(body.app.vscode).toBeNull(); // no workbench in tests
     const row = body.sessions.find((s: { key: string }) => s.key === `${orphan}\0shell`);
     expect(row).toMatchObject({ path: orphan, mode: 'shell', id: '1' });
     expect(row.pid).toBeGreaterThan(0);
@@ -81,3 +82,11 @@ describe('DELETE /api/sessions/:key', () => {
     expect(res.statusCode).toBe(404);
   }, 20_000);
 });
+
+describe('DELETE /api/sessions/vscode', () => {
+  it('stops the shared VS Code workbench (idempotent when none is running)', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/sessions/vscode' });
+    expect(res.statusCode).toBe(204);
+  }, 20_000);
+});
+

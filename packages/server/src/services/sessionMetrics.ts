@@ -25,7 +25,12 @@ export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
 
 export type SessionMetrics = {
   sampledAt: number;
-  app: { server: AppProcMetric; daemon: AppProcMetric | null };
+  app: {
+    server: AppProcMetric;
+    daemon: AppProcMetric | null;
+    /** the shared `code serve-web` workbench and everything under it */
+    vscode: (AppProcMetric & { processes: number }) | null;
+  };
   sessions: SessionMetric[];
 };
 
@@ -93,6 +98,7 @@ export function buildSessionMetrics(input: {
   procs: ProcSample[];
   serverPid: number;
   daemonPid: number | null;
+  vscodePid?: number | null;
   now?: number;
 }): SessionMetrics {
   const one = (pid: number): AppProcMetric => {
@@ -110,6 +116,7 @@ export function buildSessionMetrics(input: {
     app: {
       server: one(input.serverPid),
       daemon: input.daemonPid ? one(input.daemonPid) : null,
+      vscode: input.vscodePid ? { pid: input.vscodePid, ...subtreeTotals(input.procs, input.vscodePid) } : null,
     },
     sessions,
   };

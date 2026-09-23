@@ -285,4 +285,13 @@ describe('vscode web manager', () => {
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
     expect(probes).toBe(3);
   }, 10_000);
+
+  it('status() reports the shared workbench process while it runs, null otherwise', async () => {
+    const { mgr, spawned } = makeManager();
+    expect(mgr.status()).toBeNull();
+    const a = await mgr.ensure('/wt/a');
+    expect(mgr.status()).toEqual({ pid: spawned.length ? 1001 : 0, port: 5000, url: a.url, ready: true });
+    await mgr.closeAll();
+    expect(mgr.status()).toBeNull();
+  });
 });

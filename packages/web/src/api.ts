@@ -581,6 +581,7 @@ export const api = {
     metrics: () => request<SessionMetrics>('/api/sessions/metrics'),
     kill: (key: string) =>
       request<void>(`/api/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+    stopVscode: () => request<void>('/api/sessions/vscode', { method: 'DELETE' }),
   },
   vscode: {
     // Ensures the shared VS Code web server is running; returns its base URL.

@@ -5,9 +5,10 @@ const metrics = vi.hoisted(() => vi.fn());
 const kill = vi.hoisted(() => vi.fn());
 const worktreesList = vi.hoisted(() => vi.fn());
 const reposList = vi.hoisted(() => vi.fn());
+const stopVscode = vi.hoisted(() => vi.fn());
 vi.mock('../../api', () => ({
   api: {
-    sessions: { metrics, kill },
+    sessions: { metrics, kill, stopVscode },
     worktrees: { list: worktreesList },
     repos: { list: reposList },
   },
@@ -31,6 +32,7 @@ const sample = () => ({
   app: {
     server: { pid: 10, cpu: 2.7, rssBytes: 119.7 * MB },
     daemon: { pid: 11, cpu: 0.4, rssBytes: 35 * MB },
+    vscode: { pid: 12, cpu: 3.0, rssBytes: 410 * MB, processes: 5 },
   },
   sessions: [
     { key: WT, path: WT, mode: 'claude', id: '1', pid: 500, cpu: 1.0, rssBytes: 235 * MB, processes: 3 },
@@ -50,6 +52,8 @@ function renderSection() {
 beforeEach(() => {
   metrics.mockReset().mockResolvedValue(sample());
   kill.mockReset().mockResolvedValue(undefined);
+  stopVscode.mockReset().mockResolvedValue(undefined);
+  localStorage.clear();
   worktreesList.mockReset().mockResolvedValue([
     { path: WT, repoId: 'fleetx-react-app', branch: 'master', meta: { ticketId: null, title: null } },
   ]);
@@ -60,7 +64,11 @@ beforeEach(() => {
       { pid: 2, type: 'Tab', cpu: 1.3, memoryKb: 375.5 * 1024 },
       { pid: 3, type: 'GPU', cpu: 0.5, memoryKb: 60 * 1024 },
       { pid: 4, type: 'Utility', cpu: 0.1, memoryKb: 20 * 1024 },
+      // Browser preview WebContentsViews: renderer processes tagged with their preview key.
+      { pid: 5, type: 'Tab', cpu: 0.7, memoryKb: 150 * 1024, preview: WT },
+      { pid: 6, type: 'Tab', cpu: 0.2, memoryKb: 90 * 1024, preview: `${ORPHAN}\0browser:2` },
     ]),
+    preview: vi.fn().mockResolvedValue(true),
   };
 });
 
@@ -72,9 +80,9 @@ describe('SessionsSection', () => {
     expect(within(repo).getByText('fleetx-react-app')).toBeInTheDocument();
     const wt = screen.getByTestId(`sessions-worktree-${WT}`);
     expect(within(wt).getByText('master')).toBeInTheDocument();
-    // worktree totals = sum of its sessions
-    expect(within(wt).getByText('1.2%')).toBeInTheDocument();
-    expect(within(wt).getByText('247.0 MB')).toBeInTheDocument();
+    // worktree totals = its pty sessions (1.0 + 0.2, 235 + 12) plus its Browser preview (0.7, 150)
+    expect(within(wt).getByText('1.9%')).toBeInTheDocument();
+    expect(within(wt).getByText('397.0 MB')).toBeInTheDocument();
     const claude = screen.getByTestId(`sessions-row-${WT}`);
     expect(within(claude).getByText('Claude')).toBeInTheDocument();
     expect(within(claude).getByText('1.0%')).toBeInTheDocument();
@@ -106,7 +114,7 @@ describe('SessionsSection', () => {
     metrics.mockResolvedValue({ ...sample(), sessions: sample().sessions.slice(0, 2) });
     fireEvent.click(within(row).getByRole('button', { name: /kill/i }));
     await waitFor(() => expect(kill).toHaveBeenCalledWith(`${ORPHAN}\0shell`));
-    await waitFor(() => expect(screen.queryByTestId('sessions-group-other')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId(`sessions-row-${ORPHAN}\0shell`)).not.toBeInTheDocument());
   });
 
   it('collapses a repo group', async () => {
@@ -118,7 +126,44 @@ describe('SessionsSection', () => {
 
   it('says so when the daemon holds no sessions', async () => {
     metrics.mockResolvedValue({ ...sample(), sessions: [] });
+    (window as unknown as { strado: { appMetrics: ReturnType<typeof vi.fn> } }).strado.appMetrics.mockResolvedValue([]);
     renderSection();
     expect(await screen.findByText(/no terminal sessions/i)).toBeInTheDocument();
+  });
+
+  it('shows the shared VS Code workbench under Strado, with a Stop action', async () => {
+    renderSection();
+    const app = await screen.findByTestId('sessions-group-strado');
+    const row = within(app).getByTestId('sessions-row-vscode');
+    expect(within(row).getByText('VS Code')).toBeInTheDocument();
+    expect(within(row).getByText('410.0 MB')).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: /stop vs code/i }));
+    await waitFor(() => expect(stopVscode).toHaveBeenCalled());
+  });
+
+  it('lists Browser previews under their worktree and keeps them out of the Renderer row', async () => {
+    renderSection();
+    const wt = await screen.findByTestId(`sessions-worktree-${WT}`);
+    const browser = screen.getByTestId(`sessions-row-browser:${WT}`);
+    expect(within(browser).getByText('Browser')).toBeInTheDocument();
+    expect(within(browser).getByText('150.0 MB')).toBeInTheDocument();
+    // worktree total now includes the preview: 235 + 12 + 150
+    expect(within(wt).getByText('397.0 MB')).toBeInTheDocument();
+    // Renderer row is the dashboard only.
+    const app = screen.getByTestId('sessions-group-strado');
+    expect(within(app).getByText('375.5 MB')).toBeInTheDocument();
+    // An orphan preview lands under Other, numbered like its tab.
+    const other = screen.getByTestId('sessions-group-other');
+    expect(within(other).getByText('Browser 2')).toBeInTheDocument();
+  });
+
+  it('closing a Browser preview tears down the view and forgets the tab', async () => {
+    localStorage.setItem('strado:browser-tabs', JSON.stringify([WT]));
+    renderSection();
+    const browser = await screen.findByTestId(`sessions-row-browser:${WT}`);
+    fireEvent.click(within(browser).getByRole('button', { name: /close browser/i }));
+    const strado = (window as unknown as { strado: { preview: ReturnType<typeof vi.fn> } }).strado;
+    await waitFor(() => expect(strado.preview).toHaveBeenCalledWith('close', WT));
+    expect(JSON.parse(localStorage.getItem('strado:browser-tabs') ?? '[]')).toEqual([]);
   });
 });

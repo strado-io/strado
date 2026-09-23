@@ -299,6 +299,11 @@ export type SessionMetric = {
 export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
 export type SessionMetrics = {
   sampledAt: number;
-  app: { server: AppProcMetric; daemon: AppProcMetric | null };
+  app: {
+    server: AppProcMetric;
+    daemon: AppProcMetric | null;
+    /** the shared `code serve-web` workbench and everything under it */
+    vscode: (AppProcMetric & { processes: number }) | null;
+  };
   sessions: SessionMetric[];
 };

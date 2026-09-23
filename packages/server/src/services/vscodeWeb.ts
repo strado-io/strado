@@ -79,6 +79,8 @@ export type VsCodeWebManager = {
   drop(folder: string): Promise<void>;
   reapOrphans(): Promise<void>;
   closeAll(): Promise<void>;
+  /** the shared workbench process, or null when none is running */
+  status(): { pid: number; port: number; url: string; ready: boolean } | null;
 };
 
 // A daemon store persists spawned {pid,port} so orphans survive a crash and get
@@ -387,7 +389,12 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
     prune([entry.pid]);
   }
 
-  return { ensure, prewarm, drop, reapOrphans, closeAll };
+  function status(): { pid: number; port: number; url: string; ready: boolean } | null {
+    if (!instance || instance.child.exitCode !== null) return null;
+    return { pid: instance.pid, port: instance.port, url: instance.url, ready: instance.ready };
+  }
+
+  return { ensure, prewarm, drop, reapOrphans, closeAll, status };
 }
 
 // HAZARD: this captures daemonFilePath() (via createVsCodeWebManager ->
@@ -406,3 +413,4 @@ export const prewarmVsCodeWeb = () => defaultManager.prewarm();
 export const dropVsCodeWeb = (folder: string) => defaultManager.drop(folder);
 export const reapOrphans = () => defaultManager.reapOrphans();
 export const closeAll = () => defaultManager.closeAll();
+export const vsCodeWebStatus = () => defaultManager.status();

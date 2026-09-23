@@ -7,6 +7,7 @@
 // for weeks — that is what "Other" surfaces, with a Kill that works by key.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
+import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
 
@@ -25,9 +26,14 @@ const fmtCpu = (pct: number) => `${pct.toFixed(1)}%`;
 const basename = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
 
 type Usage = { cpu: number; rssBytes: number };
-type AppMetric = { pid: number; type: string; name?: string; cpu: number; memoryKb: number };
+type AppMetric = { pid: number; type: string; name?: string; cpu: number; memoryKb: number; preview?: string };
 
-type SessionRow = { key: string; label: string; mode: SessionMetric['mode']; usage: Usage };
+// A pty session from the daemon, or a Browser preview (an Electron renderer
+// tagged with its preview key by the shell). Both sit under their worktree.
+type SessionRow =
+  | { kind: 'pty'; key: string; label: string; mode: SessionMetric['mode']; usage: Usage }
+  | { kind: 'browser'; key: string; label: string; path: string; id: string; usage: Usage };
+type BrowserPreview = { key: string; path: string; id: string; usage: Usage };
 type WorktreeRow = { path: string; label: string; usage: Usage; sessions: SessionRow[] };
 type Group = { id: string; label: string; title?: string; usage: Usage; worktrees: WorktreeRow[] };
 
@@ -36,16 +42,46 @@ const sum = (rows: Usage[]): Usage => ({
   rssBytes: rows.reduce((a, r) => a + r.rssBytes, 0),
 });
 
+// Preview keys are `<path>` for tab 1 and `<path>\0browser:<id>` beyond.
+function parsePreviewKey(key: string): { path: string; id: string } {
+  const [path, suffix] = key.split('\0');
+  return { path: path!, id: suffix?.startsWith('browser:') ? suffix.slice('browser:'.length) : '1' };
+}
+
+function browserPreviews(app: AppMetric[] | null): BrowserPreview[] {
+  if (!app) return [];
+  return app
+    .filter((m): m is AppMetric & { preview: string } => typeof m.preview === 'string')
+    .map((m) => ({ key: m.preview, ...parsePreviewKey(m.preview), usage: { cpu: m.cpu, rssBytes: m.memoryKb * 1024 } }));
+}
+
 // Repo → worktree → session; anything not in this workspace's worktree list
 // goes to "Other", one row per path so an orphan is still identifiable.
-function groupSessions(sessions: SessionMetric[], worktrees: Worktree[], repos: RepoConfig[]): Group[] {
+function groupSessions(
+  sessions: SessionMetric[],
+  previews: BrowserPreview[],
+  worktrees: Worktree[],
+  repos: RepoConfig[],
+): Group[] {
   const wtByPath = new Map(worktrees.map((w) => [w.path, w]));
   const repoName = new Map(repos.map((r) => [r.id, r.name]));
-  const byPath = new Map<string, SessionMetric[]>();
+  const byPath = new Map<string, SessionRow[]>();
+  const push = (path: string, row: SessionRow) => {
+    const list = byPath.get(path);
+    if (list) list.push(row);
+    else byPath.set(path, [row]);
+  };
   for (const s of sessions) {
-    const list = byPath.get(s.path);
-    if (list) list.push(s);
-    else byPath.set(s.path, [s]);
+    push(s.path, {
+      kind: 'pty',
+      key: s.key,
+      mode: s.mode,
+      label: s.id === '1' ? MODE_LABEL[s.mode] : `${MODE_LABEL[s.mode]} ${s.id}`,
+      usage: { cpu: s.cpu, rssBytes: s.rssBytes },
+    });
+  }
+  for (const b of previews) {
+    push(b.path, { kind: 'browser', key: b.key, path: b.path, id: b.id, label: b.id === '1' ? 'Browser' : `Browser ${b.id}`, usage: b.usage });
   }
   const groups = new Map<string, Group>();
   for (const [path, list] of byPath) {
@@ -62,14 +98,7 @@ function groupSessions(sessions: SessionMetric[], worktrees: Worktree[], repos: 
       };
       groups.set(gid, g);
     }
-    const rows: SessionRow[] = list
-      .map((s) => ({
-        key: s.key,
-        mode: s.mode,
-        label: s.id === '1' ? MODE_LABEL[s.mode] : `${MODE_LABEL[s.mode]} ${s.id}`,
-        usage: { cpu: s.cpu, rssBytes: s.rssBytes },
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const rows = [...list].sort((a, b) => a.label.localeCompare(b.label));
     g.worktrees.push({
       path,
       label: wt ? (wt.meta?.ticketId?.trim() || wt.branch || basename(path)) : basename(path),
@@ -86,19 +115,23 @@ function groupSessions(sessions: SessionMetric[], worktrees: Worktree[], repos: 
   return out.sort((a, b) => (a.id === 'other' ? 1 : b.id === 'other' ? -1 : a.label.localeCompare(b.label)));
 }
 
-// Electron's process list folded into the four rows people recognise.
-function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): Array<{ label: string; usage: Usage }> {
-  const rows: Array<{ label: string; usage: Usage }> = [];
+// Electron's process list folded into the rows people recognise. Browser
+// previews are listed under their worktree instead, so Renderer is the
+// dashboard alone. VS Code is the one shared `code serve-web` workbench.
+type AppRow = { id: string; label: string; usage: Usage };
+function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): AppRow[] {
+  const rows: AppRow[] = [];
   if (app) {
     const pick = (pred: (p: AppMetric) => boolean) =>
       sum(app.filter(pred).map((p) => ({ cpu: p.cpu, rssBytes: p.memoryKb * 1024 })));
-    rows.push({ label: 'Main', usage: pick((p) => p.type === 'Browser') });
-    rows.push({ label: 'Renderer', usage: pick((p) => p.type === 'Tab') });
-    rows.push({ label: 'GPU', usage: pick((p) => p.type === 'GPU') });
-    rows.push({ label: 'Other', usage: pick((p) => !['Browser', 'Tab', 'GPU'].includes(p.type)) });
+    rows.push({ id: 'main', label: 'Main', usage: pick((p) => p.type === 'Browser') });
+    rows.push({ id: 'renderer', label: 'Renderer', usage: pick((p) => p.type === 'Tab' && !p.preview) });
+    rows.push({ id: 'gpu', label: 'GPU', usage: pick((p) => p.type === 'GPU') });
+    rows.push({ id: 'other', label: 'Other', usage: pick((p) => !['Browser', 'Tab', 'GPU'].includes(p.type)) });
   }
-  rows.push({ label: 'Server', usage: { cpu: m.server.cpu, rssBytes: m.server.rssBytes } });
-  if (m.daemon) rows.push({ label: 'Daemon', usage: { cpu: m.daemon.cpu, rssBytes: m.daemon.rssBytes } });
+  rows.push({ id: 'server', label: 'Server', usage: { cpu: m.server.cpu, rssBytes: m.server.rssBytes } });
+  if (m.daemon) rows.push({ id: 'daemon', label: 'Daemon', usage: { cpu: m.daemon.cpu, rssBytes: m.daemon.rssBytes } });
+  if (m.vscode) rows.push({ id: 'vscode', label: 'VS Code', usage: { cpu: m.vscode.cpu, rssBytes: m.vscode.rssBytes } });
   return rows;
 }
 
@@ -181,10 +214,10 @@ export function SessionsSection() {
     };
   }, [load]);
 
-  const kill = async (key: string) => {
-    setBusy(key);
+  const run = async (id: string, action: () => Promise<unknown>) => {
+    setBusy(id);
     try {
-      await api.sessions.kill(key);
+      await action();
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -192,6 +225,16 @@ export function SessionsSection() {
       setBusy(null);
     }
   };
+  const kill = (key: string) => run(key, () => api.sessions.kill(key));
+  const stopVscode = () => run('vscode', () => api.sessions.stopVscode());
+  // Same teardown the hub's ✕ does: drop the native view, then forget the tab
+  // so the strip (which listens for the storage event) removes it.
+  const closeBrowser = (row: Extract<SessionRow, { kind: 'browser' }>) =>
+    run(row.key, async () => {
+      await window.strado?.preview?.('close', row.key);
+      if (row.id === '1') rememberBrowserTab(row.path, false);
+      else rememberBrowserTabIds(row.path, (readBrowserTabIds()[row.path] ?? []).filter((i) => i !== row.id));
+    });
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -202,8 +245,8 @@ export function SessionsSection() {
     });
 
   const groups = useMemo(
-    () => (metrics ? groupSessions(metrics.sessions, worktrees, repos) : []),
-    [metrics, worktrees, repos],
+    () => (metrics ? groupSessions(metrics.sessions, browserPreviews(appMetrics), worktrees, repos) : []),
+    [metrics, appMetrics, worktrees, repos],
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
   const appTotal = sum(app.map((r) => r.usage));
@@ -243,10 +286,23 @@ export function SessionsSection() {
               <td />
             </tr>
             {app.map((r) => (
-              <tr key={r.label}>
+              <tr key={r.id} data-testid={`sessions-row-${r.id}`} className="group">
                 <td className="py-1.5 pl-9 pr-3 text-sm text-zinc-400">{r.label}</td>
                 <UsageCells usage={r.usage} max={maxRss} dim />
-                <td />
+                <td className="px-2 py-1 text-right">
+                  {r.id === 'vscode' && (
+                    <button
+                      type="button"
+                      onClick={() => void stopVscode()}
+                      disabled={busy === 'vscode'}
+                      aria-label="Stop VS Code"
+                      title="Stop the shared VS Code workbench; tabs reconnect on next open"
+                      className="rounded-md px-2 py-1 text-xs text-zinc-500 opacity-60 hover:bg-red-950/50 hover:text-red-300 group-hover:opacity-100 disabled:opacity-40"
+                    >
+                      {busy === 'vscode' ? 'Stopping…' : 'Stop'}
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -294,10 +350,14 @@ export function SessionsSection() {
                       <td />
                     </tr>,
                     ...w.sessions.map((s) => (
-                      <tr key={`s:${s.key}`} data-testid={`sessions-row-${s.key}`} className="group">
+                      <tr
+                        key={`${s.kind}:${s.key}`}
+                        data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : `sessions-row-${s.key}`}
+                        className="group"
+                      >
                         <td className="py-1.5 pl-14 pr-3">
                           <span className="flex items-center gap-2 text-sm text-zinc-300">
-                            <span className={`size-1.5 shrink-0 rounded-full ${MODE_DOT[s.mode]}`} aria-hidden />
+                            <span className={`size-1.5 shrink-0 rounded-full ${s.kind === 'browser' ? 'bg-emerald-400' : MODE_DOT[s.mode]}`} aria-hidden />
                             <span>{s.label}</span>
                           </span>
                         </td>
@@ -305,12 +365,12 @@ export function SessionsSection() {
                         <td className="px-2 py-1 text-right">
                           <button
                             type="button"
-                            onClick={() => void kill(s.key)}
+                            onClick={() => void (s.kind === 'browser' ? closeBrowser(s) : kill(s.key))}
                             disabled={busy === s.key}
-                            aria-label={`Kill ${s.label} in ${w.label}`}
+                            aria-label={`${s.kind === 'browser' ? 'Close' : 'Kill'} ${s.label} in ${w.label}`}
                             className="rounded-md px-2 py-1 text-xs text-zinc-500 opacity-60 hover:bg-red-950/50 hover:text-red-300 group-hover:opacity-100 disabled:opacity-40"
                           >
-                            {busy === s.key ? 'Killing…' : 'Kill'}
+                            {busy === s.key ? '…' : s.kind === 'browser' ? 'Close' : 'Kill'}
                           </button>
                         </td>
                       </tr>
