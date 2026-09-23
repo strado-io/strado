@@ -1,183 +1,172 @@
-// Settings → Sessions: a bird's-eye view of every pty the daemon holds,
-// machine-wide, with the CPU and memory of the process tree under each one.
+// Settings → Sessions: where this machine's memory goes, by repo, worktree and
+// session — every pty the daemon holds, each VS Code window, each Browser
+// preview, and Strado's own processes.
 //
-// The sidebar only ever shows sessions for worktrees in the current
-// workspace. Sessions whose worktree was deleted, or that belong to another
-// workspace, are invisible there yet still hold a shell, an agent and memory
-// for weeks — that is what "Other" surfaces, with a Kill that works by key.
+// The sidebar only shows sessions for worktrees in the current workspace.
+// Sessions whose worktree was deleted, or that belong to another workspace,
+// are invisible there yet can hold an agent and a gigabyte for weeks; they
+// collect under "Not in this workspace" with a bulk End.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
 import { closeVscodeTab } from '../../pages/vscodeTabClose';
-import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
+import type { RepoConfig, SessionMetrics, Worktree } from '../../types';
+import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ReloadIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
+import { BranchIcon, RepoIcon } from '../sidebar/SidebarBody';
+import {
+  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, sum,
+  type AppMetric, type Group, type Kind, type SessionRow, type SortKey, type Usage,
+} from './sessionsModel';
 
 const POLL_MS = 5_000;
-const MB = 1024 * 1024;
+const HEAVY_BYTES = 1024 * MB; // memory at or above this reads amber
+const CONFIRM_MS = 4_000;
 
-const MODE_LABEL: Record<SessionMetric['mode'], string> = {
-  claude: 'Claude', shell: 'Shell', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi',
-};
-const MODE_DOT: Record<SessionMetric['mode'], string> = {
-  claude: 'bg-amber-300', codex: 'bg-sky-300', opencode: 'bg-violet-300', pi: 'bg-rose-300', shell: 'bg-zinc-400',
-};
-
-const fmtMb = (bytes: number) => `${(bytes / MB).toFixed(1)} MB`;
-const fmtCpu = (pct: number) => `${pct.toFixed(1)}%`;
-const basename = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
-
-type Usage = { cpu: number; rssBytes: number };
-type AppMetric = { pid: number; type: string; name?: string; cpu: number; memoryKb: number; preview?: string };
-
-// A pty session from the daemon, or a Browser preview (an Electron renderer
-// tagged with its preview key by the shell). Both sit under their worktree.
-type SessionRow =
-  | { kind: 'pty'; key: string; label: string; mode: SessionMetric['mode']; usage: Usage }
-  | { kind: 'browser'; key: string; label: string; path: string; id: string; usage: Usage }
-  // one serve-web window (its extension host's process tree), reported by the strado-window extension
-  | { kind: 'vscode'; key: string; label: string; path: string; usage: Usage };
-type BrowserPreview = { key: string; path: string; id: string; usage: Usage };
-type WorktreeRow = { path: string; label: string; usage: Usage; sessions: SessionRow[] };
-type Group = { id: string; label: string; title?: string; usage: Usage; worktrees: WorktreeRow[] };
-
-const sum = (rows: Usage[]): Usage => ({
-  cpu: rows.reduce((a, r) => a + r.cpu, 0),
-  rssBytes: rows.reduce((a, r) => a + r.rssBytes, 0),
-});
-
-// Preview keys are `<path>` for tab 1 and `<path>\0browser:<id>` beyond.
-function parsePreviewKey(key: string): { path: string; id: string } {
-  const [path, suffix] = key.split('\0');
-  return { path: path!, id: suffix?.startsWith('browser:') ? suffix.slice('browser:'.length) : '1' };
+function KindIcon({ kind, size = 13 }: { kind: Kind; size?: number }) {
+  const cls = `shrink-0 ${KIND_TEXT[kind]}`;
+  if (kind === 'claude') return <ClaudeIcon size={size} className={cls} />;
+  if (kind === 'codex') return <CodexIcon size={size} className={cls} />;
+  if (kind === 'opencode') return <OpencodeIcon size={size} className={cls} />;
+  if (kind === 'pi') return <PiIcon size={size} className={cls} />;
+  if (kind === 'vscode') return <VsCodeIcon size={size} className={cls} />;
+  if (kind === 'browser') return <GlobeIcon className={`h-[13px] w-[13px] ${cls}`} />;
+  if (kind === 'app') return <StradoMark className={cls} />;
+  return <ShellIcon size={size} className={cls} />;
 }
 
-function browserPreviews(app: AppMetric[] | null): BrowserPreview[] {
-  if (!app) return [];
-  return app
-    .filter((m): m is AppMetric & { preview: string } => typeof m.preview === 'string')
-    .map((m) => ({ key: m.preview, ...parsePreviewKey(m.preview), usage: { cpu: m.cpu, rssBytes: m.memoryKb * 1024 } }));
-}
-
-// Repo → worktree → session; anything not in this workspace's worktree list
-// goes to "Other", one row per path so an orphan is still identifiable.
-function groupSessions(
-  sessions: SessionMetric[],
-  previews: BrowserPreview[],
-  windows: SessionMetrics['vscodeWindows'],
-  worktrees: Worktree[],
-  repos: RepoConfig[],
-): Group[] {
-  const wtByPath = new Map(worktrees.map((w) => [w.path, w]));
-  const repoName = new Map(repos.map((r) => [r.id, r.name]));
-  const byPath = new Map<string, SessionRow[]>();
-  const push = (path: string, row: SessionRow) => {
-    const list = byPath.get(path);
-    if (list) list.push(row);
-    else byPath.set(path, [row]);
-  };
-  for (const s of sessions) {
-    push(s.path, {
-      kind: 'pty',
-      key: s.key,
-      mode: s.mode,
-      label: s.id === '1' ? MODE_LABEL[s.mode] : `${MODE_LABEL[s.mode]} ${s.id}`,
-      usage: { cpu: s.cpu, rssBytes: s.rssBytes },
-    });
-  }
-  for (const b of previews) {
-    push(b.path, { kind: 'browser', key: b.key, path: b.path, id: b.id, label: b.id === '1' ? 'Browser' : `Browser ${b.id}`, usage: b.usage });
-  }
-  for (const w of windows) {
-    push(w.path, { kind: 'vscode', key: `vscode:${w.path}:${w.pid}`, path: w.path, label: 'VS Code', usage: { cpu: w.cpu, rssBytes: w.rssBytes } });
-  }
-  const groups = new Map<string, Group>();
-  for (const [path, list] of byPath) {
-    const wt = wtByPath.get(path);
-    const gid = wt?.repoId ?? 'other';
-    let g = groups.get(gid);
-    if (!g) {
-      g = {
-        id: gid,
-        label: wt ? (repoName.get(wt.repoId ?? '') ?? wt.repoId ?? 'repo') : 'Other',
-        title: wt ? undefined : 'Sessions whose worktree is not in this workspace (deleted, or another workspace)',
-        usage: { cpu: 0, rssBytes: 0 },
-        worktrees: [],
-      };
-      groups.set(gid, g);
-    }
-    const rows = [...list].sort((a, b) => a.label.localeCompare(b.label));
-    g.worktrees.push({
-      path,
-      label: wt ? (wt.meta?.ticketId?.trim() || wt.branch || basename(path)) : basename(path),
-      usage: sum(rows.map((r) => r.usage)),
-      sessions: rows,
-    });
-  }
-  const out = [...groups.values()];
-  for (const g of out) {
-    g.worktrees.sort((a, b) => a.label.localeCompare(b.label));
-    g.usage = sum(g.worktrees.map((w) => w.usage));
-  }
-  // Repos alphabetically; Other last.
-  return out.sort((a, b) => (a.id === 'other' ? 1 : b.id === 'other' ? -1 : a.label.localeCompare(b.label)));
-}
-
-// Electron's process list folded into the rows people recognise. Browser
-// previews are listed under their worktree instead, so Renderer is the
-// dashboard alone. VS Code is the one shared `code serve-web` workbench.
-type AppRow = { id: string; label: string; usage: Usage };
-function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): AppRow[] {
-  const rows: AppRow[] = [];
-  if (app) {
-    const pick = (pred: (p: AppMetric) => boolean) =>
-      sum(app.filter(pred).map((p) => ({ cpu: p.cpu, rssBytes: p.memoryKb * 1024 })));
-    rows.push({ id: 'main', label: 'Main', usage: pick((p) => p.type === 'Browser') });
-    rows.push({ id: 'renderer', label: 'Renderer', usage: pick((p) => p.type === 'Tab' && !p.preview) });
-    rows.push({ id: 'gpu', label: 'GPU', usage: pick((p) => p.type === 'GPU') });
-    rows.push({ id: 'other', label: 'Other', usage: pick((p) => !['Browser', 'Tab', 'GPU'].includes(p.type)) });
-  }
-  rows.push({ id: 'server', label: 'Server', usage: { cpu: m.server.cpu, rssBytes: m.server.rssBytes } });
-  if (m.daemon) rows.push({ id: 'daemon', label: 'Daemon', usage: { cpu: m.daemon.cpu, rssBytes: m.daemon.rssBytes } });
-  if (m.vscode) rows.push({ id: 'vscode', label: 'VS Code (shared)', usage: { cpu: m.vscode.cpu, rssBytes: m.vscode.rssBytes } });
-  return rows;
-}
-
-function ShareBar({ value, max }: { value: number; max: number }) {
-  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+function StradoMark({ className = '' }: { className?: string }) {
   return (
-    <div
-      role="progressbar"
-      aria-valuenow={pct}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-label="Memory share"
-      className="h-1 w-full rounded-full bg-zinc-800"
-    >
-      <div className="h-1 rounded-full bg-zinc-500" style={{ width: `${pct}%` }} />
-    </div>
-  );
-}
-
-function UsageCells({ usage, max, dim }: { usage: Usage; max: number; dim?: boolean }) {
-  const tone = dim ? 'text-zinc-500' : 'text-zinc-200';
-  return (
-    <>
-      <td className={`w-20 px-3 py-1.5 text-right text-sm tabular-nums ${tone}`}>{fmtCpu(usage.cpu)}</td>
-      <td className={`w-28 px-3 py-1.5 text-right text-sm tabular-nums ${tone}`}>{fmtMb(usage.rssBytes)}</td>
-      <td className="w-40 px-3 py-1.5"><ShareBar value={usage.rssBytes} max={max} /></td>
-    </>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden className={className}>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <path d="M3 9h18" />
+    </svg>
   );
 }
 
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden
-      className={`shrink-0 transition-transform ${open ? '' : '-rotate-90'}`}>
+      className={`shrink-0 text-zinc-500 transition-transform duration-150 motion-reduce:transition-none ${open ? '' : '-rotate-90'}`}>
       <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }
+
+// One bar per row, sized against the heaviest row on the page so rows compare
+// at a glance. Group rows stack their kinds; a session row is one colour.
+function ShareBar({ parts, max, label }: { parts: Array<{ kind: Kind; bytes: number }>; max: number; label: string }) {
+  const total = parts.reduce((a, p) => a + p.bytes, 0);
+  const pct = max > 0 ? Math.min(100, (total / max) * 100) : 0;
+  return (
+    <div
+      role="progressbar"
+      aria-valuenow={Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`${label} memory share`}
+      className="flex h-1.5 w-full overflow-hidden rounded-full bg-zinc-800/80"
+    >
+      <div className="flex h-full" style={{ width: `${pct}%` }}>
+        {parts.map((p) => (
+          <div key={p.kind} className={`h-full ${KIND_BG[p.kind]}`} style={{ width: `${total ? (p.bytes / total) * 100 : 0}%` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const partsOf = (byKind: Partial<Record<Kind, number>>) =>
+  (Object.entries(byKind) as Array<[Kind, number]>).filter(([, b]) => b > 0).map(([kind, bytes]) => ({ kind, bytes }));
+
+function UsageCells({ usage, parts, max, label, strong }: {
+  usage: Usage; parts: Array<{ kind: Kind; bytes: number }>; max: number; label: string; strong?: boolean;
+}) {
+  const heavy = usage.rssBytes >= HEAVY_BYTES;
+  const tone = heavy ? 'text-amber-300' : strong ? 'text-zinc-100' : 'text-zinc-400';
+  return (
+    <>
+      <td className={`w-16 px-2 py-1.5 text-right text-[13px] tabular-nums ${strong ? 'text-zinc-300' : 'text-zinc-500'}`}>{fmtCpu(usage.cpu)}</td>
+      <td className={`w-24 px-2 py-1.5 text-right text-[13px] tabular-nums ${tone}`} title={heavy ? 'Over 1 GB' : undefined}>{fmtMem(usage.rssBytes)}</td>
+      <td className="w-36 px-3 py-1.5"><ShareBar parts={parts} max={max} label={label} /></td>
+    </>
+  );
+}
+
+// Destructive actions that end a live agent ask once: first click arms, a
+// second within a few seconds confirms. Close (reopenable) acts at once.
+function ActionButton({ label, confirmLabel, busy, onRun }: {
+  label: string; confirmLabel?: string; busy: boolean; onRun: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), CONFIRM_MS);
+    return () => clearTimeout(t);
+  }, [armed]);
+  const base = 'rounded-md px-2 py-1 text-xs transition-colors disabled:opacity-40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-zinc-500';
+  if (armed && confirmLabel) {
+    return (
+      <button type="button" onClick={() => { setArmed(false); onRun(); }} aria-label={`Confirm ${confirmLabel}`}
+        className={`${base} bg-red-950/70 text-red-200 ring-1 ring-inset ring-red-800/70 hover:bg-red-900/60`}>
+        {confirmLabel}?
+      </button>
+    );
+  }
+  return (
+    <button type="button" disabled={busy} aria-label={label}
+      onClick={() => (confirmLabel ? setArmed(true) : onRun())}
+      className={`${base} text-zinc-500 opacity-0 hover:bg-red-950/50 hover:text-red-300 focus-visible:opacity-100 group-hover:opacity-100`}>
+      {busy ? '…' : label.split(' ')[0]}
+    </button>
+  );
+}
+
+function MemoryMap({ parts, filter, onFilter }: {
+  parts: Array<{ kind: Kind; bytes: number }>; filter: Kind | null; onFilter: (k: Kind | null) => void;
+}) {
+  const total = parts.reduce((a, p) => a + p.bytes, 0);
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3.5" data-testid="sessions-memory-map">
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl font-semibold tabular-nums tracking-tight text-zinc-100">{fmtMem(total)}</span>
+        <span className="text-xs text-zinc-500">in use by Strado and everything it runs</span>
+      </div>
+      <div className="mt-3 flex h-2.5 w-full gap-px overflow-hidden rounded-full bg-zinc-800" aria-hidden>
+        {parts.map((p) => (
+          <div key={p.kind}
+            className={`h-full transition-opacity duration-150 motion-reduce:transition-none ${KIND_BG[p.kind]} ${filter && filter !== p.kind ? 'opacity-25' : ''}`}
+            style={{ width: `${total ? (p.bytes / total) * 100 : 0}%` }} />
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-1 gap-y-1" role="group" aria-label="Show only one kind">
+        {parts.map((p) => {
+          const on = filter === p.kind;
+          const clickable = p.kind !== 'app';
+          return (
+            <button key={p.kind} type="button" disabled={!clickable} aria-pressed={on}
+              onClick={() => onFilter(on ? null : p.kind)}
+              title={clickable ? (on ? 'Show everything' : `Show only ${KIND_LABEL[p.kind]}`) : undefined}
+              className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors disabled:cursor-default ${
+                on ? 'bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700' : 'text-zinc-400 enabled:hover:bg-zinc-800/60 enabled:hover:text-zinc-200'
+              } ${filter && !on ? 'opacity-50' : ''}`}>
+              <KindIcon kind={p.kind} size={12} />
+              <span>{KIND_LABEL[p.kind]}</span>
+              <span className="tabular-nums text-zinc-500">{fmtMem(p.bytes)}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const SORTS: Array<{ id: SortKey; label: string }> = [
+  { id: 'memory', label: 'Memory' },
+  { id: 'cpu', label: 'CPU' },
+  { id: 'name', label: 'Name' },
+];
 
 export function SessionsSection() {
   const { workspace } = useWorkspace();
@@ -187,7 +176,12 @@ export function SessionsSection() {
   const [repos, setRepos] = useState<RepoConfig[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Strado's own processes start folded: the page is about sessions.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(['strado']));
+  const [sort, setSort] = useState<SortKey>('memory');
+  const [kindFilter, setKindFilter] = useState<Kind | null>(null);
+  const [query, setQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -204,7 +198,7 @@ export function SessionsSection() {
       setAppMetrics(appM);
       setError(null);
     } catch (err) {
-      setError((err as Error).message);
+      setError(`Could not read sessions: ${(err as Error).message}`);
     }
   }, [workspace.id]);
 
@@ -222,6 +216,12 @@ export function SessionsSection() {
     };
   }, [load]);
 
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
   const run = async (id: string, action: () => Promise<unknown>) => {
     setBusy(id);
     try {
@@ -233,7 +233,17 @@ export function SessionsSection() {
       setBusy(null);
     }
   };
-  const kill = (key: string) => run(key, () => api.sessions.kill(key));
+  const endRow = (s: SessionRow) => {
+    if (s.kind === 'pty') return run(s.key, () => api.sessions.kill(s.key));
+    // Same close the hub's ✕ does: forget the tab (the strip listens) and,
+    // for VS Code, tell the server so it ends that window's extension host.
+    if (s.kind === 'vscode') return run(s.key, async () => { closeVscodeTab(s.path); });
+    return run(s.key, async () => {
+      await window.strado?.preview?.('close', s.key);
+      if (s.id === '1') rememberBrowserTab(s.path, false);
+      else rememberBrowserTabIds(s.path, (readBrowserTabIds()[s.path] ?? []).filter((i) => i !== s.id));
+    });
+  };
   // Stopping the shared workbench strands every VS Code tab on a dead server,
   // so close them all; reopening one boots a fresh workbench.
   const stopVscode = () =>
@@ -241,18 +251,13 @@ export function SessionsSection() {
       await api.sessions.stopVscode();
       for (const path of readVscodeTabs()) rememberVscodeTab(path, false);
     });
-  // Same teardown the hub's ✕ does: drop the native view, then forget the tab
-  // so the strip (which listens for the storage event) removes it.
-  // Same close the hub's ✕ does: forget the tab (the strip listens) and tell
-  // the server, which ends that window's extension host — VS Code would
-  // otherwise keep it, and its memory, alive for hours.
-  const closeVscode = (row: Extract<SessionRow, { kind: 'vscode' }>) =>
-    run(row.key, async () => { closeVscodeTab(row.path); });
-  const closeBrowser = (row: Extract<SessionRow, { kind: 'browser' }>) =>
-    run(row.key, async () => {
-      await window.strado?.preview?.('close', row.key);
-      if (row.id === '1') rememberBrowserTab(row.path, false);
-      else rememberBrowserTabIds(row.path, (readBrowserTabIds()[row.path] ?? []).filter((i) => i !== row.id));
+  const endGroup = (g: Group) =>
+    run(`group:${g.id}`, async () => {
+      for (const w of g.worktrees) for (const s of w.sessions) {
+        if (s.kind === 'pty') await api.sessions.kill(s.key);
+        else if (s.kind === 'vscode') closeVscodeTab(s.path);
+        else await window.strado?.preview?.('close', s.key);
+      }
     });
 
   const toggle = (id: string) =>
@@ -264,21 +269,37 @@ export function SessionsSection() {
     });
 
   const groups = useMemo(
-    () => (metrics ? groupSessions(metrics.sessions, browserPreviews(appMetrics), metrics.vscodeWindows ?? [], worktrees, repos) : []),
-    [metrics, appMetrics, worktrees, repos],
+    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, windows: metrics.vscodeWindows ?? [], worktrees, repos, sort }) : []),
+    [metrics, appMetrics, worktrees, repos, sort],
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
   const appTotal = sum(app.map((r) => r.usage));
+  const map = memoryByKind(groups, app);
+  const shown = filterGroups(groups, kindFilter, query);
   const maxRss = Math.max(appTotal.rssBytes, ...groups.map((g) => g.usage.rssBytes), 1);
+  const sessionCount = groups.reduce((a, g) => a + g.worktrees.reduce((b, w) => b + w.sessions.length, 0), 0);
+  const stradoOpen = !collapsed.has('strado');
+  const showApp = !kindFilter && !query;
 
   return (
-    <section className="flex flex-col gap-3" data-testid="sessions-section">
-      <div>
-        <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
-        <p className="text-xs text-zinc-500">
-          Every terminal the daemon is holding on this machine, with the CPU and memory of the processes under it.
-          Sessions survive app restarts, so this is where forgotten ones show up.
-        </p>
+    <section className="flex flex-col gap-4" data-testid="sessions-section">
+      <div className="flex items-start justify-between gap-4 pr-10">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
+          <p className="mt-0.5 max-w-prose text-xs leading-relaxed text-zinc-500">
+            Every terminal, agent, VS Code window and browser preview on this machine, with the memory and CPU of
+            the processes behind it. Sessions outlive app restarts, so forgotten ones pile up here.
+          </p>
+        </div>
+        <button type="button" onClick={() => void refresh()} aria-label="Refresh now"
+          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200">
+          <span className="relative flex size-1.5" aria-hidden>
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400/60 motion-reduce:animate-none" />
+            <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
+          </span>
+          <span>Live</span>
+          <ReloadIcon size={12} className={refreshing ? 'animate-spin motion-reduce:animate-none' : ''} />
+        </button>
       </div>
 
       {error && (
@@ -286,119 +307,175 @@ export function SessionsSection() {
       )}
 
       {metrics === null ? (
-        <p className="text-xs text-zinc-500">Loading…</p>
+        <div className="h-28 animate-pulse rounded-lg bg-zinc-900/60 motion-reduce:animate-none" aria-label="Loading sessions" />
       ) : (
-        <table className="w-full border-separate border-spacing-0 overflow-hidden rounded border border-zinc-800">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-wide text-zinc-500">
-              <th className="px-3 py-2 text-left font-medium">Process</th>
-              <th className="px-3 py-2 text-right font-medium">CPU</th>
-              <th className="px-3 py-2 text-right font-medium">Memory</th>
-              <th className="px-3 py-2 text-left font-medium normal-case tracking-normal text-zinc-500">Memory share</th>
-              <th className="w-16" />
-            </tr>
-          </thead>
-          <tbody data-testid="sessions-group-strado" className="border-t border-zinc-800">
-            <tr className="border-t border-zinc-800">
-              <td className="px-3 py-2 text-sm font-medium text-zinc-100">Strado</td>
-              <UsageCells usage={appTotal} max={maxRss} />
-              <td />
-            </tr>
-            {app.map((r) => (
-              <tr key={r.id} data-testid={`sessions-row-${r.id}`} className="group">
-                <td className="py-1.5 pl-9 pr-3 text-sm text-zinc-400">{r.label}</td>
-                <UsageCells usage={r.usage} max={maxRss} dim />
-                <td className="px-2 py-1 text-right">
-                  {r.id === 'vscode' && (
-                    <button
-                      type="button"
-                      onClick={() => void stopVscode()}
-                      disabled={busy === 'vscode'}
-                      aria-label="Stop VS Code"
-                      title="Stop the shared VS Code workbench and close every VS Code tab"
-                      className="rounded-md px-2 py-1 text-xs text-zinc-500 opacity-60 hover:bg-red-950/50 hover:text-red-300 group-hover:opacity-100 disabled:opacity-40"
-                    >
-                      {busy === 'vscode' ? 'Stopping…' : 'Stop'}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
+        <>
+          <MemoryMap parts={map} filter={kindFilter} onFilter={setKindFilter} />
 
-          {groups.length === 0 && (
-            <tbody>
-              <tr>
-                <td colSpan={5} className="border-t border-zinc-800 px-3 py-3 text-xs text-zinc-500">
-                  No terminal sessions. Open a Claude, shell or Codex tab and it appears here.
-                </td>
-              </tr>
-            </tbody>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter by repo or branch"
+              aria-label="Filter by repo or branch"
+              className="h-8 min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+            <div className="flex rounded-md border border-zinc-800 p-0.5" role="group" aria-label="Sort by">
+              {SORTS.map((s) => (
+                <button key={s.id} type="button" aria-pressed={sort === s.id} onClick={() => setSort(s.id)}
+                  className={`rounded px-2.5 py-1 text-xs ${sort === s.id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs tabular-nums text-zinc-600">
+              {sessionCount} session{sessionCount === 1 ? '' : 's'}
+            </span>
+          </div>
 
-          {groups.map((g) => {
-            const open = !collapsed.has(g.id);
-            return (
-              <tbody key={g.id} data-testid={`sessions-group-${g.id}`}>
-                <tr className="border-t border-zinc-800">
-                  <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => toggle(g.id)}
-                      aria-label={`${open ? 'Collapse' : 'Expand'} ${g.label}`}
-                      title={g.title}
-                      className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-zinc-100 hover:text-white"
-                    >
-                      <Chevron open={open} />
-                      <span>{g.label}</span>
+          <table className="w-full border-separate border-spacing-0 overflow-hidden rounded-lg border border-zinc-800">
+            <thead>
+              <tr className="text-left text-[11px] font-medium text-zinc-500">
+                <th className="px-3 py-2 font-medium">Name</th>
+                <th className="px-2 py-2 text-right font-medium">CPU</th>
+                <th className="px-2 py-2 text-right font-medium">Memory</th>
+                <th className="px-3 py-2 font-medium">Share</th>
+                <th className="w-20" />
+              </tr>
+            </thead>
+
+            {showApp && (
+              <tbody data-testid="sessions-group-strado">
+                <tr className="bg-zinc-900/30">
+                  <td className="border-t border-zinc-800 px-3 py-2">
+                    <button type="button" onClick={() => toggle('strado')} aria-expanded={stradoOpen}
+                      aria-label={`${stradoOpen ? 'Collapse' : 'Expand'} Strado`}
+                      className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                      <Chevron open={stradoOpen} />
+                      <KindIcon kind="app" />
+                      <span>Strado</span>
+                      <span className="text-xs font-normal text-zinc-500">app, server and VS Code</span>
                     </button>
                   </td>
-                  <UsageCells usage={g.usage} max={maxRss} />
-                  <td />
+                  <UsageCells usage={appTotal} max={maxRss} label="Strado" strong
+                    parts={[
+                      { kind: 'app', bytes: appTotal.rssBytes - (metrics.app.vscode?.rssBytes ?? 0) },
+                      { kind: 'vscode', bytes: metrics.app.vscode?.rssBytes ?? 0 },
+                    ]} />
+                  <td className="border-t border-zinc-800" />
                 </tr>
-                {open &&
-                  g.worktrees.flatMap((w) => [
-                    <tr key={`wt:${w.path}`} data-testid={`sessions-worktree-${w.path}`}>
-                      <td className="py-1.5 pl-7 pr-3">
-                        <span className="flex items-center gap-2 text-sm text-zinc-200" title={w.path}>
-                          <Chevron open />
+                {stradoOpen && app.map((r) => (
+                  <tr key={r.id} data-testid={`sessions-row-${r.id}`} className="group hover:bg-zinc-900/40">
+                    <td className="py-1.5 pl-12 pr-3 text-[13px] text-zinc-400">
+                      <span className="flex items-center gap-2">
+                        {r.id === 'vscode' && <KindIcon kind="vscode" size={12} />}
+                        <span>{r.label}</span>
+                      </span>
+                    </td>
+                    <UsageCells usage={r.usage} max={maxRss} label={r.label}
+                      parts={[{ kind: r.id === 'vscode' ? 'vscode' : 'app', bytes: r.usage.rssBytes }]} />
+                    <td className="px-2 py-1 text-right">
+                      {r.id === 'vscode' && (
+                        <ActionButton label="Stop VS Code" busy={busy === 'vscode'} onRun={() => void stopVscode()} />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            )}
+
+            {shown.length === 0 && (
+              <tbody>
+                <tr>
+                  <td colSpan={5} className="border-t border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">
+                    {kindFilter || query
+                      ? 'Nothing matches. Clear the filter to see every session.'
+                      : 'No terminal sessions. Open a Claude, shell or Codex tab and it appears here.'}
+                  </td>
+                </tr>
+              </tbody>
+            )}
+
+            {shown.map((g) => {
+              const open = !collapsed.has(g.id);
+              const all = g.worktrees.reduce((a, w) => a + w.sessions.length, 0);
+              return (
+                <tbody key={g.id} data-testid={`sessions-group-${g.id}`}>
+                  <tr className="bg-zinc-900/30">
+                    <td className="border-t border-zinc-800 px-3 py-2">
+                      <button type="button" onClick={() => toggle(g.id)} aria-expanded={open}
+                        aria-label={`${open ? 'Collapse' : 'Expand'} ${g.orphan ? 'Other' : g.label}`}
+                        className="flex min-w-0 items-center gap-2 text-sm font-medium text-zinc-100">
+                        <Chevron open={open} />
+                        {g.orphan ? (
+                          <span aria-hidden className="flex h-5 w-5 items-center justify-center text-zinc-500">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 8v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+                          </span>
+                        ) : <RepoIcon />}
+                        <span className="truncate">{g.label}</span>
+                        <span className="text-xs font-normal tabular-nums text-zinc-600">{all}</span>
+                      </button>
+                      {g.orphan && open && (
+                        <p className="mt-1 pl-[3.25rem] text-[11px] leading-snug text-zinc-500">
+                          From worktrees this workspace doesn’t list, usually deleted ones. End them if you don’t need them.
+                        </p>
+                      )}
+                    </td>
+                    <UsageCells usage={g.usage} max={maxRss} label={g.label} strong parts={partsOf(g.byKind)} />
+                    <td className="border-t border-zinc-800 px-2 py-1 text-right">
+                      {g.orphan && (
+                        <span className="group">
+                          <ActionButton label="End all" confirmLabel={`End ${all}`} busy={busy === `group:${g.id}`}
+                            onRun={() => void endGroup(g)} />
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  {open && g.worktrees.flatMap((w) => [
+                    <tr key={`wt:${w.path}`} data-testid={`sessions-worktree-${w.path}`} className="hover:bg-zinc-900/40">
+                      <td className="py-1.5 pl-9 pr-3">
+                        <span className="flex min-w-0 items-center gap-2 text-[13px] text-zinc-200" title={w.path}>
+                          <BranchIcon className="shrink-0 text-zinc-500" />
                           <span className="truncate">{w.label}</span>
                         </span>
                       </td>
-                      <UsageCells usage={w.usage} max={maxRss} />
+                      <UsageCells usage={w.usage} max={maxRss} label={w.label} strong parts={partsOf(w.byKind)} />
                       <td />
                     </tr>,
-                    ...w.sessions.map((s) => (
-                      <tr
-                        key={`${s.kind}:${s.key}`}
-                        data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : s.kind === 'vscode' ? `sessions-row-vscode:${s.path}` : `sessions-row-${s.key}`}
-                        className="group"
-                      >
-                        <td className="py-1.5 pl-14 pr-3">
-                          <span className="flex items-center gap-2 text-sm text-zinc-300">
-                            <span className={`size-1.5 shrink-0 rounded-full ${s.kind === 'browser' ? 'bg-emerald-400' : s.kind === 'vscode' ? 'bg-blue-400' : MODE_DOT[s.mode]}`} aria-hidden />
-                            <span>{s.label}</span>
-                          </span>
-                        </td>
-                        <UsageCells usage={s.usage} max={maxRss} dim />
-                        <td className="px-2 py-1 text-right">
-                          <button
-                            type="button"
-                            onClick={() => void (s.kind === 'browser' ? closeBrowser(s) : s.kind === 'vscode' ? closeVscode(s) : kill(s.key))}
-                            disabled={busy === s.key}
-                            aria-label={`${s.kind === 'pty' ? 'Kill' : 'Close'} ${s.label} in ${w.label}`}
-                            className="rounded-md px-2 py-1 text-xs text-zinc-500 opacity-60 hover:bg-red-950/50 hover:text-red-300 group-hover:opacity-100 disabled:opacity-40"
-                          >
-                            {busy === s.key ? '…' : s.kind === 'pty' ? 'Kill' : 'Close'}
-                          </button>
-                        </td>
-                      </tr>
-                    )),
+                    ...w.sessions.map((s) => {
+                      const processes = s.kind === 'browser' ? null : s.processes;
+                      return (
+                        <tr key={`${s.kind}:${s.key}`}
+                          data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : s.kind === 'vscode' ? `sessions-row-vscode:${s.path}` : `sessions-row-${s.key}`}
+                          className="group hover:bg-zinc-900/40">
+                          <td className="py-1.5 pl-16 pr-3">
+                            <span className="flex items-center gap-2 text-[13px] text-zinc-300"
+                              title={s.kind === 'browser' ? undefined : s.pid ? `pid ${s.pid}` : undefined}>
+                              <KindIcon kind={s.mode} />
+                              <span>{s.label}</span>
+                              {processes !== null && processes > 1 && (
+                                <span className="text-[11px] tabular-nums text-zinc-600">{processes} processes</span>
+                              )}
+                            </span>
+                          </td>
+                          <UsageCells usage={s.usage} max={maxRss} label={s.label} parts={[{ kind: s.mode, bytes: s.usage.rssBytes }]} />
+                          <td className="px-2 py-1 text-right">
+                            <ActionButton
+                              label={`${s.kind === 'pty' ? 'Kill' : 'Close'} ${s.label} in ${w.label}`}
+                              confirmLabel={s.kind === 'pty' && s.mode !== 'shell' ? `Kill ${s.label}` : undefined}
+                              busy={busy === s.key}
+                              onRun={() => void endRow(s)} />
+                          </td>
+                        </tr>
+                      );
+                    }),
                   ])}
-              </tbody>
-            );
-          })}
-        </table>
+                </tbody>
+              );
+            })}
+          </table>
+        </>
       )}
     </section>
   );

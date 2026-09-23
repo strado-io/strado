@@ -70,7 +70,7 @@ const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeL
 
 // branch glyph (hand-tuned SVG, ships pre-flipped upside down) — marks
 // each worktree row as a branch hanging off its repo.
-function BranchIcon({ className = '' }: { className?: string }) {
+export function BranchIcon({ className = '' }: { className?: string }) {
   return (
     <svg
       width="14" height="14" viewBox="0 0 48 48" aria-hidden data-worktree-icon="branch"
@@ -158,7 +158,7 @@ function MergeRequestBadge({ worktree, mr, onOpen, testIdSuffix = worktree.path 
   );
 }
 
-function RepoIcon() {
+export function RepoIcon() {
   // book-with-bookmark repo glyph (hand-tuned SVG), always in the app's
   // primary orange (sky-* is remapped to Strado orange) — one color for every repo
   return (

@@ -100,6 +100,9 @@ describe('SessionsSection', () => {
   it('shows the Strado app processes on top: Main, Renderer, GPU, Other, Server, Daemon', async () => {
     renderSection();
     const app = await screen.findByTestId('sessions-group-strado');
+    // folded by default: the page is about sessions
+    expect(within(app).queryByText('Main')).not.toBeInTheDocument();
+    fireEvent.click(within(app).getByRole('button', { name: /expand strado/i }));
     for (const label of ['Main', 'Renderer', 'GPU', 'Other', 'Server', 'Daemon']) {
       expect(within(app).getByText(label)).toBeInTheDocument();
     }
@@ -141,6 +144,7 @@ describe('SessionsSection', () => {
   it('shows the shared VS Code workbench under Strado, with a Stop action', async () => {
     renderSection();
     const app = await screen.findByTestId('sessions-group-strado');
+    fireEvent.click(within(app).getByRole('button', { name: /expand strado/i }));
     const row = within(app).getByTestId('sessions-row-vscode');
     // what is left of the serve-web tree after the per-window rows below
     expect(within(row).getByText('VS Code (shared)')).toBeInTheDocument();
@@ -162,6 +166,7 @@ describe('SessionsSection', () => {
     expect(within(wt).getByText('997.0 MB')).toBeInTheDocument();
     // Renderer row is the dashboard only.
     const app = screen.getByTestId('sessions-group-strado');
+    fireEvent.click(within(app).getByRole('button', { name: /expand strado/i }));
     expect(within(app).getByText('375.5 MB')).toBeInTheDocument();
     // An orphan preview lands under Other, numbered like its tab.
     const other = screen.getByTestId('sessions-group-other');
@@ -189,5 +194,56 @@ describe('SessionsSection', () => {
     await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]')).toEqual([ORPHAN]));
     // and the server ends that window's extension host (the hub may not be mounted)
     expect(vscodeClose).toHaveBeenCalledWith(WT);
+  });
+
+  it('the memory map totals everything by kind, and a legend item filters the table to that kind', async () => {
+    renderSection();
+    const map = await screen.findByTestId('sessions-memory-map');
+    // Claude 235 MB, VS Code window 600 + shared 410, Browser 150 + 90, Shell 12 + 8
+    expect(within(map).getByRole('button', { name: /Claude.*235\.0 MB/ })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: /VS Code.*1010\.0 MB/ })).toBeInTheDocument();
+    fireEvent.click(within(map).getByRole('button', { name: /^Claude/ }));
+    expect(within(map).getByRole('button', { name: /^Claude/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId(`sessions-row-${WT}`)).toBeInTheDocument(); // Claude row stays
+    expect(screen.queryByTestId(`sessions-row-${WT}\0shell`)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('sessions-group-other')).not.toBeInTheDocument(); // no Claude there
+  });
+
+  it('sorts sessions by memory by default, and by name on request', async () => {
+    renderSection();
+    await screen.findByTestId(`sessions-worktree-${WT}`);
+    const order = () => screen.getAllByTestId(/^sessions-row-(vscode:|browser:|\/)/)
+      .filter((r) => r.getAttribute('data-testid')!.includes(WT))
+      .map((r) => within(r).getAllByText(/^(Claude|Shell|VS Code|Browser)$/)[0]!.textContent);
+    expect(order()).toEqual(['VS Code', 'Claude', 'Browser', 'Shell']);
+    fireEvent.click(screen.getByRole('button', { name: 'Name' }));
+    expect(order()).toEqual(['Browser', 'Claude', 'Shell', 'VS Code']);
+  });
+
+  it('search narrows to matching repos and branches', async () => {
+    renderSection();
+    await screen.findByTestId('sessions-group-other');
+    fireEvent.change(screen.getByRole('searchbox', { name: /filter by repo or branch/i }), { target: { value: 'oms' } });
+    expect(screen.getByTestId('sessions-group-other')).toBeInTheDocument();
+    expect(screen.queryByTestId('sessions-group-fleetx-react-app')).not.toBeInTheDocument();
+  });
+
+  it('killing an agent asks once before it acts', async () => {
+    renderSection();
+    const row = await screen.findByTestId(`sessions-row-${WT}`);
+    fireEvent.click(within(row).getByRole('button', { name: /kill claude in master/i }));
+    expect(kill).not.toHaveBeenCalled();
+    fireEvent.click(within(row).getByRole('button', { name: /confirm kill claude/i }));
+    await waitFor(() => expect(kill).toHaveBeenCalledWith(WT));
+  });
+
+  it('End all ends every session not in this workspace, after a confirm', async () => {
+    renderSection();
+    const other = await screen.findByTestId('sessions-group-other');
+    fireEvent.click(within(other).getByRole('button', { name: /end all/i }));
+    fireEvent.click(within(other).getByRole('button', { name: /confirm end 2/i }));
+    await waitFor(() => expect(kill).toHaveBeenCalledWith(`${ORPHAN}\0shell`));
+    const strado = (window as unknown as { strado: { preview: ReturnType<typeof vi.fn> } }).strado;
+    expect(strado.preview).toHaveBeenCalledWith('close', `${ORPHAN}\0browser:2`);
   });
 });
