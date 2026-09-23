@@ -13,10 +13,10 @@ import { useWorkspace } from '../../hooks/useWorkspace';
 import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
 import { closeVscodeTab } from '../../pages/vscodeTabClose';
 import type { RepoConfig, SessionMetrics, Worktree } from '../../types';
-import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ReloadIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
+import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ReloadIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
 import { BranchIcon, RepoIcon } from '../sidebar/SidebarBody';
 import {
-  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, sum,
+  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, serverPids, sum,
   type AppMetric, type Group, type Kind, type SessionRow, type SortKey, type Usage,
 } from './sessionsModel';
 
@@ -33,6 +33,7 @@ function KindIcon({ kind, size = 13 }: { kind: Kind; size?: number }) {
   if (kind === 'vscode') return <VsCodeIcon size={size} className={cls} />;
   if (kind === 'browser') return <GlobeIcon className={`h-[13px] w-[13px] ${cls}`} />;
   if (kind === 'app') return <StradoMark className={cls} />;
+  if (kind === 'server') return <ScreenIcon size={size} className={cls} />;
   return <ShellIcon size={size} className={cls} />;
 }
 
@@ -186,12 +187,14 @@ export function SessionsSection() {
 
   const load = useCallback(async () => {
     try {
-      const [m, wts, rs, appM] = await Promise.all([
-        api.sessions.metrics(),
+      // Worktrees first: their dev-server pids are what the metrics call
+      // measures alongside the daemon's sessions.
+      const [wts, rs, appM] = await Promise.all([
         api.worktrees.list(workspace.id).catch(() => [] as Worktree[]),
         api.repos.list(workspace.id).catch(() => [] as RepoConfig[]),
         window.strado?.appMetrics ? window.strado.appMetrics().catch(() => null) : Promise.resolve(null),
       ]);
+      const m = await api.sessions.metrics(serverPids(wts));
       setMetrics(m);
       setWorktrees(wts);
       setRepos(rs);
@@ -235,6 +238,11 @@ export function SessionsSection() {
   };
   const endRow = (s: SessionRow) => {
     if (s.kind === 'pty') return run(s.key, () => api.sessions.kill(s.key));
+    // Strado's own server stops through its process manager; an external one
+    // gets the same SIGTERM the worktree row's Kill sends.
+    if (s.kind === 'server') {
+      return run(s.key, () => (s.external ? api.worktrees.killExternal(workspace.id, s.path) : api.worktrees.stop(workspace.id, s.path)));
+    }
     // Same close the hub's ✕ does: forget the tab (the strip listens) and,
     // for VS Code, tell the server so it ends that window's extension host.
     if (s.kind === 'vscode') return run(s.key, async () => { closeVscodeTab(s.path); });
@@ -255,6 +263,7 @@ export function SessionsSection() {
     run(`group:${g.id}`, async () => {
       for (const w of g.worktrees) for (const s of w.sessions) {
         if (s.kind === 'pty') await api.sessions.kill(s.key);
+        else if (s.kind === 'server') continue; // orphan paths have no worktree to stop through
         else if (s.kind === 'vscode') closeVscodeTab(s.path);
         else await window.strado?.preview?.('close', s.key);
       }
@@ -269,7 +278,7 @@ export function SessionsSection() {
     });
 
   const groups = useMemo(
-    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, windows: metrics.vscodeWindows ?? [], worktrees, repos, sort }) : []),
+    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, windows: metrics.vscodeWindows ?? [], processes: metrics.processes, worktrees, repos, sort }) : []),
     [metrics, appMetrics, worktrees, repos, sort],
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
@@ -445,6 +454,8 @@ export function SessionsSection() {
                     </tr>,
                     ...w.sessions.map((s) => {
                       const processes = s.kind === 'browser' ? null : s.processes;
+                      const verb = s.kind === 'pty' || (s.kind === 'server' && s.external) ? 'Kill' : s.kind === 'server' ? 'Stop' : 'Close';
+                      const confirm = (s.kind === 'pty' && s.mode !== 'shell') || (s.kind === 'server' && s.external);
                       return (
                         <tr key={`${s.kind}:${s.key}`}
                           data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : s.kind === 'vscode' ? `sessions-row-vscode:${s.path}` : `sessions-row-${s.key}`}
@@ -454,6 +465,13 @@ export function SessionsSection() {
                               title={s.kind === 'browser' ? undefined : s.pid ? `pid ${s.pid}` : undefined}>
                               <KindIcon kind={s.mode} />
                               <span>{s.label}</span>
+                              {s.kind === 'server' && (
+                                <span
+                                  title={s.external ? 'Started outside Strado; found listening on this worktree’s port' : 'Started by Strado'}
+                                  className={`rounded px-1.5 py-px text-[10px] font-medium ${s.external ? 'bg-amber-500/10 text-amber-300/90 ring-1 ring-inset ring-amber-500/20' : 'bg-teal-500/10 text-teal-300/90 ring-1 ring-inset ring-teal-500/20'}`}>
+                                  {s.external ? 'External' : 'Strado'}
+                                </span>
+                              )}
                               {processes !== null && processes > 1 && (
                                 <span className="text-[11px] tabular-nums text-zinc-600">{processes} processes</span>
                               )}
@@ -462,8 +480,8 @@ export function SessionsSection() {
                           <UsageCells usage={s.usage} max={maxRss} label={s.label} parts={[{ kind: s.mode, bytes: s.usage.rssBytes }]} />
                           <td className="px-2 py-1 text-right">
                             <ActionButton
-                              label={`${s.kind === 'pty' ? 'Kill' : 'Close'} ${s.label} in ${w.label}`}
-                              confirmLabel={s.kind === 'pty' && s.mode !== 'shell' ? `Kill ${s.label}` : undefined}
+                              label={`${verb} ${s.label} in ${w.label}`}
+                              confirmLabel={confirm ? `${verb} ${s.label}` : undefined}
                               busy={busy === s.key}
                               onRun={() => void endRow(s)} />
                           </td>

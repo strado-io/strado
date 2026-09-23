@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const metrics = vi.hoisted(() => vi.fn());
 const kill = vi.hoisted(() => vi.fn());
 const worktreesList = vi.hoisted(() => vi.fn());
+const wtStop = vi.hoisted(() => vi.fn());
+const wtKillExternal = vi.hoisted(() => vi.fn());
 const reposList = vi.hoisted(() => vi.fn());
 const stopVscode = vi.hoisted(() => vi.fn());
 const vscodeClose = vi.hoisted(() => vi.fn());
@@ -11,7 +13,7 @@ vi.mock('../../api', () => ({
   api: {
     sessions: { metrics, kill, stopVscode },
     vscode: { close: vscodeClose },
-    worktrees: { list: worktreesList },
+    worktrees: { list: worktreesList, stop: wtStop, killExternal: wtKillExternal },
     repos: { list: reposList },
   },
 }));
@@ -28,6 +30,7 @@ const workspace: Workspace = {
 
 const WT = '/Users/me/.strado/worktrees/fleetx-react-app/master';
 const ORPHAN = '/Users/me/Desktop/strado/strado-oms-service';
+const WT2 = '/Users/me/.strado/worktrees/fleetx-react-app/feature';
 
 const sample = () => ({
   sampledAt: 1000,
@@ -36,6 +39,10 @@ const sample = () => ({
     daemon: { pid: 11, cpu: 0.4, rssBytes: 35 * MB },
     vscode: { pid: 12, cpu: 3.0, rssBytes: 410 * MB, processes: 5 },
   },
+  processes: [
+    { pid: 800, cpu: 12.5, rssBytes: 1500 * MB, processes: 7 },
+    { pid: 900, cpu: 0.5, rssBytes: 180 * MB, processes: 2 },
+  ],
   vscodeWindows: [
     { path: WT, pid: 700, cpu: 2.0, rssBytes: 600 * MB, processes: 4 },
   ],
@@ -61,8 +68,13 @@ beforeEach(() => {
   vscodeClose.mockReset().mockResolvedValue({ ok: true });
   localStorage.clear();
   worktreesList.mockReset().mockResolvedValue([
-    { path: WT, repoId: 'fleetx-react-app', branch: 'master', meta: { ticketId: null, title: null } },
+    { path: WT, repoId: 'fleetx-react-app', branch: 'master', meta: { ticketId: null, title: null },
+      process: { status: 'running', pid: 800, port: 3002, external: true, startedAt: null, detectedUrl: null, exitCode: null } },
+    { path: WT2, repoId: 'fleetx-react-app', branch: 'feature', meta: { ticketId: null, title: null },
+      process: { status: 'running', pid: 900, port: 5173, external: false, startedAt: null, detectedUrl: null, exitCode: null } },
   ]);
+  wtStop.mockReset().mockResolvedValue(undefined);
+  wtKillExternal.mockReset().mockResolvedValue(undefined);
   reposList.mockReset().mockResolvedValue([{ id: 'fleetx-react-app', name: 'fleetx-react-app', path: '/repo' }]);
   (window as unknown as { strado?: unknown }).strado = {
     appMetrics: vi.fn().mockResolvedValue([
@@ -87,9 +99,9 @@ describe('SessionsSection', () => {
     const wt = screen.getByTestId(`sessions-worktree-${WT}`);
     expect(within(wt).getByText('master')).toBeInTheDocument();
     // worktree totals = its pty sessions (1.0 + 0.2, 235 + 12) plus its Browser preview (0.7, 150)
-    // pty (1.0 + 0.2, 235 + 12) + Browser preview (0.7, 150) + VS Code window (2.0, 600)
-    expect(within(wt).getByText('3.9%')).toBeInTheDocument();
-    expect(within(wt).getByText('997.0 MB')).toBeInTheDocument();
+    // pty (1.0 + 0.2, 235 + 12) + Browser preview (0.7, 150) + VS Code window (2.0, 600) + dev server (12.5, 1500)
+    expect(within(wt).getByText('16.4%')).toBeInTheDocument();
+    expect(within(wt).getByText('2.44 GB')).toBeInTheDocument();
     const claude = screen.getByTestId(`sessions-row-${WT}`);
     expect(within(claude).getByText('Claude')).toBeInTheDocument();
     expect(within(claude).getByText('1.0%')).toBeInTheDocument();
@@ -135,7 +147,8 @@ describe('SessionsSection', () => {
   });
 
   it('says so when the daemon holds no sessions', async () => {
-    metrics.mockResolvedValue({ ...sample(), sessions: [], vscodeWindows: [] });
+    metrics.mockResolvedValue({ ...sample(), sessions: [], vscodeWindows: [], processes: [] });
+    worktreesList.mockResolvedValue([]);
     (window as unknown as { strado: { appMetrics: ReturnType<typeof vi.fn> } }).strado.appMetrics.mockResolvedValue([]);
     renderSection();
     expect(await screen.findByText(/no terminal sessions/i)).toBeInTheDocument();
@@ -162,8 +175,8 @@ describe('SessionsSection', () => {
     const browser = screen.getByTestId(`sessions-row-browser:${WT}`);
     expect(within(browser).getByText('Browser')).toBeInTheDocument();
     expect(within(browser).getByText('150.0 MB')).toBeInTheDocument();
-    // worktree total includes the preview and the VS Code window
-    expect(within(wt).getByText('997.0 MB')).toBeInTheDocument();
+    // worktree total includes the preview, the VS Code window and the dev server
+    expect(within(wt).getByText('2.44 GB')).toBeInTheDocument();
     // Renderer row is the dashboard only.
     const app = screen.getByTestId('sessions-group-strado');
     fireEvent.click(within(app).getByRole('button', { name: /expand strado/i }));
@@ -245,5 +258,32 @@ describe('SessionsSection', () => {
     await waitFor(() => expect(kill).toHaveBeenCalledWith(`${ORPHAN}\0shell`));
     const strado = (window as unknown as { strado: { preview: ReturnType<typeof vi.fn> } }).strado;
     expect(strado.preview).toHaveBeenCalledWith('close', `${ORPHAN}\0browser:2`);
+  });
+
+  it('shows each worktree dev server with its port, origin and process-tree memory', async () => {
+    renderSection();
+    const ext = await screen.findByTestId(`sessions-row-server:${WT}`);
+    expect(within(ext).getByText('Server :3002')).toBeInTheDocument();
+    expect(within(ext).getByText('External')).toBeInTheDocument();
+    expect(within(ext).getByText('1.46 GB')).toBeInTheDocument();
+    expect(within(ext).getByText('7 processes')).toBeInTheDocument();
+    // a worktree whose only session is its server still gets a row
+    const own = screen.getByTestId(`sessions-row-server:${WT2}`);
+    expect(within(own).getByText('Server :5173')).toBeInTheDocument();
+    expect(within(own).getByText('Strado')).toBeInTheDocument();
+    // the pids of running servers are what the metrics call measures
+    expect(metrics).toHaveBeenCalledWith([800, 900]);
+  });
+
+  it('stops a Strado-started server at once, and kills an external one after a confirm', async () => {
+    renderSection();
+    const own = await screen.findByTestId(`sessions-row-server:${WT2}`);
+    fireEvent.click(within(own).getByRole('button', { name: /stop server :5173/i }));
+    await waitFor(() => expect(wtStop).toHaveBeenCalledWith('default', WT2));
+    const ext = screen.getByTestId(`sessions-row-server:${WT}`);
+    fireEvent.click(within(ext).getByRole('button', { name: /kill server :3002/i }));
+    expect(wtKillExternal).not.toHaveBeenCalled();
+    fireEvent.click(within(ext).getByRole('button', { name: /confirm kill server :3002/i }));
+    await waitFor(() => expect(wtKillExternal).toHaveBeenCalledWith('default', WT));
   });
 });

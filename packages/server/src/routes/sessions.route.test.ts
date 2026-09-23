@@ -129,3 +129,14 @@ describe('closing a VS Code tab ends its window', () => {
   }, 20_000);
 });
 
+describe('dev server usage', () => {
+  it('GET /api/sessions/metrics?pids= returns each pid tree, ignoring junk', async () => {
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/metrics?pids=${process.pid},abc,-3` });
+    expect(res.statusCode).toBe(200);
+    const procs = res.json().processes;
+    expect(procs).toHaveLength(1);
+    expect(procs[0].pid).toBe(process.pid);
+    expect(procs[0].rssBytes).toBeGreaterThan(0);
+  }, 20_000);
+});
+

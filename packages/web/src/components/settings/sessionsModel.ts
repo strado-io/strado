@@ -6,22 +6,22 @@ import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../
 export const MB = 1024 * 1024;
 
 /** What a row is, for icon, colour and the memory-map legend. */
-export type Kind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'vscode' | 'browser' | 'app';
+export type Kind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'vscode' | 'browser' | 'server' | 'app';
 
 export const KIND_LABEL: Record<Kind, string> = {
   claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi', shell: 'Shell',
-  vscode: 'VS Code', browser: 'Browser', app: 'Strado app',
+  vscode: 'VS Code', browser: 'Browser', server: 'Dev servers', app: 'Strado app',
 };
 // Same hues as the tab strip and sidebar avatars (sessionAvatars.tsx).
 export const KIND_TEXT: Record<Kind, string> = {
   claude: 'text-amber-300', codex: 'text-sky-300', opencode: 'text-violet-300', pi: 'text-rose-300',
-  shell: 'text-zinc-300', vscode: 'text-blue-400', browser: 'text-emerald-400', app: 'text-zinc-400',
+  shell: 'text-zinc-300', vscode: 'text-blue-400', browser: 'text-emerald-400', server: 'text-teal-300', app: 'text-zinc-400',
 };
 export const KIND_BG: Record<Kind, string> = {
   claude: 'bg-amber-300', codex: 'bg-sky-300', opencode: 'bg-violet-300', pi: 'bg-rose-300',
-  shell: 'bg-zinc-400', vscode: 'bg-blue-400', browser: 'bg-emerald-400', app: 'bg-zinc-600',
+  shell: 'bg-zinc-400', vscode: 'bg-blue-400', browser: 'bg-emerald-400', server: 'bg-teal-400', app: 'bg-zinc-600',
 };
-export const KIND_ORDER: Kind[] = ['claude', 'codex', 'opencode', 'pi', 'vscode', 'browser', 'shell', 'app'];
+export const KIND_ORDER: Kind[] = ['server', 'claude', 'codex', 'opencode', 'pi', 'vscode', 'browser', 'shell', 'app'];
 
 export type Usage = { cpu: number; rssBytes: number };
 export type AppMetric = { pid: number; type: string; name?: string; cpu: number; memoryKb: number; preview?: string };
@@ -29,7 +29,9 @@ export type AppMetric = { pid: number; type: string; name?: string; cpu: number;
 export type SessionRow =
   | { kind: 'pty'; mode: SessionMetric['mode']; key: string; label: string; pid: number | null; processes: number; usage: Usage }
   | { kind: 'browser'; mode: 'browser'; key: string; label: string; path: string; id: string; usage: Usage }
-  | { kind: 'vscode'; mode: 'vscode'; key: string; label: string; path: string; pid: number; processes: number; usage: Usage };
+  | { kind: 'vscode'; mode: 'vscode'; key: string; label: string; path: string; pid: number; processes: number; usage: Usage }
+  // the worktree's dev server: started by Strado, or found listening on its port
+  | { kind: 'server'; mode: 'server'; key: string; label: string; path: string; pid: number; port: number | null; external: boolean; processes: number; usage: Usage };
 export type WorktreeRow = { path: string; label: string; usage: Usage; byKind: Partial<Record<Kind, number>>; sessions: SessionRow[] };
 export type Group = { id: string; label: string; orphan: boolean; usage: Usage; byKind: Partial<Record<Kind, number>>; worktrees: WorktreeRow[] };
 export type AppRow = { id: string; label: string; usage: Usage };
@@ -41,6 +43,12 @@ export const sum = (rows: Usage[]): Usage => ({
   rssBytes: rows.reduce((a, r) => a + r.rssBytes, 0),
 });
 const basename = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
+const isServing = (w: Worktree) => ['running', 'starting', 'stopping'].includes(w.process?.status);
+
+/** Pids of this workspace's running dev servers, for the metrics call. */
+export function serverPids(worktrees: Worktree[]): number[] {
+  return worktrees.filter((w) => !w.remote && w.process?.pid && isServing(w)).map((w) => w.process.pid!);
+}
 
 export function fmtMem(bytes: number): string {
   return bytes >= 1024 * MB ? `${(bytes / (1024 * MB)).toFixed(2)} GB` : `${(bytes / MB).toFixed(1)} MB`;
@@ -70,6 +78,7 @@ export function groupSessions(input: {
   sessions: SessionMetric[];
   app: AppMetric[] | null;
   windows: SessionMetrics['vscodeWindows'];
+  processes?: SessionMetrics['processes'];
   worktrees: Worktree[];
   repos: RepoConfig[];
   sort: SortKey;
@@ -103,6 +112,20 @@ export function groupSessions(input: {
     push(w.path, {
       kind: 'vscode', mode: 'vscode', key: `vscode:${w.path}:${w.pid}`, path: w.path, pid: w.pid,
       processes: w.processes, label: 'VS Code', usage: { cpu: w.cpu, rssBytes: w.rssBytes },
+    });
+  }
+
+  const procByPid = new Map((input.processes ?? []).map((p) => [p.pid, p]));
+  for (const w of input.worktrees) {
+    const pid = w.process?.pid;
+    if (w.remote || !pid || !isServing(w)) continue;
+    const m = procByPid.get(pid);
+    const port = w.process.port ?? null;
+    push(w.path, {
+      kind: 'server', mode: 'server', key: `server:${w.path}`, path: w.path, pid, port,
+      external: !!w.process.external, processes: m?.processes ?? 0,
+      label: port ? `Server :${port}` : 'Server',
+      usage: { cpu: m?.cpu ?? 0, rssBytes: m?.rssBytes ?? 0 },
     });
   }
 

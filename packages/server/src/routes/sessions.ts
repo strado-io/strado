@@ -13,7 +13,16 @@ import { vscodeWindows } from '../services/vscodeWindows.js';
 import { buildSessionMetrics, sampleProcesses, sessionKeyOf } from '../services/sessionMetrics.js';
 
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/sessions/metrics', async () => {
+  // ?pids=1,2 — also measure these process trees. The page passes its
+  // worktrees' dev-server pids (it holds the workspace-scoped worktree list;
+  // this route is machine-wide).
+  const parsePids = (raw: unknown): number[] =>
+    String(raw ?? '')
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0)
+      .slice(0, 100);
+  app.get<{ Querystring: { pids?: string } }>('/api/sessions/metrics', async (req) => {
     const live = app.deps.terminal.liveSessions();
     const procs = await sampleProcesses();
     return buildSessionMetrics({
@@ -24,6 +33,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       daemonPid: readManifest(app.deps.homeStateDir)?.pid ?? null,
       vscodePid: vsCodeWebStatus()?.pid ?? null,
       vscodeWindows: vscodeWindows.list(),
+      extraPids: parsePids(req.query.pids),
     });
   });
 

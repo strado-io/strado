@@ -36,6 +36,8 @@ export type SessionMetrics = {
   sessions: SessionMetric[];
   /** one entry per VS Code window whose extension host reported its folder */
   vscodeWindows: VsCodeWindowMetric[];
+  /** process tree of each pid the caller asked about (worktree dev servers) */
+  processes: Array<{ pid: number } & ProcTotals>;
 };
 
 /** Parse `ps -Ao pid=,ppid=,%cpu=,rss=` (rss in KB). Malformed lines are skipped. */
@@ -104,6 +106,7 @@ export function buildSessionMetrics(input: {
   daemonPid: number | null;
   vscodePid?: number | null;
   vscodeWindows?: Array<{ pid: number; folder: string }>;
+  extraPids?: number[];
   now?: number;
 }): SessionMetrics {
   const one = (pid: number): AppProcMetric => {
@@ -131,6 +134,7 @@ export function buildSessionMetrics(input: {
     },
     sessions,
     vscodeWindows,
+    processes: (input.extraPids ?? []).filter((pid) => known.has(pid)).map((pid) => ({ pid, ...subtreeTotals(input.procs, pid) })),
   };
 }
 

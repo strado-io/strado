@@ -308,4 +308,6 @@ export type SessionMetrics = {
   sessions: SessionMetric[];
   /** one per VS Code window whose extension host reported its folder */
   vscodeWindows: Array<{ path: string; pid: number; cpu: number; rssBytes: number; processes: number }>;
+  /** process tree of each pid asked for with ?pids= (worktree dev servers) */
+  processes?: Array<{ pid: number; cpu: number; rssBytes: number; processes: number }>;
 };

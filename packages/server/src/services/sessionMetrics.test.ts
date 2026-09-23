@@ -102,4 +102,12 @@ describe('buildSessionMetrics', () => {
     // shared = root tree minus attributed windows: 100 + 400
     expect(out.app.vscode).toEqual({ pid: 100, cpu: 10.5, rssBytes: 170000 * 1024, processes: 2 });
   });
+
+  it('reports the process tree of each requested pid (dev servers), skipping pids not in the sample', () => {
+    const out = buildSessionMetrics({
+      live: [], pidOf: () => null, procs: parsePsOutput(PS), serverPid: 1, daemonPid: null,
+      extraPids: [200, 999], now: 0,
+    });
+    expect(out.processes).toEqual([{ pid: 200, cpu: 4.2, rssBytes: 100000 * 1024, processes: 2 }]);
+  });
 });

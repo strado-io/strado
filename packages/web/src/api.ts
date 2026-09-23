@@ -685,7 +685,8 @@ export const api = {
   // Machine-wide pty sessions (not workspace-scoped: the daemon outlives
   // worktrees, and orphans are the point of the page).
   sessions: {
-    metrics: () => request<SessionMetrics>('/api/sessions/metrics'),
+    metrics: (pids: number[] = []) =>
+      request<SessionMetrics>(`/api/sessions/metrics${pids.length ? `?pids=${pids.join(',')}` : ''}`),
     kill: (key: string) =>
       request<void>(`/api/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
     stopVscode: () => request<void>('/api/sessions/vscode', { method: 'DELETE' }),
