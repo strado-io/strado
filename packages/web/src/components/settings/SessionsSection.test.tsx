@@ -34,6 +34,9 @@ const sample = () => ({
     daemon: { pid: 11, cpu: 0.4, rssBytes: 35 * MB },
     vscode: { pid: 12, cpu: 3.0, rssBytes: 410 * MB, processes: 5 },
   },
+  vscodeWindows: [
+    { path: WT, pid: 700, cpu: 2.0, rssBytes: 600 * MB, processes: 4 },
+  ],
   sessions: [
     { key: WT, path: WT, mode: 'claude', id: '1', pid: 500, cpu: 1.0, rssBytes: 235 * MB, processes: 3 },
     { key: `${WT}\0shell`, path: WT, mode: 'shell', id: '1', pid: 501, cpu: 0.2, rssBytes: 12 * MB, processes: 1 },
@@ -81,8 +84,9 @@ describe('SessionsSection', () => {
     const wt = screen.getByTestId(`sessions-worktree-${WT}`);
     expect(within(wt).getByText('master')).toBeInTheDocument();
     // worktree totals = its pty sessions (1.0 + 0.2, 235 + 12) plus its Browser preview (0.7, 150)
-    expect(within(wt).getByText('1.9%')).toBeInTheDocument();
-    expect(within(wt).getByText('397.0 MB')).toBeInTheDocument();
+    // pty (1.0 + 0.2, 235 + 12) + Browser preview (0.7, 150) + VS Code window (2.0, 600)
+    expect(within(wt).getByText('3.9%')).toBeInTheDocument();
+    expect(within(wt).getByText('997.0 MB')).toBeInTheDocument();
     const claude = screen.getByTestId(`sessions-row-${WT}`);
     expect(within(claude).getByText('Claude')).toBeInTheDocument();
     expect(within(claude).getByText('1.0%')).toBeInTheDocument();
@@ -125,7 +129,7 @@ describe('SessionsSection', () => {
   });
 
   it('says so when the daemon holds no sessions', async () => {
-    metrics.mockResolvedValue({ ...sample(), sessions: [] });
+    metrics.mockResolvedValue({ ...sample(), sessions: [], vscodeWindows: [] });
     (window as unknown as { strado: { appMetrics: ReturnType<typeof vi.fn> } }).strado.appMetrics.mockResolvedValue([]);
     renderSection();
     expect(await screen.findByText(/no terminal sessions/i)).toBeInTheDocument();
@@ -135,7 +139,8 @@ describe('SessionsSection', () => {
     renderSection();
     const app = await screen.findByTestId('sessions-group-strado');
     const row = within(app).getByTestId('sessions-row-vscode');
-    expect(within(row).getByText('VS Code')).toBeInTheDocument();
+    // what is left of the serve-web tree after the per-window rows below
+    expect(within(row).getByText('VS Code (shared)')).toBeInTheDocument();
     expect(within(row).getByText('410.0 MB')).toBeInTheDocument();
     fireEvent.click(within(row).getByRole('button', { name: /stop vs code/i }));
     await waitFor(() => expect(stopVscode).toHaveBeenCalled());
@@ -147,8 +152,8 @@ describe('SessionsSection', () => {
     const browser = screen.getByTestId(`sessions-row-browser:${WT}`);
     expect(within(browser).getByText('Browser')).toBeInTheDocument();
     expect(within(browser).getByText('150.0 MB')).toBeInTheDocument();
-    // worktree total now includes the preview: 235 + 12 + 150
-    expect(within(wt).getByText('397.0 MB')).toBeInTheDocument();
+    // worktree total includes the preview and the VS Code window
+    expect(within(wt).getByText('997.0 MB')).toBeInTheDocument();
     // Renderer row is the dashboard only.
     const app = screen.getByTestId('sessions-group-strado');
     expect(within(app).getByText('375.5 MB')).toBeInTheDocument();
@@ -165,5 +170,16 @@ describe('SessionsSection', () => {
     const strado = (window as unknown as { strado: { preview: ReturnType<typeof vi.fn> } }).strado;
     await waitFor(() => expect(strado.preview).toHaveBeenCalledWith('close', WT));
     expect(JSON.parse(localStorage.getItem('strado:browser-tabs') ?? '[]')).toEqual([]);
+  });
+
+  it('shows each VS Code window under its worktree, and Close forgets that VS Code tab', async () => {
+    localStorage.setItem('strado:vscode-tabs', JSON.stringify([WT, ORPHAN]));
+    renderSection();
+    const row = await screen.findByTestId(`sessions-row-vscode:${WT}`);
+    expect(within(row).getByText('VS Code')).toBeInTheDocument();
+    expect(within(row).getByText('600.0 MB')).toBeInTheDocument();
+    expect(within(row).getByText('2.0%')).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: /close vs code in master/i }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]')).toEqual([ORPHAN]));
   });
 });

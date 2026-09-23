@@ -90,3 +90,24 @@ describe('DELETE /api/sessions/vscode', () => {
   }, 20_000);
 });
 
+describe('VS Code window reports', () => {
+  it('POST /api/vscode/window attributes an extension host to a folder; metrics list it; DELETE withdraws it', async () => {
+    const folder = path.join(tmp, 'wt-a');
+    const post = await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: process.pid, folder } });
+    expect(post.statusCode).toBe(204);
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/metrics' });
+    const win = res.json().vscodeWindows.find((w: { path: string }) => w.path === folder);
+    expect(win).toMatchObject({ pid: process.pid });
+    expect(win.rssBytes).toBeGreaterThan(0);
+    const del = await app.inject({ method: 'DELETE', url: '/api/vscode/window', payload: { pid: process.pid } });
+    expect(del.statusCode).toBe(204);
+    const after = await app.inject({ method: 'GET', url: '/api/sessions/metrics' });
+    expect(after.json().vscodeWindows).toEqual([]);
+  }, 20_000);
+
+  it('rejects a report without an absolute folder or a numeric pid', async () => {
+    expect((await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: 'x', folder: '/a' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: 1, folder: 'rel' } })).statusCode).toBe(400);
+  }, 20_000);
+});
+

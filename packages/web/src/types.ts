@@ -306,4 +306,6 @@ export type SessionMetrics = {
     vscode: (AppProcMetric & { processes: number }) | null;
   };
   sessions: SessionMetric[];
+  /** one per VS Code window whose extension host reported its folder */
+  vscodeWindows: Array<{ path: string; pid: number; cpu: number; rssBytes: number; processes: number }>;
 };

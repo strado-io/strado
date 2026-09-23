@@ -18,6 +18,7 @@ import {
 } from './serveWebProcess.js';
 import { pruneDeadIdeLocks as realPrune } from './ideLockfiles.js';
 import { ensureTsServerMemory as realEnsureSettings } from './vscodeSettings.js';
+import { installStradoExtension as realInstallExtension } from './vscodeExtensionInstall.js';
 import { pinnedCommit as realPinnedCommit } from './serveWebCache.js';
 
 const HOST = '127.0.0.1';
@@ -116,6 +117,8 @@ type Deps = {
   readyWaitMs?: number;
   pruneDeadIdeLocks?: (pids: number[]) => void;
   ensureTsServerMemory?: (cli: string) => void;
+  /** drop the strado-window extension into the serve-web extensions dir */
+  installStradoExtension?: (cli: string) => void;
   /** cached serve-web build to pin via --commit-id; null → let serve-web pick */
   pinnedCommit?: (cli: string) => string | null;
   /** pause between the pinned workbench turning ready and the cache warm-up */
@@ -165,6 +168,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   const readyWaitMs = deps.readyWaitMs ?? 20_000;
   const prune = deps.pruneDeadIdeLocks ?? realPrune;
   const ensureSettings = deps.ensureTsServerMemory ?? realEnsureSettings;
+  const installExtension = deps.installStradoExtension ?? realInstallExtension;
   const pinned = deps.pinnedCommit ?? realPinnedCommit;
   const warmDelayMs = deps.warmDelayMs ?? 30_000;
   // Generous: on a slow link a 650MB build can take a long time, and giving up
@@ -318,7 +322,11 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
         if (instance && instance.pid === pid) instance = null;
       });
 
-      if (!settingsSeeded) { settingsSeeded = true; try { ensureSettings(file); } catch { /* noop */ } }
+      if (!settingsSeeded) {
+        settingsSeeded = true;
+        try { ensureSettings(file); } catch { /* noop */ }
+        try { installExtension(file); } catch { /* noop */ }
+      }
 
       // Best-effort wait for the port so the first iframe load succeeds; the
       // client retries regardless, so a slow warmup still returns the URL.

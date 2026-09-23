@@ -23,15 +23,19 @@ export type SessionMetric = LiveSession & {
 
 export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
 
+export type VsCodeWindowMetric = { path: string; pid: number } & ProcTotals;
+
 export type SessionMetrics = {
   sampledAt: number;
   app: {
     server: AppProcMetric;
     daemon: AppProcMetric | null;
-    /** the shared `code serve-web` workbench and everything under it */
+    /** the shared `code serve-web` workbench, minus the windows attributed below */
     vscode: (AppProcMetric & { processes: number }) | null;
   };
   sessions: SessionMetric[];
+  /** one entry per VS Code window whose extension host reported its folder */
+  vscodeWindows: VsCodeWindowMetric[];
 };
 
 /** Parse `ps -Ao pid=,ppid=,%cpu=,rss=` (rss in KB). Malformed lines are skipped. */
@@ -52,8 +56,8 @@ export function parsePsOutput(text: string): ProcSample[] {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-/** Totals for `rootPid` plus every descendant in the sample. */
-export function subtreeTotals(procs: ProcSample[], rootPid: number): ProcTotals {
+/** Totals for `rootPid` plus every descendant in the sample, skipping `exclude`d subtrees. */
+export function subtreeTotals(procs: ProcSample[], rootPid: number, exclude: Set<number> = new Set()): ProcTotals {
   const children = new Map<number, ProcSample[]>();
   const byPid = new Map<number, ProcSample>();
   for (const p of procs) {
@@ -70,7 +74,7 @@ export function subtreeTotals(procs: ProcSample[], rootPid: number): ProcTotals 
   const stack = [rootPid];
   while (stack.length) {
     const pid = stack.pop()!;
-    if (seen.has(pid)) continue;
+    if (seen.has(pid) || (pid !== rootPid && exclude.has(pid))) continue;
     seen.add(pid);
     const p = byPid.get(pid);
     if (!p) continue;
@@ -99,6 +103,7 @@ export function buildSessionMetrics(input: {
   serverPid: number;
   daemonPid: number | null;
   vscodePid?: number | null;
+  vscodeWindows?: Array<{ pid: number; folder: string }>;
   now?: number;
 }): SessionMetrics {
   const one = (pid: number): AppProcMetric => {
@@ -111,14 +116,21 @@ export function buildSessionMetrics(input: {
     const totals = pid ? subtreeTotals(input.procs, pid) : { cpu: 0, rssBytes: 0, processes: 0 };
     return { ...s, key, pid, ...totals };
   });
+  // Windows whose extension host is in the sample; dead hosts drop out.
+  const known = new Set(input.procs.map((p) => p.pid));
+  const vscodeWindows: VsCodeWindowMetric[] = (input.vscodeWindows ?? [])
+    .filter((w) => known.has(w.pid))
+    .map((w) => ({ path: w.folder, pid: w.pid, ...subtreeTotals(input.procs, w.pid) }));
+  const windowPids = new Set(vscodeWindows.map((w) => w.pid));
   return {
     sampledAt: input.now ?? Date.now(),
     app: {
       server: one(input.serverPid),
       daemon: input.daemonPid ? one(input.daemonPid) : null,
-      vscode: input.vscodePid ? { pid: input.vscodePid, ...subtreeTotals(input.procs, input.vscodePid) } : null,
+      vscode: input.vscodePid ? { pid: input.vscodePid, ...subtreeTotals(input.procs, input.vscodePid, windowPids) } : null,
     },
     sessions,
+    vscodeWindows,
   };
 }
 

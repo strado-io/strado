@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
+import { rememberVscodeTab } from '../../hooks/vscodeTabs';
 import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
 
 const POLL_MS = 5_000;
@@ -32,7 +33,9 @@ type AppMetric = { pid: number; type: string; name?: string; cpu: number; memory
 // tagged with its preview key by the shell). Both sit under their worktree.
 type SessionRow =
   | { kind: 'pty'; key: string; label: string; mode: SessionMetric['mode']; usage: Usage }
-  | { kind: 'browser'; key: string; label: string; path: string; id: string; usage: Usage };
+  | { kind: 'browser'; key: string; label: string; path: string; id: string; usage: Usage }
+  // one serve-web window (its extension host's process tree), reported by the strado-window extension
+  | { kind: 'vscode'; key: string; label: string; path: string; usage: Usage };
 type BrowserPreview = { key: string; path: string; id: string; usage: Usage };
 type WorktreeRow = { path: string; label: string; usage: Usage; sessions: SessionRow[] };
 type Group = { id: string; label: string; title?: string; usage: Usage; worktrees: WorktreeRow[] };
@@ -60,6 +63,7 @@ function browserPreviews(app: AppMetric[] | null): BrowserPreview[] {
 function groupSessions(
   sessions: SessionMetric[],
   previews: BrowserPreview[],
+  windows: SessionMetrics['vscodeWindows'],
   worktrees: Worktree[],
   repos: RepoConfig[],
 ): Group[] {
@@ -82,6 +86,9 @@ function groupSessions(
   }
   for (const b of previews) {
     push(b.path, { kind: 'browser', key: b.key, path: b.path, id: b.id, label: b.id === '1' ? 'Browser' : `Browser ${b.id}`, usage: b.usage });
+  }
+  for (const w of windows) {
+    push(w.path, { kind: 'vscode', key: `vscode:${w.path}:${w.pid}`, path: w.path, label: 'VS Code', usage: { cpu: w.cpu, rssBytes: w.rssBytes } });
   }
   const groups = new Map<string, Group>();
   for (const [path, list] of byPath) {
@@ -131,7 +138,7 @@ function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): AppRow[] {
   }
   rows.push({ id: 'server', label: 'Server', usage: { cpu: m.server.cpu, rssBytes: m.server.rssBytes } });
   if (m.daemon) rows.push({ id: 'daemon', label: 'Daemon', usage: { cpu: m.daemon.cpu, rssBytes: m.daemon.rssBytes } });
-  if (m.vscode) rows.push({ id: 'vscode', label: 'VS Code', usage: { cpu: m.vscode.cpu, rssBytes: m.vscode.rssBytes } });
+  if (m.vscode) rows.push({ id: 'vscode', label: 'VS Code (shared)', usage: { cpu: m.vscode.cpu, rssBytes: m.vscode.rssBytes } });
   return rows;
 }
 
@@ -229,6 +236,10 @@ export function SessionsSection() {
   const stopVscode = () => run('vscode', () => api.sessions.stopVscode());
   // Same teardown the hub's ✕ does: drop the native view, then forget the tab
   // so the strip (which listens for the storage event) removes it.
+  // Closing the tab unmounts the iframe; the window disconnects and its
+  // extension host exits on its own shortly after.
+  const closeVscode = (row: Extract<SessionRow, { kind: 'vscode' }>) =>
+    run(row.key, async () => { rememberVscodeTab(row.path, false); });
   const closeBrowser = (row: Extract<SessionRow, { kind: 'browser' }>) =>
     run(row.key, async () => {
       await window.strado?.preview?.('close', row.key);
@@ -245,7 +256,7 @@ export function SessionsSection() {
     });
 
   const groups = useMemo(
-    () => (metrics ? groupSessions(metrics.sessions, browserPreviews(appMetrics), worktrees, repos) : []),
+    () => (metrics ? groupSessions(metrics.sessions, browserPreviews(appMetrics), metrics.vscodeWindows ?? [], worktrees, repos) : []),
     [metrics, appMetrics, worktrees, repos],
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
@@ -352,12 +363,12 @@ export function SessionsSection() {
                     ...w.sessions.map((s) => (
                       <tr
                         key={`${s.kind}:${s.key}`}
-                        data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : `sessions-row-${s.key}`}
+                        data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : s.kind === 'vscode' ? `sessions-row-vscode:${s.path}` : `sessions-row-${s.key}`}
                         className="group"
                       >
                         <td className="py-1.5 pl-14 pr-3">
                           <span className="flex items-center gap-2 text-sm text-zinc-300">
-                            <span className={`size-1.5 shrink-0 rounded-full ${s.kind === 'browser' ? 'bg-emerald-400' : MODE_DOT[s.mode]}`} aria-hidden />
+                            <span className={`size-1.5 shrink-0 rounded-full ${s.kind === 'browser' ? 'bg-emerald-400' : s.kind === 'vscode' ? 'bg-blue-400' : MODE_DOT[s.mode]}`} aria-hidden />
                             <span>{s.label}</span>
                           </span>
                         </td>
@@ -365,12 +376,12 @@ export function SessionsSection() {
                         <td className="px-2 py-1 text-right">
                           <button
                             type="button"
-                            onClick={() => void (s.kind === 'browser' ? closeBrowser(s) : kill(s.key))}
+                            onClick={() => void (s.kind === 'browser' ? closeBrowser(s) : s.kind === 'vscode' ? closeVscode(s) : kill(s.key))}
                             disabled={busy === s.key}
-                            aria-label={`${s.kind === 'browser' ? 'Close' : 'Kill'} ${s.label} in ${w.label}`}
+                            aria-label={`${s.kind === 'pty' ? 'Kill' : 'Close'} ${s.label} in ${w.label}`}
                             className="rounded-md px-2 py-1 text-xs text-zinc-500 opacity-60 hover:bg-red-950/50 hover:text-red-300 group-hover:opacity-100 disabled:opacity-40"
                           >
-                            {busy === s.key ? '…' : s.kind === 'browser' ? 'Close' : 'Kill'}
+                            {busy === s.key ? '…' : s.kind === 'pty' ? 'Kill' : 'Close'}
                           </button>
                         </td>
                       </tr>

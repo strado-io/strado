@@ -88,4 +88,18 @@ describe('buildSessionMetrics', () => {
     const without = buildSessionMetrics({ live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: null, now: 0 });
     expect(without.app.vscode).toBeNull();
   });
+
+  it('attributes reported VS Code windows to their folder and keeps only the rest under app.vscode', () => {
+    const procs = parsePsOutput(PS);
+    // serve-web root 100 → {200 → 201, 400}; window ext host = 200.
+    const out = buildSessionMetrics({
+      live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: 100,
+      vscodeWindows: [{ pid: 200, folder: '/wt/a' }, { pid: 999, folder: '/wt/dead' }], now: 0,
+    });
+    expect(out.vscodeWindows).toEqual([
+      { path: '/wt/a', pid: 200, cpu: 4.2, rssBytes: 100000 * 1024, processes: 2 },
+    ]);
+    // shared = root tree minus attributed windows: 100 + 400
+    expect(out.app.vscode).toEqual({ pid: 100, cpu: 10.5, rssBytes: 170000 * 1024, processes: 2 });
+  });
 });

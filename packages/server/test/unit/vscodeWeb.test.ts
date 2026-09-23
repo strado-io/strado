@@ -59,6 +59,7 @@ function makeManager(overrides: Record<string, unknown> = {}) {
     daemonStore: store,
     pruneDeadIdeLocks: () => {},
     ensureTsServerMemory: () => {},
+    installStradoExtension: () => {},
     pinnedCommit: () => null,               // never read the real ~/.vscode*/cli cache
     warmDelayMs: 0,
     warmPollMs: 5,

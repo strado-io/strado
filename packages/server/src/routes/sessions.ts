@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../errors.js';
 import { readManifest } from '../services/ptyDaemon/supervisor.js';
 import { closeAll as stopVsCodeWeb, vsCodeWebStatus } from '../services/vscodeWeb.js';
+import { vscodeWindows } from '../services/vscodeWindows.js';
 import { buildSessionMetrics, sampleProcesses, sessionKeyOf } from '../services/sessionMetrics.js';
 
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
@@ -22,6 +23,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       serverPid: process.pid,
       daemonPid: readManifest(app.deps.homeStateDir)?.pid ?? null,
       vscodePid: vsCodeWebStatus()?.pid ?? null,
+      vscodeWindows: vscodeWindows.list(),
     });
   });
 
