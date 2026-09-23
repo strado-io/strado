@@ -249,8 +249,16 @@ describe('PtydServer', () => {
 // Cutting that conn turns a restart into a reconnect→replay→cut loop.
 describe('PtydServer backpressure', () => {
   it('keeps a slow subscriber connected through a multi-megabyte replay burst and delivers every byte', async () => {
-    const N = 40; // 40 × 256 KB ≈ 10 MB, past the old 8 MB destroy cutoff
-    const FILL = 256 * 1024;
+    // 5 × 2 MB rings = 10 MB, past the old 8 MB destroy cutoff. Few, large
+    // rings keep the pty count low: 40 default-size sessions starved the pty
+    // tests running beside this file on CI's small macOS runners.
+    const N = 5;
+    const FILL = 2 * 1024 * 1024;
+    const bigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ptyd-'));
+    const bigSock = path.join(bigDir, 'ptyd.sock');
+    const big = new PtydServer({ socketPath: bigSock, daemonVersion: '0.0.0-test', bufferCap: FILL });
+    await big.listen();
+    const sock = bigSock; // this test's own server, not the shared one
     const a = await connect(sock);
     await hello(a);
     for (let i = 0; i < N; i++) {
@@ -299,5 +307,7 @@ describe('PtydServer backpressure', () => {
 
     for (let i = 0; i < N; i++) a.send({ type: 'close', id: `fill${i}` });
     a.close(); b.close();
+    await big.close();
+    fs.rmSync(bigDir, { recursive: true, force: true });
   }, 60_000);
 });
