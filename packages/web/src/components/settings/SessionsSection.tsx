@@ -13,14 +13,18 @@ import { useWorkspace } from '../../hooks/useWorkspace';
 import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
 import { closeVscodeTab } from '../../pages/vscodeTabClose';
 import type { RepoConfig, SessionMetrics, Worktree } from '../../types';
-import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ReloadIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
+import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
 import { BranchIcon, RepoIcon } from '../sidebar/SidebarBody';
 import {
   KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, serverPids, sum,
   type AppMetric, type Group, type Kind, type SessionRow, type SortKey, type Usage,
 } from './sessionsModel';
 
-const POLL_MS = 5_000;
+// Usage is one ps sample on the server, cheap enough to refresh every second
+// while this page is open. The worktree list does git work per worktree, so
+// it (and with it the dev-server pids) refreshes less often.
+const POLL_MS = 1_000;
+const LIST_MS = 5_000;
 const HEAVY_BYTES = 1024 * MB; // memory at or above this reads amber
 const CONFIRM_MS = 4_000;
 
@@ -182,22 +186,30 @@ export function SessionsSection() {
   const [sort, setSort] = useState<SortKey>('memory');
   const [kindFilter, setKindFilter] = useState<Kind | null>(null);
   const [query, setQuery] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
+  const lists = useRef<{ worktrees: Worktree[]; repos: RepoConfig[]; at: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async () => {
+  // `fresh` re-reads the worktree list too (after an action changed it).
+  const load = useCallback(async (fresh = false) => {
     try {
       // Worktrees first: their dev-server pids are what the metrics call
       // measures alongside the daemon's sessions.
-      const [wts, rs, appM] = await Promise.all([
-        api.worktrees.list(workspace.id).catch(() => [] as Worktree[]),
-        api.repos.list(workspace.id).catch(() => [] as RepoConfig[]),
+      let l = lists.current;
+      if (fresh || !l || Date.now() - l.at >= LIST_MS) {
+        const [wts, rs] = await Promise.all([
+          api.worktrees.list(workspace.id).catch(() => [] as Worktree[]),
+          api.repos.list(workspace.id).catch(() => [] as RepoConfig[]),
+        ]);
+        l = { worktrees: wts, repos: rs, at: Date.now() };
+        lists.current = l;
+        setWorktrees(wts);
+        setRepos(rs);
+      }
+      const [m, appM] = await Promise.all([
+        api.sessions.metrics(serverPids(l.worktrees)),
         window.strado?.appMetrics ? window.strado.appMetrics().catch(() => null) : Promise.resolve(null),
       ]);
-      const m = await api.sessions.metrics(serverPids(wts));
       setMetrics(m);
-      setWorktrees(wts);
-      setRepos(rs);
       setAppMetrics(appM);
       setError(null);
     } catch (err) {
@@ -209,7 +221,8 @@ export function SessionsSection() {
     let live = true;
     const tick = async () => {
       if (!live) return;
-      await load();
+      // A hidden window has nobody watching; skip the sample, keep the beat.
+      if (!document.hidden) await load();
       if (live) timer.current = setTimeout(() => void tick(), POLL_MS);
     };
     void tick();
@@ -219,17 +232,11 @@ export function SessionsSection() {
     };
   }, [load]);
 
-  const refresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
-
   const run = async (id: string, action: () => Promise<unknown>) => {
     setBusy(id);
     try {
       await action();
-      await load();
+      await load(true);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -292,20 +299,7 @@ export function SessionsSection() {
 
   return (
     <section className="flex flex-col gap-4" data-testid="sessions-section">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
-        </div>
-        <button type="button" onClick={() => void refresh()} aria-label="Refresh now"
-          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200">
-          <span className="relative flex size-1.5" aria-hidden>
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400/60 motion-reduce:animate-none" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
-          </span>
-          <span>Live</span>
-          <ReloadIcon size={12} className={refreshing ? 'animate-spin motion-reduce:animate-none' : ''} />
-        </button>
-      </div>
+      <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
 
       {error && (
         <p role="alert" className="rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-300">{error}</p>

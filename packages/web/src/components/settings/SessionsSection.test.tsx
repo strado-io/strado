@@ -286,4 +286,12 @@ describe('SessionsSection', () => {
     fireEvent.click(within(ext).getByRole('button', { name: /confirm kill server :3002/i }));
     await waitFor(() => expect(wtKillExternal).toHaveBeenCalledWith('default', WT));
   });
+
+  it('refreshes usage every second while open, but the worktree list only every few seconds', async () => {
+    renderSection();
+    await screen.findByTestId('sessions-memory-map');
+    await waitFor(() => expect(metrics.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 3500 });
+    expect(worktreesList).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /refresh now/i })).not.toBeInTheDocument();
+  }, 8000);
 });
