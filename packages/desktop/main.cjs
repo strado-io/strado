@@ -625,6 +625,26 @@ if (!gotLock) {
   // 'page' target with working input. The renderer owns a placeholder div,
   // streams its bounds, and mirrors load/navigation state from events.
   const previews = new Map(); // key (worktree path) -> { view, win }
+  // Settings → Sessions: the app's own processes next to the daemon's pty
+  // sessions. workingSetSize is KB; percentCPUUsage is since the last call.
+  // A renderer that is a Browser preview carries its preview key, so the
+  // view can list it under its worktree instead of lumping it into Renderer.
+  ipcMain.handle('strado:app-metrics', () => {
+    const previewByPid = new Map();
+    for (const [key, entry] of previews) {
+      try {
+        if (!entry.view.webContents.isDestroyed()) previewByPid.set(entry.view.webContents.getOSProcessId(), key);
+      } catch { /* view torn down mid-call */ }
+    }
+    return app.getAppMetrics().map((m) => ({
+      pid: m.pid,
+      type: m.type,
+      name: m.name,
+      cpu: m.cpu?.percentCPUUsage ?? 0,
+      memoryKb: m.memory?.workingSetSize ?? 0,
+      preview: previewByPid.get(m.pid),
+    }));
+  });
   const previewWcIds = new Set(); // for the certificate-error override
 
   // Cmd+Opt+I: on a Browser-preview tab, toggle OUR docked DevTools for that

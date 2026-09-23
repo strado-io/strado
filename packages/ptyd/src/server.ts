@@ -25,10 +25,16 @@ export interface PtydServerOptions {
 
 // Flow control: past this outbound backlog, pause the producing PTYs; the
 // kernel PTY buffer fills and the foreground process blocks on write —
-// the flood throttles at the source. Resume on socket 'drain'.
+// the flood throttles at the source. Replays (ring-buffer dumps requested by
+// a subscriber) queue behind the same mark. Both resume on socket 'drain'.
+//
+// No "too much backlog → destroy" cutoff: the one real client is a server
+// that on (re)start subscribes to EVERY session with replay, and dozens of
+// full rings exceed any fixed number while it is busy digesting the first
+// ones. Cutting it turned a restart into a reconnect→replay→cut loop. A
+// dead peer surfaces as a socket error; a slow one just waits. Memory is
+// bounded regardless: the pause mark plus at most one in-flight replay.
 const PAUSE_THRESHOLD = 1 * 1024 * 1024;
-// A conn that buffers past this is dead weight — cut it.
-const DESTROY_THRESHOLD = 8 * 1024 * 1024;
 
 interface Conn {
   socket: net.Socket;
@@ -36,6 +42,9 @@ interface Conn {
   negotiated: boolean;
   subscriptions: Set<string>;
   pausedSessions: Set<string>;
+  // Replays held back while the socket is above the pause mark, in request
+  // order. Flushed on 'drain'.
+  pendingReplays: Array<{ id: string; buf: Buffer }>;
 }
 
 interface LiveSession extends Session {
@@ -141,7 +150,25 @@ export class PtydServer {
     const { socket } = conn;
     if (socket.destroyed) return;
     socket.write(encodeFrame(msg, payload));
-    if (socket.writableLength > DESTROY_THRESHOLD) socket.destroy();
+  }
+
+  // Send a replay now if the socket has room, else hold it for 'drain'.
+  private sendReplay(conn: Conn, id: string, buf: Buffer): void {
+    if (conn.socket.destroyed) return;
+    if (conn.pendingReplays.length > 0 || conn.socket.writableLength > PAUSE_THRESHOLD) {
+      conn.pendingReplays.push({ id, buf });
+      return;
+    }
+    this.send(conn, { type: 'output', id }, buf);
+  }
+
+  private flushReplays(conn: Conn): void {
+    while (conn.pendingReplays.length > 0 && !conn.socket.destroyed && conn.socket.writableLength <= PAUSE_THRESHOLD) {
+      const next = conn.pendingReplays.shift()!;
+      // Dropped between queue and flush (unsubscribe/exit): nothing to replay.
+      if (!conn.subscriptions.has(next.id)) continue;
+      this.send(conn, { type: 'output', id: next.id }, next.buf);
+    }
   }
 
   private onConnection(socket: net.Socket): void {
@@ -151,9 +178,13 @@ export class PtydServer {
       negotiated: false,
       subscriptions: new Set(),
       pausedSessions: new Set(),
+      pendingReplays: [],
     };
     this.conns.add(conn);
-    socket.on('drain', () => this.resumePaused(conn));
+    socket.on('drain', () => {
+      this.flushReplays(conn);
+      this.resumePaused(conn);
+    });
     // Annotated: @types/node >=26 widens the 'data' payload to
     // `string | Buffer` for the setEncoding() case. This socket is never
     // given an encoding, so frames always arrive as Buffers.
@@ -180,6 +211,7 @@ export class PtydServer {
     });
     const drop = () => {
       this.conns.delete(conn);
+      conn.pendingReplays.length = 0;
       this.resumePaused(conn); // a destroyed socket never drains
     };
     socket.on('close', drop);
@@ -271,7 +303,7 @@ export class PtydServer {
         conn.subscriptions.add(msg.id);
         if (msg.replay) {
           const buf = this.store.replay(s);
-          if (buf.byteLength > 0) this.send(conn, { type: 'output', id: msg.id }, buf);
+          if (buf.byteLength > 0) this.sendReplay(conn, msg.id, buf);
         }
         return;
       }

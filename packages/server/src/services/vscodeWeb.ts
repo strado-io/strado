@@ -18,6 +18,7 @@ import {
 } from './serveWebProcess.js';
 import { pruneDeadIdeLocks as realPrune } from './ideLockfiles.js';
 import { ensureTsServerMemory as realEnsureSettings } from './vscodeSettings.js';
+import { installStradoExtension as realInstallExtension } from './vscodeExtensionInstall.js';
 import { pinnedCommit as realPinnedCommit } from './serveWebCache.js';
 
 const HOST = '127.0.0.1';
@@ -32,6 +33,13 @@ function serveWebArgs(port: number, commit: string | null): string[] {
 }
 function codeServerArgs(port: number): string[] {
   return ['--auth', 'none', '--bind-addr', `${HOST}:${port}`];
+}
+
+// The workbench's extension hosts inherit this. STRADO_SERVER must name THIS
+// server: a dev server started from a production Strado terminal inherits the
+// production URL, and the strado-window extension would report there.
+function spawnEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, [MARKER]: '1', STRADO_SERVER: `http://${HOST}:${process.env.PORT ?? 7777}` };
 }
 
 const CANDIDATE_FILES = ['code-insiders', 'code', 'code-server'] as const;
@@ -79,6 +87,8 @@ export type VsCodeWebManager = {
   drop(folder: string): Promise<void>;
   reapOrphans(): Promise<void>;
   closeAll(): Promise<void>;
+  /** the shared workbench process, or null when none is running */
+  status(): { pid: number; port: number; url: string; ready: boolean } | null;
 };
 
 // A daemon store persists spawned {pid,port} so orphans survive a crash and get
@@ -114,6 +124,8 @@ type Deps = {
   readyWaitMs?: number;
   pruneDeadIdeLocks?: (pids: number[]) => void;
   ensureTsServerMemory?: (cli: string) => void;
+  /** drop the strado-window extension into the serve-web extensions dir */
+  installStradoExtension?: (cli: string) => void;
   /** cached serve-web build to pin via --commit-id; null → let serve-web pick */
   pinnedCommit?: (cli: string) => string | null;
   /** pause between the pinned workbench turning ready and the cache warm-up */
@@ -163,6 +175,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   const readyWaitMs = deps.readyWaitMs ?? 20_000;
   const prune = deps.pruneDeadIdeLocks ?? realPrune;
   const ensureSettings = deps.ensureTsServerMemory ?? realEnsureSettings;
+  const installExtension = deps.installStradoExtension ?? realInstallExtension;
   const pinned = deps.pinnedCommit ?? realPinnedCommit;
   const warmDelayMs = deps.warmDelayMs ?? 30_000;
   // Generous: on a slow link a 650MB build can take a long time, and giving up
@@ -209,7 +222,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
       if (!instance) return; // app is shutting down
       const port = await findFreePort();
       const child = spawn(file, argsFor(file, port, null), {
-        stdio: 'ignore', detached: true, env: { ...process.env, [MARKER]: '1' },
+        stdio: 'ignore', detached: true, env: spawnEnv(),
       });
       // An unhandled 'error' on a ChildProcess is thrown from nextTick and
       // would take the whole server down — the main path guards this too.
@@ -244,7 +257,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
       if (!file) return null;
       const commit = pinFor(file);
       const child = spawn(file, argsFor(file, port, commit), {
-        stdio: 'ignore', detached: true, env: { ...process.env, [MARKER]: '1' },
+        stdio: 'ignore', detached: true, env: spawnEnv(),
       });
       if (child.pid) store.record({ pid: child.pid, port });
       return { file, child, commit };
@@ -252,7 +265,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
     for (const file of CANDIDATE_FILES) {
       const commit = pinFor(file);
       const child = spawn(file, argsFor(file, port, commit), {
-        stdio: 'ignore', detached: true, env: { ...process.env, [MARKER]: '1' },
+        stdio: 'ignore', detached: true, env: spawnEnv(),
       });
       // Record the instant we have a pid — before the ~400ms probe — so a crash
       // in that window still leaves a pidfile entry for the next reapOrphans.
@@ -316,7 +329,11 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
         if (instance && instance.pid === pid) instance = null;
       });
 
-      if (!settingsSeeded) { settingsSeeded = true; try { ensureSettings(file); } catch { /* noop */ } }
+      if (!settingsSeeded) {
+        settingsSeeded = true;
+        try { ensureSettings(file); } catch { /* noop */ }
+        try { installExtension(file); } catch { /* noop */ }
+      }
 
       // Best-effort wait for the port so the first iframe load succeeds; the
       // client retries regardless, so a slow warmup still returns the URL.
@@ -387,7 +404,12 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
     prune([entry.pid]);
   }
 
-  return { ensure, prewarm, drop, reapOrphans, closeAll };
+  function status(): { pid: number; port: number; url: string; ready: boolean } | null {
+    if (!instance || instance.child.exitCode !== null) return null;
+    return { pid: instance.pid, port: instance.port, url: instance.url, ready: instance.ready };
+  }
+
+  return { ensure, prewarm, drop, reapOrphans, closeAll, status };
 }
 
 // HAZARD: this captures daemonFilePath() (via createVsCodeWebManager ->
@@ -406,3 +428,4 @@ export const prewarmVsCodeWeb = () => defaultManager.prewarm();
 export const dropVsCodeWeb = (folder: string) => defaultManager.drop(folder);
 export const reapOrphans = () => defaultManager.reapOrphans();
 export const closeAll = () => defaultManager.closeAll();
+export const vsCodeWebStatus = () => defaultManager.status();

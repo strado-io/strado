@@ -8,10 +8,11 @@ import { PrivacySection } from './PrivacySection';
 import { ProfileSection } from './ProfileSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
 import { RunnersPanel } from '../RunnersPanel';
+import { SessionsSection } from './SessionsSection';
 import { useEntitlements } from '../../hooks/entitlements';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'sessions';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -77,6 +78,14 @@ function SettingsNavIcon({ id }: { id: SettingsSection | 'feedback' }) {
       </svg>
     );
   }
+  if (id === 'sessions') {
+    return (
+      <svg {...props}>
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M7 9h10M7 13h6M7 17h8" />
+      </svg>
+    );
+  }
   if (id === 'privacy') {
     return (
       <svg {...props}>
@@ -108,7 +117,7 @@ const GROUPS: NavGroup[] = [
   { title: 'Agents', items: [{ id: 'agents', label: 'Coding agents' }] },
   { title: 'Infrastructure', items: [{ id: 'runners', label: 'Runners' }] },
   { title: 'Connections', items: [{ id: 'integrations', label: 'Integrations' }] },
-  { title: 'System', items: [{ id: 'privacy', label: 'Privacy' }] },
+  { title: 'System', items: [{ id: 'sessions', label: 'Sessions' }, { id: 'privacy', label: 'Privacy' }] },
 ];
 
 // Which settings sections are Pro (cloud) features. Jira and Linear run on the
@@ -274,6 +283,7 @@ export function SettingsPage({
                 onJiraConnected={onJiraConnected}
               />
             )}
+            {active === 'sessions' && <SessionsSection />}
             {active === 'privacy' && <PrivacySection />}
           </div>
         </main>

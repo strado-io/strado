@@ -16,6 +16,7 @@ export const OPEN_PATHS = [
   '/api/auth/start',     // begin a device-code sign-in
   '/api/auth/poll',      // wait for it
   '/api/auth/signout',   // sign out, which by definition needs no license
+  '/api/vscode/window',  // the bundled VS Code extension reporting its pid+folder — local, unauthenticated by nature
 ] as const;
 
 export function registerLicenseEnforcement(app: FastifyInstance): void {

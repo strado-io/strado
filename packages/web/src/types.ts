@@ -282,3 +282,32 @@ export type MachineSample = {
   loadAvg: number[];
   uptimeSec: number;
 };
+
+// Settings → Sessions: every pty the daemon holds, machine-wide, with the
+// CPU/memory of the process tree under it (GET /api/sessions/metrics).
+export type SessionMetric = {
+  /** TerminalManager key; what DELETE /api/sessions/:key takes. */
+  key: string;
+  path: string;
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi';
+  id: string;
+  pid: number | null;
+  cpu: number;
+  rssBytes: number;
+  processes: number;
+};
+export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
+export type SessionMetrics = {
+  sampledAt: number;
+  app: {
+    server: AppProcMetric;
+    daemon: AppProcMetric | null;
+    /** the shared `code serve-web` workbench and everything under it */
+    vscode: (AppProcMetric & { processes: number }) | null;
+  };
+  sessions: SessionMetric[];
+  /** one per VS Code window whose extension host reported its folder */
+  vscodeWindows: Array<{ path: string; pid: number; cpu: number; rssBytes: number; processes: number }>;
+  /** process tree of each pid asked for with ?pids= (worktree dev servers) */
+  processes?: Array<{ pid: number; cpu: number; rssBytes: number; processes: number }>;
+};

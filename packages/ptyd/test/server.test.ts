@@ -242,3 +242,72 @@ describe('PtydServer', () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(250);
   });
 });
+
+// A server restart resubscribes to EVERY session with replay at once. With
+// dozens of full 256 KB ring buffers that burst exceeds any fixed cutoff, and
+// the reader (busy digesting the first replays) looks "slow" for a moment.
+// Cutting that conn turns a restart into a reconnect→replay→cut loop.
+describe('PtydServer backpressure', () => {
+  it('keeps a slow subscriber connected through a multi-megabyte replay burst and delivers every byte', async () => {
+    // 5 × 2 MB rings = 10 MB, past the old 8 MB destroy cutoff. Few, large
+    // rings keep the pty count low: 40 default-size sessions starved the pty
+    // tests running beside this file on CI's small macOS runners.
+    const N = 5;
+    const FILL = 2 * 1024 * 1024;
+    const bigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ptyd-'));
+    const bigSock = path.join(bigDir, 'ptyd.sock');
+    const big = new PtydServer({ socketPath: bigSock, daemonVersion: '0.0.0-test', bufferCap: FILL });
+    await big.listen();
+    const sock = bigSock; // this test's own server, not the shared one
+    const a = await connect(sock);
+    await hello(a);
+    for (let i = 0; i < N; i++) {
+      a.send({
+        type: 'open',
+        id: `fill${i}`,
+        meta: meta({ argv: ['-c', `head -c ${FILL} /dev/zero | tr '\\0' x; printf DONE; sleep 60`] }),
+      });
+    }
+    for (let i = 0; i < N; i++) {
+      await a.waitFor((f) => (f.message as { type: string; id?: string }).type === 'open-ack' && (f.message as { id: string }).id === `fill${i}`, 20_000);
+      a.send({ type: 'subscribe', id: `fill${i}`, replay: true });
+    }
+    // Wait until every ring buffer holds its full payload.
+    const seen = new Set<string>();
+    while (seen.size < N) {
+      const f = await a.waitFor((fr) => (fr.message as { type: string }).type === 'output' && !!fr.payload?.includes('DONE'), 20_000);
+      seen.add((f.message as { id: string }).id);
+    }
+
+    // "Restarted server": subscribes to everything with replay, but is not
+    // reading yet.
+    const b = await connect(sock);
+    await hello(b);
+    b.pause();
+    for (let i = 0; i < N; i++) b.send({ type: 'subscribe', id: `fill${i}`, replay: true });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(b.closed()).toBe(false);
+
+    // Once it reads, every replay arrives: a full ring (256 KB cap, so the
+    // oldest bytes of the fill are gone) ending in the sentinel.
+    b.resume();
+    const bytes = new Map<string, number>();
+    const tails = new Map<string, string>();
+    while (bytes.size < N || [...bytes.values()].some((n) => n < FILL)) {
+      const f = await b.waitFor((fr) => (fr.message as { type: string }).type === 'output', 20_000);
+      const id = (f.message as { id: string }).id;
+      bytes.set(id, (bytes.get(id) ?? 0) + (f.payload?.byteLength ?? 0));
+      tails.set(id, f.payload?.subarray(-4).toString() ?? '');
+    }
+    expect(b.closed()).toBe(false);
+    for (let i = 0; i < N; i++) {
+      expect(bytes.get(`fill${i}`)).toBe(FILL);
+      expect(tails.get(`fill${i}`)).toBe('DONE');
+    }
+
+    for (let i = 0; i < N; i++) a.send({ type: 'close', id: `fill${i}` });
+    a.close(); b.close();
+    await big.close();
+    fs.rmSync(bigDir, { recursive: true, force: true });
+  }, 60_000);
+});

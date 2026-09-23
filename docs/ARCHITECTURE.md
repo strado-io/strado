@@ -78,7 +78,7 @@ Key boundaries:
 |---|---|---|
 | **Worktree dashboard** | Create / adopt / delete worktrees across repos and workspaces; each row shows branch, uncommitted changes, env profile, dev-server status, agent status, tracked time — live via SSE. | `web/pages/Dashboard.tsx`, `server/routes/worktrees.ts` |
 | **Agent & terminal hub** | Persistent Claude Code / Codex / OpenCode / Pi / shell sessions per worktree; multiple Claude sessions (`Claude N` tabs); sessions survive tab close, server restart and app upgrade. Split panes, drag-reorder tabs, hold-Cmd Arc-style switcher with live previews. | `web/pages/TerminalView.tsx`, `server/routes/terminal.ts`, `packages/ptyd` |
-| **Embedded VS Code** | `code serve-web` per folder in a cross-origin iframe, kept mounted across tab switches; Cmd+W reaches the editor (Close Window is Shift+Cmd+W). | `server/services/vscodeWeb.ts`, desktop hotkey wiring |
+| **Embedded VS Code** | One shared `code serve-web` workbench in a cross-origin iframe per folder, kept mounted across tab switches; Cmd+W reaches the editor (Close Window is Shift+Cmd+W). A bundled `strado-window` extension (`server/hooks/vscode-extension`, installed into the serve-web extensions dir on first boot) reports each window's extension-host pid + folder so Settings → Sessions can attribute its process tree to the worktree. | `server/services/vscodeWeb.ts`, `vscodeWindows.ts`, desktop hotkey wiring |
 | **Preview browser + agent verification** | Multi-tab in-app browser (WebContentsView) with toolbar and dockable DevTools. Exposed to agents as the `preview_*` tools of the `strado` MCP server (screenshot, click, fill, eval, console, network) — scoped so each session only sees **its own worktree's** tabs. | `desktop/main.cjs`, `server/hooks/mcp/preview.mjs`, `server/routes/previewTargets.ts` |
 | **Diff & commit** | Staged/unstaged hunks, per-hunk stage/discard, commit, push/pull, branch diff, commit graph, in-app MR/PR review and creation. | `web/pages/DiffView.tsx`, `server/routes/gitChanges.ts` |
 | **Git providers** | GitLab and GitHub PRs behind one provider-agnostic `MergeRequest` shape; per-owner tokens (`host/owner` keys); ssh alias resolution via `ssh -G`. | `server/services/{gitlab,github,gitProviders}.ts` |
@@ -103,7 +103,8 @@ any other import, then builds the dependency graph (`workspaces`, `registry`, ev
 
 **API surface (abridged):**
 
-- Root: `/api/health`, `/api/capabilities`, `/api/workspaces*`, `/api/runners*`,
+- Root: `/api/health`, `/api/capabilities`, `/api/sessions/*` (machine-wide pty sessions +
+  process-tree usage, Settings → Sessions), `/api/workspaces*`, `/api/runners*`,
   `/api/terminal/peek`, `WS /ws/terminal`, `/api/{claude,codex,opencode,pi}/status`,
   `/api/activity/beat`, `/api/vscode`, `/api/jira/*`, `/api/{gitlab,github}/config`,
   `/api/license*`, `/api/auth/{start,poll,signout}`, `/api/update-check`,
@@ -162,7 +163,7 @@ switching worktrees remounts it), `DiffView` (full-screen overlay), settings and
 workspace modals.
 
 The hub's tab modes: `shell` / `claude` / `codex` / `opencode` / `pi` (pty over WS), `vscode`
-(iframe, kept mounted-but-hidden), `browser` (Electron WebContentsView overlay,
+(iframe, kept mounted-but-hidden, dockable into split panes like any tab), `browser` (Electron WebContentsView overlay,
 multi-tab, DevTools dock bottom/right/window), `kb`. Tab icon = identity, tab **color =
 status**. Drag-reorder is pointer-based with DOM transforms (HTML5 DnD rejected).
 Active tab restore never silently spawns an agent.

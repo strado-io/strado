@@ -1,0 +1,26 @@
+{
+  "name": "strado-window",
+  "displayName": "Strado",
+  "description": "Lets Strado attribute this VS Code window's processes to its worktree in Settings \u2192 Sessions, and turns off Restricted Mode for Strado's worktrees (unless you set it yourself).",
+  "version": "0.1.2",
+  "publisher": "strado",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {},
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Only reports this window's process id and folder path to Strado; reads no workspace files."
+    },
+    "virtualWorkspaces": true
+  }
+}

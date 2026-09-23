@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import net from 'node:net';
 import { createDaemonTerminalManager } from './manager.js';
 import type { TerminalManager } from '../terminalManager.js';
+import headlessPkg from '@xterm/headless';
+import serializePkg from '@xterm/addon-serialize';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const daemonScript = path.resolve(here, '../../../../ptyd/dist/ptyd.cjs');
@@ -218,5 +221,87 @@ describe('DaemonTerminalManager', () => {
     const m2 = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8'));
     expect(m2.pid).not.toBe(manifest.pid);
     manager.kill(key);
+  }, 30000);
+
+  it('adopting a daemon does not feed replays into the screen emulator until snapshot() asks', async () => {
+    // A server restart resubscribes to EVERY session with replay. Running each
+    // 256 KB ring through a headless terminal at boot pegged the event loop for
+    // dozens of sessions (HTTP "Failed to fetch"), and the stalled socket read
+    // made the daemon cut the connection. Bytes go to the mirror only; the
+    // emulator is rebuilt from the mirror on the first snapshot.
+    const key = '/tmp\0shell';
+    await manager.ensure(key, '/tmp', shSpec);
+    await vwait(() => manager.snapshot(key).includes('ready'));
+    manager.destroy();
+
+    let emuWrites = 0;
+    const manager2 = await createDaemonTerminalManager({
+      stateDir,
+      daemonScript,
+      makeEmulator: (cols, rows) => {
+        const emu = new headlessPkg.Terminal({ cols, rows, allowProposedApi: true, scrollback: 1000 });
+        const serialize = new serializePkg.SerializeAddon();
+        emu.loadAddon(serialize);
+        const write = emu.write.bind(emu);
+        emu.write = ((data: string | Uint8Array, cb?: () => void) => { emuWrites++; return write(data, cb); }) as typeof emu.write;
+        return { emu, serialize };
+      },
+    });
+    try {
+      await vwait(() => manager2.liveSessions().length === 1);
+      await new Promise((r) => setTimeout(r, 300)); // replay has landed by now
+      expect(emuWrites).toBe(0);
+      expect(manager2.snapshot(key)).toContain('ready'); // rebuilt lazily
+      expect(emuWrites).toBeGreaterThan(0);
+    } finally {
+      manager2.kill(key);
+      manager2.destroy();
+    }
+  }, 20000);
+
+  it('a dropped daemon connection does not report live sessions as exited when the daemon is still up', async () => {
+    // Cut the wire between manager and daemon with a unix-socket proxy. The
+    // daemon and its sessions are untouched, so the reconnect resync must find
+    // them running — no exit event, status never flips.
+    const key = '/tmp\0shell';
+    await manager.ensure(key, '/tmp', shSpec);
+    await vwait(() => manager.snapshot(key).includes('ready'));
+    manager.destroy();
+
+    const sockDir = path.join(stateDir, 'ptyd');
+    const real = path.join(sockDir, 'ptyd.real.sock');
+    const front = path.join(sockDir, 'ptyd.sock');
+    fs.renameSync(front, real); // the daemon keeps listening on the moved inode
+    const wires = new Set<net.Socket>();
+    const proxy = net.createServer((client) => {
+      const upstream = net.connect(real);
+      wires.add(client); wires.add(upstream);
+      client.pipe(upstream); upstream.pipe(client);
+      const drop = () => { client.destroy(); upstream.destroy(); wires.delete(client); wires.delete(upstream); };
+      client.on('close', drop); upstream.on('close', drop);
+      client.on('error', drop); upstream.on('error', drop);
+    });
+    await new Promise<void>((r) => proxy.listen(front, r));
+
+    const manager2 = await createDaemonTerminalManager({ stateDir, daemonScript });
+    try {
+      await vwait(() => manager2.status(key).status === 'running');
+      let exits = 0;
+      manager2.onExit(key, () => { exits++; });
+      for (const w of wires) w.destroy(); // the wire drops; the daemon does not
+      // Reconnect + resync must settle with the session still running.
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(manager2.status(key).status).toBe('running');
+      expect(exits).toBe(0);
+      const got: string[] = [];
+      manager2.subscribe(key, (d) => got.push(d));
+      manager2.write(key, 'still-here\n');
+      await vwait(() => got.join('').includes('still-here'));
+    } finally {
+      manager2.kill(key);
+      manager2.destroy();
+      await new Promise<void>((r) => proxy.close(() => r()));
+      try { fs.renameSync(real, front); } catch { /* afterEach kills by pid anyway */ }
+    }
   }, 30000);
 });

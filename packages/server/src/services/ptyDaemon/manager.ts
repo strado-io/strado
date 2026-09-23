@@ -53,24 +53,22 @@ type Mirror = {
   // the way tmux reattaches. See snapshot().
   emu: HeadlessTerm;
   serialize: Serialize;
+  // True while the emulator has NOT seen the bytes in `buffer`. Set when a
+  // replay is expected (adoption/resync): feeding dozens of 256 KB rings
+  // through headless terminals at boot pegs the event loop, stalls the
+  // daemon socket read and starves HTTP. The emulator is rebuilt from the
+  // mirror on the first snapshot() that needs it — same bytes, same screen.
+  emuStale: boolean;
+  emuSize: { cols: number; rows: number };
 };
 
-const makeEmu = (cols: number, rows: number): { emu: HeadlessTerm; serialize: Serialize } => {
+export type EmulatorFactory = (cols: number, rows: number) => { emu: HeadlessTerm; serialize: Serialize };
+
+const defaultMakeEmu: EmulatorFactory = (cols, rows) => {
   const emu = new HeadlessTerminal({ cols, rows, allowProposedApi: true, scrollback: 1000 });
   const serialize = new SerializeAddon();
   emu.loadAddon(serialize);
   return { emu, serialize };
-};
-
-// Replace a mirror's emulator with a fresh one at the given size. Called
-// wherever the byte mirror is cleared for a daemon replay (open, resync): the
-// replay re-feeds the whole ring buffer, so the emulator must start empty and
-// the right size or the reconstructed screen would be doubled or clipped.
-const resetEmu = (m: Mirror, cols: number, rows: number) => {
-  try { m.emu.dispose(); } catch { /* ignore */ }
-  const next = makeEmu(cols, rows);
-  m.emu = next.emu;
-  m.serialize = next.serialize;
 };
 
 export type DaemonTerminalManagerOptions = {
@@ -81,7 +79,13 @@ export type DaemonTerminalManagerOptions = {
   onData?: (key: string) => void;
   onExit?: (key: string) => void;
   extraEnv?: ExtraEnv;
+  /** Test seam: observe or replace the per-session screen emulator. */
+  makeEmulator?: EmulatorFactory;
 };
+
+// Yield to the event loop this often while resubscribing at resync, so a
+// large session set does not block HTTP for the whole loop.
+const RESYNC_YIELD_EVERY = 8;
 
 export async function createDaemonTerminalManager(
   opts: DaemonTerminalManagerOptions,
@@ -95,6 +99,27 @@ export async function createDaemonTerminalManager(
   };
   const mirrors = new Map<string, Mirror>();
   const inflightOpens = new Map<string, Promise<TerminalInfo>>();
+  const makeEmu = opts.makeEmulator ?? defaultMakeEmu;
+
+  // Replace a mirror's emulator with a fresh one at the given size. Called
+  // wherever the byte mirror is cleared for a daemon replay (open, resync):
+  // the replay re-feeds the whole ring buffer, so the emulator must start
+  // empty and the right size or the reconstructed screen would be doubled or
+  // clipped.
+  const resetEmu = (m: Mirror, cols: number, rows: number) => {
+    try { m.emu.dispose(); } catch { /* ignore */ }
+    const next = makeEmu(cols, rows);
+    m.emu = next.emu;
+    m.serialize = next.serialize;
+    m.emuSize = { cols, rows };
+  };
+  // Bring a stale emulator up to date with the mirror in one write.
+  const refreshEmu = (m: Mirror) => {
+    if (!m.emuStale) return;
+    m.emuStale = false;
+    resetEmu(m, m.emuSize.cols, m.emuSize.rows);
+    if (m.buffer) m.emu.write(m.buffer);
+  };
 
   const { socketPath, daemonVersion } = await ensurePtyDaemon({ stateDir: opts.stateDir, daemonScript: opts.daemonScript });
   const client: DaemonClient = createDaemonClient(socketPath);
@@ -111,6 +136,8 @@ export async function createDaemonTerminalManager(
         emitter: new EventEmitter(),
         emu,
         serialize,
+        emuStale: false,
+        emuSize: { cols: 80, rows: 24 },
       };
       m.emitter.setMaxListeners(0);
       mirrors.set(key, m);
@@ -142,7 +169,9 @@ export async function createDaemonTerminalManager(
     if (!text) return;
     m.buffer += text;
     if (m.buffer.length > MAX_MIRROR) m.buffer = m.buffer.slice(m.buffer.length - MAX_MIRROR);
-    m.emu.write(text); // keep the screen emulator current for snapshot()
+    // A stale emulator catches up from `buffer` on demand; feeding it now
+    // would just double the work.
+    if (!m.emuStale) m.emu.write(text); // keep the screen emulator current for snapshot()
     m.emitter.emit('data', text);
     notifyData(key);
   });
@@ -160,13 +189,18 @@ export async function createDaemonTerminalManager(
   const resync = async () => {
     const sessions = await client.list();
     const liveIds = new Set(sessions.map((s) => s.id));
+    let n = 0;
     for (const s of sessions) {
       const m = mirror(s.id);
       m.info = { status: 'running', pid: s.pid, exitCode: null };
       m.buffer = '';
       m.decoder = new StringDecoder('utf8');
-      resetEmu(m, s.cols, s.rows); // replay rebuilds the screen at the daemon's size
+      // Replay lands in `buffer` only; the emulator is rebuilt at the daemon's
+      // size by the first snapshot() — see Mirror.emuStale.
+      m.emuStale = true;
+      m.emuSize = { cols: s.cols, rows: s.rows };
       client.subscribe(s.id, true); // replay refills the mirror buffer
+      if (++n % RESYNC_YIELD_EVERY === 0) await new Promise<void>((r) => setImmediate(r));
     }
     // Anything we believed was running but the daemon no longer has, exited
     // while we were away.
@@ -194,21 +228,28 @@ export async function createDaemonTerminalManager(
   // ever add it), so ensure() can join it rather than re-arming underneath a
   // handoff that is about to reconnect anyway.
   let upgradePromise: Promise<void> | null = null;
+  // Everything we believed was running is gone: the daemon died and could
+  // not be brought back. Tell subscribers once.
+  const markAllExited = () => {
+    for (const [key, m] of mirrors) {
+      if (m.info.status === 'running') {
+        m.info = { status: 'exited', pid: null, exitCode: null };
+        m.emitter.emit('exit', 0);
+        notifyExit(key);
+      }
+    }
+  };
   client.onDisconnect(() => {
     connected = false;
     if (destroyed || reconnecting || upgrading) return;
     reconnecting = true;
-    // Daemon died: every session died with it. Respawn the daemon and
-    // reconnect so new terminals keep working; mark old sessions exited.
+    // The wire dropped. That is NOT proof the sessions died: a slow read on
+    // our side, or a daemon restart via handoff, drops the socket while every
+    // pty lives on. Reconnect and let resync tell the truth — it marks exited
+    // exactly the sessions the daemon no longer lists. Only if the daemon
+    // cannot be reached at all do we declare everything gone.
     reconnectPromise = (async () => {
       try {
-        for (const [key, m] of mirrors) {
-          if (m.info.status === 'running') {
-            m.info = { status: 'exited', pid: null, exitCode: null };
-            m.emitter.emit('exit', 0);
-            notifyExit(key);
-          }
-        }
         for (let attempt = 0; attempt < 5 && !destroyed; attempt++) {
           try {
             await ensurePtyDaemon({ stateDir: opts.stateDir, daemonScript: opts.daemonScript });
@@ -225,6 +266,7 @@ export async function createDaemonTerminalManager(
         }
         if (!destroyed) {
           process.stderr.write('[ptyd-manager] reconnect gave up after 5 attempts; terminals unavailable until server restart\n');
+          markAllExited();
         }
       } finally {
         reconnecting = false;
@@ -390,12 +432,23 @@ export async function createDaemonTerminalManager(
       const m = mirror(key);
       if (m.info.status === 'running') {
         client.resize(key, cols, rows);
-        try { m.emu.resize(cols, rows); } catch { /* ignore invalid dims */ }
+        m.emuSize = { cols, rows };
+        if (!m.emuStale) {
+          try { m.emu.resize(cols, rows); } catch { /* ignore invalid dims */ }
+        }
       }
     },
     snapshot(key) {
       const m = mirrors.get(key);
       if (!m) return '';
+      // First look after adoption: kick the emulator rebuild and hand back the
+      // raw mirror this once. Headless xterm parses asynchronously, so the
+      // grid is not ready in this tick — and after a replay the raw ring holds
+      // exactly the bytes the emulator would have anyway.
+      if (m.emuStale) {
+        refreshEmu(m);
+        return m.buffer;
+      }
       // Serialize the emulator's current screen: a self-contained escape
       // sequence that reconstructs exactly what's on screen (alt-screen,
       // colors, cursor) when replayed into the client's fresh xterm. Falls
