@@ -1,9 +1,14 @@
+import os from 'node:os';
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
+    // Native PTYs and detached daemons own process-level handles. Isolate
+    // suites in processes so a recycled worker thread cannot strand them.
+    pool: 'forks',
     testTimeout: 15_000,
     // Empty, not absent: the app exports STRADO_LICENSE_REQUIRED=1 into every
     // terminal it spawns, so a suite run from inside Strado hit the license
@@ -19,6 +24,7 @@ export default defineConfig({
       STRADO_HOME: '',
       STRADO_LICENSE_REQUIRED: '',
       STRADO_SESSION_ID: '',
+      STRADO_CLAUDE_JSON: path.join(os.tmpdir(), `strado-vitest-${process.pid}-claude.json`),
     },
   },
 });

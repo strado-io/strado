@@ -8,6 +8,17 @@ import type { AgentMode, HandoffConversationMessage, HandoffContextSource } from
 
 type JsonRecord = Record<string, unknown>;
 
+/** One text-bearing message with what the diary needs and the handoff never did.
+ * `meta` marks entries the transcript itself flags as not part of the visible
+ * conversation (Claude: isMeta, isSidechain, tool results). The handoff
+ * wrappers below keep them, exactly as before; the turn diary drops them. */
+export type ConversationMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number | null;
+  meta: boolean;
+};
+
 export type AgentConversation = {
   messages: HandoffConversationMessage[];
   source: HandoffContextSource;
@@ -42,6 +53,18 @@ function isInjectedUserContext(content: string): boolean {
   return trimmed.startsWith('<environment_context>') && trimmed.endsWith('</environment_context>');
 }
 
+function parseTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const t = Date.parse(value);
+    return Number.isNaN(t) ? null : t;
+  }
+  return null;
+}
+
+const toHandoff = (messages: ConversationMessage[]): HandoffConversationMessage[] =>
+  messages.map(({ role, content }) => ({ role, content }));
+
 function compact(messages: HandoffConversationMessage[]): HandoffConversationMessage[] {
   const useful = messages
     .map((message) => ({ ...message, content: message.content.trim() }))
@@ -72,8 +95,8 @@ function parseJsonLines(raw: string): JsonRecord[] {
   });
 }
 
-export function parseClaudeConversation(raw: string): HandoffConversationMessage[] {
-  const messages = parseJsonLines(raw).flatMap((entry): HandoffConversationMessage[] => {
+export function parseClaudeMessages(raw: string): ConversationMessage[] {
+  return parseJsonLines(raw).flatMap((entry): ConversationMessage[] => {
     if (entry.type !== 'user' && entry.type !== 'assistant') return [];
     const message = isRecord(entry.message) ? entry.message : null;
     if (!message) return [];
@@ -81,24 +104,32 @@ export function parseClaudeConversation(raw: string): HandoffConversationMessage
     if (role !== 'user' && role !== 'assistant') return [];
     const content = textContent(message.content);
     if (role === 'user' && isInjectedUserContext(content)) return [];
-    return content ? [{ role, content }] : [];
+    if (!content) return [];
+    const meta = entry.isMeta === true || entry.isSidechain === true || 'toolUseResult' in entry;
+    return [{ role, content, timestamp: parseTimestamp(entry.timestamp), meta }];
   });
-  return compact(messages);
 }
 
-export function parseCodexConversation(raw: string): HandoffConversationMessage[] {
-  const messages = parseJsonLines(raw).flatMap((entry): HandoffConversationMessage[] => {
+export function parseClaudeConversation(raw: string): HandoffConversationMessage[] {
+  return compact(toHandoff(parseClaudeMessages(raw)));
+}
+
+export function parseCodexMessages(raw: string): ConversationMessage[] {
+  return parseJsonLines(raw).flatMap((entry): ConversationMessage[] => {
     if (entry.type !== 'response_item' || !isRecord(entry.payload) || entry.payload.type !== 'message') return [];
     const role = entry.payload.role;
     if (role !== 'user' && role !== 'assistant') return [];
     const content = textContent(entry.payload.content);
     if (role === 'user' && isInjectedUserContext(content)) return [];
-    return content ? [{ role, content }] : [];
+    return content ? [{ role, content, timestamp: parseTimestamp(entry.timestamp), meta: false }] : [];
   });
-  return compact(messages);
 }
 
-export function parseOpenCodeConversation(raw: string): HandoffConversationMessage[] {
+export function parseCodexConversation(raw: string): HandoffConversationMessage[] {
+  return compact(toHandoff(parseCodexMessages(raw)));
+}
+
+export function parseOpenCodeMessages(raw: string): ConversationMessage[] {
   let exported: unknown;
   try {
     exported = JSON.parse(raw);
@@ -106,20 +137,24 @@ export function parseOpenCodeConversation(raw: string): HandoffConversationMessa
     return [];
   }
   if (!isRecord(exported) || !Array.isArray(exported.messages)) return [];
-  const messages = exported.messages.flatMap((entry): HandoffConversationMessage[] => {
+  return exported.messages.flatMap((entry): ConversationMessage[] => {
     if (!isRecord(entry)) return [];
     const info = isRecord(entry.info) ? entry.info : entry;
     const role = info.role;
     if (role !== 'user' && role !== 'assistant') return [];
     const content = textContent(entry.parts);
     if (role === 'user' && isInjectedUserContext(content)) return [];
-    return content ? [{ role, content }] : [];
+    const timestamp = parseTimestamp(isRecord(info.time) ? info.time.created : undefined);
+    return content ? [{ role, content, timestamp, meta: false }] : [];
   });
-  return compact(messages);
 }
 
-export function parsePiConversation(raw: string): HandoffConversationMessage[] {
-  const messages = parseJsonLines(raw).flatMap((entry): HandoffConversationMessage[] => {
+export function parseOpenCodeConversation(raw: string): HandoffConversationMessage[] {
+  return compact(toHandoff(parseOpenCodeMessages(raw)));
+}
+
+export function parsePiMessages(raw: string): ConversationMessage[] {
+  return parseJsonLines(raw).flatMap((entry): ConversationMessage[] => {
     if (entry.type !== 'message' || !isRecord(entry.message)) return [];
     const role = entry.message.role;
     // Pi writes tool results as their own `toolResult` role, so dropping
@@ -127,9 +162,12 @@ export function parsePiConversation(raw: string): HandoffConversationMessage[] {
     if (role !== 'user' && role !== 'assistant') return [];
     const content = textContent(entry.message.content);
     if (role === 'user' && isInjectedUserContext(content)) return [];
-    return content ? [{ role, content }] : [];
+    return content ? [{ role, content, timestamp: parseTimestamp(entry.timestamp), meta: false }] : [];
   });
-  return compact(messages);
+}
+
+export function parsePiConversation(raw: string): HandoffConversationMessage[] {
+  return compact(toHandoff(parsePiMessages(raw)));
 }
 
 async function safeRead(filePath: string, root: string): Promise<string | null> {
@@ -173,11 +211,7 @@ async function newest(files: string[]): Promise<string[]> {
   return stamped.sort((a, b) => b.mtime - a.mtime).map(({ file }) => file);
 }
 
-async function claudeConversation(
-  cwd: string,
-  reference: AgentSessionReference | null,
-  homeDir: string,
-): Promise<AgentConversation> {
+async function loadClaudeTranscript(cwd: string, reference: AgentSessionReference | null, homeDir: string): Promise<string | null> {
   const root = path.join(homeDir, '.claude', 'projects');
   const projectDir = path.join(root, cwd.replace(/[^A-Za-z0-9]/g, '-'));
   let transcript: string | null = null;
@@ -189,15 +223,10 @@ async function claudeConversation(
     const candidates = await newest(await filesUnder(projectDir, (name) => name.endsWith('.jsonl')));
     if (candidates[0]) transcript = await safeRead(candidates[0], root);
   }
-  const messages = transcript ? parseClaudeConversation(transcript) : [];
-  return { messages, source: messages.length ? 'claude-history' : 'none' };
+  return transcript;
 }
 
-async function codexConversation(
-  cwd: string,
-  reference: AgentSessionReference | null,
-  homeDir: string,
-): Promise<AgentConversation> {
+async function loadCodexTranscript(cwd: string, reference: AgentSessionReference | null, homeDir: string): Promise<string | null> {
   const root = path.join(homeDir, '.codex', 'sessions');
   const files = await filesUnder(root, (name) => name.endsWith('.jsonl'));
   let candidates = reference?.providerSessionId
@@ -215,16 +244,14 @@ async function codexConversation(
       }
     }
   }
-  const raw = candidates[0] ? await safeRead(candidates[0], root) : null;
-  const messages = raw ? parseCodexConversation(raw) : [];
-  return { messages, source: messages.length ? 'codex-history' : 'none' };
+  return candidates[0] ? safeRead(candidates[0], root) : null;
 }
 
-async function opencodeConversation(
+async function loadOpenCodeTranscript(
   cwd: string,
   reference: AgentSessionReference | null,
   runOpenCode: (args: string[], cwd: string) => Promise<string>,
-): Promise<AgentConversation> {
+): Promise<string | null> {
   let providerSessionId = reference?.providerSessionId;
   try {
     if (!providerSessionId) {
@@ -234,19 +261,14 @@ async function opencodeConversation(
         if (isRecord(match) && typeof match.id === 'string') providerSessionId = match.id;
       }
     }
-    if (!providerSessionId) return { messages: [], source: 'none' };
-    const messages = parseOpenCodeConversation(await runOpenCode(['export', providerSessionId], cwd));
-    return { messages, source: messages.length ? 'opencode-history' : 'none' };
+    if (!providerSessionId) return null;
+    return await runOpenCode(['export', providerSessionId], cwd);
   } catch {
-    return { messages: [], source: 'none' };
+    return null;
   }
 }
 
-async function piConversation(
-  cwd: string,
-  reference: AgentSessionReference | null,
-  homeDir: string,
-): Promise<AgentConversation> {
+async function loadPiTranscript(cwd: string, reference: AgentSessionReference | null, homeDir: string): Promise<string | null> {
   const root = path.join(homeDir, '.pi', 'agent', 'sessions');
   let raw = reference?.transcriptPath ? await safeRead(reference.transcriptPath, root) : null;
   if (!raw) {
@@ -268,9 +290,38 @@ async function piConversation(
       }
     }
   }
-  const messages = raw ? parsePiConversation(raw) : [];
-  return { messages, source: messages.length ? 'pi-history' : 'none' };
+  return raw;
 }
+
+const defaultRunOpenCode = (): NonNullable<AgentConversationOptions['runOpenCode']> => async (args, worktree) =>
+  // Match terminal/tool detection behavior: GUI-launched desktop builds do
+  // not necessarily inherit Homebrew/npm PATH, so resolve opencode through
+  // the user's login shell. Arguments stay positional, never interpolated.
+  (await exec(defaultShell(), ['-l', '-c', 'exec opencode "$@"', 'opencode', ...args], {
+    cwd: worktree,
+    timeoutMs: 5_000,
+  })).stdout;
+
+/** The raw transcript text for a tab, located the way the handoff always has, or null. Never throws. */
+export async function loadTranscript(
+  mode: AgentMode,
+  cwd: string,
+  reference: AgentSessionReference | null,
+  options: AgentConversationOptions = {},
+): Promise<string | null> {
+  const homeDir = options.homeDir ?? os.homedir();
+  if (mode === 'claude') return loadClaudeTranscript(cwd, reference, homeDir);
+  if (mode === 'codex') return loadCodexTranscript(cwd, reference, homeDir);
+  if (mode === 'pi') return loadPiTranscript(cwd, reference, homeDir);
+  return loadOpenCodeTranscript(cwd, reference, options.runOpenCode ?? defaultRunOpenCode());
+}
+
+const SOURCE: Record<AgentMode, HandoffContextSource> = {
+  claude: 'claude-history', codex: 'codex-history', opencode: 'opencode-history', pi: 'pi-history',
+};
+const PARSE: Record<AgentMode, (raw: string) => HandoffConversationMessage[]> = {
+  claude: parseClaudeConversation, codex: parseCodexConversation, opencode: parseOpenCodeConversation, pi: parsePiConversation,
+};
 
 export async function collectAgentConversation(
   mode: AgentMode,
@@ -278,17 +329,7 @@ export async function collectAgentConversation(
   reference: AgentSessionReference | null,
   options: AgentConversationOptions = {},
 ): Promise<AgentConversation> {
-  const homeDir = options.homeDir ?? os.homedir();
-  const runOpenCode = options.runOpenCode ?? (async (args, worktree) =>
-    // Match terminal/tool detection behavior: GUI-launched desktop builds do
-    // not necessarily inherit Homebrew/npm PATH, so resolve opencode through
-    // the user's login shell. Arguments stay positional, never interpolated.
-    (await exec(defaultShell(), ['-l', '-c', 'exec opencode "$@"', 'opencode', ...args], {
-      cwd: worktree,
-      timeoutMs: 5_000,
-    })).stdout);
-  if (mode === 'claude') return claudeConversation(cwd, reference, homeDir);
-  if (mode === 'codex') return codexConversation(cwd, reference, homeDir);
-  if (mode === 'pi') return piConversation(cwd, reference, homeDir);
-  return opencodeConversation(cwd, reference, runOpenCode);
+  const raw = await loadTranscript(mode, cwd, reference, options);
+  const messages = raw ? PARSE[mode](raw) : [];
+  return { messages, source: messages.length ? SOURCE[mode] : 'none' };
 }

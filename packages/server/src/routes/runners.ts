@@ -8,6 +8,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { createCloudApi } from '../services/cloudApi.js';
+import { createRunnerFetch, runnerErrorMessage, type RunnerFetch } from '../services/runnerFetch.js';
 import { createForwardManager } from '../services/forwardManager.js';
 import { backfillCloneUrls } from '../services/repoBackfill.js';
 import { resolveSshAlias } from '../services/gitProviders.js';
@@ -65,31 +66,11 @@ export function runnerSessionPath(o: {
   return o.id && o.id !== '1' ? `${base}?id=${encodeURIComponent(o.id)}` : base;
 }
 
-/**
- * Unwrap a runner's error body down to its human sentence.
- *
- * Our own error shape is `{error:{code,message}}`, so a naive pass-through
- * shows the user JSON. Anything we can't parse falls back to naming the
- * runner and the status, which at least says which machine refused.
- */
-export function runnerErrorMessage(body: string, runnerId: string, status: number): string {
-  try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } | string; message?: string };
-    const inner =
-      typeof parsed.error === 'string'
-        ? parsed.error
-        : parsed.error?.message ?? parsed.message;
-    if (inner) return `${runnerId}: ${inner}`;
-  } catch {
-    /* not JSON */
-  }
-  const text = body.trim();
-  return text
-    ? `${runnerId} returned ${status}: ${text.slice(0, 300)}`
-    : `${runnerId} returned ${status}`;
-}
+// Re-exported for compatibility: this used to live here, now in the shared
+// runnerFetch service alongside the function that calls it.
+export { runnerErrorMessage };
 
-export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> {
+export async function registerRunnerRoutes(app: FastifyInstance): Promise<RunnerFetch> {
   const apiUrl = (process.env.STRADO_LICENSE_API ?? 'https://api.strado.io').replace(/\/$/, '');
   const { token, cloud } = createCloudApi();
 
@@ -139,79 +120,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
     );
   });
 
-  // Tickets are reusable within their TTL, so cache them: listing remote
-  // worktrees makes three calls per runner, and minting one apiece would turn
-  // every sidebar refresh into a burst of writes on the cloud store.
-  const tickets = new Map<string, { ticket: string; httpBase: string; expiresAt: number }>();
-
-  async function runnerCredential(runnerId: string): Promise<{ ticket: string; httpBase: string }> {
-    const hit = tickets.get(runnerId);
-    // Re-mint a minute early so a call can't start with a ticket that expires
-    // mid-flight.
-    if (hit && hit.expiresAt - Date.now() > 60_000) return hit;
-    const t = await token();
-    const minted = await cloud<{ ticket: string; httpBase: string; expiresAt: string }>(
-      '/v1/runners/socket-ticket',
-      { method: 'POST', body: { token: t, runnerId } },
-    );
-    const entry = {
-      ticket: minted.ticket,
-      httpBase: minted.httpBase,
-      expiresAt: Date.parse(minted.expiresAt),
-    };
-    tickets.set(runnerId, entry);
-    return entry;
-  }
-
-  /** One request to a runner's own API, through the relay. */
-  async function runnerFetch<T>(
-    runnerId: string,
-    path: string,
-    init?: { method?: string; body?: unknown; timeoutMs?: number },
-  ): Promise<T> {
-    if (!path.startsWith('/api/')) {
-      throw new AppError('VALIDATION', 'runner path must start with /api/');
-    }
-    const { ticket, httpBase } = await runnerCredential(runnerId);
-    const sep = path.includes('?') ? '&' : '?';
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), init?.timeoutMs ?? TIMEOUT_MS);
-    try {
-      const res = await fetch(`${httpBase}${path}${sep}ticket=${ticket}`, {
-        method: init?.method ?? 'GET',
-        headers: init?.body ? { 'content-type': 'application/json' } : undefined,
-        body: init?.body ? JSON.stringify(init.body) : undefined,
-        signal: controller.signal,
-      });
-      if (res.status === 401) {
-        // The ticket was rejected (revoked runner, or it aged out while
-        // cached). Drop it so the next call mints fresh rather than repeating
-        // a request that can only fail.
-        tickets.delete(runnerId);
-        throw new AppError('VALIDATION', `runner ${runnerId} rejected our access`);
-      }
-      if (!res.ok) {
-        // 503 from the relay means the tunnel is down: an offline runner, not a
-        // broken request, and the UI renders those differently.
-        if (res.status === 503) {
-          throw new AppError('CLOUD_UNREACHABLE', `runner ${runnerId} is offline`);
-        }
-        // The far side already wrote a message for a human (clone failed,
-        // no credentials, …). Pass THAT through — wrapping it in
-        // "runner returned 500: {json}" buries the sentence the user needs
-        // inside a payload.
-        const detail = await res.text().catch(() => '');
-        throw new AppError('VALIDATION', runnerErrorMessage(detail, runnerId, res.status));
-      }
-      return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
-    } catch (err) {
-      if (err instanceof AppError) throw err;
-      const reason = (err as Error).name === 'AbortError' ? 'timed out' : (err as Error).message;
-      throw new AppError('CLOUD_UNREACHABLE', `could not reach runner ${runnerId} (${reason})`);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+  const runner = createRunnerFetch({ cloud, token, timeoutMs: TIMEOUT_MS });
 
   // ── Port forwarding ─────────────────────────────────────────────
   //
@@ -260,7 +169,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
   app.get('/api/runners/:id/rpc', async (req) => {
     const { id } = RunnerParams.parse(req.params);
     const { path } = RpcQuery.parse(req.query);
-    return runnerFetch<unknown>(id, path);
+    return runner.fetch<unknown>(id, path);
   });
 
   app.post('/api/runners/:id/rpc', async (req) => {
@@ -268,7 +177,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
     const { path } = RpcQuery.parse(req.query);
     // Longer than a read: this carries repo clones and worktree creation, which
     // do real work on the far side.
-    return runnerFetch<unknown>(id, path, { method: 'POST', body: req.body, timeoutMs: 60_000 });
+    return runner.fetch<unknown>(id, path, { method: 'POST', body: req.body, timeoutMs: 60_000 });
   });
 
   /**
@@ -316,7 +225,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
           return { runner: { runnerId: r.runnerId, name: r.name, online: false, error: null }, worktrees: [] };
         }
         try {
-          const spaces = await runnerFetch<{ activeWorkspaceId: string | null; workspaces: { id: string }[] }>(
+          const spaces = await runner.fetch<{ activeWorkspaceId: string | null; workspaces: { id: string }[] }>(
             r.runnerId,
             '/api/workspaces',
           );
@@ -325,11 +234,11 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
             return { runner: { runnerId: r.runnerId, name: r.name, online: true, error: null }, worktrees: [] };
           }
           const [repos, worktrees] = await Promise.all([
-            runnerFetch<{ repos: { id: string; path: string; cloneUrl?: string | null }[] }>(
+            runner.fetch<{ repos: { id: string; path: string; cloneUrl?: string | null }[] }>(
               r.runnerId,
               `/api/w/${encodeURIComponent(remoteWsId)}/repos`,
             ),
-            runnerFetch<{ worktrees: Array<{
+            runner.fetch<{ worktrees: Array<{
               path: string; repoId: string | null; branch: string | null; head: string;
               hasClaudeSession?: boolean; claudeStatus?: 'idle' | 'working' | 'waiting';
               claudeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; claudeSessions?: string[];
@@ -348,7 +257,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
           const byId = new Map(repos.repos.map((x) => [x.id, x]));
           // The relay origin rides along so the UI never has to mint a ticket
           // just to learn where to connect.
-          const { httpBase } = await runnerCredential(r.runnerId);
+          const { httpBase } = await runner.credential(r.runnerId);
           const wsBase = httpBase.replace(/^https:/, 'wss:');
           return {
             runner: { runnerId: r.runnerId, name: r.name, online: true, error: null },
@@ -430,12 +339,12 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
       if (body.force) q.set('force', '1');
       if (body.deleteBranch) q.set('deleteBranch', '1');
       const qs = q.toString();
-      const { jobId } = await runnerFetch<{ jobId: string }>(
+      const { jobId } = await runner.fetch<{ jobId: string }>(
         body.runnerId,
         `/api/w/${encodeURIComponent(body.remoteWsId)}/worktrees/${encodeURIComponent(body.path)}${qs ? `?${qs}` : ''}`,
         { method: 'DELETE' },
       );
-      const { httpBase, ticket } = await runnerCredential(body.runnerId);
+      const { httpBase, ticket } = await runner.credential(body.runnerId);
       await followRemoteJob(
         `${httpBase}/events/jobs/${encodeURIComponent(jobId)}?ticket=${ticket}`,
         (evt) => {
@@ -466,7 +375,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
   app.post('/api/w/:ws/remote-worktrees/kill-session', async (req) => {
     z.object({ ws: z.string().min(1) }).parse(req.params);
     const body = RemoteKill.parse(req.body);
-    await runnerFetch<unknown>(body.runnerId, runnerSessionPath(body), { method: 'DELETE' });
+    await runner.fetch<unknown>(body.runnerId, runnerSessionPath(body), { method: 'DELETE' });
     return { ok: true };
   });
 
@@ -531,7 +440,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
       ]);
 
       step('runner');
-      const spaces = await runnerFetch<{ activeWorkspaceId: string | null; workspaces: { id: string }[] }>(
+      const spaces = await runner.fetch<{ activeWorkspaceId: string | null; workspaces: { id: string }[] }>(
         body.runnerId,
         '/api/workspaces',
       );
@@ -545,7 +454,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
 
       step('clone');
       // Idempotent on the far side: an existing clone is registered, not re-cloned.
-      const cloned = await runnerFetch<{ repo: { id: string }; alreadyRegistered: boolean; path: string }>(
+      const cloned = await runner.fetch<{ repo: { id: string }; alreadyRegistered: boolean; path: string }>(
         body.runnerId,
         `/api/w/${encodeURIComponent(remoteWsId)}/repos/clone`,
         {
@@ -580,7 +489,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
       // on the runner's CreateBody. Omitted entirely when there's nothing to send.
       const sandboxEnv = await sandboxEnvForRepo(localRepo);
 
-      const { jobId } = await runnerFetch<{ jobId: string }>(
+      const { jobId } = await runner.fetch<{ jobId: string }>(
         body.runnerId,
         `/api/w/${encodeURIComponent(remoteWsId)}/worktrees`,
         {
@@ -601,7 +510,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
       );
 
       step('worktree');
-      const { httpBase, ticket } = await runnerCredential(body.runnerId);
+      const { httpBase, ticket } = await runner.credential(body.runnerId);
       // Follow the runner's own job so its steps appear in the same list.
       await followRemoteJob(
         `${httpBase}/events/jobs/${encodeURIComponent(jobId)}?ticket=${ticket}`,
@@ -626,4 +535,6 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<void> 
     const t = await token();
     return cloud<{ ok: boolean }>('/v1/runners/revoke', { method: 'POST', body: { token: t, runnerId: id } });
   });
+
+  return runner;
 }

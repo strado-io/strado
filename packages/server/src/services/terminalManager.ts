@@ -15,6 +15,10 @@ export type BuildSpec = (cwd: string) => SpawnSpec;
 // at the worktree's container (services/sandbox/spec.ts); undefined means the
 // spec spawns exactly as it always has.
 export type SpecWrapper = (cwd: string, spec: SpawnSpec) => SpawnSpec;
+// Identity the agent registry mints for a given session key — layered over
+// sessionEnv() at spawn time so sessionEnv itself stays a pure function of
+// (key, cwd) with no knowledge of the registry.
+export type ExtraEnv = (key: string, cwd: string) => Record<string, string>;
 
 export type LiveSession = { path: string; mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi'; id: string };
 
@@ -42,6 +46,20 @@ export function opencodeKey(path: string, id: string): string {
 // Pi 1 keeps the historical suffix-only key for the same reason.
 export function piKey(path: string, id: string): string {
   return id === '1' ? `${path}\0pi` : `${path}\0pi:${id}`;
+}
+
+/** The session key for a (mode, path, id) triple. An agent launched inside a
+ * Shell tab reports `shell:N` as its session id and lives under that Shell
+ * tab's key — never under a per-mode key — so the prefix wins over the mode. */
+export function sessionKeyFor(mode: LiveSession['mode'], path: string, id: string): string {
+  if (id.startsWith('shell:')) return shellKey(path, id.slice('shell:'.length));
+  switch (mode) {
+    case 'shell': return shellKey(path, id);
+    case 'claude': return claudeKey(path, id);
+    case 'codex': return codexKey(path, id);
+    case 'opencode': return opencodeKey(path, id);
+    case 'pi': return piKey(path, id);
+  }
 }
 
 export function parseSessionKey(key: string): LiveSession {
@@ -103,6 +121,12 @@ const INSTANCE_IDENTITY_KEYS = [
   'STRADO_WEB_DIST',
   'STRADO_HOOKS_DIR',
   'STRADO_CDP_PORT',
+  // This tab's own agent identity (minted by agentRegistry, delivered via
+  // extraEnv). Without stripping it here, Strado-inside-Strado hands the
+  // outer tab's token to any inner session whose extraEnv is empty.
+  'STRADO_AGENT_ID',
+  'STRADO_SCOPE_ID',
+  'STRADO_AGENT_TOKEN',
 ] as const;
 
 // Env every session spawns with, shared by the in-process manager and the
@@ -123,10 +147,10 @@ export function sessionEnv(key: string, cwd: string): Record<string, string> {
     // Lets the opencode status plugin (and any future in-session tool)
     // reach this server without guessing the port.
     STRADO_STATUS_PORT: String(process.env.PORT ?? 7777),
-    // The per-worktree preview MCP (packages/desktop/preview-mcp.cjs) asks this
-    // server which CDP target belongs to the worktree. Without this it falls
-    // back to :7777 — so an agent under the dev instance would drive the
-    // release instance's browser.
+    // The preview tools in the `strado` MCP server (hooks/mcp/preview.mjs) ask
+    // this server which CDP target belongs to the worktree. Without this it
+    // falls back to :7777 — so an agent under the dev instance would drive
+    // the release instance's browser.
     STRADO_SERVER: `http://127.0.0.1:${process.env.PORT ?? 7777}`,
     STRADO_SESSION_ID: session.id,
     // Agent hooks namespace statuses from a generic Shell tab separately from
@@ -135,6 +159,11 @@ export function sessionEnv(key: string, cwd: string): Record<string, string> {
     // Shell sessions prepend this directory to PATH. The launchers instrument
     // agents typed manually without changing the user's global configuration.
     STRADO_AGENT_BIN_DIR: path.join(hooksDir(), 'bin'),
+    // Claude's project hooks run this script by env, never by a path baked
+    // into .claude/settings.local.json. A path written there goes stale when
+    // the worktree or install that wrote it disappears (MODULE_NOT_FOUND on
+    // every turn); the env always names THIS server's copy.
+    STRADO_CLAUDE_HOOK: path.join(hooksDir(), 'claude-status-hook.mjs'),
     // A profile-aware bootstrap re-applies the launcher PATH after interactive
     // rc files. Without it, nvm/Homebrew entries added by .zshrc or .bashrc can
     // hide the Codex launcher while Claude's project hook still appears fine.
@@ -177,6 +206,7 @@ export function createTerminalManager(
   onData?: (key: string) => void,
   onExit?: (key: string) => void,
   wrapSpec?: SpecWrapper,
+  extraEnv?: ExtraEnv,
 ): TerminalManager {
   const sessions = new Map<string, Session>();
 
@@ -197,7 +227,9 @@ export function createTerminalManager(
       cols: size?.cols ?? 80,
       rows: size?.rows ?? 24,
       cwd,
-      env: sessionEnv(key, cwd),
+      // Identity the agent registry minted for this key (agent id, scope,
+      // token) rides on top of the shared session env. sessionEnv stays pure.
+      env: { ...sessionEnv(key, cwd), ...(extraEnv?.(key, cwd) ?? {}) },
     });
     const session: Session = {
       pty: term,

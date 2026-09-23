@@ -1,6 +1,16 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// TerminalView reads intercom state for the focused tab's escalation banner;
+// these tests mount it without the provider, so stub a quiet, "loaded" context.
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({
+    escalations: [], tasks: [], peers: [], loaded: true, error: null,
+    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
+    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+  }),
+}));
+
 // --- Mock xterm so jsdom (no canvas) can run ---
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {

@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { assertPathUnder } from '../paths.js';
 import { AppError } from '../errors.js';
+import { sessionKeyFor } from '../services/terminalManager.js';
 
 const Body = z.object({
   cwd: z.string().min(1),
@@ -41,10 +42,27 @@ export async function registerOpencodeStatusRoutes(app: FastifyInstance) {
       });
     }
 
+    // Turn diary (step 4b): extract this tab's turns from its transcript. Not
+    // awaited — the hook must not wait on a parse — and never rejects.
+    if (status !== 'closed') void app.deps.turnDiary.refresh('opencode', cwd, sessionId ?? '1', status);
+
     // 'closed' means the agent process is gone, which is not the same as an
     // idle one: the session leaves the map so a Shell tab stops claiming it.
     if (status === 'closed') app.deps.opencodeStatus.remove(cwd, sessionId ?? '1');
     else app.deps.opencodeStatus.set(cwd, status, sessionId ?? '1');
+    // Push delivery (step 5b): `waiting` is this harness's turn-complete — its
+    // Stop. It both ends the idle period (a nudge-started turn never posts
+    // `working` here, so the once-per-idle marker must clear now) and is the
+    // moment to look at the inbox. A user-started turn (`working`) re-arms too.
+    const key = sessionKeyFor('opencode', cwd, sessionId ?? '1');
+    const ex = app.deps.agents.byKey(key);
+    if (ex) {
+      if (status === 'working') app.deps.intercomPush.turnStarted(key);
+      else if (status === 'waiting') {
+        app.deps.intercomPush.turnStarted(key);
+        void app.deps.intercomPush.consider(ex.scopeId, ex.agentId, 'stop');
+      }
+    }
     // Agent turn boundaries count as activity for the Time spent column.
     if (status !== 'closed') app.deps.activity.touch(cwd);
     return { ok: true };

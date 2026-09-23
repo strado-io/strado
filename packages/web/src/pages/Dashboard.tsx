@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { api, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
 import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } from '../hooks/claudeNotifications';
+import { useIntercom } from '../contexts/IntercomContext';
+import { escalationsByWorktree, nextSeenIds, openEscalations } from '../hooks/intercom';
 import { playDoneBeep } from '../lib/beep';
 import type { MergeRequest, RepoConfig, Worktree, WorkflowStatus } from '../types';
 import { OnboardingCard } from '../components/OnboardingCard';
@@ -14,8 +16,9 @@ import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
-import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
+import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import { FeedbackDialog } from '../components/FeedbackDialog';
+import { IntercomPanel } from '../components/IntercomPanel';
 import { CommandPalette } from '../components/CommandPalette';
 import { useColumnWidths } from '../hooks/useColumnWidths';
 import { useDensity } from '../hooks/useDensity';
@@ -392,6 +395,14 @@ export function Dashboard(props: {
   }, [ticketsOn, JSON.stringify(ticketRefs)]);
 
   const prevClaude = useRef<ClaudeStatusMap>({});
+  const intercom = useIntercom();
+  const escalationsByPath = useMemo(() => escalationsByWorktree(intercom), [intercom.escalations, intercom.peers]);
+  // Questions waiting on the human, workspace-wide — the header count.
+  const openCount = useMemo(() => openEscalations(intercom).length, [intercom.escalations]);
+  // The intercom panel lives here, above every surface that opens it (the row
+  // badge, a notification, the header count, the hub's banner), so there is
+  // only ever one panel and one piece of state describing what it shows.
+  const [intercomPanel, setIntercomPanel] = useState<{ tab: 'escalations' | 'tasks' | 'forks'; worktreePath?: string; focusId?: string } | null>(null);
 
   useEffect(() => {
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -426,6 +437,35 @@ export function Dashboard(props: {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.worktrees]);
+
+  // null = not yet initialized (first loaded snapshot for this workspace);
+  // distinguishes "no escalations were open before" from "we haven't seen a
+  // snapshot yet", so the first load never fires a notification for
+  // escalations already open. Reset on every workspace switch — declared
+  // ahead of the notification effect below — so the new workspace's first
+  // snapshot also seeds silently instead of firing for everything already
+  // open there.
+  const prevOpenEscalations = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    prevOpenEscalations.current = null;
+  }, [wsId]);
+  useEffect(() => {
+    if (!intercom.loaded) return;
+    const label = (p: string) => state.worktrees.find((w) => w.path === p)?.meta?.ticketId ?? p.split('/').pop() ?? p;
+    const { seen, fire } = nextSeenIds(prevOpenEscalations.current, intercom, label);
+    prevOpenEscalations.current = seen;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    for (const n of fire) {
+      const worktree = state.worktrees.find((w) => w.path === n.path);
+      const notification = new Notification(n.title, n.body ? { body: n.body } : undefined);
+      notification.onclick = () => {
+        window.focus();
+        if (worktree) openInlineHub(worktree, n.mode, n.sessionId);
+        setIntercomPanel({ tab: 'escalations', focusId: n.id });
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intercom.escalations, intercom.peers, intercom.loaded]);
 
   useEffect(() => {
     localStorage.setItem(STORE_SIDEBAR, sidebarCollapsed ? '1' : '0');
@@ -624,7 +664,6 @@ export function Dashboard(props: {
       onKillExternal={handleKillExternal}
     />
   );
-  const hasRunningServers = state.worktrees.some(isRunning);
 
   const handleSetEnvProfile = async (w: Worktree, profile: string) => {
     const wasRunning = w.process.status === 'running' || w.process.status === 'starting';
@@ -682,6 +721,7 @@ export function Dashboard(props: {
   return (
     <RendererOverlayContext.Provider value={overlays.report}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
+      <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
       {!sidebarCollapsed && (
         <Sidebar
           repos={state.repos}
@@ -736,7 +776,7 @@ export function Dashboard(props: {
         {/* Code reviews carries the sidebar toggle and running-servers chip in
             its own toolbar, so the shared row would only be an empty strip. */}
         {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote
-          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (sidebarCollapsed || hasRunningServers) && (
+          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (
         <FilterBar
           leading={
             sidebarCollapsed ? (
@@ -750,7 +790,26 @@ export function Dashboard(props: {
               </button>
             ) : undefined
           }
-          trailing={runningServers}
+          trailing={
+            <div className="flex items-center gap-2">
+              {/* Questions waiting on you, workspace-wide. Amber whenever the
+                  count is non-zero — the same colour the board rows use — and a
+                  muted glyph otherwise, so the control never moves or vanishes. */}
+              <button
+                aria-label={openCount > 0 ? `Open intercom, ${openCount} waiting on you` : 'Open intercom'}
+                title={openCount > 0 ? `${openCount} waiting on you` : 'Intercom'}
+                onClick={() => setIntercomPanel({ tab: 'escalations' })}
+                className={
+                  openCount > 0
+                    ? 'shrink-0 rounded-md border border-amber-800/60 bg-amber-950/40 px-2.5 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40'
+                    : 'shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
+                }
+              >
+                {openCount > 0 ? `⚑ ${openCount}` : '⚑'}
+              </button>
+              {runningServers}
+            </div>
+          }
         />
         )}
 
@@ -789,6 +848,8 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
+              onOpenIntercom={(id) => setIntercomPanel({ tab: 'escalations', focusId: id })}
+              onForked={(id) => setIntercomPanel({ tab: 'forks', focusId: id })}
             />
           </div>
         ) : selectedWorktree ? (
@@ -805,6 +866,8 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
+              onOpenIntercom={(id) => setIntercomPanel({ tab: 'escalations', focusId: id })}
+              onForked={(id) => setIntercomPanel({ tab: 'forks', focusId: id })}
             />
           </div>
         ) : activeView.kind === 'reviews' ? (
@@ -877,6 +940,7 @@ export function Dashboard(props: {
                 onStartResize={startResize}
                 density={density}
                 onReorder={handleReorder}
+                escalationsByPath={escalationsByPath}
                 prefs={boardPrefs}
                 onPrefs={patchBoardPrefs}
                 handlers={{
@@ -889,6 +953,7 @@ export function Dashboard(props: {
                   onKillExternal: handleKillExternal,
                   onOpenSettings: props.onMenu,
                   onOpenMr: props.onOpenMr,
+                  onOpenEscalations: (w) => setIntercomPanel({ tab: 'escalations', worktreePath: w.path }),
                 }}
               />
             </>
@@ -896,6 +961,7 @@ export function Dashboard(props: {
         </div>
         )}
       </main>
+      </div>
 
       {showPalette && (
         <CommandPalette
@@ -926,7 +992,7 @@ export function Dashboard(props: {
       )}
 
       {settingsSection && (
-        <SettingsModal
+        <SettingsPage
           key={settingsSection}
           section={settingsSection}
           onClose={() => setSettingsSection(null)}
@@ -935,6 +1001,25 @@ export function Dashboard(props: {
             refreshTicketProviders();
           }}
           onOpenFeedback={() => setFeedbackOpen(true)}
+        />
+      )}
+
+      {intercomPanel && (
+        <IntercomPanel
+          // The panel reads its tab and worktree filter into state once, so a
+          // second open with a different tab or worktree has to remount to apply
+          // them. `focusId` is excluded — it's a plain prop the panel reacts to
+          // on every change, so clicking a second notification while the drawer
+          // is already open scrolls to the new row instead of remounting it.
+          key={`${intercomPanel.tab}:${intercomPanel.worktreePath ?? ''}`}
+          initialTab={intercomPanel.tab}
+          worktreePath={intercomPanel.worktreePath}
+          focusId={intercomPanel.focusId}
+          onClose={() => setIntercomPanel(null)}
+          onOpenTab={(path, mode, sessionId) => {
+            const w = state.worktrees.find((x) => x.path === path);
+            if (w) openInlineHub(w, mode, sessionId);
+          }}
         />
       )}
 

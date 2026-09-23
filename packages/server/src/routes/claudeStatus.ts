@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { assertPathUnder } from '../paths.js';
 import { AppError } from '../errors.js';
+import { sessionKeyFor } from '../services/terminalManager.js';
 
 const Body = z.object({
   cwd: z.string().min(1),
@@ -46,10 +47,22 @@ export async function registerClaudeStatusRoutes(app: FastifyInstance) {
       });
     }
 
+    // Turn diary (step 4b): extract this tab's turns from its transcript. Not
+    // awaited — the hook must not wait on a parse — and never rejects.
+    if (status !== 'closed') void app.deps.turnDiary.refresh('claude', cwd, sessionId ?? '1', status);
+
     // 'closed' means the agent process is gone, which is not the same as an
     // idle one: the session leaves the map so a Shell tab stops claiming it.
     if (status === 'closed') app.deps.claudeStatus.remove(cwd, sessionId ?? '1');
     else app.deps.claudeStatus.set(cwd, status, sessionId ?? '1');
+    // Push delivery (step 5): a Stop proves the tab is at its prompt, so queued
+    // messages may be nudged in; a new turn clears the once-per-idle marker.
+    const key = sessionKeyFor('claude', cwd, sessionId ?? '1');
+    const ex = app.deps.agents.byKey(key);
+    if (ex) {
+      if (status === 'idle') void app.deps.intercomPush.consider(ex.scopeId, ex.agentId, 'stop');
+      else if (status === 'working') app.deps.intercomPush.turnStarted(key);
+    }
     // Agent turns count as activity even when the user isn't typing: the
     // prompt-submit and turn-complete hooks bracket the working period.
     if (status !== 'closed') app.deps.activity.touch(cwd);

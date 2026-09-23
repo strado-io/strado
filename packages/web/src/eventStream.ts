@@ -117,6 +117,25 @@ export type EnvInstallEvent =
   | { type: 'output'; data: { id: string; line: string } }
   | { type: 'done'; data: { id: string; ok: boolean; message: string | null; tool: ToolStatus | null } };
 
+export const INTERCOM_EVENT_TYPES = ['task.created', 'task.claimed', 'task.released', 'task.done', 'task.cancelled', 'task.assigned', 'escalation.opened', 'escalation.resolved', 'escalation.dismissed', 'escalation.retargeted', 'fork.created', 'fork.summarising', 'fork.queued', 'fork.delivered', 'fork.accepted', 'fork.failed', 'fork.cancelled', 'peer.registered', 'peer.dropped'] as const;
+export type IntercomEventType = (typeof INTERCOM_EVENT_TYPES)[number];
+export type IntercomEvent = { type: IntercomEventType; data: { scopeId: string; id: string } & Record<string, unknown> };
+
+export function subscribeIntercom(wsId: string, handler: (evt: IntercomEvent) => void): Unsub {
+  const es = new EventSource(`/events/intercom?ws=${encodeURIComponent(wsId)}`);
+  const listeners = INTERCOM_EVENT_TYPES.map((type) => {
+    const listener = (e: MessageEvent) => {
+      try { handler({ type, data: JSON.parse(e.data) }); } catch { /* ignore malformed messages */ }
+    };
+    es.addEventListener(type, listener as EventListener);
+    return [type, listener] as const;
+  });
+  return () => {
+    for (const [type, listener] of listeners) es.removeEventListener(type, listener as EventListener);
+    es.close();
+  };
+}
+
 // Live output from an onboarding-driven prerequisite install. One stream covers
 // every tool — each event names its own id, so the welcome screen can run more
 // than one install without opening a socket per row.

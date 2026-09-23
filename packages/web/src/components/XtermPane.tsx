@@ -173,7 +173,7 @@ function answerCapabilityProbes(data: string, ws: WebSocket | null) {
 // reconnect, fit, drop-to-attach and the "Starting…" overlay. Extracted from
 // TerminalView so a split layout can mount several at once — each pane owns
 // its session for the pane's lifetime.
-export function XtermPane({ wsId, tab, focused, visible = true, onFocus, handoffId }: {
+export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
   wsId: string;
   tab: PtyTab;
   /** the focused pane receives keyboard focus when it (re)connects */
@@ -182,8 +182,6 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, handoff
   visible?: boolean;
   /** pointer went down inside this pane — make it the active one */
   onFocus?: () => void;
-  /** A ready server-side handoff whose packet becomes this fresh session's initial prompt. */
-  handoffId?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -336,8 +334,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, handoff
       const target = remote ? { wsId: remote.wsId, path: remote.path } : { wsId, path: tab.path };
       const query =
         `ws=${encodeURIComponent(target.wsId)}&path=${encodeURIComponent(target.path)}` +
-        `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}` +
-        (handoffId ? `&handoff=${encodeURIComponent(handoffId)}` : '');
+        `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}`;
       return remote
         ? `${remote.wsBase}/ws/terminal?${query}&ticket=${encodeURIComponent(ticket ?? '')}`
         : `${proto}://${location.host}/ws/terminal?${query}`;
@@ -499,7 +496,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, handoff
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsId, tab.path, tab.mode, tab.id, tab.remote?.runnerId, tab.remote?.path, handoffId]);
+  }, [wsId, tab.path, tab.mode, tab.id, tab.remote?.runnerId, tab.remote?.path]);
 
   // xterm paints into its own canvas, so CSS variables cannot recolor or
   // remeasure it. Keep mounted panes in sync without reconnecting their PTYs

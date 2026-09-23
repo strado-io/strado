@@ -83,6 +83,11 @@ run('npx', [
   'esbuild', 'packages/server/dist/index.js',
   '--bundle', '--minify', '--platform=node', '--format=esm',
   '--external:node-pty',
+  // jsonc-parser's CJS entry is a UMD wrapper that calls require() through a
+  // factory parameter, which esbuild cannot follow — the './impl/*' requires
+  // survived into 0.1.53's bundle and the server died on MODULE_NOT_FOUND
+  // at launch. Point the bundler at the package's ESM build instead.
+  '--alias:jsonc-parser=jsonc-parser/lib/esm/main.js',
   // CJS externals under an ESM bundle need a require shim
   `--banner:js=import{createRequire}from'node:module';const require=createRequire(import.meta.url);`,
   `--outfile=${path.join(PACK, 'server', 'server.js')}`,
@@ -132,10 +137,12 @@ assertSelfContainedNode(bundledNode);
 step('compile cmdwatch');
 run('cc', ['-O2', '-framework', 'ApplicationServices', 'packages/desktop/cmdwatch.c', '-o', path.join(PACK, 'bin', 'strado-cmdwatch')]);
 
-step('bundle desktop main/preload + preview MCP (minified)');
+step('bundle desktop main/preload + strado MCP (minified)');
 run('npx', ['esbuild', 'packages/desktop/main.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', '--external:electron', `--outfile=${path.join(PACK, 'app', 'main.cjs')}`]);
 run('npx', ['esbuild', 'packages/desktop/preload.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', '--external:electron', `--outfile=${path.join(PACK, 'app', 'preload.cjs')}`]);
-run('npx', ['esbuild', 'packages/desktop/preview-mcp.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', `--outfile=${path.join(PACK, 'bin', 'preview-mcp.cjs')}`]);
+run('npx', ['esbuild', 'packages/server/hooks/strado-mcp.mjs', '--bundle', '--minify', '--platform=node', '--format=cjs', `--outfile=${path.join(PACK, 'bin', 'strado-mcp.cjs')}`]);
+// One-release shim: configs still naming the old strado-preview server keep working.
+fs.writeFileSync(path.join(PACK, 'bin', 'preview-mcp.cjs'), "require('./strado-mcp.cjs');\n");
 const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 fs.writeFileSync(
   path.join(PACK, 'app', 'package.json'),
@@ -176,6 +183,13 @@ if (SIGNING) {
   );
 }
 run('npx', builderArgs);
+
+// Boot the assembled app's server with its own bundled Node before anything
+// is signed or uploaded. 0.1.53 packaged, signed, notarized and published a
+// server.js that could not load — nothing between esbuild and the user ever
+// ran it. Fails the build on a non-starting bundle.
+step('smoke: the packaged server boots and answers /api/health');
+run('node', ['scripts/smoke-packaged-server.mjs', path.join(ROOT, 'release', 'mac-arm64', 'Strado.app', 'Contents', 'Resources')]);
 
 if (SIGNING) {
   // Trust nothing about the pipeline above: prove the artifact on disk is

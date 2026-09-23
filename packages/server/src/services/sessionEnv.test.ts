@@ -94,6 +94,7 @@ describe('sessionEnv', () => {
     expect(env.STRADO_SESSION_ID).toBe('1');
     expect(env.STRADO_SESSION_MODE).toBe('claude');
     expect(env.STRADO_AGENT_BIN_DIR).toMatch(/server\/hooks\/bin$/);
+    expect(env.STRADO_CLAUDE_HOOK).toMatch(/server\/hooks\/claude-status-hook\.mjs$/);
     expect(env.STRADO_SHELL_BOOTSTRAP).toMatch(/server\/hooks\/strado-shell-bootstrap$/);
     expect(env.STRADO_INNER_SHELL).toBeTruthy();
   });
@@ -102,5 +103,35 @@ describe('sessionEnv', () => {
     const env = sessionEnv('/tmp/wt\0shell:3', '/tmp/wt');
     expect(env.STRADO_SESSION_ID).toBe('3');
     expect(env.STRADO_SESSION_MODE).toBe('shell');
+  });
+
+  it('does not itself carry agent identity — that enters via extraEnv', () => {
+    const env = sessionEnv('claude:1', '/tmp/wt');
+    expect(env.STRADO_AGENT_ID).toBeUndefined();
+    expect(env.STRADO_AGENT_TOKEN).toBeUndefined();
+  });
+
+  it('strips this instance/tab\'s own agent identity out of the spread', () => {
+    const originalAgentId = process.env.STRADO_AGENT_ID;
+    const originalScopeId = process.env.STRADO_SCOPE_ID;
+    const originalAgentToken = process.env.STRADO_AGENT_TOKEN;
+    process.env.STRADO_AGENT_ID = 'claude-1@outer';
+    process.env.STRADO_SCOPE_ID = 'default';
+    process.env.STRADO_AGENT_TOKEN = 'outer';
+    try {
+      const env = sessionEnv('claude:1', '/tmp/wt');
+      // The outer tab's own identity must never leak into a nested session
+      // (Strado-inside-Strado): extraEnv is the only sanctioned path in.
+      expect(env).not.toHaveProperty('STRADO_AGENT_ID');
+      expect(env).not.toHaveProperty('STRADO_SCOPE_ID');
+      expect(env).not.toHaveProperty('STRADO_AGENT_TOKEN');
+    } finally {
+      if (originalAgentId === undefined) delete process.env.STRADO_AGENT_ID;
+      else process.env.STRADO_AGENT_ID = originalAgentId;
+      if (originalScopeId === undefined) delete process.env.STRADO_SCOPE_ID;
+      else process.env.STRADO_SCOPE_ID = originalScopeId;
+      if (originalAgentToken === undefined) delete process.env.STRADO_AGENT_TOKEN;
+      else process.env.STRADO_AGENT_TOKEN = originalAgentToken;
+    }
   });
 });

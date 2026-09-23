@@ -16,12 +16,27 @@ export const SANDBOX_SOCKET_PATH = '/run/strado/api.sock';
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Session identity forwarded into the container. `--env KEY` (no value)
- * copies KEY from the exec client's environment — which is sessionEnv(),
- * because ptyd spawns THIS command with that env. Values never hit argv.
+ * copies KEY from the exec client's environment — which is sessionEnv()
+ * plus extraEnv(), because ptyd spawns THIS command with that env. Values
+ * never hit argv.
  *
- * Every key here is guaranteed to be set on a sandboxed spawn: sessionEnv
- * computes the four STRADO_* ones unconditionally, node-pty sets TERM, and
- * the generated script exports STRADO_SERVER_SOCKET itself (see below). */
+ * Most keys here are guaranteed to be set on a sandboxed spawn: sessionEnv
+ * computes those STRADO_* ones unconditionally, node-pty sets TERM, and the
+ * generated script exports STRADO_SERVER_SOCKET itself (see below). The
+ * three agent-identity keys are set only when the agent registry has an
+ * execution for this key (extraEnv), so they can be absent. That is fine:
+ * neither podman nor docker is installed to test live, so this is verified
+ * against each project's own docs rather than `--help` output. Per
+ * docs.podman.io's podman-run(1)/podman-exec(1) man pages, `--env KEY` with
+ * no `=`: "If an environment variable is specified without a value, Podman
+ * checks the host environment for a value and set the variable only if it
+ * is set on the host" — an unset KEY is silently dropped from `--env`, not
+ * an error. Per docs.docker.com's `docker container run` reference, `-e`/
+ * `--env KEY` with no `=`: "If no `=` is provided and that variable isn't
+ * exported in your local environment, the variable is unset in the
+ * container" — same no-op, not an error. So the guarantee "every key is
+ * always set" relaxes, for these three, to "set when the registry has an
+ * execution, harmlessly absent otherwise". */
 const FORWARDED = [
   'STRADO_SESSION_ID',
   'STRADO_SESSION_MODE',
@@ -31,6 +46,10 @@ const FORWARDED = [
   'STRADO_SERVER_SOCKET',
   'STRADO_AGENT_BIN_DIR',
   'STRADO_SHELL_BOOTSTRAP',
+  'STRADO_CLAUDE_HOOK',
+  'STRADO_AGENT_ID',
+  'STRADO_SCOPE_ID',
+  'STRADO_AGENT_TOKEN',
   'TERM',
 ];
 

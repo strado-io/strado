@@ -8,6 +8,15 @@ const current = {
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({ workspace: current.workspace, allWorkspaces: [], switchTo: vi.fn() }),
 }));
+// Dashboard now reads intercom state for the escalation badge/notification;
+// these tests don't exercise Intercom, so stub a quiet, "loaded" context.
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({
+    escalations: [], tasks: [], peers: [], loaded: true, error: null,
+    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
+    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+  }),
+}));
 
 // The remote-worktrees call resolves only by hand, so a test can hold the
 // sidebar in its "first runner fetch still in flight" state.

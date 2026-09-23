@@ -7,6 +7,7 @@ import { DeleteWorktreeDialog } from './components/DeleteWorktreeDialog';
 import { WorktreeSettingsDialog } from './components/WorktreeSettingsDialog';
 import { LogPanel } from './components/LogPanel';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
+import { IntercomProvider } from './contexts/IntercomContext';
 import { useWorkspace } from './hooks/useWorkspace';
 import { api, type RemoteWorktree } from './api';
 import type { MergeRequest, RepoConfig, Worktree } from './types';
@@ -61,7 +62,7 @@ function AppShell() {
   const close = () => setDialog({ kind: 'none' });
 
   return (
-    <>
+    <IntercomProvider wsId={wsId}>
       <Dashboard
         remoteRefreshKey={remoteRefreshKey}
         modalOpen={dialog.kind !== 'none' || mandatory}
@@ -228,7 +229,7 @@ function AppShell() {
           onInstall={upd.install}
         />
       )}
-    </>
+    </IntercomProvider>
   );
 }
 

@@ -24,3 +24,6 @@ release/
 
 # Strado runs Shell tabs with ZDOTDIR pointed here; zsh would drop history in it
 packages/server/hooks/shell/zsh/.zsh_history
+
+# Planning docs live in the strado-cloud repo, never here.
+docs/superpowers/

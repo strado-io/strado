@@ -57,9 +57,7 @@ branch, uncommitted changes, env profile, and run status live.
 ### Agent & terminal hub
 
 Persistent Claude Code, Codex, opencode, Pi, and shell sessions per worktree —
-they survive closing the tab and app updates. When an agent reaches a limit,
-handoff starts a fresh agent with clean provider conversation messages and
-repository state — never a replay of terminal screen output.
+they survive closing the tab and app updates.
 One hub window with a super-tab per worktree, plus the embedded IDE.
 
 </td>
@@ -113,7 +111,7 @@ sessionized with a 15-minute idle gap — no timers, no worklogs to remember.
 
 ## Requirements
 
-- Node 20+, git 2.40+
+- Node 24+, git 2.40+
 - Worktrees live under `~/.strado/worktrees/<repoId>` (created automatically
   for new worktrees).
 

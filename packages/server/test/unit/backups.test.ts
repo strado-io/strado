@@ -57,4 +57,16 @@ describe('backupBeforeWrite', () => {
   it('never throws when the file is unreadable', async () => {
     await expect(backupBeforeWrite(path.join(tmp, 'nope', 'deep.json'))).resolves.toBeUndefined();
   });
+
+  it('produces N distinct files for N rapid consecutive backups', async () => {
+    await fs.writeFile(file, '{"v":1}');
+    const N = 5;
+    for (let i = 0; i < N; i++) {
+      // No delay between calls — a millisecond-resolution timestamp alone
+      // can collide here, and a collision silently overwrites (copyFile),
+      // losing a backup with no error.
+      await backupBeforeWrite(file, { minIntervalMs: 0 });
+    }
+    expect((await backups()).length).toBe(N);
+  });
 });

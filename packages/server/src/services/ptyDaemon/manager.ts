@@ -11,6 +11,7 @@ import {
   parseSessionKey,
   sessionEnv,
   type BuildSpec,
+  type ExtraEnv,
   type LiveSession,
   type SpawnSpec,
   type SpecWrapper,
@@ -77,6 +78,7 @@ export type DaemonTerminalManagerOptions = {
   wrapSpec?: SpecWrapper;
   onData?: (key: string) => void;
   onExit?: (key: string) => void;
+  extraEnv?: ExtraEnv;
   /** Test seam: observe or replace the per-session screen emulator. */
   makeEmulator?: EmulatorFactory;
 };
@@ -401,7 +403,7 @@ export async function createDaemonTerminalManager(
           shell: s.file,
           argv: s.args,
           cwd,
-          env: sessionEnv(key, cwd),
+          env: { ...sessionEnv(key, cwd), ...(opts.extraEnv?.(key, cwd) ?? {}) },
           cols: size?.cols ?? 80,
           rows: size?.rows ?? 24,
         };
@@ -482,6 +484,13 @@ export async function createDaemonTerminalManager(
       return () => m.emitter.off('exit', cb);
     },
     status(key) {
+      // A spawn is in flight for this key (open() hasn't resolved yet) — the
+      // mirror's info is still last-known 'exited'. Report 'running' (pid
+      // unknown) instead, or a racing register/attach for the same key would
+      // see this as not-running and mint a fresh token for a process that is
+      // about to come up authenticated with the old one, which can then never
+      // authenticate until it is respawned.
+      if (inflightOpens.has(key)) return { status: 'running', pid: null, exitCode: null };
       return mirrors.get(key)?.info ?? { status: 'exited', pid: null, exitCode: null };
     },
     kill(key) {
