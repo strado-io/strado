@@ -142,8 +142,11 @@ describe('SessionsSection', () => {
     // what is left of the serve-web tree after the per-window rows below
     expect(within(row).getByText('VS Code (shared)')).toBeInTheDocument();
     expect(within(row).getByText('410.0 MB')).toBeInTheDocument();
+    localStorage.setItem('strado:vscode-tabs', JSON.stringify([WT, ORPHAN]));
     fireEvent.click(within(row).getByRole('button', { name: /stop vs code/i }));
     await waitFor(() => expect(stopVscode).toHaveBeenCalled());
+    // Every VS Code tab pointed at the stopped workbench: close them all.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]')).toEqual([]));
   });
 
   it('lists Browser previews under their worktree and keeps them out of the Renderer row', async () => {

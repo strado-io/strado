@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
-import { rememberVscodeTab } from '../../hooks/vscodeTabs';
+import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
 import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
 
 const POLL_MS = 5_000;
@@ -233,7 +233,13 @@ export function SessionsSection() {
     }
   };
   const kill = (key: string) => run(key, () => api.sessions.kill(key));
-  const stopVscode = () => run('vscode', () => api.sessions.stopVscode());
+  // Stopping the shared workbench strands every VS Code tab on a dead server,
+  // so close them all; reopening one boots a fresh workbench.
+  const stopVscode = () =>
+    run('vscode', async () => {
+      await api.sessions.stopVscode();
+      for (const path of readVscodeTabs()) rememberVscodeTab(path, false);
+    });
   // Same teardown the hub's ✕ does: drop the native view, then forget the tab
   // so the strip (which listens for the storage event) removes it.
   // Closing the tab unmounts the iframe; the window disconnects and its
@@ -307,7 +313,7 @@ export function SessionsSection() {
                       onClick={() => void stopVscode()}
                       disabled={busy === 'vscode'}
                       aria-label="Stop VS Code"
-                      title="Stop the shared VS Code workbench; tabs reconnect on next open"
+                      title="Stop the shared VS Code workbench and close every VS Code tab"
                       className="rounded-md px-2 py-1 text-xs text-zinc-500 opacity-60 hover:bg-red-950/50 hover:text-red-300 group-hover:opacity-100 disabled:opacity-40"
                     >
                       {busy === 'vscode' ? 'Stopping…' : 'Stop'}

@@ -295,4 +295,22 @@ describe('vscode web manager', () => {
     await mgr.closeAll();
     expect(mgr.status()).toBeNull();
   });
+
+  it('points the workbench at THIS server, not an inherited STRADO_SERVER', async () => {
+    // A dev server launched from a production Strado terminal inherits
+    // STRADO_SERVER=…:7777; the strado-window extension in each VS Code window
+    // would then report to the wrong Strado and never be attributed.
+    const prevPort = process.env.PORT;
+    const prevServer = process.env.STRADO_SERVER;
+    process.env.PORT = '7877';
+    process.env.STRADO_SERVER = 'http://127.0.0.1:7777';
+    try {
+      const { mgr, spawned } = makeManager();
+      await mgr.ensure('/wt/a');
+      expect(spawned[0].env.STRADO_SERVER).toBe('http://127.0.0.1:7877');
+    } finally {
+      if (prevPort === undefined) delete process.env.PORT; else process.env.PORT = prevPort;
+      if (prevServer === undefined) delete process.env.STRADO_SERVER; else process.env.STRADO_SERVER = prevServer;
+    }
+  });
 });
