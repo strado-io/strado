@@ -292,13 +292,9 @@ export function SessionsSection() {
 
   return (
     <section className="flex flex-col gap-4" data-testid="sessions-section">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
-          <p className="mt-0.5 max-w-prose text-xs leading-relaxed text-zinc-500">
-            Every terminal, agent, VS Code window and browser preview on this machine, with the memory and CPU of
-            the processes behind it. Sessions outlive app restarts, so forgotten ones pile up here.
-          </p>
         </div>
         <button type="button" onClick={() => void refresh()} aria-label="Refresh now"
           className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200">
