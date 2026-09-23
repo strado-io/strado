@@ -292,7 +292,7 @@ export function SessionsSection() {
 
   return (
     <section className="flex flex-col gap-4" data-testid="sessions-section">
-      <div className="flex items-start justify-between gap-4 pr-10">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
           <p className="mt-0.5 max-w-prose text-xs leading-relaxed text-zinc-500">
