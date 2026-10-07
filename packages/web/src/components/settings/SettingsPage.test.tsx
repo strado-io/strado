@@ -110,14 +110,4 @@ describe('SettingsPage', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('opens the Sessions view from the System group', async () => {
-    render(
-      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
-        <SettingsPage onClose={() => {}} />
-      </WorkspaceContext.Provider>,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
-    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'sessions');
-    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
-  });
 });

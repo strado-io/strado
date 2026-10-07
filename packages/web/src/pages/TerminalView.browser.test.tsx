@@ -41,6 +41,7 @@ vi.mock('@xterm/xterm', () => ({
   },
 }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit = vi.fn(); } }));
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class { onContextLoss = vi.fn(); dispose = vi.fn(); } }));
 vi.mock('@xterm/addon-unicode-graphemes', () => ({ UnicodeGraphemesAddon: class { dispose = vi.fn(); } }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 

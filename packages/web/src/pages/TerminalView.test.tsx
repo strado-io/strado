@@ -45,6 +45,9 @@ vi.mock('@xterm/addon-fit', () => ({
 vi.mock('@xterm/addon-unicode-graphemes', () => ({
   UnicodeGraphemesAddon: class { dispose = vi.fn(); },
 }));
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class { onContextLoss = vi.fn(); dispose = vi.fn(); },
+}));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 
 // --- Mock the workspace hook ---
@@ -554,6 +557,41 @@ describe('TerminalView', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a parked session waits for a keystroke, then reattaches with resume=1', () => {
+    vi.useFakeTimers();
+    try {
+      render(<TerminalView worktree={worktree} onClose={() => {}} />);
+      const ws = FakeWS.instances[0]!;
+      expect(ws.url).not.toContain('resume=1');
+      act(() => { ws.onmessage?.({ data: '\r\n[strado:parked] Parked after being idle. Press any key.\r\n' }); });
+      // the marker is for the pane, not the user
+      expect(termWrite).not.toHaveBeenCalledWith(expect.stringContaining('[strado:parked]'));
+      expect(termWrite).toHaveBeenCalledWith(expect.stringContaining('Parked after being idle'));
+      ws.readyState = 3;
+      act(() => { ws.onclose?.(); });
+      act(() => { vi.advanceTimersByTime(30000); });
+      expect(FakeWS.instances).toHaveLength(1); // parked: no auto-reconnect
+      act(() => { onDataHandlers[onDataHandlers.length - 1]!('x'); });
+      expect(FakeWS.instances).toHaveLength(2);
+      expect(FakeWS.instances[1]!.url).toContain('resume=1');
+      // the waking key is not forwarded into the resumed session
+      expect(FakeWS.instances[1]!.sent).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dims a parked Claude tab and explains it on hover', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, hasClaudeSession: true, claudeSessions: ['1'], parkedClaudeSessions: ['1'] } as Worktree}
+        mode="claude"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Claude').closest('[title]')?.getAttribute('title')).toContain('Parked');
   });
 
   it('renders one tab per shell session plus claude', () => {
@@ -1374,6 +1412,37 @@ describe('TerminalView', () => {
     expect(screen.getByText('Shell')).toBeInTheDocument();
   });
 
+  it('heartbeats while VS Code is visible and reloads the frame when the workbench was restarted', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vscodeOpen
+        .mockResolvedValueOnce({ url: 'http://127.0.0.1:7788/', pid: 101 })
+        .mockResolvedValueOnce({ url: 'http://127.0.0.1:7788/', pid: 101 })
+        .mockResolvedValue({ url: 'http://127.0.0.1:7788/', pid: 202 });
+      render(
+        <TerminalView
+          worktree={baseWorktree}
+          mode="vscode"
+          onClose={vi.fn()}
+        />,
+      );
+      const first = await screen.findByTitle('VS Code');
+      expect(vscodeOpen).toHaveBeenCalledTimes(1);
+
+      // same daemon: the heartbeat must not touch the frame
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(vscodeOpen).toHaveBeenCalledTimes(2);
+      expect(screen.getByTitle('VS Code')).toBe(first);
+
+      // idle-stopped and rebooted on the server: a new pid remounts the frame
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(vscodeOpen).toHaveBeenCalledTimes(3);
+      await vi.waitFor(() => expect(screen.getByTitle('VS Code')).not.toBe(first));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('registers the VS Code origin with Electron before mounting the iframe', async () => {
     let finishRegistration: (allowed: boolean) => void = () => {};
     const vscodeOrigin = vi.fn(() => new Promise<boolean>((resolve) => {
@@ -1773,14 +1842,13 @@ describe('TerminalView', () => {
     expect(screen.queryByText('React | FD-2')).not.toBeInTheDocument();
   });
 
-  it('Review all changes opens the diff for the active worktree and Esc closes only the diff', async () => {
+  it('the Changes button opens the diff modal directly and Esc closes only the diff', async () => {
     const onClose = vi.fn();
     gitChanges.mockResolvedValue({
       files: [{ path: 'src/app.ts', status: 'M', staged: 'none', untracked: false }],
     });
     render(<TerminalView worktree={baseWorktree as Worktree} mode="claude" onClose={onClose} />);
     fireEvent.click(screen.getByRole('button', { name: 'Changes' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Review all changes' }));
     expect(await screen.findByPlaceholderText('Commit message')).toBeInTheDocument();
     expect(gitChanges).toHaveBeenCalledWith(expect.anything(), baseWorktree.path);
 

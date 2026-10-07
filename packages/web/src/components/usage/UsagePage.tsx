@@ -5,6 +5,7 @@ import type { MachineSample } from '../../types';
 import { AccountCard, AGENT_NAME } from './AccountCard';
 import { ModelTable, WorktreeTable } from './BreakdownTables';
 import { MachineResources } from './MachineResources';
+import { SessionsSection } from './SessionsSection';
 import { StatStrip } from './StatStrip';
 import { UsageLoading } from './UsageLoading';
 import { UsageChart } from './UsageChart';
@@ -112,8 +113,9 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
       </div>
 
       {tab === 'machine' ? (
-        <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
+        <div className="flex flex-col gap-5 px-3 py-3">
           <MachineResources sample={machine} />
+          <SessionsSection />
         </div>
       ) : loading && !summary ? (
         <UsageLoading label="Loading usage…" />

@@ -1,6 +1,6 @@
 // Shared bits for the terminal hub (TerminalView and its popover menus).
 
-export type ProcState = { status: string; port?: number | null; detectedUrl?: string | null; exitCode?: number | null };
+export type ProcState = { status: string; port?: number | null; detectedUrl?: string | null; proxyUrl?: string | null; exitCode?: number | null };
 
 export const PROC_COLOR: Record<string, string> = {
   idle: 'bg-zinc-600',

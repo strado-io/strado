@@ -13,6 +13,9 @@ vi.mock('../../api', () => ({
   api: { usage: { summary: mocks.summary, accounts: mocks.accounts, machine: mocks.machine } },
 }));
 
+// The Sessions panel polls its own APIs and needs a workspace; it has its own tests.
+vi.mock('./SessionsSection', () => ({ SessionsSection: () => <section aria-label="Sessions" /> }));
+
 const HOUR = 3_600_000;
 
 const summary = (over: Partial<UsageSummary> = {}): UsageSummary => ({
@@ -229,6 +232,7 @@ describe('UsagePage', () => {
     expect(screen.getByText('12.0 GB of 16.0 GB')).toBeInTheDocument();
     expect(screen.getByText('10 cores · load 2.00 3.00 4.00')).toBeInTheDocument();
     expect(screen.getByText('Up 4d 0h · sampled when this tab opened')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Sessions' })).toBeInTheDocument();
   });
 
   it('surfaces a failed load without hiding the page', async () => {

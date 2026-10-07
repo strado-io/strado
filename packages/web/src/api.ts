@@ -695,8 +695,10 @@ export const api = {
     // Ensures the shared VS Code web server is running; returns its base URL.
     // ready:false means serve-web is still downloading a VS Code update and
     // would serve a placeholder page — callers should keep loading and re-poll.
+    // Doubles as the heartbeat: the server stops an unseen workbench after a
+    // while, and a changed pid means it was restarted (reload the frame).
     open: (folder: string) =>
-      request<{ url: string; ready?: boolean }>('/api/vscode', {
+      request<{ url: string; ready?: boolean; pid?: number }>('/api/vscode', {
         method: 'POST',
         body: JSON.stringify({ folder }),
       }),
@@ -1035,7 +1037,7 @@ export type RemoteWorktree = {
   // Session state, forwarded by the remote-worktrees proxy so the rail can show
   // what's alive on a runner without opening the worktree.
   hasClaudeSession?: boolean; claudeStatus?: 'idle' | 'working' | 'waiting';
-  claudeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; claudeSessions?: string[];
+  claudeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; claudeSessions?: string[]; parkedClaudeSessions?: string[];
   hasCodexSession?: boolean; codexStatus?: 'idle' | 'working' | 'waiting';
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; codexSessions?: string[];
   hasOpencodeSession?: boolean; opencodeStatus?: 'idle' | 'working' | 'waiting';

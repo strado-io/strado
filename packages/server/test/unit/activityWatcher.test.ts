@@ -98,6 +98,26 @@ describe.each(BACKENDS)('activityWatcher [$name]', ({ platform }) => {
     expect(touched).toEqual([wt]);
   });
 
+  it('counts every change in version(), unthrottled; null when unwatched', async () => {
+    const wt = tmpWorktree();
+    const watcher = createWorktreeWatcher({ touch: () => {}, throttleMs: 60_000, platform });
+    cleanups.push(() => watcher.close());
+    expect(watcher.version(wt)).toBeNull();
+    watcher.ensure([wt]);
+    await settle(() => watcher.version(wt) !== null);
+    expect(watcher.version(wt)).toBe(0);
+    await new Promise((r) => setTimeout(r, 100));
+    fs.writeFileSync(path.join(wt, 'a.ts'), 'x');
+    await settle(() => (watcher.version(wt) ?? 0) > 0);
+    const first = watcher.version(wt)!;
+    expect(first).toBeGreaterThan(0);
+    fs.writeFileSync(path.join(wt, 'b.ts'), 'x');
+    await settle(() => watcher.version(wt)! > first);
+    expect(watcher.version(wt)).toBeGreaterThan(first);
+    watcher.remove(wt);
+    expect(watcher.version(wt)).toBeNull();
+  });
+
   it('skips paths that do not exist instead of throwing', () => {
     const touched: string[] = [];
     expect(() => watching(touched).ensure(['/definitely/not/a/dir'])).not.toThrow();

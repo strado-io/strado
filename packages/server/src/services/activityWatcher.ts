@@ -41,6 +41,12 @@ export type WorktreeWatcher = {
   ensure(paths: string[]): void;
   remove(worktreePath: string): void;
   close(): void;
+  /**
+   * Counts every non-ignored change under a watched worktree (unthrottled,
+   * unlike the beat). Null while the path is not (yet) watched, so callers
+   * caching on it must treat null as "unknown" and not cache.
+   */
+  version(worktreePath: string): number | null;
 };
 
 export function createWorktreeWatcher(opts: {
@@ -53,8 +59,11 @@ export function createWorktreeWatcher(opts: {
   const throttleMs = opts.throttleMs ?? 30_000;
   const platform = opts.platform ?? process.platform;
   const lastBeat = new Map<string, number>();
+  const versions = new Map<string, number>();
 
   function beat(p: string) {
+    const v = versions.get(p);
+    if (v !== undefined) versions.set(p, v + 1);
     const t = now();
     const last = lastBeat.get(p);
     if (last !== undefined && t - last < throttleMs) return;
@@ -62,9 +71,10 @@ export function createWorktreeWatcher(opts: {
     opts.touch(p);
   }
 
-  return platform === 'darwin'
-    ? createNativeWatcher(beat, lastBeat)
-    : createChokidarWatcher(beat, lastBeat);
+  const watcher = platform === 'darwin'
+    ? createNativeWatcher(beat, lastBeat, versions)
+    : createChokidarWatcher(beat, lastBeat, versions);
+  return { ...watcher, version: (p) => versions.get(p) ?? null };
 }
 
 // ── darwin: native FSEvents via fs.watch({recursive}) ───────────────────────
@@ -72,7 +82,8 @@ export function createWorktreeWatcher(opts: {
 function createNativeWatcher(
   beat: (p: string) => void,
   lastBeat: Map<string, number>,
-): WorktreeWatcher {
+  versions: Map<string, number>,
+): Omit<WorktreeWatcher, 'version'> {
   const watchers = new Map<string, fs.FSWatcher>();
 
   function drop(worktreePath: string) {
@@ -80,6 +91,7 @@ function createNativeWatcher(
     if (!w) return;
     watchers.delete(worktreePath);
     lastBeat.delete(worktreePath);
+    versions.delete(worktreePath);
     try { w.close(); } catch { /* already closed */ }
   }
 
@@ -108,6 +120,7 @@ function createNativeWatcher(
         }
         watcher.on('error', () => drop(p));
         watchers.set(p, watcher);
+        versions.set(p, 0);
       }
     },
     remove: drop,
@@ -122,7 +135,8 @@ function createNativeWatcher(
 function createChokidarWatcher(
   beat: (p: string) => void,
   lastBeat: Map<string, number>,
-): WorktreeWatcher {
+  versions: Map<string, number>,
+): Omit<WorktreeWatcher, 'version'> {
   const watchers = new Map<string, FSWatcher>();
   // Startup queue: initial scans run one worktree at a time. Kicking off many
   // big trees at once floods the event loop with readdir callbacks and starves
@@ -153,6 +167,7 @@ function createChokidarWatcher(
     if (!w) return;
     watchers.delete(worktreePath);
     lastBeat.delete(worktreePath);
+    versions.delete(worktreePath);
     // Detach synchronously so no beat fires after remove(), regardless of when
     // the async close() settles; then tear the watcher down.
     w.removeAllListeners();
@@ -194,7 +209,12 @@ function createChokidarWatcher(
           };
           const cap = setTimeout(finish, 60_000);
           cap.unref?.();
-          watcher.once('ready', finish);
+          // Versioned only once the initial scan is done: before 'ready' a
+          // change can land in a directory chokidar hasn't reached yet.
+          watcher.once('ready', () => {
+            if (watchers.get(p) === watcher) versions.set(p, 0);
+            finish();
+          });
           watcher.once('error', finish);
         });
       }

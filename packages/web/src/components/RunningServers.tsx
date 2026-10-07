@@ -63,7 +63,7 @@ export function RunningServers({
               <div key={w.path} className="group flex items-center gap-2 rounded pr-1 hover:bg-zinc-900">
                 <button
                   onClick={() => { setOpen(false); onOpen(w); }}
-                  title={w.process.detectedUrl ?? w.path}
+                  title={w.process.proxyUrl ?? w.process.detectedUrl ?? w.path}
                   className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left"
                 >
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-200">{label(w)}</span>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { MergeRequest, RepoConfig, WorkflowStatus, Worktree } from '../types';
+import type { RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
@@ -21,8 +21,6 @@ import {
 } from '../hooks/browserTabs';
 import { DiffView } from './DiffView';
 import { LogPanel } from '../components/LogPanel';
-import { ChangesRail } from '../components/ChangesRail';
-import { MrReviewModal } from '../components/MrReviewModal';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
 import { formatActiveTime } from '../components/WorktreeRow';
@@ -99,6 +97,9 @@ type Group = {
   // Per-session status for multi-session worktrees; id '1' falls back to the
   // aggregate field when absent (older servers).
   claudeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
+  // Claude tab ids the server parked (process stopped, tab kept; the next
+  // keystroke resumes the conversation).
+  parkedClaudeIds?: string[];
   codexStatus?: 'idle' | 'working' | 'waiting';
   codexStatusById?: Record<string, 'idle' | 'working' | 'waiting'>;
   opencodeStatus?: 'idle' | 'working' | 'waiting';
@@ -130,9 +131,13 @@ function extraIds(ids: Iterable<string> | undefined): string[] {
 // Tab icons are the mode identity; their COLOR carries status only
 // (amber = agent working, blue = needs your input, neutral = idle).
 const IDLE_ICON = 'text-zinc-500';
+// How often a visible VS Code tab tells the server it is still in use.
+const VSCODE_HEARTBEAT_MS = 60_000;
 const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon, pi: PiIcon };
 const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
 
+// Parked: no process behind the tab, so dimmer than idle.
+const PARKED_ICON = 'text-zinc-500 opacity-40';
 const AGENT_ICON: Record<string, string> = {
   working: 'text-amber-400 animate-pulse',
   waiting: 'text-blue-400',
@@ -206,19 +211,22 @@ function groupTabs(
     byId: Group['claudeStatusById'],
     aggregate: Group['claudeStatus'],
     Icon: (props: { className?: string }) => React.ReactElement,
+    parked: string[] = [],
   ) => {
     const ids = [...(open ? ['1'] : []), ...sortIds([...server, ...local]).filter((id) => id !== '1')];
     return ids.map((id) => {
       const status = agentTabStatus(id, byId, aggregate) ?? 'idle';
+      const isParked = parked.includes(id);
       return {
         tab: { path: g.path, mode, id },
         label: shellNames[sessionNameKey(g.path, mode, id)] ?? (id === '1' ? label : `${label} ${id}`),
-        icon: <Icon className={AGENT_ICON[status] ?? IDLE_ICON} />,
+        icon: <Icon className={isParked ? PARKED_ICON : AGENT_ICON[status] ?? IDLE_ICON} />,
+        hint: isParked ? 'Parked to free memory, press a key in the tab to resume' : undefined,
       };
     });
   };
   const entries = [
-    ...agentTabs('claude', g.claudeOpen, g.serverClaudeIds, g.localClaudeIds, 'Claude', g.claudeStatusById, g.claudeStatus, ClaudeIcon),
+    ...agentTabs('claude', g.claudeOpen, g.serverClaudeIds, g.localClaudeIds, 'Claude', g.claudeStatusById, g.claudeStatus, ClaudeIcon, g.parkedClaudeIds),
     ...agentTabs('codex', g.codexOpen, g.serverCodexIds, g.localCodexIds, 'Codex', g.codexStatusById, g.codexStatus, CodexIcon),
     ...agentTabs('opencode', g.opencodeOpen, g.serverOpencodeIds, g.localOpencodeIds, 'OpenCode', g.opencodeStatusById, g.opencodeStatus, OpencodeIcon),
     ...agentTabs('pi', g.piOpen, g.serverPiIds, g.localPiIds, 'Pi', g.piStatusById, g.piStatus, PiIcon),
@@ -707,6 +715,7 @@ export function TerminalView({
     ]),
     claudeStatus: worktree.claudeStatus,
     claudeStatusById: worktree.claudeStatusById,
+    parkedClaudeIds: worktree.parkedClaudeSessions,
     codexStatus: worktree.codexStatus,
     codexStatusById: worktree.codexStatusById,
     opencodeStatus: worktree.opencodeStatus,
@@ -749,6 +758,7 @@ export function TerminalView({
       status: worktree.process?.status ?? 'idle',
       port: worktree.process?.port,
       detectedUrl: worktree.process?.detectedUrl,
+      proxyUrl: worktree.process?.proxyUrl,
       exitCode: worktree.process?.exitCode,
     },
   }));
@@ -968,9 +978,11 @@ export function TerminalView({
     // 3000 (or a configured-but-idle port) produces a hostile error page.
     const proc = path === worktree.path
       ? procs[path]
-      : row?.process as { status?: string; detectedUrl?: string | null; port?: number | null } | undefined;
+      : row?.process as { status?: string; detectedUrl?: string | null; proxyUrl?: string | null; port?: number | null } | undefined;
     const livePort = proc?.status === 'running' ? (proc.port ?? row?.meta?.port) : null;
-    const raw = row?.meta?.previewUrl ?? proc?.detectedUrl ?? (livePort ? `http://localhost:${livePort}` : '');
+    // The proxy hostname resolves on the runner, not here: remote keeps the
+    // forwarded private port.
+    const raw = row?.meta?.previewUrl ?? (remote ? null : proc?.proxyUrl) ?? proc?.detectedUrl ?? (livePort ? `http://localhost:${livePort}` : '');
     if (!raw) return '';
     if (!remote) return raw;
     // Everything above names a port on the RUNNER's loopback. Pointing a browser
@@ -1002,13 +1014,10 @@ export function TerminalView({
       void window.strado?.preview?.('navigate', pk, { url });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, remoteForward.forward, groups, browserUrl, procs[worktree.path]?.status, procs[worktree.path]?.port, procs[worktree.path]?.detectedUrl]);
+  }, [remote, remoteForward.forward, groups, browserUrl, procs[worktree.path]?.status, procs[worktree.path]?.port, procs[worktree.path]?.detectedUrl, procs[worktree.path]?.proxyUrl]);
   const [showDiff, setShowDiff] = useState(false);
   const showDiffRef = useRef(false);
   showDiffRef.current = showDiff;
-  const [mrReview, setMrReview] = useState<MergeRequest | null>(null);
-  const mrReviewRef = useRef(mrReview);
-  mrReviewRef.current = mrReview;
   const [showLogs, setShowLogs] = useState(false);
   const showLogsRef = useRef(false);
   showLogsRef.current = showLogs;
@@ -1035,10 +1044,6 @@ export function TerminalView({
   const addMenuRef = useRef(false);
   addMenuRef.current = addMenu !== null;
   // "More" menu popover holding the per-worktree header controls.
-  // Right-side Changes rail: toggled from the header, refreshed on SSE ticks
-  // for this worktree so a commit/checkout elsewhere updates the file list.
-  const [changesOpen, setChangesOpen] = useState(false);
-  const [changesRefresh, setChangesRefresh] = useState(0);
   // OpenCode and Pi are the add-menu rows gated on the binary actually being
   // installed — the server's tool-check reports them, so the menu can grey them
   // out with a hint instead of spawning a session that just fails.
@@ -1106,6 +1111,7 @@ export function TerminalView({
               status: row.process?.status ?? 'idle',
               port: row.process?.port,
               detectedUrl: row.process?.detectedUrl,
+              proxyUrl: row.process?.proxyUrl,
               exitCode: row.process?.exitCode,
             };
           }
@@ -1144,6 +1150,7 @@ export function TerminalView({
                 piOpen: (g.piOpen || !!row.hasPiSession) && !closedAgentsRef.current!.pi.has(row.path),
                 claudeStatus: row.claudeStatus ?? g.claudeStatus,
                 claudeStatusById: row.claudeStatusById ?? g.claudeStatusById,
+                parkedClaudeIds: row.parkedClaudeSessions ?? g.parkedClaudeIds,
                 codexStatus: row.codexStatus ?? g.codexStatus,
                 codexStatusById: row.codexStatusById ?? g.codexStatusById,
                 opencodeStatus: row.opencodeStatus ?? g.opencodeStatus,
@@ -1190,6 +1197,7 @@ export function TerminalView({
               kbIds: storedKbIds,
               claudeStatus: row.claudeStatus,
               claudeStatusById: row.claudeStatusById,
+              parkedClaudeIds: row.parkedClaudeSessions,
               codexStatus: row.codexStatus,
               codexStatusById: row.codexStatusById,
               opencodeStatus: row.opencodeStatus,
@@ -1229,7 +1237,7 @@ export function TerminalView({
     if (remote) return;
     return subscribeWorktrees((evt) => {
       const path = evt.data.path;
-      const proc = evt.data.process as { status?: string; port?: number | null; detectedUrl?: string | null; exitCode?: number | null } | undefined;
+      const proc = evt.data.process as { status?: string; port?: number | null; detectedUrl?: string | null; proxyUrl?: string | null; exitCode?: number | null } | undefined;
       if (proc) {
         setProcs((prev) => ({
           ...prev,
@@ -1270,6 +1278,7 @@ export function TerminalView({
             kbIds: [],
             claudeStatus: evt.data.claudeStatus,
             claudeStatusById: evt.data.claudeStatusById,
+            parkedClaudeIds: Array.isArray(evt.data.parkedClaudeSessions) ? (evt.data.parkedClaudeSessions as string[]) : undefined,
             codexStatus: evt.data.codexStatus,
             codexStatusById: evt.data.codexStatusById,
             opencodeStatus: evt.data.opencodeStatus,
@@ -1297,6 +1306,9 @@ export function TerminalView({
           // actually removes the tab. Ids the server hasn't reported yet stay
           // local (e.g. a freshly-opened tab whose pty hasn't spawned yet).
           ng.localShellIds = g.localShellIds.filter((id) => !shellSessions.includes(id));
+        }
+        if (Array.isArray(evt.data.parkedClaudeSessions)) {
+          ng.parkedClaudeIds = evt.data.parkedClaudeSessions as string[];
         }
         if (claudeSessions) {
           // Same server/local handoff as shells, for agent ids beyond 1.
@@ -1366,7 +1378,6 @@ export function TerminalView({
         next[idx] = ng;
         return next;
       });
-      if (evt.data.path === worktree.path) setChangesRefresh((n) => n + 1);
     });
    }, [worktree.path, remote]);
 
@@ -1375,7 +1386,6 @@ export function TerminalView({
     // listener) — don't also close the terminal panel underneath.
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (mrReviewRef.current) { setMrReview(null); return; }
       if (showDiffRef.current) return;
       // Esc peels popovers first (add-session menu), then the logs drawer.
       // The hub itself is left via Back / sidebar now, not Esc.
@@ -1386,11 +1396,12 @@ export function TerminalView({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // VS Code web server base urls, keyed by worktree path — each worktree now
-  // runs its own serve-web daemon on its own port, so the base URL is fetched
-  // lazily the first time that worktree's VS Code tab becomes active and
-  // cached per-folder for the panel's lifetime.
-  const [vscodeUrls, setVscodeUrls] = useState<Record<string, string>>({});
+  // VS Code web server base urls, keyed by worktree path, fetched the first
+  // time that worktree's VS Code tab becomes active. While the tab is visible
+  // the same call repeats as a heartbeat: the server stops a workbench nobody
+  // has looked at for a while (its tsserver holds GBs), and a new pid in the
+  // reply means it was restarted, so the frame (keyed by pid) remounts.
+  const [vscodeUrls, setVscodeUrls] = useState<Record<string, { url: string; pid: number | null }>>({});
   const [vscodeError, setVscodeError] = useState<string | null>(null);
 
 
@@ -1666,8 +1677,12 @@ export function TerminalView({
   };
   // Boot the workbench as soon as its pane is on screen — as the full tab or
   // docked beside a terminal — so a restored split never shows a blank leaf.
+  // While it stays on screen, re-ask every VSCODE_HEARTBEAT_MS: that is the
+  // server's "still in use" signal (it stops an idle workbench), and a new
+  // pid means it was restarted, which remounts the frame.
+  const vscodeAllowedOrigins = useRef(new Set<string>());
   useEffect(() => {
-    if (!vscodeShown || vscodeUrls[worktree.path]) return;
+    if (!vscodeShown) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const path = worktree.path;
@@ -1683,7 +1698,7 @@ export function TerminalView({
           // VS Code 1.136+ sends SAMEORIGIN/frame-ancestors headers. Electron
           // relaxes them only after this exact loopback origin is registered;
           // await the IPC so the first iframe navigation cannot race it.
-          if (window.strado?.vscodeOrigin) {
+          if (window.strado?.vscodeOrigin && !vscodeAllowedOrigins.current.has(r.url)) {
             let allowed = false;
             try {
               allowed = await window.strado.vscodeOrigin(r.url);
@@ -1697,18 +1712,27 @@ export function TerminalView({
               throw error;
             }
             if (!allowed) throw new Error('VS Code returned an unsupported embed URL');
+            vscodeAllowedOrigins.current.add(r.url);
           }
           if (!alive) return;
-          setVscodeUrls((m) => ({ ...m, [path]: r.url }));
+          const pid = r.pid ?? null;
+          setVscodeError(null);
+          setVscodeUrls((m) => (m[path]?.url === r.url && m[path]?.pid === pid ? m : { ...m, [path]: { url: r.url, pid } }));
+          timer = setTimeout(attempt, VSCODE_HEARTBEAT_MS);
         })
-        .catch((e) => alive && setVscodeError(e instanceof Error ? e.message : String(e)));
+        .catch((e) => {
+          if (!alive) return;
+          setVscodeError(e instanceof Error ? e.message : String(e));
+          // a failed heartbeat (server restarting) must not end the heartbeats
+          timer = setTimeout(attempt, VSCODE_HEARTBEAT_MS);
+        });
     };
     attempt();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
     };
-  }, [vscodeShown, worktree.path, vscodeUrls]);
+  }, [vscodeShown, worktree.path]);
   // Diffstat for the active worktree, shown on the Changes toggle. The hub is
   // scoped to one worktree, so the active tab is normally this worktree — read
   // the `worktree` prop, which Dashboard keeps fresh (its 15s poll of the
@@ -1778,13 +1802,13 @@ export function TerminalView({
         commit();
         return;
       }
-      // Cmd+L toggles the worktree's Changes rail. Ctrl+L deliberately falls
+      // Cmd+L toggles the worktree's Changes modal (diff + its MR). Ctrl+L deliberately falls
       // through so shells keep their clear-screen binding.
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'l') {
         if (e.repeat) return;
         e.preventDefault();
         e.stopPropagation();
-        setChangesOpen((open) => !open);
+        setShowDiff((open) => !open);
         return;
       }
       // Cmd+W closes the active tab (terminal/shell/agent focus lands here;
@@ -1854,7 +1878,7 @@ export function TerminalView({
         return;
       }
       if (combo === 'changes') {
-        setChangesOpen((open) => !open);
+        setShowDiff((open) => !open);
         return;
       }
       const dir = combo === 'tab-next' || combo === 'group-next' ? 1 : combo === 'tab-prev' || combo === 'group-prev' ? -1 : null;
@@ -2817,7 +2841,7 @@ export function TerminalView({
                   : remoteForward.pending
                     ? `forwarding port ${remotePreviewPort}…`
                     : ''
-              : p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
+              : p.proxyUrl ?? p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
             const row = rowsRef.current.get(active.path) ?? (active.path === worktree.path ? worktree : undefined);
             const repo = row?.repoId ? reposById[row.repoId] : undefined;
             const profiles = repo?.envProfiles ?? [];
@@ -2958,12 +2982,12 @@ export function TerminalView({
               </button>
               <button
                 className={`flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900 ${
-                  changesOpen ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
+                  showDiff ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
                 }`}
-                onClick={() => setChangesOpen((v) => !v)}
+                onClick={() => setShowDiff(true)}
                 title="Changes (⌘L)"
                 aria-label="Changes"
-                aria-pressed={changesOpen}
+                aria-pressed={showDiff}
               >
                 <span className="font-mono text-[11px] tabular-nums">
                   <span className="text-emerald-400">+{activeDiff?.additions ?? 0}</span>{' '}
@@ -3250,9 +3274,9 @@ export function TerminalView({
               const placed = shown && !!placement;
               return (
                 <iframe
-                  key={g.path}
+                  key={`${g.path}:${vscodeUrls[g.path]?.pid ?? ''}`}
                   data-vscode-path={g.path}
-                  src={`${vscodeUrls[g.path] ?? ''}?folder=${encodeURIComponent(g.path)}`}
+                  src={`${vscodeUrls[g.path]?.url ?? ''}?folder=${encodeURIComponent(g.path)}`}
                   title={placed ? 'VS Code' : `VS Code — ${g.path}`}
                   className={placed ? 'z-10 border-0 bg-zinc-950' : 'hidden'}
                   style={placement}
@@ -3320,7 +3344,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || mrReview || forkDialog);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || forkDialog);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3555,25 +3579,8 @@ export function TerminalView({
         <div data-testid="xterm-pane" className="relative h-full w-full">
           {renderPane(paneTree, [])}
         </div>
-        {mrReview && (
-          // stopPropagation: clicks in the modal (including its backdrop-close
-          // click) must not bubble to the terminal overlay's onClick and close
-          // the panel underneath.
-          <div onClick={(e) => e.stopPropagation()}>
-            <MrReviewModal worktree={worktree} mr={mrReview} onClose={() => setMrReview(null)} />
-          </div>
-        )}
         </div>
       </div>
-      <ChangesRail
-        worktree={worktree}
-        open={changesOpen}
-        onToggle={() => setChangesOpen((v) => false)}
-        onOpenFile={() => setShowDiff(true)}
-        onReviewAll={() => setShowDiff(true)}
-        onOpenMr={setMrReview}
-        refreshKey={changesRefresh}
-      />
       {showLogs && (
         // stopPropagation: clicks in the drawer must not bubble to the
         // terminal overlay's onClick and close the panel.

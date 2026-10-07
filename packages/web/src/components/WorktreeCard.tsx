@@ -42,9 +42,9 @@ export function WorktreeCard({ worktree, onStart, onStop, onOpenEditor, onMenu, 
         <div className="mt-2 inline-block rounded bg-amber-900/40 px-2 py-0.5 text-xs text-amber-300">untracked</div>
       )}
 
-      {process.detectedUrl && (
-        <a className="mt-2 block text-xs text-sky-400 underline" href={process.detectedUrl} target="_blank" rel="noreferrer">
-          {process.detectedUrl}
+      {(process.proxyUrl ?? process.detectedUrl) && (
+        <a className="mt-2 block text-xs text-sky-400 underline" href={(process.proxyUrl ?? process.detectedUrl)!} target="_blank" rel="noreferrer">
+          {process.proxyUrl ?? process.detectedUrl}
         </a>
       )}
 

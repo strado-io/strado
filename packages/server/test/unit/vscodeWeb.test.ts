@@ -313,4 +313,61 @@ describe('vscode web manager', () => {
       if (prevServer === undefined) delete process.env.STRADO_SERVER; else process.env.STRADO_SERVER = prevServer;
     }
   });
+
+  describe('idle stop', () => {
+    function idleManager() {
+      let clock = 0;
+      const h = makeManager({ idleMs: 15 * 60_000, idleCheckMs: 1_000, now: () => clock });
+      return { ...h, advance: async (ms: number) => { clock += ms; await vi.advanceTimersByTimeAsync(1_000); } };
+    }
+
+    it('stops the workbench after idleMs without a heartbeat, and the next ensure boots a new one', async () => {
+      vi.useFakeTimers();
+      try {
+        const { mgr, killed, spawned, store, advance } = idleManager();
+        const first = await mgr.ensure('/wt/a');
+        await advance(14 * 60_000);
+        expect(killed).toEqual([]);
+        await advance(2 * 60_000);
+        expect(killed).toEqual([first.pid]);
+        expect(store.recorded).toHaveLength(0);
+
+        const second = await mgr.ensure('/wt/a');
+        expect(spawned).toHaveLength(2);
+        expect(second.pid).not.toBe(first.pid); // the client reloads its frame on this
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('every ensure (the visible tab\'s heartbeat) pushes the stop back', async () => {
+      vi.useFakeTimers();
+      try {
+        const { mgr, killed, advance } = idleManager();
+        const first = await mgr.ensure('/wt/a');
+        for (let i = 0; i < 5; i++) {
+          await advance(10 * 60_000);
+          expect((await mgr.ensure('/wt/a')).pid).toBe(first.pid);
+        }
+        expect(killed).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('idleMs 0 keeps the workbench until quit', async () => {
+      vi.useFakeTimers();
+      try {
+        let clock = 0;
+        const { mgr, killed } = makeManager({ idleMs: 0, idleCheckMs: 1_000, now: () => clock });
+        await mgr.ensure('/wt/a');
+        clock += 24 * 60 * 60_000;
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(killed).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });
+

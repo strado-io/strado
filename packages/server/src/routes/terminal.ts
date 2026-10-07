@@ -6,10 +6,22 @@ import { agentSpawnSpec, withAgentSpawnLock } from '../services/agentSpawn.js';
 import { installClaudeMcp } from '../services/claudeMcp.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { peekLines } from '../services/terminalText.js';
+import { defaultShell } from '../services/platform.js';
+import { PARK_BANNER } from '../services/claudePark.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
   | { type: 'resize'; cols: number; rows: number };
+
+// The pane keys off PARK_BANNER; the rest is what the user reads.
+function parkedNotice(hasConversation: boolean): string {
+  const next = hasConversation ? 'Press any key to resume this conversation.' : 'Press any key to start Claude again.';
+  return `\r\n\x1b[2m${PARK_BANNER} Parked after being idle, to free memory. ${next}\x1b[0m\r\n`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 export async function registerTerminalRoutes(app: FastifyInstance) {
   // Hover peek: last lines of a session buffer as plain text.
@@ -48,7 +60,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       }
     },
   );
-  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; cols?: string; rows?: string } }>(
+  app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string; cols?: string; rows?: string; resume?: string } }>(
     '/ws/terminal',
     { websocket: true },
     async (connection, req) => {
@@ -125,7 +137,27 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // rule, the login-shell bootstrap and the per-mode command all live in
       // services/agentSpawn.ts now, so a fork opening a tab with no client
       // attached spawns exactly what this route does.
-      const spec = agentSpawnSpec(mode, sessionId, target);
+      // A parked Claude tab (claudePark.ts) has no process. Attaching to it
+      // must not quietly respawn it — every cached pane reconnects on app
+      // load, which would undo all parking — so a plain attach only gets the
+      // parked notice. The pane asks again with resume=1 on a keystroke, and
+      // that spawn reopens the same conversation.
+      const parkedEntry =
+        mode === 'claude' && app.deps.terminal.status(sessionKey).status !== 'running'
+          ? app.deps.parked.get(sessionKey)
+          : null;
+      if (mode === 'claude' && !parkedEntry) app.deps.parked.remove(sessionKey);
+      if (parkedEntry && req.query.resume !== '1') {
+        socket.off('message', bufferHandler);
+        try { socket.send(parkedNotice(!!parkedEntry.providerSessionId)); } catch { /* ignore */ }
+        socket.close();
+        return;
+      }
+      // No conversation id: it was parked before anything was typed, so
+      // waking it is just a fresh Claude (the default spec).
+      const spec = parkedEntry?.providerSessionId
+        ? { file: defaultShell(), args: ['-l', '-c', `claude --resume ${shellQuote(parkedEntry.providerSessionId)}`] }
+        : agentSpawnSpec(mode, sessionId, target);
 
       if (mode === 'claude' || mode === 'shell') {
         try {
@@ -151,7 +183,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         const live = app.deps.terminal.liveSessions().filter((s) => s.path === target);
         app.deps.bus.emit('worktrees', {
           type: 'worktree.updated',
-          data: { path: target, ...sessionsPayload(live) },
+          data: { path: target, ...sessionsPayload(live, app.deps.parked.idsFor(target)) },
         });
       };
 
@@ -165,6 +197,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
           }
           await app.deps.terminal.ensure(sessionKey, target, spec, size);
         });
+        if (parkedEntry) app.deps.parked.remove(sessionKey);
       } catch (err) {
         return fail(`could not start session: ${(err as Error).message}`);
       }
@@ -200,7 +233,8 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
         }
         emitSessions();
         if (socket.readyState === socket.OPEN) {
-          try { socket.send(`\r\n[process exited ${code}]\r\n`); } catch { /* ignore */ }
+          const parked = mode === 'claude' ? app.deps.parked.get(sessionKey) : null;
+          try { socket.send(parked ? parkedNotice(!!parked.providerSessionId) : `\r\n[process exited ${code}]\r\n`); } catch { /* ignore */ }
         }
         socket.close();
       });

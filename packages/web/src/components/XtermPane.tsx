@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
+import { WebglAddon } from '@xterm/addon-webgl';
+
+// Server marker for a parked Claude tab (server/src/services/claudePark.ts).
+const PARK_BANNER = '[strado:parked]';
 import '@xterm/xterm/css/xterm.css';
 import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
@@ -216,6 +220,11 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
     // The pty process ended (server sent "[process exited]" then closed): a
     // deliberate end, so we do NOT reconnect — reconnecting would respawn it.
     let processExited = false;
+    // The server parked this idle Claude tab (no process; see the server's
+    // claudePark.ts). Not an end and not a drop: stay put, and the next
+    // keystroke reattaches with resume=1, which reopens the conversation.
+    let parked = false;
+    let resumeNext = false;
     let attempts = 0;
     let reconnectTimer: number | undefined;
     // Relay credential for a remote pane. Reusable until it expires, so one
@@ -309,8 +318,30 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         });
       }
       term.open(container);
+      // GPU renderer. xterm's default DOM renderer rebuilds row elements on
+      // every repaint, so a TUI redrawing its status line (Claude, opencode)
+      // keeps the window in style recalc + layout. Must load after open().
+      // No WebGL (or a lost context: Chromium caps live contexts per page and
+      // evicts the oldest once many panes are mounted) falls back to the DOM
+      // renderer by disposing the addon.
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+      } catch (err) {
+        console.warn('[terminal] webgl renderer unavailable, using DOM renderer', err);
+      }
       // Reads `ws` at keystroke time, so input forwarding follows reconnects.
       dataSub = term.onData((data) => {
+        if (parked && !(ws && ws.readyState === WebSocket.OPEN)) {
+          // The key that wakes it is consumed: typed into a Claude that is
+          // still loading, it would land somewhere unexpected.
+          parked = false;
+          resumeNext = true;
+          term.write('\r\n\x1b[2m[resuming…]\x1b[0m\r\n');
+          connect();
+          return;
+        }
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'data', data }));
         }
@@ -334,7 +365,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
       const target = remote ? { wsId: remote.wsId, path: remote.path } : { wsId, path: tab.path };
       const query =
         `ws=${encodeURIComponent(target.wsId)}&path=${encodeURIComponent(target.path)}` +
-        `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}`;
+        `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}` +
+        (resumeNext ? '&resume=1' : '');
       return remote
         ? `${remote.wsBase}/ws/terminal?${query}&ticket=${encodeURIComponent(ticket ?? '')}`
         : `${proto}://${location.host}/ws/terminal?${query}`;
@@ -394,6 +426,12 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
       // fitted size then, covering reattach to a pty another client resized.
       let announced = false;
       ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string' && ev.data.includes(PARK_BANNER)) {
+          parked = true;
+          term.write(ev.data.replace(`${PARK_BANNER} `, ''));
+          settled();
+          return;
+        }
         if (typeof ev.data === 'string') {
           // opencode/opentui only: rewrite its OSC 66 cell-measurement probe
           // into plain text so the cursor advances and it reads a real cell
@@ -418,6 +456,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         }
       };
       ws.onopen = () => {
+        resumeNext = false;
         if (attempts > 0) { term.write('\r\n[reconnected]\r\n'); attempts = 0; }
         authFailures = 0;
         if (fitIfVisible()) sendResize();
@@ -428,6 +467,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         settled();
         if (disposed) return;
         if (processExited) { term.write('\r\n[disconnected]\r\n'); return; }
+        if (parked) return;
         // 1008 from the relay means the ticket was rejected — a credential
         // problem, which backing off cannot fix. Re-mint once; a second refusal
         // is real (revoked runner, clock skew) and looping would only hammer

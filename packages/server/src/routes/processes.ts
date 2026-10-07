@@ -5,6 +5,10 @@ import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
 import { evictPortListeners, findExternalProcesses } from '../services/externalProcess.js';
+import { worktreeHostname } from '../services/devProxy.js';
+import { findFreePort } from '../ports.js';
+import type { RepoConfig } from '../repoConfig.js';
+import type { StateStore, WorktreeMeta } from '../state.js';
 import { defaultShell } from '../services/platform.js';
 import { resolveStartCommand } from '../services/startCommand.js';
 import { resolveStartEnv } from '../services/startEnv.js';
@@ -22,6 +26,66 @@ export async function registerProcessRoutes(app: FastifyInstance) {
     }
     await evictPortListeners(port);
   }
+
+  // Free the port, route the worktree through the dev proxy when the repo has
+  // one, and spawn the start command. With a proxy, the dev server never gets
+  // the proxy's port: a worktree still configured for it (443 was the repo
+  // default) is moved to a free private port, persisted so it stays stable.
+  async function launch(opts: {
+    target: string;
+    repo: RepoConfig;
+    meta: WorktreeMeta | null;
+    state: StateStore;
+    cwd: string;
+    startCommand: string;
+    env: Record<string, string>;
+  }) {
+    const { target, repo, meta, state } = opts;
+    let port = meta?.port ?? repo.defaultPort;
+    const proxy = repo.devProxy ?? null;
+    let proxyUrl: string | null = null;
+    let warning: string | null = null;
+    if (proxy) {
+      if (port === proxy.port) {
+        const reserved = new Set(
+          (await state.list())
+            .map((e) => e.meta.port)
+            .filter((p): p is number => typeof p === 'number'),
+        );
+        reserved.add(proxy.port);
+        port = await findFreePort(proxy.port, reserved);
+        if (meta) await state.patch(target, { port });
+      }
+      // Whatever still holds the proxy port (a dev server from before the
+      // proxy was configured) has to go before the proxy can bind it.
+      if (!app.deps.devProxy.listenPorts().has(proxy.port)) await freePort(proxy.port, target);
+      const registered = await app.deps.devProxy.register({
+        key: target,
+        hostname: worktreeHostname(proxy.host, target, repo.path),
+        config: proxy,
+        resolvePort: () => {
+          const info = app.deps.proc.status(target);
+          return info.status === 'running' || info.status === 'starting' ? info.port : null;
+        },
+      });
+      proxyUrl = registered.url;
+      warning = registered.warning;
+    }
+
+    await freePort(port, target);
+    await app.deps.proc.start({
+      key: target,
+      cwd: opts.cwd,
+      command: defaultShell(),
+      args: ['-ilc', opts.startCommand],
+      env: opts.env,
+      port,
+      proxyUrl,
+      proxyPort: proxy?.port ?? null,
+      notices: warning ? [warning] : [],
+    });
+    return { warning };
+  }
   app.post<{ Params: { encodedPath: string } }>(
     '/worktrees/:encodedPath/start',
     async (req) => {
@@ -33,7 +97,6 @@ export async function registerProcessRoutes(app: FastifyInstance) {
       assertPathUnder(target, [repo.path, ...worktreeRootsFor(app.deps.homeStateDir, repo)]);
 
       const meta = await state.get(target);
-      const port = meta?.port ?? repo.defaultPort;
       const cwd = repo.projectSubdir ? path.join(target, repo.projectSubdir) : target;
       if (!(meta?.startCommand?.trim() || repo.startCommand.trim())) {
         throw new AppError('VALIDATION', 'empty startCommand');
@@ -46,17 +109,7 @@ export async function registerProcessRoutes(app: FastifyInstance) {
       );
       const env = await resolveStartEnv({ cwd, envFile, interpolated, worktreeEnv: meta?.env ?? {} });
 
-      await freePort(port, target);
-
-      const shell = defaultShell();
-      await app.deps.proc.start({
-        key: target,
-        cwd,
-        command: shell,
-        args: ['-ilc', startCommand],
-        env,
-        port,
-      });
+      const { warning } = await launch({ target, repo, meta, state, cwd, startCommand, env });
 
       if (meta) {
         const patch: Record<string, unknown> = { lastStartedAt: new Date().toISOString() };
@@ -65,7 +118,7 @@ export async function registerProcessRoutes(app: FastifyInstance) {
         }
         await state.patch(target, patch);
       }
-      return app.deps.proc.status(target);
+      return { ...app.deps.proc.status(target), ...(warning ? { proxyWarning: warning } : {}) };
     },
   );
 
@@ -106,20 +159,10 @@ export async function registerProcessRoutes(app: FastifyInstance) {
       });
 
       if (wasRunning) {
-        const port = meta.port ?? repo.defaultPort;
         const cwd = repo.projectSubdir ? path.join(target, repo.projectSubdir) : target;
         const { command: startCommand, envFile, interpolated } = resolveStartCommand(repo, profile, meta.startCommand ?? null);
         const env = await resolveStartEnv({ cwd, envFile, interpolated, worktreeEnv: meta.env ?? {} });
-        await freePort(port, target);
-        const shell = defaultShell();
-        await app.deps.proc.start({
-          key: target,
-          cwd,
-          command: shell,
-          args: ['-ilc', startCommand],
-          env,
-          port,
-        });
+        await launch({ target, repo, meta, state, cwd, startCommand, env });
         await state.patch(target, { lastStartedAt: new Date().toISOString() });
       }
 

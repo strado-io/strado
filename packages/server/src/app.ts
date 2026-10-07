@@ -8,6 +8,7 @@ import { createJobQueue, JobQueue } from './services/jobs.js';
 import { createGitWorktreeService, GitWorktreeService } from './services/gitWorktree.js';
 import { createNodeModulesLinkService, NodeModulesLinkService } from './services/nodeModulesLink.js';
 import { createProcessManager, ProcessManager } from './services/processManager.js';
+import { createDevProxy, type DevProxy } from './services/devProxy.js';
 import { createDebugLog, DebugLog } from './services/debugLog.js';
 import { createTerminalManager, parseSessionKey, sessionsPayload, TerminalManager } from './services/terminalManager.js';
 import { createDaemonTerminalManager } from './services/ptyDaemon/manager.js';
@@ -16,6 +17,7 @@ import { createAgentStatusStore, ClaudeStatusStore } from './services/claudeStat
 import { createGitChangesService, GitChangesService } from './services/gitChanges.js';
 import { createActivityTracker, createAgentOutputBeats, ActivityTracker } from './services/activityTracker.js';
 import { createWorktreeWatcher, WorktreeWatcher } from './services/activityWatcher.js';
+import { createDiffStatsCache, DiffStatsCache } from './services/diffStatsCache.js';
 import { ZodError } from 'zod';
 import { toResponse, AppError } from './errors.js';
 import { runMigration } from './migration.js';
@@ -39,6 +41,7 @@ import { createShellRunner, type ShellRunner } from './services/shellRunner.js';
 import { agentSpawnInstallers, spawnAgentTab } from './services/agentSpawn.js';
 import { createForkService, type ForkService } from './services/forkService.js';
 import { PUSH_ENV } from './services/intercomSchema.js';
+import { claudeProjectDir, createParkStore, hasBackgroundJobs, noTranscriptSince, parkMinutesFromEnv, processStartMs, startClaudeParkSweep, type ParkStore } from './services/claudePark.js';
 
 export type Deps = {
   workspaces: WorkspaceConfigStore;
@@ -48,6 +51,7 @@ export type Deps = {
   git: GitWorktreeService;
   link: NodeModulesLinkService;
   proc: ProcessManager;
+  devProxy: DevProxy;
   terminal: TerminalManager;
   status: GitStatusService;
   claudeStatus: ClaudeStatusStore;
@@ -79,6 +83,11 @@ export type Deps = {
   gitChanges: GitChangesService;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
+  // Worktree-list diff badges, cached on file/git changes (see diffStatsCache).
+  diffStats: DiffStatsCache;
+  // Idle Claude tabs whose process was stopped to free memory (claudePark.ts).
+  // Their idle clock is ptyActivity's last input/output per session.
+  parked: ParkStore;
   debugLog: DebugLog;
   // Per-machine state root (~/.strado). Routes need it for state that is NOT
   // per-workspace — the sandbox bare clones live under it.
@@ -156,6 +165,10 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const piStatus = createAgentStatusStore(bus, 'piStatus');
   const agentSessions = createAgentSessionRegistry(path.join(homeStateDir, 'agent-sessions.json'));
   const activity = createActivityTracker(path.join(homeStateDir, 'activity.json'));
+  const gitChanges = createGitChangesService();
+  // File saves (any editor) beat the activity clock; worktree paths are
+  // registered as the /worktrees listing discovers them.
+  const activityWatch = createWorktreeWatcher({ touch: (p) => activity.touch(p) });
   const debugLog = createDebugLog(process.env.STRADO_LOG_DIR || path.join(homeStateDir, 'logs'));
   // Declared ahead of the callbacks below: onTerminalExit closes over
   // `terminal`, which isn't assigned until after createDaemonTerminalManager
@@ -227,6 +240,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const sandboxLastActivity = (worktreePath: string): number | null => sandboxActivity.get(worktreePath);
   const forgetSandboxActivity = (worktreePath: string): void => sandboxActivity.forget(worktreePath);
   const ptyActivity = createPtyActivity();
+  const parked = createParkStore(path.join(homeStateDir, 'parked-sessions.json'));
   const onData = (key: string) => {
     ptyActivity.noteOutput(key);
     sandboxActivity.touch(parseSessionKey(key).path);
@@ -246,7 +260,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     const live = terminal.liveSessions().filter((s) => s.path === p);
     bus.emit('worktrees', {
       type: 'worktree.updated',
-      data: { path: p, ...sessionsPayload(live) },
+      data: { path: p, ...sessionsPayload(live, parked.idsFor(p)) },
     });
   };
   // Probed once, at boot: /api/capabilities advertises it and worktree
@@ -371,6 +385,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     git: createGitWorktreeService(),
     link: createNodeModulesLinkService(),
     proc: createProcessManager(bus, debugLog),
+    devProxy: createDevProxy(debugLog),
     terminal,
     status: createGitStatusService(),
     claudeStatus,
@@ -386,11 +401,13 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     shellRunner,
     forks,
     agentHomeDir,
-    gitChanges: createGitChangesService(),
+    gitChanges,
     activity,
-    // File saves (any editor) beat the activity clock; worktree paths are
-    // registered as the /worktrees listing discovers them.
-    activityWatch: createWorktreeWatcher({ touch: (p) => activity.touch(p) }),
+    activityWatch,
+    diffStats: createDiffStatsCache({
+      shortStat: (p) => gitChanges.shortStat(p),
+      version: (p) => activityWatch.version(p),
+    }),
     debugLog,
     homeStateDir,
     sandboxRuntime,
@@ -400,6 +417,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     closeSandboxSocket,
     sandboxLastActivity,
     forgetSandboxActivity,
+    parked,
   };
 }
 
@@ -452,11 +470,46 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       })
     : null;
 
+  // Idle Claude tabs: stop the process, keep the tab, resume on the next
+  // keystroke. STRADO_PARK_IDLE_MINUTES=0 turns it off.
+  const parkIdleMinutes = parkMinutesFromEnv();
+  const claudeParkSweep = parkIdleMinutes > 0
+    ? startClaudeParkSweep({
+        liveSessions: () => deps.terminal.liveSessions(),
+        lastActivity: (key) => {
+          // last keystroke or output, whichever is more recent
+          const q = deps.ptyActivity.quiet(key);
+          const quiet = Math.min(q.input, q.output);
+          return Number.isFinite(quiet) ? Date.now() - quiet : null;
+        },
+        status: (p, id) => deps.claudeStatus.sessions(p)[id],
+        backgroundJobs: async (key) => {
+          const pid = deps.terminal.status(key).pid;
+          return pid ? hasBackgroundJobs(pid) : true;
+        },
+        processStart: async (key) => {
+          const pid = deps.terminal.status(key).pid;
+          return pid ? processStartMs(pid) : null;
+        },
+        conversation: (p, id) => deps.agentSessions.get('claude', p, id),
+        unusedSince: (p, since) => noTranscriptSince(claudeProjectDir(p), since),
+        park: (key, entry) => {
+          // Recorded BEFORE the kill: the exit handlers read it to keep the
+          // tab listed and to tell an attached pane it was parked, not ended.
+          deps.parked.add(entry);
+          deps.terminal.kill(key);
+        },
+        idleMs: parkIdleMinutes * 60_000,
+      })
+    : null;
+
   // FSWatchers keep the event loop alive; close them with the app and flush
   // any activity accrued since the last debounced write.
   app.addHook('onClose', async () => {
     stopParkSweep?.();
+    claudeParkSweep?.stop();
     deps.activityWatch.close();
+    await deps.devProxy.close();
     await deps.activity.flush();
     await closeVsCodeWeb();
     // Leaves no socket file behind for the next boot to trip over.
