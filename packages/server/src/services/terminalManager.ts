@@ -79,11 +79,15 @@ export function parseSessionKey(key: string): LiveSession {
 // The session-presence payload carried on worktree.updated events and the
 // worktrees listing — derived from one worktree's live sessions. Single
 // builder so the WS route, exit handler, kill route, and listing agree.
-export function sessionsPayload(live: LiveSession[]) {
+// `parkedClaude` are Claude tab ids with no process (claudePark.ts): they are
+// listed with the live ones so the tab stays put, and flagged separately.
+export function sessionsPayload(live: LiveSession[], parkedClaude: string[] = []) {
   const ids = (mode: LiveSession['mode']) =>
     live.filter((s) => s.mode === mode).map((s) => s.id).sort((a, b) => Number(a) - Number(b));
   const shellSessions = ids('shell');
-  const claudeSessions = ids('claude');
+  const liveClaude = ids('claude');
+  const parkedClaudeSessions = parkedClaude.filter((id) => !liveClaude.includes(id));
+  const claudeSessions = [...liveClaude, ...parkedClaudeSessions].sort((a, b) => Number(a) - Number(b));
   const codexSessions = ids('codex');
   const opencodeSessions = ids('opencode');
   const piSessions = ids('pi');
@@ -95,6 +99,7 @@ export function sessionsPayload(live: LiveSession[]) {
     hasShellSession: shellSessions.length > 0,
     shellSessions,
     claudeSessions,
+    parkedClaudeSessions,
     codexSessions,
     opencodeSessions,
     piSessions,

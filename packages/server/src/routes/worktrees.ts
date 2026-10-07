@@ -132,7 +132,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
       list.push(s);
       liveByPath.set(s.path, list);
     }
-    const sessionsOf = (p: string) => sessionsPayload(liveByPath.get(p) ?? []);
+    const sessionsOf = (p: string) => sessionsPayload(liveByPath.get(p) ?? [], app.deps.parked.idsFor(p));
 
     // List every repo's worktrees in parallel — each `git worktree list` is an
     // independent subprocess. One broken repo (bad path, not a git repo yet)
@@ -190,7 +190,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
       flat.map(async ({ repo, w }) => {
         const [nodeModules, diffStats] = await Promise.all([
           detectNodeModules(w.path, repo.projectSubdir),
-          app.deps.gitChanges.shortStat(w.path),
+          app.deps.diffStats.get(w.path),
         ]);
         let meta = stateByPath.get(w.path) ?? null;
         // Auto-adopt the repo's main worktree (the repo root) so its Settings
@@ -558,6 +558,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         step('stop');
         await app.deps.proc.stop(target);
         app.deps.terminal.killUnder(target);
+        app.deps.parked.removeUnder(target);
         if (sandboxSlug && app.deps.sandbox) {
           // Same rule as creation: destroy only what is provably this
           // worktree's. The slug is path-derived so a mismatch should be
@@ -622,6 +623,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         app.deps.sandboxSlugs.delete(target);
         app.deps.activity.remove(target);
         app.deps.activityWatch.remove(target);
+        app.deps.diffStats.forget(target);
         // Worktree paths are deterministic (buildWorktreeSlug(ticketId, title)),
         // so recreating a worktree for the same ticket/title lands at this
         // IDENTICAL path — a leaked stale timestamp would make the new
@@ -692,6 +694,8 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         : mode === 'pi' ? piKey(target, id)
         : claudeKey(target, id),
       );
+      // Closing a parked tab is the only way it ends: there is no process.
+      if (mode === 'claude') app.deps.parked.remove(claudeKey(target, id));
       if (mode === 'claude') app.deps.claudeStatus.clear(target, id);
       if (mode === 'codex') app.deps.codexStatus.clear(target, id);
       if (mode === 'opencode') app.deps.opencodeStatus.clear(target, id);
@@ -703,7 +707,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         .filter((s) => s.path === target && !(s.mode === mode && s.id === id));
       app.deps.bus.emit('worktrees', {
         type: 'worktree.updated',
-        data: { path: target, ...sessionsPayload(live) },
+        data: { path: target, ...sessionsPayload(live, app.deps.parked.idsFor(target)) },
       });
       return reply.code(204).send();
     },

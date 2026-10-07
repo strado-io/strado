@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MergeRequest, Worktree } from '../types';
 
@@ -48,6 +48,7 @@ const gitMocks = vi.hoisted(() => ({
 const worktreeMocks = vi.hoisted(() => ({
   createMergeRequest: vi.fn(),
   mergeRequestChanges: vi.fn(),
+  mergeRequests: vi.fn().mockResolvedValue({ kind: 'absent' }),
 }));
 
 vi.mock('../api', async () => {
@@ -59,6 +60,7 @@ vi.mock('../api', async () => {
         git: gitMocks,
         createMergeRequest: worktreeMocks.createMergeRequest,
         mergeRequestChanges: worktreeMocks.mergeRequestChanges,
+        mergeRequests: worktreeMocks.mergeRequests,
         mergeRequestDiscussion: () => Promise.resolve({
           kind: 'discussion' as const, discussion: { description: null, comments: [] },
         }),
@@ -134,6 +136,7 @@ beforeEach(() => {
   gitMocks.mrUrl.mockReset().mockResolvedValue({ url: 'https://bitbucket.org/x/y/pull-requests/new', sourceBranch: 'FD-1' });
   worktreeMocks.createMergeRequest.mockReset();
   worktreeMocks.mergeRequestChanges.mockReset().mockResolvedValue({ kind: 'list', files: [] });
+  worktreeMocks.mergeRequests.mockReset().mockResolvedValue({ kind: 'absent' });
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -434,6 +437,19 @@ describe('DiffView', () => {
     expect(gitMocks.diff).not.toHaveBeenCalled();
   });
 
+  it('arrow keys do not move the hidden Changes list while the MRs tab is open', async () => {
+    worktreeMocks.mergeRequests.mockResolvedValue({
+      kind: 'list', provider: 'gitlab',
+      mergeRequests: [{ number: 12, title: 'Add widget', state: 'open', url: 'https://g/x/-/merge_requests/12' }],
+    });
+    render(<DiffView worktree={worktree} onClose={() => {}} />);
+    await screen.findByText('a.ts');
+    fireEvent.click(await screen.findByRole('button', { name: 'MRs (1)' }));
+    gitMocks.diff.mockClear();
+    fireEvent.keyDown(window, { key: 'ArrowUp' });
+    expect(gitMocks.diff).not.toHaveBeenCalled();
+  });
+
   it('arrow keys inside the commit message textarea do not steal navigation', async () => {
     render(<DiffView worktree={worktree} onClose={() => {}} />);
     await screen.findByText('a.ts');
@@ -448,6 +464,55 @@ describe('DiffView', () => {
     await screen.findByText('a.ts');
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('shows no MRs tab when the repo has no MR provider', async () => {
+    render(<DiffView worktree={worktree} onClose={() => {}} />);
+    await screen.findByText('a.ts');
+    expect(screen.queryByRole('button', { name: /^(MRs|PRs)/ })).not.toBeInTheDocument();
+  });
+
+  it('one MRs tab lists every merge request; picking one opens its review beside the list', async () => {
+    worktreeMocks.mergeRequests.mockResolvedValue({
+      kind: 'list',
+      provider: 'gitlab',
+      mergeRequests: [
+        { number: 7, title: 'Old attempt', state: 'closed', url: 'https://g/x/-/merge_requests/7' },
+        { number: 12, title: 'Add widget', state: 'open', url: 'https://g/x/-/merge_requests/12' },
+      ],
+    });
+    render(<DiffView worktree={worktree} onClose={() => {}} />);
+    await screen.findByText('a.ts');
+    fireEvent.click(await screen.findByRole('button', { name: 'MRs (2)' }));
+    // the list replaces the file list, open MR first
+    const list = within(screen.getByRole('group', { name: 'Merge request list' }));
+    const rows = list.getAllByRole('button');
+    expect(rows.map((r) => r.textContent?.match(/!\d+/)?.[0])).toEqual(['!12', '!7']);
+    expect(list.getByText('Add widget')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Commit message')).not.toBeInTheDocument();
+    // the open MR is selected by default and its review loads
+    await waitFor(() => expect(worktreeMocks.mergeRequestChanges).toHaveBeenCalled());
+    // back to the diff
+    fireEvent.click(screen.getByRole('button', { name: 'Changes' }));
+    expect(await screen.findByPlaceholderText('Commit message')).toBeInTheDocument();
+  });
+
+  it('says so when the branch has no merge requests yet', async () => {
+    worktreeMocks.mergeRequests.mockResolvedValue({ kind: 'list', provider: 'gitlab', mergeRequests: [] });
+    render(<DiffView worktree={worktree} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'MRs (0)' }));
+    expect(screen.getByText('No merge requests for this branch')).toBeInTheDocument();
+  });
+
+  it('GitHub shows PRs, and an unconnected provider gets a Connect prompt', async () => {
+    worktreeMocks.mergeRequests.mockResolvedValue({ kind: 'needsAuth', provider: 'github' });
+    const opened = vi.fn();
+    window.addEventListener('strado:open-settings', opened);
+    render(<DiffView worktree={worktree} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'PRs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+    expect(opened).toHaveBeenCalled();
+    window.removeEventListener('strado:open-settings', opened);
   });
 
   describe('in-app create-MR dialog', () => {

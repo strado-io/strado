@@ -80,8 +80,13 @@ async function realWorkbenchReady(url: string): Promise<boolean> {
 // Probe which CLI exists by attempting a serve-web spawn on the given port and
 // seeing if it stays up. Returns the file that worked, or null.
 export type VsCodeWebManager = {
-  /** ready=false → serve-web is still serving its "downloading VS Code" placeholder */
-  ensure(folder: string): Promise<{ url: string; ready: boolean }>;
+  /**
+   * ready=false → serve-web is still serving its "downloading VS Code" placeholder.
+   * pid identifies the daemon: a new pid means the workbench was restarted
+   * (idle stop) and any frame on the old one must reload. Also the heartbeat:
+   * every call counts as use and pushes back the idle stop.
+   */
+  ensure(folder: string): Promise<{ url: string; ready: boolean; pid: number }>;
   /** boot the shared workbench now (app start) instead of on first tab open; never throws */
   prewarm(): Promise<void>;
   drop(folder: string): Promise<void>;
@@ -136,7 +141,22 @@ type Deps = {
   warmPollMs?: number;
   // Test hook: resolve directly to the winning CLI, skipping real spawn probing.
   cliExists?: (port: number) => Promise<string | null>;
+  /** stop the workbench after this long without ensure(); 0 = never */
+  idleMs?: number;
+  /** how often the idle stop is checked */
+  idleCheckMs?: number;
+  now?: () => number;
 };
+
+// The workbench's TypeScript server alone can hold 2+ GB on a large repo, and
+// it used to live until app quit. Stop it after this long unseen; the next
+// VS Code tab open boots it again (a few seconds on the pinned build).
+// STRADO_VSCODE_IDLE_MINUTES overrides; 0 keeps it alive until quit.
+function idleMsFromEnv(env = process.env): number {
+  const raw = env.STRADO_VSCODE_IDLE_MINUTES;
+  const minutes = raw === undefined || raw === '' ? 15 : Number(raw);
+  return Number.isFinite(minutes) && minutes >= 0 ? minutes * 60_000 : 15 * 60_000;
+}
 
 function filePortStore(file: string): PortStore {
   const KEY = 'app'; // one shared workbench for the whole app
@@ -183,16 +203,42 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   // closeAll() reaps the warm-up on quit, so the cap is only a safety net.
   const warmWaitMs = deps.warmWaitMs ?? 60 * 60_000;
   const warmPollMs = deps.warmPollMs ?? 5_000;
+  const idleMs = deps.idleMs ?? idleMsFromEnv();
+  const idleCheckMs = deps.idleCheckMs ?? 60_000;
+  const now = deps.now ?? Date.now;
 
   // ONE shared serve-web instance for the whole app. The workbench is
   // folder-agnostic (the renderer opens folders via ?folder=<path>), and a
   // single origin means VS Code's browser-stored user settings are shared by
   // every worktree tab — and stable across restarts via the persisted port.
   let instance: { pid: number; port: number; url: string; child: ChildProcess; ready: boolean } | null = null;
-  let inflight: Promise<{ url: string; ready: boolean }> | null = null;
+  let inflight: Promise<{ url: string; ready: boolean; pid: number }> | null = null;
   let settingsSeeded = false;
   let warmed = false;
   let warm: { pid: number; child: ChildProcess } | null = null;
+  let lastUsed = now();
+  let idleTimer: ReturnType<typeof setInterval> | null = null;
+
+  function stopIdleTimer(): void {
+    if (idleTimer) clearInterval(idleTimer);
+    idleTimer = null;
+  }
+
+  function startIdleTimer(): void {
+    if (idleMs <= 0 || idleTimer) return;
+    idleTimer = setInterval(() => {
+      if (!instance) { stopIdleTimer(); return; }
+      if (inflight || now() - lastUsed < idleMs) return;
+      const entry = instance;
+      instance = null;
+      stopIdleTimer();
+      killTree(entry.pid);
+      store.forget(entry.pid);
+      prune([entry.pid]);
+    }, idleCheckMs);
+    // never what keeps the server process alive
+    idleTimer.unref?.();
+  }
 
   function pinFor(file: string): string | null {
     if (file === 'code-server') return null;
@@ -281,13 +327,14 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
     return null;
   }
 
-  async function ensure(_folder: string): Promise<{ url: string; ready: boolean }> {
+  async function ensure(_folder: string): Promise<{ url: string; ready: boolean; pid: number }> {
+    lastUsed = now();
     if (instance && instance.child.exitCode === null) {
       // A running instance can still be serving the update placeholder
       // (serve-web downloads new VS Code builds at boot) — re-probe until it
       // turns ready so the client can keep its own loading overlay up.
       if (!instance.ready) instance.ready = await workbenchReady(instance.url);
-      return { url: instance.url, ready: instance.ready };
+      return { url: instance.url, ready: instance.ready, pid: instance.pid };
     }
     if (inflight) return inflight;
 
@@ -321,6 +368,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
       const pid = child.pid as number;
       const url = `http://${HOST}:${port}/`;
       instance = { pid, port, url, child, ready: false };
+      startIdleTimer();
       try { portStore.set(port); } catch { /* never block editor open */ }
       // (already recorded to the store inside spawnCandidate the moment the
       // child got a pid — no double-record here)
@@ -354,7 +402,8 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
       }
       if (instance && instance.pid === pid) instance.ready = ready;
       if (commit) void warmCache(file);
-      return { url, ready };
+      lastUsed = now(); // the boot itself may have taken a while
+      return { url, ready, pid };
     })().finally(() => { inflight = null; });
 
     inflight = p;
@@ -378,8 +427,8 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   async function drop(_folder: string): Promise<void> {
     // Intentional no-op: ONE shared workbench serves every folder, so closing
     // one VS Code tab must not kill the editor other tabs are using. The
-    // daemon lives until closeAll (app shutdown) — still strictly fewer
-    // processes than the old one-daemon-per-folder model.
+    // daemon lives until it goes unseen for idleMs (no ensure() heartbeat
+    // from a visible tab) or until closeAll (app shutdown).
   }
 
   // Reap daemons left behind by a prior process that skipped closeAll (crash,
@@ -397,6 +446,7 @@ export function createVsCodeWebManager(deps: Deps = {}): VsCodeWebManager {
   async function closeAll(): Promise<void> {
     const entry = instance;
     instance = null;
+    stopIdleTimer();
     if (warm) reapWarm(warm.pid); // detached: would outlive process.exit otherwise
     if (!entry) return;
     killTree(entry.pid);

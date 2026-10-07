@@ -54,9 +54,9 @@ export function LogPanel({ worktree, onClose }: { worktree: Worktree; onClose: (
       <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2 text-sm">
         <div>
           Logs: <span className="font-mono text-zinc-200">{worktree.meta?.ticketId ?? worktree.path.split('/').pop()}</span>
-          {worktree.process.detectedUrl && (
-            <a className="ml-3 text-sky-400 underline" href={worktree.process.detectedUrl} target="_blank" rel="noreferrer">
-              {worktree.process.detectedUrl}
+          {(worktree.process.proxyUrl ?? worktree.process.detectedUrl) && (
+            <a className="ml-3 text-sky-400 underline" href={(worktree.process.proxyUrl ?? worktree.process.detectedUrl)!} target="_blank" rel="noreferrer">
+              {worktree.process.proxyUrl ?? worktree.process.detectedUrl}
             </a>
           )}
         </div>

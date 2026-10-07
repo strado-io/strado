@@ -60,10 +60,20 @@ describe('sessionsPayload', () => {
       hasShellSession: true,
       shellSessions: ['1', '3'],
       claudeSessions: ['1', '2'],
+      parkedClaudeSessions: [],
       codexSessions: ['2'],
       opencodeSessions: ['1'],
       piSessions: ['2'],
     });
+  });
+
+  it('lists parked Claude tabs with the live ones, flagged, without duplicating', () => {
+    const live = [{ path: '/wt/a', mode: 'claude' as const, id: '1' }];
+    const p = sessionsPayload(live, ['3', '1']);
+    expect(p.claudeSessions).toEqual(['1', '3']);
+    // id 1 is live again (resumed) — only 3 is still parked
+    expect(p.parkedClaudeSessions).toEqual(['3']);
+    expect(sessionsPayload([], ['2']).hasClaudeSession).toBe(true);
   });
 
   it('is all-empty for no sessions', () => {
@@ -75,6 +85,7 @@ describe('sessionsPayload', () => {
       hasShellSession: false,
       shellSessions: [],
       claudeSessions: [],
+      parkedClaudeSessions: [],
       codexSessions: [],
       opencodeSessions: [],
       piSessions: [],

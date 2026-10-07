@@ -15,6 +15,15 @@ export const EnvProfileSchema = z.object({
 });
 export type EnvProfile = z.infer<typeof EnvProfileSchema>;
 
+export const DevProxySchema = z.object({
+  host: z.string().min(1).regex(/^[a-z0-9.-]+$/i, 'hostname only, no scheme or port'),
+  port: z.number().int().positive().max(65535).default(443),
+  certFile: z.string().min(1).nullable().optional(),
+  keyFile: z.string().min(1).nullable().optional(),
+  upstreamTls: z.boolean().optional(),
+  allowLan: z.boolean().optional(),
+});
+
 export const RepoConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -39,6 +48,10 @@ export const RepoConfigSchema = z.object({
   openUrl: z.string().url().nullable().optional(),
   envProfiles: z.array(EnvProfileSchema).optional(),
   defaultEnvProfile: z.string().optional(),
+  // Serve every worktree behind one fixed origin: Strado listens on `port`
+  // and routes `host` to the main checkout and `<worktree>.<host>` to each
+  // worktree's dev server, which runs on its own private port (PORT env).
+  devProxy: DevProxySchema.nullable().optional(),
 });
 
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;

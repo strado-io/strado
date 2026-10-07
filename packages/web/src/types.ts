@@ -16,6 +16,9 @@ export type RepoConfig = {
   openUrl?: string | null;
   envProfiles?: EnvProfile[];
   defaultEnvProfile?: string;
+  // Serves every worktree behind one origin: `host` for the main checkout,
+  // `<worktree>.<host>` for the rest, all on `port`.
+  devProxy?: { host: string; port: number; certFile?: string | null; keyFile?: string | null; upstreamTls?: boolean; allowLan?: boolean } | null;
 };
 
 export type WorktreeMeta = {
@@ -45,6 +48,9 @@ export type ProcInfo = {
   detectedUrl: string | null;
   exitCode: number | null;
   external?: boolean;
+  // The dev-proxy URL for this worktree; preferred over detectedUrl, which
+  // names the private port behind the proxy.
+  proxyUrl?: string | null;
 };
 
 export type NodeModulesStatus =
@@ -89,6 +95,8 @@ export type Worktree = {
   hasShellSession?: boolean;
   shellSessions?: string[];
   claudeSessions?: string[];
+  /** Claude tab ids parked by the server (listed in claudeSessions too). */
+  parkedClaudeSessions?: string[];
   codexSessions?: string[];
   opencodeSessions?: string[];
   opencodeStatus?: 'idle' | 'working' | 'waiting';

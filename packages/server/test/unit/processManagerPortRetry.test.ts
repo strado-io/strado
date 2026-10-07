@@ -96,4 +96,27 @@ describe('processManager EADDRINUSE retry', () => {
     expect(evictions).toBe(1);
     srv.close();
   }, 20_000);
+
+  it('never evicts the dev proxy: a crash on the proxy port explains instead of retrying', async () => {
+    proc = createProcessManager(createEventBus());
+    const proxyPort = await freePort();
+    const srv = net.createServer();
+    srv.listen(proxyPort);
+    await once(srv, 'listening');
+    keys.push('/wt/p');
+    await proc.start({
+      key: '/wt/p',
+      cwd: process.cwd(),
+      command: process.execPath,
+      args: ['-e', listenScript(proxyPort)],
+      env: {},
+      port: proxyPort + 1,
+      proxyPort,
+    });
+    await until(() => proc!.status('/wt/p').status === 'crashed' &&
+      proc!.snapshot('/wt/p').some((l) => l.includes('belongs to the dev proxy')));
+    expect(proc.snapshot('/wt/p').some((l) => l.includes('evicting'))).toBe(false);
+    srv.close();
+  }, 20_000);
 });
+

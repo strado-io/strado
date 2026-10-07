@@ -441,7 +441,7 @@ export function WorktreeRow({
           title={
             (process.external ? 'running (external)' : process.status) +
             (process.port ? ` :${process.port}` : '') +
-            (process.detectedUrl ? ` — ${process.detectedUrl}` : '') +
+            ((process.proxyUrl ?? process.detectedUrl) ? ` — ${process.proxyUrl ?? process.detectedUrl}` : '') +
             (process.exitCode !== null ? ` (exit ${process.exitCode})` : '') +
             (process.pid ? ` · pid ${process.pid}` : '')
           }

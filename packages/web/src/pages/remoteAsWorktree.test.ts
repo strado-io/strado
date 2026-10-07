@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Dashboard pulls in the terminal pane; the WebGL addon probes a canvas jsdom lacks.
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 import { remoteAsWorktree } from './Dashboard';
 import type { RemoteWorktree } from '../api';
 

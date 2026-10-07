@@ -236,6 +236,27 @@ export function ChangedFiles({ files, providerName, onOpenExternal, comments = [
   useEffect(() => {
     if (jumpTo) setSel(jumpTo.path);
   }, [jumpTo?.seq, jumpTo?.path]);
+  // ↑/↓ walk the file list, same as the local Changes view.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      // Writing a review comment keeps native caret keys.
+      if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (!listRef.current || files.length === 0) return;
+      e.preventDefault();
+      const idx = files.findIndex((file) => file.path === selected?.path);
+      const next = files[e.key === 'ArrowDown' ? Math.min(idx + 1, files.length - 1) : Math.max(idx - 1, 0)];
+      if (!next || next.path === selected?.path) return;
+      setSel(next.path);
+      listRef.current
+        .querySelector(`[data-mr-file="${CSS.escape(next.path)}"]`)
+        ?.scrollIntoView?.({ block: 'nearest' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [files, selected?.path]);
   const commentCounts = new Map<string, number>();
   for (const comment of comments) {
     if (comment.path) commentCounts.set(comment.path, (commentCounts.get(comment.path) ?? 0) + 1);
@@ -250,10 +271,11 @@ export function ChangedFiles({ files, providerName, onOpenExternal, comments = [
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-      <div className="w-64 shrink-0 overflow-auto border-r border-zinc-800 p-1">
+      <div ref={listRef} className="w-64 shrink-0 overflow-auto border-r border-zinc-800 p-1">
         {files.map((file) => (
           <button
             key={file.path}
+            data-mr-file={file.path}
             onClick={() => setSel(file.path)}
             title={file.path}
             className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs ${

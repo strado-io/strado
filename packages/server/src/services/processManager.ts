@@ -28,6 +28,9 @@ export type ProcInfo = {
   detectedUrl: string | null;
   exitCode: number | null;
   external?: boolean;
+  // Set when the repo serves worktrees through the dev proxy: the stable
+  // URL (https://<worktree>.<host>) to open instead of the private port.
+  proxyUrl?: string | null;
 };
 
 export type StartOptions = {
@@ -37,6 +40,12 @@ export type StartOptions = {
   args: string[];
   env: Record<string, string>;
   port: number;
+  proxyUrl?: string | null;
+  // The dev proxy owns this port. A dev server that still binds it crashes on
+  // EADDRINUSE, and evicting the "squatter" would mean killing the proxy.
+  proxyPort?: number | null;
+  // Shown at the top of the log, e.g. a proxy hostname that doesn't resolve.
+  notices?: string[];
 };
 
 const RING_LIMIT = 5_000;
@@ -93,12 +102,14 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
     return e;
   }
 
-  function push(entry: Entry, stream: 'stdout' | 'stderr', line: string, key: string) {
+  // `detect` is off for Strado's own notes: a line that mentions the proxy URL
+  // and the port must not pass for the dev server announcing itself.
+  function push(entry: Entry, stream: 'stdout' | 'stderr', line: string, key: string, detect = true) {
     entry.buffer.push(line);
     if (entry.buffer.length > RING_LIMIT) entry.buffer.shift();
     debugLog?.log(logTag(key), line);
     bus.emit(`logs:${key}`, { type: 'log', data: { stream, line, ts: new Date().toISOString() } });
-    if (entry.info.detectedUrl === null) {
+    if (detect && entry.info.detectedUrl === null) {
       const match = line.match(URL_PATTERN);
       if (match && entry.info.port && line.includes(String(entry.info.port))) {
         entry.info.detectedUrl = match[1] ?? null;
@@ -222,8 +233,11 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
         port: opts.port,
         detectedUrl: null,
         exitCode: null,
+        proxyUrl: opts.proxyUrl ?? null,
       };
       emitProcess(entry, opts.key);
+      if (opts.proxyUrl) push(entry, 'stdout', `[strado] dev proxy: ${opts.proxyUrl} -> 127.0.0.1:${opts.port}`, opts.key, false);
+      for (const notice of opts.notices ?? []) push(entry, 'stderr', `[strado] ${notice}`, opts.key, false);
 
       debugLog?.log(logTag(opts.key), `start${isRetry ? ' (retry)' : ''}: ${opts.command} ${opts.args.join(' ')} — port ${opts.port}`);
       const child = spawn(opts.command, opts.args, {
@@ -262,6 +276,15 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
         const tail = entry.buffer.slice(-80).join('\n');
         const addr = tail.match(/EADDRINUSE[^\n]*?:(\d+)/);
         if (!addr) return;
+        if (opts.proxyPort && Number(addr[1]) === opts.proxyPort) {
+          push(
+            entry,
+            'stderr',
+            `[strado] port ${opts.proxyPort} belongs to the dev proxy — make the dev server listen on $PORT (${opts.port}) instead of a hard-coded port`,
+            opts.key,
+          );
+          return;
+        }
         entry.addrRetried = true;
         retryAfterAddrInUse(entry, opts.key, Number(addr[1])).catch((err) => {
           push(entry, 'stderr', `[strado] retry failed: ${String((err as Error).message ?? err)}`, opts.key);

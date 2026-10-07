@@ -7,10 +7,39 @@ import { parseUnifiedDiff, hunkPatch, type ParsedDiff, type DiffHunk, type DiffL
 import { SearchSelect } from '../components/SearchSelect';
 import { GitTreePanel } from '../components/GitTreePanel';
 import { MrReviewModal } from '../components/MrReviewModal';
+import { MrReview } from '../components/MrReview';
+import { PrStateIcon } from '../components/sidebar/prVisuals';
 import { invalidateMrPath } from '../hooks/mrSummaries';
 import { MinusIcon, PlusIcon } from '../components/hub/icons';
 
 type Tab = 'changes' | 'branch';
+type MrProbe = Awaited<ReturnType<typeof api.worktrees.mergeRequests>> | { kind: 'loading' };
+
+function segmentClass(active: boolean): string {
+  return `shrink-0 rounded-md px-2.5 py-1 text-xs transition ${
+    active ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
+  }`;
+}
+
+function BranchGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+      <circle cx="6" cy="5" r="2.5" />
+      <circle cx="6" cy="19" r="2.5" />
+      <circle cx="18" cy="7" r="2.5" />
+      <path d="M6 7.5v9" />
+      <path d="M18 9.5c0 4-6 3.5-11 7" />
+    </svg>
+  );
+}
+
+const MR_STATE_TONE: Record<MergeRequest['state'], string> = {
+  open: 'text-emerald-400', merged: 'text-purple-400', closed: 'text-zinc-500',
+};
+const PIPE_GLYPH: Record<NonNullable<MergeRequest['pipeline']>, string> = {
+  success: '✓', failed: '✗', running: '…', pending: '…', canceled: '⊘',
+};
 type ChangeFile = Awaited<ReturnType<typeof api.worktrees.git.changes>>['files'][number];
 type BranchFile = Awaited<ReturnType<typeof api.worktrees.git.branchChanges>>['files'][number];
 
@@ -288,6 +317,11 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
   const [mrNeedsAuth, setMrNeedsAuth] = useState<'gitlab' | 'github' | null>(null);
   const [createdMr, setCreatedMr] = useState<MergeRequest | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  // The branch's merge/pull requests: one "MRs" header tab beside Changes.
+  // It lists them all on the left; the selected one's review fills the right.
+  const [mrProbe, setMrProbe] = useState<MrProbe>({ kind: 'loading' });
+  const [mrsOpen, setMrsOpen] = useState(false);
+  const [selectedMr, setSelectedMr] = useState<MergeRequest | null>(null);
 
   // Guards against out-of-order diff responses: every diff load bumps the
   // sequence and captures it; only the latest load may commit its results to
@@ -374,6 +408,34 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
   }
 
   useEffect(() => {
+    let alive = true;
+    const load = () => api.worktrees.mergeRequests(wsId, worktree.path)
+      .then((r) => {
+        if (!alive) return;
+        if (r.kind !== 'list') { setMrProbe(r); return; }
+        // open ones first: that is the MR this branch is being reviewed in
+        const rank = (m: MergeRequest) => (m.state === 'open' ? 0 : m.state === 'merged' ? 1 : 2);
+        setMrProbe({ ...r, mergeRequests: [...r.mergeRequests].sort((a, b) => rank(a) - rank(b)) });
+      })
+      .catch(() => { if (alive) setMrProbe({ kind: 'absent' }); });
+    void load();
+    // Settings fires this after connecting GitLab/GitHub, so the "Connect"
+    // prompt turns into the list without reopening the modal.
+    const onConnected = () => { void load(); };
+    window.addEventListener('strado:git-provider-connected', onConnected);
+    return () => {
+      alive = false;
+      window.removeEventListener('strado:git-provider-connected', onConnected);
+    };
+  }, [wsId, worktree.path, createdMr]);
+
+  function openMrs() {
+    setMrsOpen(true);
+    setShowTree(false);
+    if (!selectedMr && mrProbe.kind === 'list') setSelectedMr(mrProbe.mergeRequests[0] ?? null);
+  }
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (reviewOpen) {
@@ -399,7 +461,8 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-      if (showTree) return;
+      // The MR view (tab or stacked review modal) has its own ↑/↓ for its files.
+      if (showTree || mrsOpen || reviewOpen) return;
       // Typing in the commit message / search inputs keeps native caret keys.
       if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select')) return;
       const paths =
@@ -429,7 +492,7 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, changesFiles, branchFiles, showTree]);
+  }, [tab, changesFiles, branchFiles, showTree, mrsOpen, reviewOpen]);
 
   function selectFile(path: string) {
     selectedRef.current = path;
@@ -615,7 +678,8 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
     'flex h-4 w-4 shrink-0 items-center justify-center rounded text-[12px] leading-none text-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30';
   const selectedChangeFile = changesFiles.find((f) => f.path === selected) ?? null;
   const stagedCount = changesFiles.filter((f) => f.staged !== 'none').length;
-  const label = worktree.meta?.ticketId ?? worktree.path.split('/').pop();
+  // `||`, not `??`: the main checkout is adopted with an empty ticketId.
+  const label = worktree.meta?.ticketId || worktree.path.split('/').pop();
   const showHunkButtons = tab === 'changes' && !!selectedChangeFile && !selectedChangeFile.untracked;
 
   function renderChangeRow(f: ChangeFile, section: 'staged' | 'unstaged') {
@@ -685,6 +749,51 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
         )}
       </div>
     );
+  }
+
+  function renderMrList() {
+    if (mrProbe.kind === 'loading') return <div className="px-2 py-2 text-xs text-zinc-600">Loading…</div>;
+    if (mrProbe.kind === 'absent') return null;
+    const github = mrProbe.provider === 'github';
+    const providerName = github ? 'GitHub' : 'GitLab';
+    if (mrProbe.kind === 'needsAuth') {
+      return (
+        <div className="px-2 py-3 text-xs text-zinc-400">
+          <p className="mb-2">Connect {providerName} to see {github ? 'pull requests' : 'merge requests'} for this branch.</p>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('strado:open-settings', { detail: { section: mrProbe.provider } }))}
+            className="rounded bg-zinc-800 px-2 py-1 text-zinc-200 hover:bg-zinc-700"
+          >
+            Connect {providerName}
+          </button>
+        </div>
+      );
+    }
+    if (mrProbe.mergeRequests.length === 0) {
+      return <div className="px-2 py-2 text-xs text-zinc-600">No {github ? 'pull requests' : 'merge requests'} for this branch</div>;
+    }
+    return mrProbe.mergeRequests.map((m) => {
+      const isGithub = (m.provider ?? mrProbe.provider) === 'github';
+      return (
+        <button
+          key={m.number}
+          onClick={() => setSelectedMr(m)}
+          title={m.title}
+          className={`flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left text-xs ${
+            selectedMr?.number === m.number ? 'bg-zinc-800' : 'hover:bg-zinc-900'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <PrStateIcon state={m.state} className={`h-3 w-3 shrink-0 ${MR_STATE_TONE[m.state]}`} />
+            <span className="font-mono text-zinc-500">{isGithub ? '#' : '!'}{m.number}</span>
+            <span className={`uppercase ${MR_STATE_TONE[m.state]}`}>{m.state}</span>
+            {m.pipeline && <span className="text-zinc-400">{PIPE_GLYPH[m.pipeline]}</span>}
+            {m.approvals && <span className="text-zinc-500">{m.approvals.given}/{m.approvals.required}</span>}
+          </span>
+          <span className="min-w-0 truncate text-zinc-300">{m.title}</span>
+        </button>
+      );
+    });
   }
 
   return (
@@ -767,36 +876,39 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
           </div>
         )}
         <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 text-sm text-zinc-200">
-          <div className="flex min-w-0 max-w-[45%] items-center gap-2">
+          {/* Identity, not navigation: worktree name + a branch chip, then a
+              divider, so nothing here reads as one more tab. */}
+          <div className="flex min-w-0 max-w-[55%] items-center gap-2">
             <span className="truncate font-mono text-zinc-100" title={label}>{label}</span>
             {currentBranch && currentBranch !== label && (
-              <span className="hidden min-w-0 truncate text-xs text-zinc-600 lg:inline" title={currentBranch}>
-                {currentBranch}
+              <span
+                className="hidden min-w-0 items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-400 lg:inline-flex"
+                title={`Branch: ${currentBranch}`}
+              >
+                <BranchGlyph />
+                <span className="truncate">{currentBranch}</span>
               </span>
             )}
-          </div>
-          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {/* Comparing THIS branch with another is a property of the branch,
+                so it sits beside the chip; the base picker appears once on. */}
             <button
-              onClick={() => { setTab('changes'); setShowTree(false); }}
-              className={`shrink-0 rounded-md px-2.5 py-1 text-xs transition ${
-                !showTree && tab === 'changes'
-                  ? 'bg-zinc-800 text-zinc-100'
-                  : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
-              }`}
-            >
-              Changes
-            </button>
-            <button
-              onClick={() => { setTab('branch'); setShowTree(false); }}
-              className={`shrink-0 rounded-md px-2.5 py-1 text-xs transition ${
-                !showTree && tab === 'branch'
-                  ? 'bg-zinc-800 text-zinc-100'
-                  : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
+              onClick={() => {
+                const on = !(!mrsOpen && !showTree && tab === 'branch');
+                setTab(on ? 'branch' : 'changes');
+                setShowTree(false);
+                setMrsOpen(false);
+              }}
+              aria-pressed={!mrsOpen && !showTree && tab === 'branch'}
+              title="Compare this branch with a base branch"
+              className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] transition ${
+                !mrsOpen && !showTree && tab === 'branch'
+                  ? 'border-sky-500/40 bg-sky-500/10 text-sky-200'
+                  : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
               }`}
             >
               vs base
             </button>
-            {tab === 'branch' && (
+            {!mrsOpen && !showTree && tab === 'branch' && (
               <SearchSelect
                 value={baseOverride ?? baseBranch}
                 options={[
@@ -809,8 +921,36 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
               />
             )}
           </div>
+          <span aria-hidden className="h-5 w-px shrink-0 bg-zinc-800" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex shrink-0 items-center rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5">
+              <button
+                onClick={() => { setTab('changes'); setShowTree(false); setMrsOpen(false); }}
+                aria-pressed={!mrsOpen && !showTree && tab === 'changes'}
+                className={segmentClass(!mrsOpen && !showTree && tab === 'changes')}
+              >
+                Changes
+              </button>
+              {(mrProbe.kind === 'list' || mrProbe.kind === 'needsAuth') && (
+                <button
+                  onClick={openMrs}
+                  aria-pressed={mrsOpen}
+                  aria-label={`${mrProbe.provider === 'github' ? 'PRs' : 'MRs'}${mrProbe.kind === 'list' ? ` (${mrProbe.mergeRequests.length})` : ''}`}
+                  title={mrProbe.provider === 'github' ? 'Pull requests' : 'Merge requests'}
+                  className={`${segmentClass(mrsOpen)} inline-flex items-center gap-1.5`}
+                >
+                  {mrProbe.provider === 'github' ? 'PRs' : 'MRs'}
+                  {mrProbe.kind === 'list' && (
+                    <span className="rounded bg-zinc-800 px-1 font-mono text-[10px] tabular-nums text-zinc-300">
+                      {mrProbe.mergeRequests.length}
+                    </span>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
           <button
-            onClick={() => setShowTree((p) => !p)}
+            onClick={() => { setShowTree((p) => !p); setMrsOpen(false); }}
             title="Git tree"
             aria-label="Git tree"
             className={`inline-flex h-7 shrink-0 items-center rounded-md px-2.5 ${
@@ -903,7 +1043,23 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
           </button>
         </div>
 
-        {showTree ? (
+        {mrsOpen ? (
+          <div className="flex min-h-0 flex-1">
+            <div aria-label="Merge request list" role="group" className="w-72 shrink-0 overflow-y-auto border-r border-zinc-800 p-1">
+              {renderMrList()}
+            </div>
+            {/* MrReview fills its nearest positioned ancestor (absolute inset-0). */}
+            <div className="relative min-w-0 flex-1">
+              {selectedMr ? (
+                <MrReview key={selectedMr.number} worktree={worktree} mr={selectedMr} onClose={() => setSelectedMr(null)} />
+              ) : (
+                <div className="p-3 text-xs text-zinc-600">
+                  Select a {mrProbe.kind !== 'loading' && mrProbe.kind !== 'absent' && mrProbe.provider === 'github' ? 'pull request' : 'merge request'} to review it.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : showTree ? (
           <GitTreePanel worktreePath={worktree.path} />
         ) : (
         <div className="flex min-h-0 flex-1">
