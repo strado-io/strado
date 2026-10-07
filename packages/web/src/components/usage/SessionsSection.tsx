@@ -1,4 +1,4 @@
-// Settings → Sessions: where this machine's memory goes, by repo, worktree and
+// Usage → Machine resources → Sessions: where this machine's memory goes, by repo, worktree and
 // session — every pty the daemon holds, each VS Code window, each Browser
 // preview, and Strado's own processes.
 //
@@ -299,7 +299,7 @@ export function SessionsSection() {
 
   return (
     <section className="flex flex-col gap-4" data-testid="sessions-section">
-      <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
+      <h2 className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">Sessions</h2>
 
       {error && (
         <p role="alert" className="rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-300">{error}</p>
