@@ -43,37 +43,33 @@ export function activeGroupOf(groups: FocusGroup[], id: string | null): FocusGro
   return (id && groups.find((g) => g.id === id)) || null;
 }
 
-// Ticket groups: worktrees that share a ticket (FX-412 in api and web) bundle
-// themselves, so the common case needs no upkeep. Derived on every render,
-// never stored — they follow the worktrees as they come and go.
+// Ticket groups: worktrees made from the same ticket (FX-412 in api and web)
+// bundle themselves, so the common case needs no upkeep. Keyed on the ticket
+// id Strado saved when the worktree was created, matched exactly — never
+// parsed out of branch names, since trackers' id formats differ. Derived on
+// every render, never stored, so they follow the worktrees as they come and go.
 const TICKET_ID_PREFIX = 'ticket:';
-const TICKET_RE = /(?:^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9]*-\d+)/;
 
 export const isAutoGroup = (g: FocusGroup) => g.id.startsWith(TICKET_ID_PREFIX);
 
-/** The ticket a worktree is for: its ticket id, else a ticket-shaped part of its branch. */
-export function ticketKey(ticketId: string | null | undefined, branch: string | null | undefined): string | null {
-  for (const s of [ticketId, branch]) {
-    const m = s ? TICKET_RE.exec(s) : null;
-    if (m) return m[1]!.toUpperCase();
+/**
+ * One group per ticket shared by two or more local worktrees, sorted by
+ * ticket. Runner worktrees carry no ticket, so they never join one.
+ */
+export function ticketGroups(worktrees: Worktree[]): FocusGroup[] {
+  const byTicket = new Map<string, string[]>();
+  for (const w of worktrees) {
+    const ticket = w.meta?.ticketId?.trim();
+    if (ticket) byTicket.set(ticket, [...(byTicket.get(ticket) ?? []), localPinId(w)]);
   }
-  return null;
-}
-
-/** One group per ticket shared by two or more worktrees, sorted by ticket. */
-export function ticketGroups(worktrees: Worktree[], remote: RemoteWorktree[]): FocusGroup[] {
-  const byKey = new Map<string, string[]>();
-  const add = (key: string | null, id: string) => { if (key) byKey.set(key, [...(byKey.get(key) ?? []), id]); };
-  for (const w of worktrees) add(ticketKey(w.meta?.ticketId, w.branch), localPinId(w));
-  for (const w of remote) add(ticketKey(null, w.branch), remotePinId(w));
-  return [...byKey.entries()]
+  return [...byTicket.entries()]
     .filter(([, members]) => members.length >= 2)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, members]) => ({ id: `${TICKET_ID_PREFIX}${key}`, name: key, members, createdAt: '' }));
+    .map(([ticket, members]) => ({ id: `${TICKET_ID_PREFIX}${ticket}`, name: ticket, members, createdAt: '' }));
 }
 
 /** Manual groups, then ticket groups — minus a ticket a manual group is already named after. */
-export function allGroups(manual: FocusGroup[], worktrees: Worktree[], remote: RemoteWorktree[]): FocusGroup[] {
-  const named = new Set(manual.map((g) => g.name.trim().toUpperCase()));
-  return [...manual, ...ticketGroups(worktrees, remote).filter((g) => !named.has(g.name))];
+export function allGroups(manual: FocusGroup[], worktrees: Worktree[]): FocusGroup[] {
+  const named = new Set(manual.map((g) => g.name.trim()));
+  return [...manual, ...ticketGroups(worktrees).filter((g) => !named.has(g.name))];
 }
