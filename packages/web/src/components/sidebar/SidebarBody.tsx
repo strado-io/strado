@@ -18,6 +18,7 @@ import { GroupsView } from './GroupsView';
 import { SettledSection } from './SettledSection';
 import { relativeTime } from '../../lib/relativeTime';
 import { GroupPickerDialog } from './GroupPickerDialog';
+import { NewGroupDialog } from './NewGroupDialog';
 import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
@@ -366,6 +367,8 @@ export function SidebarBody({
   const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
   // The worktree whose "Add to group…" picker is open.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  // The New group dialog, with the worktrees it starts ticked (none from the + button).
+  const [newGroupWith, setNewGroupWith] = useState<string[] | null>(null);
   // Right-click on a worktree row: its ⋯ menu, at the cursor.
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
@@ -376,6 +379,7 @@ export function SidebarBody({
   // menu stays short however many groups exist.
   const groupMenuItems = (memberId: string) => [
     { text: 'Add to group…', onClick: () => setPickerFor(memberId) },
+    { text: 'New group…', onClick: () => setNewGroupWith([memberId]) },
   ];
   const vscodeTabs = useVscodeTabs();
   const browserTabs = useBrowserTabs();
@@ -581,17 +585,7 @@ export function SidebarBody({
       <GroupsView
         {...groupListProps}
         groups={focus.groups}
-        candidates={[
-          ...worktrees.map((w) => ({
-            pinId: localPinId(w), label: worktreeLabel(w),
-            repoName: repos.find((r) => r.id === w.repoId)?.name ?? '',
-          })),
-          ...remoteWorktrees.map((w) => ({
-            pinId: remotePinId(w), label: w.branch ?? w.name,
-            repoName: `${repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''} · ${w.runnerName}`,
-          })),
-        ]}
-        onCreate={(name, members) => { focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
+        onNewGroup={() => setNewGroupWith([])}
       />
 
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
@@ -744,6 +738,27 @@ export function SidebarBody({
       groups={focus.groups.filter(doneOf)}
       worktreeRows={settledWorktreeRows}
     />
+
+      {newGroupWith && (
+        <NewGroupDialog
+          initialMembers={newGroupWith}
+          candidates={[
+            ...worktrees.map((w) => ({
+              pinId: localPinId(w), label: worktreeLabel(w),
+              repoName: repos.find((r) => r.id === w.repoId)?.name ?? '',
+            })),
+            ...remoteWorktrees.map((w) => ({
+              pinId: remotePinId(w), label: w.branch ?? w.name,
+              repoName: `${repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''} · ${w.runnerName}`,
+            })),
+          ]}
+          onCancel={() => setNewGroupWith(null)}
+          onCreate={(name, members) => {
+            setNewGroupWith(null);
+            focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
+          }}
+        />
+      )}
 
       {contextMenu && (
         <MenuPopover pos={contextMenu} items={contextMenu.items} anchor="left" onClose={() => setContextMenu(null)} />

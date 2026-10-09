@@ -5,7 +5,6 @@
 import { useState } from 'react';
 import type { FocusGroup } from '../../api';
 import { PlusIcon } from '../hub/icons';
-import { NewGroupDialog, type GroupCandidate } from './NewGroupDialog';
 import type { SidebarEntry } from './pinIds';
 
 export type MenuItem = { text: string; danger?: boolean; onClick: () => void };
@@ -17,9 +16,8 @@ export type GroupsViewProps = {
   membersOf: (g: FocusGroup) => SidebarEntry[];
   collapsedIds: string[];
   onToggleCollapsed: (id: string) => void;
-  /** Worktrees the New group dialog offers to start a group with. */
-  candidates: GroupCandidate[];
-  onCreate: (name: string, members: string[]) => void;
+  /** Opens the New group dialog (SidebarBody owns it: worktree menus open it too). */
+  onNewGroup: () => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   renderMember: (e: SidebarEntry, g: FocusGroup) => React.ReactNode;
@@ -108,26 +106,21 @@ export function GroupList({
 /**
  * Open groups only — finished ones are shown by SettledSection at the bottom.
  * Nothing at all when there are none: the first group comes from a worktree's
- * ⋯ → Add to group…, so an empty header would only take room.
+ * menu (New group… / Add to group…), so an empty header would only take room.
  */
-export function GroupsView({ candidates, onCreate, ...list }: GroupsViewProps) {
-  const [creating, setCreating] = useState(false);
+export function GroupsView({ onNewGroup, ...list }: GroupsViewProps) {
   const openGroups = list.groups.filter((g) => !list.isDone(g));
   if (openGroups.length === 0) return null;
   return (
     <section aria-label="Focus groups">
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
         <span className="text-xs text-zinc-500">Groups</span>
-        <button onClick={() => setCreating(true)} aria-label="New group" title="New group"
+        <button onClick={onNewGroup} aria-label="New group" title="New group"
           className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300">
           <PlusIcon size={12} />
         </button>
       </div>
       <GroupList {...list} groups={openGroups} />
-      {creating && (
-        <NewGroupDialog candidates={candidates} onCancel={() => setCreating(false)}
-          onCreate={(name, members) => { setCreating(false); onCreate(name, members); }} />
-      )}
     </section>
   );
 }

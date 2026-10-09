@@ -12,14 +12,16 @@ export type GroupCandidate = { pinId: string; label: string; repoName: string };
 
 const MAX_NAME = 80; // the server's limit
 
-export function NewGroupDialog({ candidates, onCreate, onCancel }: {
+export function NewGroupDialog({ candidates, initialMembers = [], onCreate, onCancel }: {
   /** Worktrees that can start in the group. */
   candidates: GroupCandidate[];
+  /** Ticked from the start — the worktree whose menu opened the dialog. */
+  initialMembers?: string[];
   onCreate: (name: string, members: string[]) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState('');
-  const [picked, setPicked] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>(initialMembers);
   const [filter, setFilter] = useState('');
   const [ticketOpen, setTicketOpen] = useState(false);
 

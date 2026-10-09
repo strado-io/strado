@@ -164,6 +164,19 @@ describe('SidebarBody groups section', () => {
     expect(screen.getByRole('dialog', { name: 'Add to group' })).toBeInTheDocument();
   });
 
+  it('starts a new group from a worktree menu, with that worktree ticked', () => {
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    focus.create.mockResolvedValue({ ...group, id: 'g9', name: 'Fresh' });
+    render(<SidebarBody {...props({ expandedRepos: new Set(['r1']) })} />);
+    fireEvent.contextMenu(screen.getAllByText('fx-412')[0]!, { clientX: 10, clientY: 10 });
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'New group…' }));
+    const dialog = screen.getByRole('dialog', { name: 'New group' });
+    expect(within(dialog).getByRole('checkbox', { name: 'api fx-412' })).toBeChecked();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Fresh' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }));
+    expect(focus.create).toHaveBeenCalledWith('Fresh', ['local:/r1/wt']);
+  });
+
   it('filters groups as you type', () => {
     const dialog = openPicker();
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Find or create a group' }), { target: { value: 'zzz' } });
