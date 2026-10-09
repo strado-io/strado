@@ -302,7 +302,7 @@ describe('Sidebar tree', () => {
     const icon = screen.getByText('FD-1').closest('.group')!.querySelector('[data-worktree-icon="branch"]');
     expect(icon).toHaveAttribute('width', '14');
     expect(icon).toHaveAttribute('height', '14');
-    expect(icon?.parentElement).toHaveClass('ml-1.5');
+    expect(icon?.parentElement).toHaveClass('ml-8');
   });
 
   it('shows at most three overlapping session avatars plus a count, and lists every session on hover', () => {
