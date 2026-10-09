@@ -38,6 +38,8 @@ export type SidebarBodyProps = {
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   activeWorktreePath: string | null;
   onNewWorktreeForRepo: (repo: RepoConfig) => void;
+  /** New worktree with the repo still to pick. */
+  onNewWorktree?: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
@@ -354,7 +356,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 export function SidebarBody({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
   onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
-  onOpenMr, onOpenDiff, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
+  onOpenMr, onOpenDiff, onNewWorktreeForRepo, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
   remoteLoading = false, pinnedWorktreeIds, onTogglePinnedWorktree, onError,
 }: SidebarBodyProps) {
@@ -373,8 +375,21 @@ export function SidebarBody({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
     e.preventDefault();
+    e.stopPropagation(); // a row's menu, not the blank-space one below
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
+  // Fold every repo and every group, e.g. to get back to a short list.
+  const collapseAll = () => {
+    for (const id of expandedRepos) onToggleRepo(id);
+    for (const g of focus.groups) if (!focusPrefs.collapsedGroupIds.includes(g.id)) focusPrefs.toggleGroupCollapsed(g.id);
+  };
+  // Right-click on blank sidebar space: what you can make from here, and tidying up.
+  const openBlankContextMenu = (e: React.MouseEvent) => openContextMenu(e, [
+    ...(onNewWorktree ? [{ text: 'New worktree…', onClick: onNewWorktree }] : []),
+    { text: 'New group…', onClick: () => setNewGroupWith([]) },
+    { text: 'Add repo…', onClick: () => onAddRepo({ left: e.clientX, right: e.clientX, bottom: e.clientY }) },
+    { text: 'Collapse all', onClick: collapseAll },
+  ]);
   // Row-menu entry: a single "Add to group…" that opens the picker, so the
   // menu stays short however many groups exist.
   const groupMenuItems = (memberId: string) => [
@@ -570,7 +585,7 @@ export function SidebarBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
       {/* Pinned first: the few worktrees kept within reach. */}
       {pinnedRows.length > 0 && (
         <section aria-label="Pinned worktrees">

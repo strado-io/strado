@@ -177,6 +177,37 @@ describe('SidebarBody groups section', () => {
     expect(focus.create).toHaveBeenCalledWith('Fresh', ['local:/r1/wt']);
   });
 
+  it('right-clicking blank sidebar space offers New group and Add repo', () => {
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    const onAddRepo = vi.fn();
+    const { container } = render(<SidebarBody {...props({ onAddRepo })} />);
+    fireEvent.contextMenu(container.querySelector('.overflow-y-auto')!, { clientX: 20, clientY: 300 });
+    const menu = screen.getByRole('menu');
+    expect(within(menu).queryByRole('button', { name: 'Delete worktree' })).not.toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole('button', { name: 'New group…' }));
+    expect(screen.getByRole('dialog', { name: 'New group' })).toBeInTheDocument();
+  });
+
+  it('blank-space menu starts a new worktree and collapses every repo and group', () => {
+    const onNewWorktree = vi.fn();
+    const onToggleRepo = vi.fn();
+    const { container } = render(<SidebarBody {...props({ onNewWorktree, onToggleRepo, expandedRepos: new Set(['r1', 'r2']) })} />);
+    const blank = container.querySelector('.overflow-y-auto')!;
+    fireEvent.contextMenu(blank, { clientX: 20, clientY: 300 });
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'New worktree…' }));
+    expect(onNewWorktree).toHaveBeenCalled();
+    fireEvent.contextMenu(blank, { clientX: 20, clientY: 300 });
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Collapse all' }));
+    expect(onToggleRepo.mock.calls.map((c) => c[0]).sort()).toEqual(['r1', 'r2']);
+    expect(JSON.parse(localStorage.getItem('strado:focus-groups-collapsed')!)).toEqual({ w1: ['g1'] });
+  });
+
+  it('a worktree row keeps its own menu on right-click', () => {
+    render(<SidebarBody {...props({ expandedRepos: new Set(['r1']) })} />);
+    fireEvent.contextMenu(screen.getAllByText('fx-412')[0]!, { clientX: 10, clientY: 10 });
+    expect(within(screen.getByRole('menu')).getByRole('button', { name: 'Delete worktree' })).toBeInTheDocument();
+  });
+
   it('filters groups as you type', () => {
     const dialog = openPicker();
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Find or create a group' }), { target: { value: 'zzz' } });
