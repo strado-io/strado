@@ -154,6 +154,16 @@ describe('SidebarBody groups section', () => {
     expect(focus.setMembership).toHaveBeenCalledWith('g1', expect.stringMatching(/^local:\/r2\//), true);
   });
 
+  it('right-clicking a worktree opens its menu at the cursor, with Add to group', () => {
+    render(<SidebarBody {...props({ expandedRepos: new Set(['r2']) })} />);
+    const row = screen.getAllByText('fx-412').at(-1)!;
+    fireEvent.contextMenu(row, { clientX: 40, clientY: 80 });
+    const menu = screen.getByRole('menu');
+    expect(menu).toHaveStyle({ left: '40px', top: '80px' });
+    fireEvent.click(within(menu).getByRole('button', { name: 'Add to group…' }));
+    expect(screen.getByRole('dialog', { name: 'Add to group' })).toBeInTheDocument();
+  });
+
   it('filters groups as you type', () => {
     const dialog = openPicker();
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Find or create a group' }), { target: { value: 'zzz' } });

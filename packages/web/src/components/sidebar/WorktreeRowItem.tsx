@@ -58,10 +58,12 @@ export type WorktreeRowItemProps = {
   children: React.ReactNode;
   className: string;
   runnerName?: string;
+  /** Right-click on the row; the hover card closes first. */
+  onContextMenu?: (e: React.MouseEvent) => void;
 };
 
 export function WorktreeRowItem({
-  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName,
+  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu,
 }: WorktreeRowItemProps) {
   const hover = useRowHoverCard();
   const dismiss = useMemo(() => ({ close: hover.close }), [hover.close]);
@@ -69,7 +71,8 @@ export function WorktreeRowItem({
   // paint straight over it; the hub parks that view while the card is up.
   useRendererOverlay(hover.open);
   return (
-    <div ref={hover.ref} className={className} {...hover.triggerProps}>
+    <div ref={hover.ref} className={className} {...hover.triggerProps}
+      onContextMenu={onContextMenu ? (e) => { hover.close(); onContextMenu(e); } : undefined}>
       <RowHoverCardContext.Provider value={dismiss}>{children}</RowHoverCardContext.Provider>
       {hover.open && hover.rects && (
         <WorktreeHoverCard
