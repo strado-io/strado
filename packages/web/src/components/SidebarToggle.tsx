@@ -11,7 +11,8 @@ export const insetTitleBar = (): boolean => typeof window !== 'undefined' && !!w
 const LIGHTS_WIDTH = 72;
 /**
  * Height of the row the lights sit in; centred on them. Keep in step with
- * trafficLightPosition in the desktop shell's main.cjs (y=16 → centre ≈ 23).
+ * trafficLightPosition in the desktop shell's main.cjs (y=10, measured to sit
+ * the lights on this row's centre line).
  */
 export const TITLE_BAR_HEIGHT = 46;
 
