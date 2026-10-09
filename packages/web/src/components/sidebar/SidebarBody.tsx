@@ -534,7 +534,17 @@ export function SidebarBody({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-      {/* Groups first: the cross-repo bundles for the tasks at hand, then the repo tree. */}
+      {/* Pinned first: the few worktrees kept within reach. */}
+      {pinnedRows.length > 0 && (
+        <section aria-label="Pinned worktrees">
+          <div className="mb-1 mt-4 flex items-center pl-2.5 pr-1">
+            <span className="text-xs text-zinc-500">Pinned</span>
+          </div>
+          <div className="flex flex-col gap-0.5">{pinnedRows}</div>
+        </section>
+      )}
+
+      {/* Then the groups: cross-repo bundles for the tasks at hand. */}
       <GroupsView
         {...groupListProps}
         groups={focus.groups}
@@ -550,15 +560,6 @@ export function SidebarBody({
         ]}
         onCreate={(name, members) => { focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
       />
-
-      {pinnedRows.length > 0 && (
-        <section aria-label="Pinned worktrees">
-          <div className="mb-1 mt-4 flex items-center pl-2.5 pr-1">
-            <span className="text-xs text-zinc-500">Pinned</span>
-          </div>
-          <div className="flex flex-col gap-0.5">{pinnedRows}</div>
-        </section>
-      )}
 
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
         <span className="text-xs text-zinc-500">Repos</span>
