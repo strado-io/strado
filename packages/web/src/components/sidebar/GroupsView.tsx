@@ -7,6 +7,13 @@ import type { FocusGroup } from '../../api';
 import { PlusIcon } from '../hub/icons';
 import type { SidebarEntry } from './pinIds';
 
+/**
+ * The worktrees under a group or repo: indented, with a faint guide line
+ * dropping from the parent's icon (centred 18px in), so a section's items and
+ * their worktrees read as separate levels.
+ */
+export const TREE_CHILDREN = 'ml-[18px] flex flex-col gap-0.5 border-l border-zinc-800/70 pl-1';
+
 export type MenuItem = { text: string; danger?: boolean; onClick: () => void };
 
 export type GroupsViewProps = {
@@ -91,9 +98,9 @@ export function GroupList({
           ])}
         </div>
         {open && (
-          <div className="flex flex-col gap-0.5">
+          <div className={TREE_CHILDREN}>
             {members.length === 0
-              ? <div className="py-1 pl-9 pr-2 text-xs text-zinc-600">Empty — add worktrees from their ⋯ menu.</div>
+              ? <div className="py-1 pl-3 pr-2 text-xs text-zinc-600">Empty — add worktrees from their ⋯ menu.</div>
               : members.map((m) => renderMember(m, g))}
           </div>
         )}
