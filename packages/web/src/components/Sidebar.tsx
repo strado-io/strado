@@ -9,8 +9,7 @@ import { SidebarBody } from './sidebar/SidebarBody';
 import type { OpenWorktree } from './sidebar/WorktreeRowItem';
 import { SpaceCarousel, type CarouselPane, type SpaceCarouselHandle } from './sidebar/SpaceCarousel';
 import { SpaceDots } from './sidebar/SpaceDots';
-import { AccountMenu } from './AccountMenu';
-import { SidebarNav, settingsIcon } from './sidebar/SidebarNav';
+import { SidebarNav } from './sidebar/SidebarNav';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
 export type AddRepoAnchor = { left: number; right: number; bottom: number };
@@ -46,8 +45,6 @@ export type Props = {
   selected: SidebarView;
   onSelect: (view: SidebarView) => void;
   onOpenSettings: () => void;
-  onOpenOrgSettings: (section: 'organization') => void;
-  onOpenFeedback: () => void;
   taskCount: number;
   reviewCount?: number;
   /** True until the first workspace-wide code-review fetch settles. */
@@ -167,7 +164,7 @@ function WorkspaceSwitcher({
 }
 
 export function Sidebar({
-  repos, worktrees, selected, onSelect, onOpenSettings, onOpenOrgSettings, onOpenFeedback,
+  repos, worktrees, selected, onSelect, onOpenSettings,
   taskCount, onCollapse, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
@@ -307,15 +304,7 @@ export function Sidebar({
         />
         <UpdateFooter {...update} />
         <SidebarNav selected={selected} onSelect={onSelect} taskCount={taskCount}
-          reviewCount={reviewCount} reviewLoading={reviewLoading}
-          account={(
-            <AccountMenu
-              compact
-              icon={settingsIcon}
-              onOpenSettings={(section) => section === 'organization' ? onOpenOrgSettings(section) : onOpenSettings()}
-              onOpenFeedback={onOpenFeedback}
-            />
-          )} />
+          reviewCount={reviewCount} reviewLoading={reviewLoading} onOpenSettings={onOpenSettings} />
       </div>
     </aside>
   );

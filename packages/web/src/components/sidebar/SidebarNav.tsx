@@ -1,6 +1,6 @@
 // The sidebar's page switcher: one row of icons at the bottom (Tasks, Code
-// reviews, Usage, and a gear for the settings / account menu), so the rail
-// above is all groups and worktrees.
+// reviews, Usage, Settings), so the rail above is all groups and worktrees.
+// Account things — profile, organization, feedback, sign out — live in Settings.
 import type { SidebarView } from '../Sidebar';
 
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
@@ -19,7 +19,7 @@ const usageIcon = (
   </svg>
 );
 // Lucide "settings".
-export const settingsIcon = (
+const settingsIcon = (
   <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
     <circle cx="12" cy="12" r="3" />
@@ -48,14 +48,13 @@ function NavButton({ label, icon, active = false, count = null, loading = false,
   );
 }
 
-export function SidebarNav({ selected, onSelect, taskCount, reviewCount = 0, reviewLoading = false, account }: {
+export function SidebarNav({ selected, onSelect, taskCount, reviewCount = 0, reviewLoading = false, onOpenSettings }: {
   selected: SidebarView;
   onSelect: (view: SidebarView) => void;
   taskCount: number;
   reviewCount?: number;
   reviewLoading?: boolean;
-  /** The settings / account menu button, at the far right of the row. */
-  account?: React.ReactNode;
+  onOpenSettings: () => void;
 }) {
   return (
     <nav aria-label="Pages" className="flex items-center gap-1 px-1">
@@ -68,7 +67,7 @@ export function SidebarNav({ selected, onSelect, taskCount, reviewCount = 0, rev
       <NavButton label="Usage" icon={usageIcon} active={selected.kind === 'usage'}
         onClick={() => onSelect({ kind: 'usage' })} />
       <span className="flex-1" />
-      {account}
+      <NavButton label="Open settings" icon={settingsIcon} onClick={onOpenSettings} />
     </nav>
   );
 }

@@ -83,8 +83,6 @@ const base = {
   selected: { kind: 'tasks' as const },
   onSelect: vi.fn(),
   onOpenSettings: vi.fn(),
-  onOpenOrgSettings: vi.fn(),
-  onOpenFeedback: vi.fn(),
   taskCount: 0,
   onCollapse: vi.fn(),
   onAddRepo: vi.fn(),
@@ -121,9 +119,7 @@ describe('Sidebar tree', () => {
     const nav = screen.getByRole('navigation', { name: 'Pages' });
     fireEvent.click(within(nav).getByRole('button', { name: 'Usage' }));
     expect(onSelect).toHaveBeenCalledWith({ kind: 'usage' });
-    // The gear opens the account menu; Settings is its first action.
-    fireEvent.click(within(nav).getByRole('button', { name: /^Account: / }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Settings$/ }));
+    fireEvent.click(within(nav).getByRole('button', { name: 'Open settings' }));
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
@@ -659,12 +655,12 @@ describe('Sidebar tree', () => {
       expect(screen.queryByRole('menu', { name: 'Workspaces' })).toBeNull();
     });
 
-    it('renders a dot per space without a second settings menu', async () => {
+    it('renders a dot per space without a second settings menu', () => {
       wrap(<Sidebar {...base} expandedRepos={new Set()} />);
       expect(screen.getByRole('button', { name: 'Switch to W' })).toHaveAttribute('aria-current', 'true');
       expect(screen.getByRole('button', { name: 'Switch to Second' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
-      expect(await screen.findByRole('button', { name: 'Account: Kamlesh' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Open settings' })).toBeInTheDocument();
     });
 
     it('switches workspace when a dot with no pane of its own is clicked', () => {

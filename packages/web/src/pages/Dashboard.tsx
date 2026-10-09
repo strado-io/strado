@@ -794,8 +794,6 @@ export function Dashboard(props: {
           onSelect={selectView}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
-          onOpenOrgSettings={() => setSettingsSection('organization')}
-          onOpenFeedback={() => setFeedbackOpen(true)}
           taskCount={state.worktrees.length}
           reviewCount={codeReviews.counts.open}
           reviewLoading={codeReviews.loading && codeReviews.repositories.length === 0}
