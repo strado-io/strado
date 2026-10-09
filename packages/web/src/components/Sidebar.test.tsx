@@ -630,7 +630,7 @@ describe('Sidebar tree', () => {
           runnerStatuses={statuses(true)} onDeleteRemoteWorktree={onDelete} />,
       );
       fireEvent.click(screen.getByLabelText('main on runner-dev actions'));
-      expect(screen.getByText('Add to new group…')).toBeInTheDocument();
+      expect(screen.getByText('Add to group…')).toBeInTheDocument();
       expect(screen.queryByText('Delete worktree')).toBeNull();
       fireEvent.keyDown(window, { key: 'Escape' });
       expect(screen.getByRole('button', { name: 'Pin main on runner-dev' }).parentElement).toHaveClass('absolute', 'right-1');

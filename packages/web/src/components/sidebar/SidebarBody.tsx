@@ -15,7 +15,7 @@ import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './Wo
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
 import { GroupsView } from './GroupsView';
-import { NewGroupDialog } from './NewGroupDialog';
+import { GroupPickerDialog } from './GroupPickerDialog';
 import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
@@ -345,22 +345,12 @@ export function SidebarBody({
   const doneOf = (g: FocusGroup) =>
     isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
   const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
-  // The worktree a pending "Add to new group…" will seed the group with.
-  const [newGroupFor, setNewGroupFor] = useState<string | null>(null);
-  // Row-menu entries: one Add/Remove per open group, plus "new group" — a flat
-  // list because Menu has no submenus and a handful of groups fits fine.
+  // The worktree whose "Add to group…" picker is open.
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  // Row-menu entry: a single "Add to group…" that opens the picker, so the
+  // menu stays short however many groups exist.
   const groupMenuItems = (memberId: string) => [
-    ...focus.groups.filter((g) => !doneOf(g)).map((g) => {
-      const member = g.members.includes(memberId);
-      return {
-        text: `${member ? 'Remove from' : 'Add to'} ${g.name}`,
-        onClick: () => { focus.setMembership(g.id, memberId, !member).catch(report); },
-      };
-    }),
-    {
-      text: 'Add to new group…',
-      onClick: () => setNewGroupFor(memberId),
-    },
+    { text: 'Add to group…', onClick: () => setPickerFor(memberId) },
   ];
   const vscodeTabs = useVscodeTabs();
   const browserTabs = useBrowserTabs();
@@ -742,13 +732,15 @@ export function SidebarBody({
       </div>
       </>)}
 
-      {newGroupFor && (
-        <NewGroupDialog
-          onCancel={() => setNewGroupFor(null)}
+      {pickerFor && (
+        <GroupPickerDialog
+          groups={focus.groups.filter((g) => !doneOf(g))}
+          memberId={pickerFor}
+          onClose={() => setPickerFor(null)}
+          onToggle={(id, add) => { focus.setMembership(id, pickerFor, add).catch(report); }}
           onCreate={(name) => {
-            setNewGroupFor(null);
             // Land in the Groups view so the new group is visible straight away.
-            focus.create(name, [newGroupFor]).then((g) => {
+            focus.create(name, [pickerFor]).then((g) => {
               focusPrefs.setActiveFocusGroupId(g.id);
               focusPrefs.setSidebarMode('groups');
             }).catch(report);
