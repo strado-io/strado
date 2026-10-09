@@ -14,7 +14,7 @@ import { worktreeLabel, worktreeTitle } from './labels';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
-import { GroupsView } from './GroupsView';
+import { GroupsView, TREE_CHILDREN } from './GroupsView';
 import { SettledSection } from './SettledSection';
 import { relativeTime } from '../../lib/relativeTime';
 import { GroupPickerDialog } from './GroupPickerDialog';
@@ -301,7 +301,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
           className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
         />
       )}
-      <span className={`${placement === 'repo' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+      <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-1.5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
         <BranchIcon className={activeRow ? 'text-sky-400' : reachable ? 'text-zinc-600' : 'text-zinc-700'} />
       </span>
       <button
@@ -459,7 +459,7 @@ export function SidebarBody({
             className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
           />
         )}
-        <span className={`${placement === 'repo' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+        <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-1.5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
           {mr ? (
             <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} />
           ) : agentWorking(w) ? (
@@ -657,11 +657,11 @@ export function SidebarBody({
               </div>
               {open && (() => {
                 return (
-                // rows span the full sidebar width; indentation lives in padding
-                // so the hover/active background has no dead gap on the left
-                <div className="flex flex-col gap-0.5">
+                // nested under the repo: indented, with a guide line down from
+                // its icon, so the tree reads as levels
+                <div className={TREE_CHILDREN}>
                   {repoWts.length === 0 && repoRemote.length === 0 && (
-                    <div className="py-1.5 pl-9 pr-2 text-xs text-zinc-600">No worktrees</div>
+                    <div className="py-1.5 pl-3 pr-2 text-xs text-zinc-600">No worktrees</div>
                   )}
                   {repoWts.map((w) => localRow(w, repo.name, 'repo'))}
                   {/* Runner worktrees for this repo, after the local ones. An
@@ -710,7 +710,7 @@ export function SidebarBody({
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{g.name}</span>
                 <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600">{g.rows.length}</span>
               </div>
-              <div className="flex flex-col gap-0.5">
+              <div className={TREE_CHILDREN}>
                 {g.rows.map((w) => (
                   <RemoteRow
                     key={`${w.runnerId}:${w.path}`}
