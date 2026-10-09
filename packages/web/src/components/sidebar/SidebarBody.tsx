@@ -16,7 +16,7 @@ import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
 import { GroupsView } from './GroupsView';
 import { GroupPickerDialog } from './GroupPickerDialog';
-import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
+import { activeGroupOf, allGroups, isGroupDone, resolveMembers } from './focusGroups';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
 export type SidebarBodyProps = {
@@ -344,7 +344,9 @@ export function SidebarBody({
   const report = (err: unknown) => onError?.((err as Error).message);
   const doneOf = (g: FocusGroup) =>
     isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
-  const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
+  // Manual groups plus the ones worktrees sharing a ticket form on their own.
+  const groups = allGroups(focus.groups, worktrees, remoteWorktrees);
+  const activeGroup = activeGroupOf(groups, focusPrefs.activeFocusGroupId);
   // The worktree whose "Add to group…" picker is open.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   // Row-menu entry: a single "Add to group…" that opens the picker, so the
@@ -544,7 +546,7 @@ export function SidebarBody({
 
       {focusPrefs.sidebarMode === 'groups' ? (
         <GroupsView
-          groups={focus.groups}
+          groups={groups}
           activeGroupId={activeGroup?.id ?? null}
           isDone={doneOf}
           membersOf={(g) => resolveMembers(g, worktrees, remoteWorktrees)}
