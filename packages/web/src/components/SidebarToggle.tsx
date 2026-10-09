@@ -9,6 +9,11 @@ export const insetTitleBar = (): boolean => typeof window !== 'undefined' && !!w
 
 /** Room for the three traffic lights (shell places them at x=16). */
 const LIGHTS_WIDTH = 72;
+/**
+ * Height of the row the lights sit in; centred on them. Keep in step with
+ * trafficLightPosition in the desktop shell's main.cjs (y=16 → centre ≈ 23).
+ */
+export const TITLE_BAR_HEIGHT = 46;
 
 // Electron-only CSS: a strip that moves the window, and the controls inside it
 // that must stay clickable.
@@ -38,7 +43,7 @@ export function SidebarToggleButton({ open, onClick }: { open: boolean; onClick:
 /** A blank, draggable slot under the traffic lights; nothing outside the macOS shell. */
 export function TrafficLightsSpacer() {
   if (!insetTitleBar()) return null;
-  return <span aria-hidden className={`${DRAG} -my-2 shrink-0 self-stretch`} style={{ width: LIGHTS_WIDTH }} />;
+  return <span aria-hidden className={`${DRAG} shrink-0 self-stretch`} style={{ width: LIGHTS_WIDTH }} />;
 }
 
 /** For a page toolbar while the sidebar is closed: clear the lights, then the open button. */
