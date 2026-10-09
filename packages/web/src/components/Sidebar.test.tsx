@@ -9,6 +9,9 @@ import { useMrSummaries } from '../hooks/mrSummaries';
 vi.mock('../hooks/mrSummaries', () => ({
   useMrSummaries: vi.fn(() => new Map()),
 }));
+vi.mock('../hooks/useFocusGroups', () => ({
+  useFocusGroups: vi.fn(() => ({ groups: [], loaded: true, create: vi.fn(), rename: vi.fn(), setMembership: vi.fn(), remove: vi.fn() })),
+}));
 
 // The sidebar prefetches its neighbouring spaces on mount; these tests are
 // about the rail, not the fetch, so the neighbour panes stay empty. The
@@ -619,13 +622,17 @@ describe('Sidebar tree', () => {
       unmount();
 
       // A repo's main working tree isn't removable as a worktree — the delete
-      // route refuses it — so offering the action would be a dead end.
+      // route refuses it — so offering the action would be a dead end. Its
+      // menu still exists for the focus-group entries.
       wrap(
         <Sidebar {...base} expandedRepos={new Set(['r1'])}
           remoteWorktrees={[remote({ isRepoRoot: true, name: 'main', branch: 'main' })]}
           runnerStatuses={statuses(true)} onDeleteRemoteWorktree={onDelete} />,
       );
-      expect(screen.queryByLabelText('main on runner-dev actions')).toBeNull();
+      fireEvent.click(screen.getByLabelText('main on runner-dev actions'));
+      expect(screen.getByText('Add to new group…')).toBeInTheDocument();
+      expect(screen.queryByText('Delete worktree')).toBeNull();
+      fireEvent.keyDown(window, { key: 'Escape' });
       expect(screen.getByRole('button', { name: 'Pin main on runner-dev' }).parentElement).toHaveClass('absolute', 'right-1');
     });
   });
