@@ -105,26 +105,25 @@ export function GroupList({
   return <div className="flex flex-col gap-0.5">{groups.map(group)}</div>;
 }
 
-/** Open groups only — finished ones are shown by SettledSection at the bottom. */
+/**
+ * Open groups only — finished ones are shown by SettledSection at the bottom.
+ * Nothing at all when there are none: the first group comes from a worktree's
+ * ⋯ → Add to group…, so an empty header would only take room.
+ */
 export function GroupsView({ candidates, onCreate, ...list }: GroupsViewProps) {
   const [creating, setCreating] = useState(false);
   const openGroups = list.groups.filter((g) => !list.isDone(g));
+  if (openGroups.length === 0) return null;
   return (
     <section aria-label="Focus groups">
-      <div className="mb-1 mt-1 flex items-center justify-between pl-2.5 pr-1">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">Groups</span>
+      <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
+        <span className="text-xs text-zinc-500">Groups</span>
         <button onClick={() => setCreating(true)} aria-label="New group" title="New group"
           className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300">
           <PlusIcon size={12} />
         </button>
       </div>
-      {list.groups.length === 0 ? (
-        <div className="px-2.5 py-1 text-xs text-zinc-600">
-          Bundle worktrees from any repo: + or a worktree's ⋯ → Add to group…
-        </div>
-      ) : (
-        <GroupList {...list} groups={openGroups} />
-      )}
+      <GroupList {...list} groups={openGroups} />
       {creating && (
         <NewGroupDialog candidates={candidates} onCancel={() => setCreating(false)}
           onCreate={(name, members) => { setCreating(false); onCreate(name, members); }} />

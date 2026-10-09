@@ -125,10 +125,11 @@ describe('SidebarBody groups section', () => {
     expect(screen.queryByRole('region', { name: 'Settled' })).not.toBeInTheDocument();
   });
 
-  it('explains how to start when there are no groups', () => {
+  it('shows no Groups section at all when there are no groups', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
-    render(<SidebarBody {...props()} />);
-    expect(screen.getByText(/Bundle worktrees from any repo/)).toBeInTheDocument();
+    render(<SidebarBody {...props({ worktrees: [{ ...wt('/r1/m', 'r1'), branch: 'main' }] })} />);
+    expect(screen.queryByRole('region', { name: 'Focus groups' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
   });
   // One "Add to group…" item, however many groups exist — the picker holds the list.
   const openPicker = () => {
