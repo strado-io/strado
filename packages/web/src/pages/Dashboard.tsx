@@ -25,9 +25,16 @@ import { useDensity } from '../hooks/useDensity';
 import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
+import { useFocusShortcut } from '../hooks/focusShortcut';
+import { useFocusGroups } from '../hooks/useFocusGroups';
+import { useFocusPrefs } from '../hooks/focusPrefs';
+import { useMrSummaries } from '../hooks/mrSummaries';
+import { activeGroupOf, isGroupDone, nextMember, resolveMembers } from '../components/sidebar/focusGroups';
+import { worktreeLabel } from '../components/sidebar/labels';
+import type { SidebarEntry } from '../components/sidebar/pinIds';
 import { TaskBoard } from '../components/TaskBoard';
 import { computeReorderPatches } from '../hooks/rowOrder';
-import { bumpWorktreeOpened } from '../lib/worktreeLru';
+import { bumpWorktreeOpened, readWorktreeLru } from '../lib/worktreeLru';
 import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
@@ -540,6 +547,58 @@ export function Dashboard(props: {
   // True until this workspace's FIRST remote fetch settles — the sidebar shows
   // a quiet loading hint instead of runner rows popping in a beat late.
   const [remoteLoading, setRemoteLoading] = useState(true);
+  const openRemoteWorktree = useCallback((w: RemoteWorktree) => {
+    setSelectedPath(null); // one hub at a time
+    setSelectedRemote(w);
+    props.onOpenRemoteWorktree?.(w);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.onOpenRemoteWorktree]);
+
+  // ⌥⌘←/→ walks the active focus group's worktrees (any repo, local or runner).
+  const focusGroups = useFocusGroups(wsId);
+  const focusPrefs = useFocusPrefs(wsId);
+  const activeFocusMembers = useMemo(() => {
+    const g = activeGroupOf(focusGroups.groups, focusPrefs.activeFocusGroupId);
+    return g ? resolveMembers(g, state.worktrees, remote.worktrees) : [];
+  }, [focusGroups.groups, focusPrefs.activeFocusGroupId, state.worktrees, remote.worktrees]);
+  const openFocusMember = useCallback((m: SidebarEntry) => {
+    if (m.kind === 'local') openInlineHub(m.w);
+    else openRemoteWorktree(m.w);
+  }, [openInlineHub, openRemoteWorktree]);
+  useFocusShortcut((dir) => {
+    const currentId = selectedRemote
+      ? `remote:${selectedRemote.runnerId}:${selectedRemote.path}`
+      : selectedPath ? `local:${selectedPath}` : null;
+    const next = nextMember(activeFocusMembers, currentId, dir);
+    if (!next) return false;
+    openFocusMember(next);
+    return true;
+  });
+
+  // ⌘K rows for the focus groups. Same cached MR hook the sidebar uses, so
+  // the Done check costs no extra requests within its TTL.
+  const mrByPath = useMrSummaries(wsId, state.worktrees.map((w) => w.path));
+  const paletteGroups = useMemo(() => focusGroups.groups.map((group) => {
+    const members = resolveMembers(group, state.worktrees, remote.worktrees);
+    const repoNames = [...new Set(members.map((m) => state.repos.find((r) => r.id === m.repoId)?.name).filter(Boolean))];
+    const first = members[0];
+    const label = first ? (first.kind === 'local' ? worktreeLabel(first.w) : (first.w.branch ?? first.w.name)) : '';
+    return {
+      group,
+      detail: [label, repoNames.join(', ')].filter(Boolean).join(' · '),
+      done: isGroupDone(members, (p) => mrByPath.get(p)?.state ?? null),
+    };
+  }), [focusGroups.groups, state.worktrees, state.repos, remote.worktrees, mrByPath]);
+  // Picking a group in ⌘K makes it active and opens its most recently used member.
+  const pickFocusGroup = (id: string) => {
+    focusPrefs.setActiveFocusGroupId(id);
+    const group = focusGroups.groups.find((g) => g.id === id);
+    if (!group) return;
+    const members = resolveMembers(group, state.worktrees, remote.worktrees);
+    const lru = readWorktreeLru();
+    const best = [...members].sort((a, b) => (lru[b.w.path] ?? 0) - (lru[a.w.path] ?? 0))[0];
+    if (best) openFocusMember(best);
+  };
   useEffect(() => {
     // A space switch clears the previous space's rows rather than letting them
     // linger: they'd render as orphan repo folders here until the fetch lands.
@@ -730,11 +789,7 @@ export function Dashboard(props: {
           runnerStatuses={remote.runners}
           remoteLoading={remoteLoading}
           onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
-          onOpenRemoteWorktree={(w) => {
-            setSelectedPath(null); // one hub at a time
-            setSelectedRemote(w);
-            props.onOpenRemoteWorktree?.(w);
-          }}
+          onOpenRemoteWorktree={openRemoteWorktree}
           selected={activeView}
           onSelect={selectView}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
@@ -969,6 +1024,8 @@ export function Dashboard(props: {
           worktrees={state.worktrees}
           workspaces={allWorkspaces}
           activeWorkspaceId={wsId}
+          focusGroups={paletteGroups}
+          onPickGroup={pickFocusGroup}
           onOpenWorktree={(w, fromWs) => {
             if (fromWs && fromWs !== wsId) {
               // hub (if open) must come down before the workspace flips —
