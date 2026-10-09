@@ -10,6 +10,7 @@ const orgRemoveMember = vi.hoisted(() => vi.fn());
 const orgAccept = vi.hoisted(() => vi.fn());
 const orgDecline = vi.hoisted(() => vi.fn());
 const orgLeave = vi.hoisted(() => vi.fn());
+const orgSwitch = vi.hoisted(() => vi.fn());
 const licenseGet = vi.hoisted(() => vi.fn());
 
 vi.mock('../../api', async () => {
@@ -26,6 +27,7 @@ vi.mock('../../api', async () => {
         accept: orgAccept,
         decline: orgDecline,
         leave: orgLeave,
+        switch: orgSwitch,
       },
       license: { get: licenseGet },
     },
@@ -283,5 +285,28 @@ describe('OrganizationSection', () => {
     await screen.findByText(/owner@x\.io/);
 
     expect(screen.getByText(/runner sessions can remain/i)).toBeInTheDocument();
+  });
+});
+
+describe('OrganizationSection org switching', () => {
+  // The sidebar has no account menu any more: switching organization lives here.
+  it('switches organization and reloads', async () => {
+    const twoOrgs = { ...ownerView, orgs: [...ownerView.orgs, { id: 'org-2', name: 'Personal', kind: 'personal', role: 'owner' }] };
+    orgGet.mockResolvedValue(twoOrgs);
+    licenseGet.mockResolvedValue(licenseAs('owner@x.io'));
+    orgSwitch.mockResolvedValue({ ...twoOrgs, active: twoOrgs.orgs[1] });
+    const reload = vi.fn();
+    render(<OrganizationSection reload={reload} />);
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Switch organization' }), 'org-2');
+    expect(orgSwitch).toHaveBeenCalledWith('org-2');
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+
+  it('hides the switcher with only one organization', async () => {
+    orgGet.mockResolvedValue(ownerView);
+    licenseGet.mockResolvedValue(licenseAs('owner@x.io'));
+    render(<OrganizationSection />);
+    await screen.findByText('Acme');
+    expect(screen.queryByRole('combobox', { name: 'Switch organization' })).not.toBeInTheDocument();
   });
 });

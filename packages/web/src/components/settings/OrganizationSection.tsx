@@ -61,6 +61,7 @@ export function OrganizationSection({ reload = () => window.location.reload() }:
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   const [busyInvitationId, setBusyInvitationId] = useState<string | null>(null);
 
+  const [switching, setSwitching] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveRefusal, setLeaveRefusal] = useState<LeaveRefusal | null>(null);
 
@@ -83,6 +84,19 @@ export function OrganizationSection({ reload = () => window.location.reload() }:
   }
 
   const isOwner = view.active.role === 'owner';
+
+  async function switchOrg(orgId: string) {
+    if (orgId === view?.active.id) return;
+    setSwitching(true);
+    setError(null);
+    try {
+      await api.org.switch(orgId);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to switch organization');
+      setSwitching(false);
+    }
+  }
 
   async function saveRename() {
     const name = nameDraft.trim();
@@ -253,6 +267,24 @@ export function OrganizationSection({ reload = () => window.location.reload() }:
           </div>
         )}
       </header>
+
+      {/* The one place to change organization now that the sidebar has no
+          account row. A reload follows: runners and remote worktrees are
+          org-scoped and cached in component state. */}
+      {view.orgs.length > 1 && (
+        <label className="mb-7 flex max-w-md items-center gap-3 text-sm text-zinc-400">
+          <span className="shrink-0">Switch organization</span>
+          <select
+            aria-label="Switch organization"
+            value={view.active.id}
+            disabled={switching}
+            onChange={(event) => void switchOrg(event.target.value)}
+            className={`${inputCls} flex-1`}
+          >
+            {view.orgs.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+          </select>
+        </label>
+      )}
 
       {view.invitations.incoming.length > 0 && (
         <section className="mb-7">
