@@ -10,6 +10,7 @@ import type { OpenWorktree } from './sidebar/WorktreeRowItem';
 import { SpaceCarousel, type CarouselPane, type SpaceCarouselHandle } from './sidebar/SpaceCarousel';
 import { SpaceDots } from './sidebar/SpaceDots';
 import { AccountMenu } from './AccountMenu';
+import { SidebarNav } from './sidebar/SidebarNav';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
 export type AddRepoAnchor = { left: number; right: number; bottom: number };
@@ -206,7 +207,7 @@ export function Sidebar({
   // Everything the body needs except the data: the active pane gets the live
   // props, a neighbour pane gets its snapshot.
   const bodyProps = {
-    selected, onSelect, taskCount, reviewCount, reviewLoading, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
+    onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
     onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
@@ -219,9 +220,6 @@ export function Sidebar({
       wsId={wsId}
       repos={data?.repos ?? []}
       worktrees={data?.worktrees ?? []}
-      taskCount={data?.worktrees.length ?? 0}
-      reviewCount={0}
-      reviewLoading={false}
       remoteWorktrees={[]}
       runnerStatuses={[]}
       pinnedWorktreeIds={pinnedWorktrees[wsId] ?? []}
@@ -302,6 +300,8 @@ export function Sidebar({
       />
 
       <div className="flex flex-col gap-1 border-t border-zinc-900 p-2">
+        <SidebarNav selected={selected} onSelect={onSelect} taskCount={taskCount}
+          reviewCount={reviewCount} reviewLoading={reviewLoading} onOpenSettings={onOpenSettings} />
         <SpaceDots
           spaces={allWorkspaces}
           activeId={workspace.id}

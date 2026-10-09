@@ -24,7 +24,7 @@ const focus = {
 function props(over: Partial<SidebarBodyProps> = {}): SidebarBodyProps {
   return {
     wsId: 'w1', repos: [r1, r2], worktrees: [wt('/r1/wt', 'r1'), wt('/r2/wt', 'r2'), wt('/r2/other', 'r2')],
-    remoteWorktrees: [], runnerStatuses: [], selected: { kind: 'tasks' }, onSelect: vi.fn(), taskCount: 0,
+    remoteWorktrees: [], runnerStatuses: [],
     onAddRepo: vi.fn(), onDeleteRepo: vi.fn(), expandedRepos: new Set(), onToggleRepo: vi.fn(),
     onOpenWorktree: vi.fn(), activeWorktreePath: null, onNewWorktreeForRepo: vi.fn(),
     onWorktreeSettings: vi.fn(), onDeleteWorktree: vi.fn(), pinnedWorktreeIds: [], onTogglePinnedWorktree: vi.fn(),
