@@ -125,6 +125,13 @@ describe('SidebarBody groups section', () => {
     expect(screen.queryByRole('region', { name: 'Settled' })).not.toBeInTheDocument();
   });
 
+  it('puts Pinned above Groups', () => {
+    render(<SidebarBody {...props({ pinnedWorktreeIds: ['local:/r1/wt'] })} />);
+    const pinned = screen.getByRole('region', { name: 'Pinned worktrees' });
+    const groups = screen.getByRole('region', { name: 'Focus groups' });
+    expect(pinned.compareDocumentPosition(groups) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('shows no Groups section at all when there are no groups', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     render(<SidebarBody {...props({ worktrees: [{ ...wt('/r1/m', 'r1'), branch: 'main' }] })} />);
