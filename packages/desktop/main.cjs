@@ -288,6 +288,10 @@ function createWindow() {
   win.loadURL(URL);
   // The dashboard sets document.title; keep the app name instead.
   win.on('page-title-updated', (e) => e.preventDefault());
+  // Full screen hides the traffic lights: tell the renderer so it drops the
+  // room it keeps for them (see insetTitleBar in preload.cjs).
+  win.on('enter-full-screen', () => win.webContents.send('strado:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('strado:fullscreen', false));
 
   // Trackpad gesture phase. A wheel stream carries no "fingers lifted" event, so
   // the renderer's space-swipe can't tell a paused-but-held drag from a released
@@ -1180,6 +1184,9 @@ if (!gotLock) {
     : process.platform === 'linux' ? 'link'
     : 'none';
   ipcMain.on('strado:update-mode', (e) => { e.returnValue = updateMode; });
+  ipcMain.on('strado:is-fullscreen', (e) => {
+    e.returnValue = BrowserWindow.fromWebContents(e.sender)?.isFullScreen() ?? false;
+  });
 
   let pendingAppImage = null; // staged ${APPIMAGE}.download once verified
 

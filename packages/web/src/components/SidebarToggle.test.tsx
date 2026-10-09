@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenSidebarButton } from './SidebarToggle';
 
@@ -12,6 +12,20 @@ describe('OpenSidebarButton', () => {
     expect(container.querySelector('[style*="width: 72px"]')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }));
     expect(onClick).toHaveBeenCalled();
+  });
+
+  // macOS hides the lights in full screen; the room for them would be a blank gap.
+  it('drops the slot in full screen, and brings it back on leaving', () => {
+    let notify: (on: boolean) => void = () => {};
+    (window as { strado?: unknown }).strado = {
+      insetTitleBar: true,
+      isFullScreen: () => true,
+      onFullScreen: (cb: (on: boolean) => void) => { notify = cb; return () => {}; },
+    };
+    const { container } = render(<OpenSidebarButton onClick={vi.fn()} />);
+    expect(container.querySelector('[style*="width: 72px"]')).toBeNull();
+    act(() => notify(false));
+    expect(container.querySelector('[style*="width: 72px"]')).not.toBeNull();
   });
 
   it('is just the button in a browser', () => {

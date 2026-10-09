@@ -14,6 +14,14 @@ contextBridge.exposeInMainWorld('strado', {
   // traffic lights float over the app's top-left, so the renderer leaves room
   // and provides the drag strip. Absent on older shells.
   insetTitleBar: process.platform === 'darwin',
+  // Full screen hides those lights, so the room for them goes too. The
+  // current state at load, then every change.
+  isFullScreen: () => ipcRenderer.sendSync('strado:is-fullscreen'),
+  onFullScreen: (cb) => {
+    const handler = (_e, on) => cb(on);
+    ipcRenderer.on('strado:fullscreen', handler);
+    return () => ipcRenderer.removeListener('strado:fullscreen', handler);
+  },
   // Open a runner's dashboard in its own window (single-use attach URL).
   openRunner: (url) => ipcRenderer.invoke('strado:open-runner', url),
 
