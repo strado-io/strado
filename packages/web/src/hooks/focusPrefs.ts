@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
-// Which focus group is active, which sidebar view is showing (repos or
-// groups) and which groups are folded — per device and per workspace. Every instance (three sidebar panes, the
+// Which focus group is active and which groups are folded — per device and
+// per workspace. Every instance (three sidebar panes, the
 // dashboard) re-reads on one change event so they never disagree.
 const ACTIVE_KEY = 'strado:focus-group-active';
-const VIEW_KEY = 'strado:sidebar-view';
 const COLLAPSED_KEY = 'strado:focus-groups-collapsed';
 const CHANGE_EVENT = 'strado:focus-prefs-change';
 
@@ -19,8 +18,6 @@ function writeMap<T>(key: string, wsId: string, value: T) {
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
-export type SidebarMode = 'repos' | 'groups';
-
 const stringList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
@@ -28,7 +25,6 @@ function read(wsId: string) {
   const active = readMap<string | null>(ACTIVE_KEY)[wsId];
   return {
     activeFocusGroupId: typeof active === 'string' ? active : null,
-    sidebarMode: (readMap<SidebarMode>(VIEW_KEY)[wsId] === 'groups' ? 'groups' : 'repos') as SidebarMode,
     collapsedGroupIds: stringList(readMap<unknown>(COLLAPSED_KEY)[wsId]),
   };
 }
@@ -43,10 +39,9 @@ export function useFocusPrefs(wsId: string) {
   }, [wsId]);
 
   const setActiveFocusGroupId = useCallback((v: string | null) => writeMap(ACTIVE_KEY, wsId, v), [wsId]);
-  const setSidebarMode = useCallback((v: SidebarMode) => writeMap(VIEW_KEY, wsId, v), [wsId]);
   const toggleGroupCollapsed = useCallback((id: string) => {
     const cur = read(wsId).collapsedGroupIds;
     writeMap(COLLAPSED_KEY, wsId, cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
   }, [wsId]);
-  return { ...prefs, setActiveFocusGroupId, setSidebarMode, toggleGroupCollapsed };
+  return { ...prefs, setActiveFocusGroupId, toggleGroupCollapsed };
 }
