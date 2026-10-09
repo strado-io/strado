@@ -173,7 +173,9 @@ function RemoteMenu({
 // refetched, so staging one hunk doesn't re-render every other hunk's rows.
 const DiffLinesView = memo(function DiffLinesView({ lines }: { lines: DiffLine[] }) {
   return (
-    <div className="diff-surface diff-code-font">
+    // w-max lets the widest line set the width so long lines scroll sideways
+    // instead of being clipped by the hunk box.
+    <div className="diff-surface diff-code-font w-max min-w-full">
       {lines.map((l, i) => (
         <div
           key={i}
@@ -248,7 +250,9 @@ const HunkBlock = memo(
             )}
           </span>
         </div>
-        <DiffLinesView lines={visible} />
+        <div className="overflow-x-auto">
+          <DiffLinesView lines={visible} />
+        </div>
         {oversized && !expanded && (
           <button
             onClick={() => setExpanded(true)}
