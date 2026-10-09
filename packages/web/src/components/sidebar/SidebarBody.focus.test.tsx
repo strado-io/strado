@@ -106,26 +106,37 @@ describe('SidebarBody groups view', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.getByText(/No groups yet/)).toBeInTheDocument();
   });
-  it('adds a worktree to a group from its row menu', () => {
+  // One "Add to group…" item, however many groups exist — the picker holds the list.
+  const openPicker = () => {
     render(<SidebarBody {...props({ expandedRepos: new Set(['r2']) })} />);
     const menus = screen.getAllByRole('button', { name: 'fx-412 actions' });
     fireEvent.click(menus[menus.length - 1]!);
-    fireEvent.click(screen.getByRole('button', { name: 'Add to FX-412' }));
+    expect(screen.queryByRole('button', { name: 'Add to FX-412' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to group…' }));
+    return screen.getByRole('dialog', { name: 'Add to group' });
+  };
+
+  it('adds a worktree to a group from the row menu picker', () => {
+    const dialog = openPicker();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'FX-412' }));
     expect(focus.setMembership).toHaveBeenCalledWith('g1', expect.stringMatching(/^local:\/r2\//), true);
   });
 
-  // Electron has no window.prompt — the name must come from an in-app input.
-  it('names a new group in an in-app dialog from the row menu', async () => {
+  it('filters groups as you type', () => {
+    const dialog = openPicker();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Find or create a group' }), { target: { value: 'zzz' } });
+    expect(within(dialog).queryByRole('checkbox', { name: 'FX-412' })).not.toBeInTheDocument();
+  });
+
+  // Electron has no window.prompt — the name comes from the picker's own input.
+  it('creates a new group from the picker with Enter', async () => {
     focus.create.mockResolvedValue({ ...group, id: 'g2', name: 'FX-500' });
-    render(<SidebarBody {...props({ expandedRepos: new Set(['r2']) })} />);
-    const menus = screen.getAllByRole('button', { name: 'fx-412 actions' });
-    fireEvent.click(menus[menus.length - 1]!);
-    fireEvent.click(screen.getByRole('button', { name: 'Add to new group…' }));
-    const input = screen.getByRole('textbox', { name: 'New group name' });
+    const dialog = openPicker();
+    const input = within(dialog).getByRole('textbox', { name: 'Find or create a group' });
     fireEvent.change(input, { target: { value: ' FX-500 ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(focus.create).toHaveBeenCalledWith('FX-500', [expect.stringMatching(/^local:\/r2\//)]);
-    expect(screen.queryByRole('textbox', { name: 'New group name' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Add to group' })).not.toBeInTheDocument();
     await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:sidebar-view')!)).toEqual({ w1: 'groups' }));
   });
 });
