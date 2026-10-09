@@ -86,3 +86,49 @@ describe('CommandPalette', () => {
     expect(h.onClose).toHaveBeenCalled();
   });
 });
+
+describe('CommandPalette focus groups', () => {
+  const groups = [
+    { group: { id: 'g1', name: 'FX-412 checkout', members: ['local:/wt/FD-1'], createdAt: 't' }, detail: 'FD-1 · React App', done: false },
+    { group: { id: 'g2', name: 'FX-300 old', members: [], createdAt: 't' }, detail: '', done: true },
+  ];
+  function setupGroups() {
+    const onPickGroup = vi.fn();
+    render(
+      <CommandPalette
+        repos={repos}
+        worktrees={[wt('/wt/FD-1', 'FD-1', 'fix login')]}
+        workspaces={workspaces}
+        activeWorkspaceId="default"
+        focusGroups={groups}
+        onPickGroup={onPickGroup}
+        onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
+      />,
+    );
+    return onPickGroup;
+  }
+
+  it('lists matching groups first, open before done, and picks one', () => {
+    const onPickGroup = setupGroups();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'fx-' } });
+    const buttons = screen.getAllByRole('button').map((b) => b.textContent ?? '');
+    expect(buttons[0]).toContain('FX-412 checkout');
+    expect(buttons[1]).toContain('FX-300 old');
+    expect(buttons[1]).toContain('done');
+    fireEvent.click(screen.getByText('FX-412 checkout'));
+    expect(onPickGroup).toHaveBeenCalledWith('g1');
+  });
+
+  it('tags member worktrees with their group name', () => {
+    setupGroups();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'login' } });
+    expect(screen.getByText(/FX-412 checkout/)).toBeInTheDocument();
+  });
+
+  it('leaves Done groups out of the empty-query list so recent worktrees stay visible', () => {
+    setupGroups();
+    expect(screen.getByText('FX-412 checkout')).toBeInTheDocument();
+    expect(screen.queryByText('FX-300 old')).not.toBeInTheDocument();
+    expect(screen.getByText('FD-1')).toBeInTheDocument();
+  });
+});

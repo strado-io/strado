@@ -1781,8 +1781,8 @@ export function TerminalView({
       }
       setSwitcher(null);
     };
-    // Cmd+Arrow cycles the worktree's tabs, Cmd+Opt+Arrow the worktrees;
-    // once open, the strip keeps its kind regardless of Opt.
+    // Cmd+Arrow cycles the worktree's tabs. Cmd+Opt+Arrow is focus-group
+    // cycling, handled by the dashboard (useFocusShortcut).
     const advance = (kindWanted: 'tabs' | 'groups', dir: 1 | -1) => {
       const kind = switcherRef.current?.kind ?? kindWanted;
       const count = activeGroup ? switcherTabs(activeGroup).length : 0;
@@ -1838,7 +1838,8 @@ export function TerminalView({
         splitPaneRef.current(e.shiftKey ? 'col' : 'row');
         return;
       }
-      if (!e.metaKey || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+      // Cmd+Opt+Arrow belongs to focus-group cycling (useFocusShortcut).
+      if (!e.metaKey || e.altKey || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
       if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1881,8 +1882,8 @@ export function TerminalView({
         setShowDiff((open) => !open);
         return;
       }
-      const dir = combo === 'tab-next' || combo === 'group-next' ? 1 : combo === 'tab-prev' || combo === 'group-prev' ? -1 : null;
-      if (dir === null) return; // palette etc. — handled elsewhere
+      const dir = combo === 'tab-next' ? 1 : combo === 'tab-prev' ? -1 : null;
+      if (dir === null) return; // palette, group-* (focus groups), etc. — handled elsewhere
       rootRef.current?.focus();
       advance('tabs', dir);
     });
