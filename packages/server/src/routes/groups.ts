@@ -1,4 +1,3 @@
-// packages/server/src/routes/groups.ts
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 

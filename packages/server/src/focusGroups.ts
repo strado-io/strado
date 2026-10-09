@@ -1,4 +1,3 @@
-// packages/server/src/focusGroups.ts
 // Focus groups: named, cross-repo bundles of worktrees for one task. One file
 // per workspace, written through the same serialized queue + atomic rename as
 // state.json — two quick "Add to group" clicks must both land.
