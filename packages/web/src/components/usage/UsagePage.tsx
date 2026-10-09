@@ -1,3 +1,4 @@
+import { OpenSidebarButton } from '../SidebarToggle';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../../api';
 import { useUsage, type UsageRange } from '../../hooks/usage';
@@ -77,14 +78,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-900 bg-zinc-950 px-3 py-2">
-        {sidebarCollapsed && (
-          <button
-            aria-label="Open sidebar"
-            title="Open sidebar (⌘B)"
-            onClick={() => onExpandSidebar?.()}
-            className="-ml-1 shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-          >»</button>
-        )}
+        {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
         <Segmented
           label="Usage view"
           value={tab}

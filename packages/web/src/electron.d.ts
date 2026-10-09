@@ -19,6 +19,9 @@ interface Window {
     platform?: NodeJS.Platform;
     // self-update capability; absent on older shells (fall back to platform)
     updateMode?: 'swap' | 'link' | 'none';
+    // macOS: no native title bar — the renderer clears the traffic lights and
+    // supplies the window drag strip; absent on older shells and elsewhere
+    insetTitleBar?: boolean;
     // Opens a self-hosted runner's dashboard in its own window; absent on
     // older shells (the panel falls back to window.open).
     openRunner?: (url: string) => Promise<boolean>;

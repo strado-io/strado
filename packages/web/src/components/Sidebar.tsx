@@ -1,3 +1,4 @@
+import { DRAG, SidebarToggleButton, TrafficLightsSpacer, insetTitleBar } from './SidebarToggle';
 import { useEffect, useRef, useState } from 'react';
 import type { RemoteWorktree, RunnerStatus } from '../api';
 import type { MergeRequest, RepoConfig, Workspace, Worktree } from '../types';
@@ -279,13 +280,20 @@ export function Sidebar({
         className={`absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize ${resizing ? 'bg-sky-500/50' : 'hover:bg-sky-500/30'}`}
         {...handleProps}
       />
-      <div className="border-b border-zinc-900 px-3 py-3">
+      {/* macOS: the traffic lights sit over this row (no native title bar), the
+          toggle right after them, and the row itself drags the window. */}
+      {insetTitleBar() && (
+        <div className={`${DRAG} flex h-11 shrink-0 items-center gap-1 px-2`}>
+          <TrafficLightsSpacer />
+          <SidebarToggleButton open onClick={onCollapse} />
+        </div>
+      )}
+      <div className={`border-b border-zinc-900 px-3 ${insetTitleBar() ? 'pb-3' : 'py-3'}`}>
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
           </div>
-          <button aria-label="Collapse sidebar" title="Collapse sidebar (⌘B)" onClick={onCollapse}
-            className="shrink-0 rounded p-1 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200">«</button>
+          {!insetTitleBar() && <SidebarToggleButton open onClick={onCollapse} />}
         </div>
       </div>
 
