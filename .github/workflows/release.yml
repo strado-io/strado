@@ -132,3 +132,39 @@ jobs:
     steps:
       - env: { GH_TOKEN: '${{ github.token }}' }
         run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest -R "$GITHUB_REPOSITORY"
+
+  deploy:
+    # Pushes the release to the update feed, so installed apps pick it up.
+    # The API box pulls the artifacts from the (now public) GitHub release and
+    # checks each against the sha256 GitHub recorded at upload; this job only
+    # sends the version. The SSH key is pinned on the box to one forced
+    # command (publish-desktop-release in strado-cloud), so it cannot open a
+    # shell even if it leaks.
+    needs: [create-release, publish]
+    runs-on: ubuntu-22.04
+    # Optional: add yourself as required reviewer on a "production"
+    # environment to approve each feed publish with one click.
+    # environment: production
+    steps:
+      - name: Notes from the tag
+        id: notes
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          # Annotated tag message if there is one, else "Strado X.Y.Z".
+          N="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object' \
+                | jq -r 'select(.type=="tag") | .url' \
+                | xargs -r -I{} gh api {} --jq '.message' | head -1)"
+          echo "notes=${N:-Strado ${{ needs.create-release.outputs.version }}}" >> "$GITHUB_OUTPUT"
+      - name: Publish to the update feed
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes -o ConnectTimeout=20 \
+            "$HOST" "$VERSION $NOTES"
