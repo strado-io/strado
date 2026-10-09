@@ -121,7 +121,9 @@ describe('Sidebar tree', () => {
     const nav = screen.getByRole('navigation', { name: 'Pages' });
     fireEvent.click(within(nav).getByRole('button', { name: 'Usage' }));
     expect(onSelect).toHaveBeenCalledWith({ kind: 'usage' });
-    fireEvent.click(within(nav).getByRole('button', { name: 'Open settings' }));
+    // The gear opens the account menu; Settings is its first action.
+    fireEvent.click(within(nav).getByRole('button', { name: /^Account: / }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Settings$/ }));
     expect(onOpenSettings).toHaveBeenCalled();
   });
 

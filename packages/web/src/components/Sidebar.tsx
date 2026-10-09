@@ -10,7 +10,7 @@ import type { OpenWorktree } from './sidebar/WorktreeRowItem';
 import { SpaceCarousel, type CarouselPane, type SpaceCarouselHandle } from './sidebar/SpaceCarousel';
 import { SpaceDots } from './sidebar/SpaceDots';
 import { AccountMenu } from './AccountMenu';
-import { SidebarNav } from './sidebar/SidebarNav';
+import { SidebarNav, settingsIcon } from './sidebar/SidebarNav';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
 export type AddRepoAnchor = { left: number; right: number; bottom: number };
@@ -300,21 +300,22 @@ export function Sidebar({
       />
 
       <div className="flex flex-col gap-1 border-t border-zinc-900 p-2">
-        <SidebarNav selected={selected} onSelect={onSelect} taskCount={taskCount}
-          reviewCount={reviewCount} reviewLoading={reviewLoading} onOpenSettings={onOpenSettings}
-          account={(
-            <AccountMenu
-              compact
-              onOpenSettings={(section) => section === 'organization' ? onOpenOrgSettings(section) : onOpenSettings()}
-              onOpenFeedback={onOpenFeedback}
-            />
-          )} />
         <SpaceDots
           spaces={allWorkspaces}
           activeId={workspace.id}
           onSelect={selectSpace}
         />
         <UpdateFooter {...update} />
+        <SidebarNav selected={selected} onSelect={onSelect} taskCount={taskCount}
+          reviewCount={reviewCount} reviewLoading={reviewLoading}
+          account={(
+            <AccountMenu
+              compact
+              icon={settingsIcon}
+              onOpenSettings={(section) => section === 'organization' ? onOpenOrgSettings(section) : onOpenSettings()}
+              onOpenFeedback={onOpenFeedback}
+            />
+          )} />
       </div>
     </aside>
   );
