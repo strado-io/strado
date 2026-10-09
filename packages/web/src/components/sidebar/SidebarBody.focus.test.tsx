@@ -91,15 +91,38 @@ describe('SidebarBody groups section', () => {
     expect(focus.rename).toHaveBeenCalledWith('g1', 'FX-413');
   });
 
-  it('keeps merged groups under a folded Settled section', () => {
+  it('moves a merged group out of Groups into Settled at the bottom', () => {
     const shipped: FocusGroup = { id: 'g2', name: 'FX-300', members: ['local:/r2/other'], createdAt: 't' };
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, shipped] });
-    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r2/other', { state: 'merged' }]]) as ReturnType<typeof useMrSummaries>);
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r2/other', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
     render(<SidebarBody {...props()} />);
-    expect(screen.getByRole('group', { name: 'FX-412' })).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Settled (1)' }));
-    expect(screen.getByRole('group', { name: 'FX-300' })).toBeInTheDocument();
+    const groups = screen.getByRole('region', { name: 'Focus groups' });
+    const settled = screen.getByRole('region', { name: 'Settled' });
+    expect(within(groups).getByRole('group', { name: 'FX-412' })).toBeInTheDocument();
+    expect(within(groups).queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
+    expect(within(settled).getByRole('group', { name: 'FX-300' })).toBeInTheDocument();
+    fireEvent.click(within(settled).getByRole('button', { name: /^Settled \(/ }));
+    expect(within(settled).queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
+  });
+
+  it('moves a worktree with a merged PR from its repo into Settled; a repo checkout never settles', () => {
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    const root = { ...wt('/r1', 'r1'), branch: 'master' } as Worktree;
+    const done = { ...wt('/r2/done', 'r2'), branch: 'fx-old' } as Worktree;
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([
+      ['/r2/done', { state: 'merged', updatedAt: '2026-01-01' }],
+      ['/r1', { state: 'merged', updatedAt: '2026-01-01' }],
+    ]) as ReturnType<typeof useMrSummaries>);
+    render(<SidebarBody {...props({ worktrees: [root, done], expandedRepos: new Set(['r1', 'r2']) })} />);
+    const settled = screen.getByRole('region', { name: 'Settled' });
+    expect(within(settled).getByText('fx-old')).toBeInTheDocument();
+    expect(within(settled).queryByText('master')).not.toBeInTheDocument();
+    expect(screen.getAllByText('fx-old')).toHaveLength(1);
+  });
+
+  it('shows no Settled section when nothing has settled', () => {
+    render(<SidebarBody {...props()} />);
+    expect(screen.queryByRole('region', { name: 'Settled' })).not.toBeInTheDocument();
   });
 
   it('explains how to start when there are no groups', () => {

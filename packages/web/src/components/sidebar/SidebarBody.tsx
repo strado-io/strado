@@ -14,7 +14,9 @@ import { worktreeLabel, worktreeTitle } from './labels';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
-import { GroupsView } from './GroupsView';
+import { GroupsView, type MenuItem } from './GroupsView';
+import { SettledSection } from './SettledSection';
+import { relativeTime } from '../../lib/relativeTime';
 import { GroupPickerDialog } from './GroupPickerDialog';
 import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
@@ -413,14 +415,15 @@ export function SidebarBody({
 
   // A row opened from the Groups view makes its group the active one, so
   // ⌥⌘←/→ cycles the group the user is working in.
-  const localRow = (w: Worktree, repoName: string, placement: 'repo' | 'pinned' | 'focus', group?: FocusGroup) => {
+  const localRow = (w: Worktree, repoName: string, placement: 'repo' | 'pinned' | 'focus' | 'settled', group?: FocusGroup) => {
     const open: OpenWorktree = (...args) => { if (group) focusPrefs.setActiveFocusGroupId(group.id); onOpenWorktree(...args); };
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
     const hasSessions = chips.length > 0;
     const mr = mrByPath.get(w.path);
     const pinned = pinnedIds.has(localPinId(w));
-    const testIdSuffix = placement === 'repo' ? w.path : `${placement}-${w.path}`;
+    // A settled worktree shows only in Settled, so it keeps the plain id like a repo row.
+    const testIdSuffix = placement === 'repo' || placement === 'settled' ? w.path : `${placement}-${w.path}`;
     return (
       <WorktreeRowItem
         key={`${placement}:${w.path}`}
@@ -461,8 +464,13 @@ export function SidebarBody({
           </span>
         </button>
         <span className="mr-1 flex shrink-0 items-center gap-1.5">
-          {placement === 'focus' && repoName && (
+          {(placement === 'focus' || placement === 'settled') && repoName && (
             <span className="max-w-[6rem] truncate text-[10px] text-zinc-600">{repoName}</span>
+          )}
+          {placement === 'settled' && mr && (
+            <span title={`PR ${mr.state}`} className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">
+              {relativeTime(mr.mergedAt ?? mr.updatedAt).replace(/ ago$/, '')}
+            </span>
           )}
           {diffBadge(w, testIdSuffix)}
           <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
@@ -517,7 +525,53 @@ export function SidebarBody({
     )];
   });
 
+  // Shared by the Groups section (open groups) and Settled (finished ones).
+  const groupListProps = {
+    activeGroupId: activeGroup?.id ?? null,
+    isDone: doneOf,
+    membersOf: (g: FocusGroup) => resolveMembers(g, worktrees, remoteWorktrees),
+    collapsedIds: focusPrefs.collapsedGroupIds,
+    onToggleCollapsed: focusPrefs.toggleGroupCollapsed,
+    onRename: (id: string, name: string) => { focus.rename(id, name).catch(report); },
+    onDelete: (id: string) => {
+      focus.remove(id)
+        .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
+        .catch(report);
+    },
+    renderMenu: (label: string, items: MenuItem[]) => <Menu alwaysVisible label={label} items={items} />,
+    renderMember: (e: SidebarEntry, g: FocusGroup) => {
+      const repoName = repos.find((r) => r.id === e.repoId)?.name ?? '';
+      if (e.kind === 'local') return localRow(e.w, repoName, 'focus', g);
+      return (
+        <RemoteRow
+          key={`focus:${e.pinId}`}
+          w={e.w}
+          repoName={repoName || e.w.remoteRepoName || ''}
+          reachable={runnerOnline(e.w.runnerId)}
+          activeRow={e.w.path === activeWorktreePath}
+          pinned={pinnedIds.has(e.pinId)}
+          placement="focus"
+          groupItems={groupMenuItems(e.pinId)}
+          onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
+          onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
+          onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+        />
+      );
+    },
+  };
+  // A worktree whose PR is merged or closed has settled: it leaves its repo in
+  // the tree for the Settled section at the bottom. A repo's own checkout
+  // (master/main) never settles, whatever PR its branch once had.
+  const repoRoots = new Set(repos.map((r) => r.path));
+  const isSettled = (w: Worktree) => {
+    const state = mrByPath.get(w.path)?.state;
+    return (state === 'merged' || state === 'closed') && !repoRoots.has(w.path);
+  };
+  const settledWorktreeRows = worktrees.filter(isSettled).map((w) =>
+    localRow(w, repos.find((r) => r.id === w.repoId)?.name ?? '', 'settled'));
+
   return (
+    <div className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
       <div className="flex flex-col gap-0.5">
         <TopItem active={selected.kind === 'tasks'} onClick={() => onSelect({ kind: 'tasks' })}
@@ -532,12 +586,8 @@ export function SidebarBody({
 
       {/* Groups first: the cross-repo bundles for the tasks at hand, then the repo tree. */}
       <GroupsView
+        {...groupListProps}
         groups={focus.groups}
-        activeGroupId={activeGroup?.id ?? null}
-        isDone={doneOf}
-        membersOf={(g) => resolveMembers(g, worktrees, remoteWorktrees)}
-        collapsedIds={focusPrefs.collapsedGroupIds}
-        onToggleCollapsed={focusPrefs.toggleGroupCollapsed}
         candidates={[
           ...worktrees.map((w) => ({
             pinId: localPinId(w), label: worktreeLabel(w),
@@ -549,32 +599,6 @@ export function SidebarBody({
           })),
         ]}
         onCreate={(name, members) => { focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
-        onRename={(id, name) => { focus.rename(id, name).catch(report); }}
-        onDelete={(id) => {
-          focus.remove(id)
-            .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
-            .catch(report);
-        }}
-        renderMenu={(label, items) => <Menu alwaysVisible label={label} items={items} />}
-        renderMember={(e: SidebarEntry, g: FocusGroup) => {
-          const repoName = repos.find((r) => r.id === e.repoId)?.name ?? '';
-          if (e.kind === 'local') return localRow(e.w, repoName, 'focus', g);
-          return (
-            <RemoteRow
-              key={`focus:${e.pinId}`}
-              w={e.w}
-              repoName={repoName || e.w.remoteRepoName || ''}
-              reachable={runnerOnline(e.w.runnerId)}
-              activeRow={e.w.path === activeWorktreePath}
-              pinned={pinnedIds.has(e.pinId)}
-              placement="focus"
-              groupItems={groupMenuItems(e.pinId)}
-              onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
-              onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
-              onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-            />
-          );
-        }}
       />
 
       {pinnedRows.length > 0 && (
@@ -604,7 +628,7 @@ export function SidebarBody({
 
       <div className="flex flex-col gap-0.5">
         {repos.map((repo) => {
-          const repoWts = worktrees.filter((w) => w.repoId === repo.id);
+          const repoWts = worktrees.filter((w) => w.repoId === repo.id && !isSettled(w));
           const repoRemote = remoteWorktrees.filter((w) => w.localRepoId === repo.id);
           const open = expandedRepos.has(repo.id);
           return (
@@ -728,6 +752,13 @@ export function SidebarBody({
             </div>
           ))}
       </div>
+    </div>
+
+    <SettledSection
+      {...groupListProps}
+      groups={focus.groups.filter(doneOf)}
+      worktreeRows={settledWorktreeRows}
+    />
 
       {pickerFor && (
         <GroupPickerDialog
