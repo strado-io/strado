@@ -14,7 +14,7 @@ import { worktreeLabel, worktreeTitle } from './labels';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
-import { GroupsView, type MenuItem } from './GroupsView';
+import { GroupsView } from './GroupsView';
 import { SettledSection } from './SettledSection';
 import { relativeTime } from '../../lib/relativeTime';
 import { GroupPickerDialog } from './GroupPickerDialog';
@@ -173,21 +173,60 @@ export function RepoIcon() {
 }
 
 // small kebab (⋯) button + popover; closes on outside-click via a fixed backdrop
+type MenuItem = { text: string; danger?: boolean; onClick: () => void };
+
+/**
+ * A menu's floating list. `anchor: 'right'` hangs it left of the point (under
+ * a ⋯ button); 'left' opens it rightwards from the point (a right-click).
+ */
+function MenuPopover({ pos, items, anchor, onClose }: {
+  pos: { x: number; y: number };
+  items: MenuItem[];
+  anchor: 'left' | 'right';
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  // portal: the space carousel's transformed track would otherwise become
+  // the containing block for these fixed elements, shoving the popover a
+  // pane-width off-screen on every space but the first
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); onClose(); }}
+        onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        role="menu"
+        className={`fixed z-50 min-w-44 ${anchor === 'right' ? '-translate-x-full' : ''} rounded-md border border-zinc-800 bg-zinc-950 p-1 shadow-2xl`}
+        style={{ left: pos.x, top: pos.y }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {items.map((it) => (
+          <button
+            key={it.text}
+            onClick={() => { onClose(); it.onClick(); }}
+            className={`block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-zinc-900 ${it.danger ? 'text-red-300' : 'text-zinc-200'}`}
+          >
+            {it.text}
+          </button>
+        ))}
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 function Menu({ label, items, alwaysVisible = false }: {
   label: string;
-  items: { text: string; danger?: boolean; onClick: () => void }[];
+  items: MenuItem[];
   alwaysVisible?: boolean;
 }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   // Inside a worktree row this dismisses the row's hover card (a no-op for
   // repo and space menus): the menu, and whatever it opens, take over.
   const dismissHoverCard = useRowHoverCardDismiss();
-  useEffect(() => {
-    if (!pos) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [pos]);
   return (
     <>
       <button
@@ -205,29 +244,9 @@ function Menu({ label, items, alwaysVisible = false }: {
           <circle cx="8" cy="3.5" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="8" cy="12.5" r="1.25" />
         </svg>
       </button>
-      {/* portal: the space carousel's transformed track would otherwise become
-          the containing block for these fixed elements, shoving the popover a
-          pane-width off-screen on every space but the first */}
-      {pos && createPortal(
-        <>
-          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setPos(null); }} />
-          <div
-            className="fixed z-50 min-w-44 -translate-x-full rounded-md border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
-            style={{ left: pos.x, top: pos.y }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {items.map((it) => (
-              <button
-                key={it.text}
-                onClick={() => { setPos(null); dismissHoverCard(); it.onClick(); }}
-                className={`block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-zinc-900 ${it.danger ? 'text-red-300' : 'text-zinc-200'}`}
-              >
-                {it.text}
-              </button>
-            ))}
-          </div>
-        </>,
-        document.body,
+      {pos && (
+        <MenuPopover pos={pos} items={items} anchor="right"
+          onClose={() => { setPos(null); dismissHoverCard(); }} />
       )}
     </>
   );
@@ -238,7 +257,7 @@ function Menu({ label, items, alwaysVisible = false }: {
  * that adjacency is the point — but always badged with the machine, because
  * where it runs decides what it can see.
  */
-function RemoteRow({ w, repoName, reachable, activeRow, pinned, placement, groupItems = [], onTogglePinned, onOpenRemoteWorktree, onDeleteRemoteWorktree }: {
+function RemoteRow({ w, repoName, reachable, activeRow, pinned, placement, groupItems = [], onTogglePinned, onOpenRemoteWorktree, onDeleteRemoteWorktree, onContextMenu }: {
 w: RemoteWorktree;
 /** Shown as a chip in the Focus section, where rows from many repos sit together. */
 repoName?: string;
@@ -250,10 +269,18 @@ groupItems?: { text: string; onClick: () => void }[];
 onTogglePinned: () => void;
 onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
+/** Right-click: the row's menu at the cursor. */
+onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 }) {
   const chips = sessionChips([w as unknown as Worktree]);
   const hasSessions = chips.length > 0;
   const testIdSuffix = placement === 'repo' ? `${w.runnerId}:${w.path}` : `${placement}-${w.runnerId}:${w.path}`;
+  const menuItems: MenuItem[] = [
+    ...groupItems,
+    ...(!w.isRepoRoot && onDeleteRemoteWorktree
+      ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
+      : []),
+  ];
   return (
     <WorktreeRowItem
       worktree={w as unknown as Worktree}
@@ -261,6 +288,7 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
       mr={null}
       runnerName={w.runnerName}
       onOpen={() => onOpenRemoteWorktree?.(w)}
+      onContextMenu={menuItems.length > 0 && onContextMenu ? (e) => onContextMenu(e, menuItems) : undefined}
       className={`group relative flex items-center rounded-md pr-1 ${activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
     >
       {hasSessions && (
@@ -314,12 +342,7 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
         {(!w.isRepoRoot && onDeleteRemoteWorktree) || groupItems.length > 0 ? (
           <Menu
             label={`${w.branch ?? w.name} on ${w.runnerName}${placement === 'pinned' ? ' pinned' : ''} actions`}
-            items={[
-              ...groupItems,
-              ...(!w.isRepoRoot && onDeleteRemoteWorktree
-                ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
-                : []),
-            ]}
+            items={menuItems}
           />
         ) : null}
       </HoverActions>
@@ -343,6 +366,12 @@ export function SidebarBody({
   const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
   // The worktree whose "Add to group…" picker is open.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  // Right-click on a worktree row: its ⋯ menu, at the cursor.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, items });
+  };
   // Row-menu entry: a single "Add to group…" that opens the picker, so the
   // menu stays short however many groups exist.
   const groupMenuItems = (memberId: string) => [
@@ -385,6 +414,11 @@ export function SidebarBody({
     const pinned = pinnedIds.has(localPinId(w));
     // A settled worktree shows only in Settled, so it keeps the plain id like a repo row.
     const testIdSuffix = placement === 'repo' || placement === 'settled' ? w.path : `${placement}-${w.path}`;
+    const menuItems: MenuItem[] = [
+      { text: 'Settings', onClick: () => onWorktreeSettings(w) },
+      ...groupMenuItems(localPinId(w)),
+      { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
+    ];
     return (
       <WorktreeRowItem
         key={`${placement}:${w.path}`}
@@ -395,6 +429,7 @@ export function SidebarBody({
         onOpenMr={onOpenMr}
         onOpenDiff={onOpenDiff}
         onSettings={onWorktreeSettings}
+        onContextMenu={(e) => openContextMenu(e, menuItems)}
         className={`group relative flex items-center rounded-md pr-1 ${
           activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
       >
@@ -450,11 +485,7 @@ export function SidebarBody({
             pinned={pinned}
             onToggle={() => onTogglePinnedWorktree(localPinId(w))}
           />
-          <Menu label={`${worktreeLabel(w)}${placement === 'pinned' ? ' pinned' : ''} actions`} items={[
-            { text: 'Settings', onClick: () => onWorktreeSettings(w) },
-            ...groupMenuItems(localPinId(w)),
-            { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
-          ]} />
+          <Menu label={`${worktreeLabel(w)}${placement === 'pinned' ? ' pinned' : ''} actions`} items={menuItems} />
         </HoverActions>
       </WorktreeRowItem>
     );
@@ -479,6 +510,7 @@ export function SidebarBody({
         pinned
         placement="pinned"
         groupItems={groupMenuItems(pinId)}
+        onContextMenu={openContextMenu}
         onTogglePinned={() => onTogglePinnedWorktree(pinId)}
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
@@ -513,6 +545,7 @@ export function SidebarBody({
           pinned={pinnedIds.has(e.pinId)}
           placement="focus"
           groupItems={groupMenuItems(e.pinId)}
+          onContextMenu={openContextMenu}
           onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
           onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
           onDeleteRemoteWorktree={onDeleteRemoteWorktree}
@@ -634,6 +667,7 @@ export function SidebarBody({
                       pinned={pinnedIds.has(remotePinId(w))}
                       placement="repo"
                       groupItems={groupMenuItems(remotePinId(w))}
+                      onContextMenu={openContextMenu}
                       onTogglePinned={() => onTogglePinnedWorktree(remotePinId(w))}
                       onOpenRemoteWorktree={onOpenRemoteWorktree}
                       onDeleteRemoteWorktree={onDeleteRemoteWorktree}
@@ -677,6 +711,7 @@ export function SidebarBody({
                     pinned={pinnedIds.has(remotePinId(w))}
                     placement="repo"
                     groupItems={groupMenuItems(remotePinId(w))}
+                    onContextMenu={openContextMenu}
                     onTogglePinned={() => onTogglePinnedWorktree(remotePinId(w))}
                     onOpenRemoteWorktree={onOpenRemoteWorktree}
                     onDeleteRemoteWorktree={onDeleteRemoteWorktree}
@@ -709,6 +744,10 @@ export function SidebarBody({
       groups={focus.groups.filter(doneOf)}
       worktreeRows={settledWorktreeRows}
     />
+
+      {contextMenu && (
+        <MenuPopover pos={contextMenu} items={contextMenu.items} anchor="left" onClose={() => setContextMenu(null)} />
+      )}
 
       {pickerFor && (
         <GroupPickerDialog
