@@ -345,7 +345,7 @@ export function SidebarBody({
   const doneOf = (g: FocusGroup) =>
     isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
   // Manual groups plus the ones worktrees sharing a ticket form on their own.
-  const groups = allGroups(focus.groups, worktrees);
+  const groups = allGroups(focus.groups, worktrees, remoteWorktrees);
   const activeGroup = activeGroupOf(groups, focusPrefs.activeFocusGroupId);
   // The worktree whose "Add to group…" picker is open.
   const [pickerFor, setPickerFor] = useState<string | null>(null);

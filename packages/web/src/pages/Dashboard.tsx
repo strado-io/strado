@@ -559,8 +559,8 @@ export function Dashboard(props: {
   const focusPrefs = useFocusPrefs(wsId);
   // Manual groups plus the ones worktrees sharing a ticket form on their own.
   const groups = useMemo(
-    () => allGroups(focusGroups.groups, state.worktrees),
-    [focusGroups.groups, state.worktrees],
+    () => allGroups(focusGroups.groups, state.worktrees, remote.worktrees),
+    [focusGroups.groups, state.worktrees, remote.worktrees],
   );
   const activeFocusMembers = useMemo(() => {
     const g = activeGroupOf(groups, focusPrefs.activeFocusGroupId);
