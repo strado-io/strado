@@ -4,7 +4,6 @@
 import { useState } from 'react';
 import type { FocusGroup } from '../../api';
 import { PlusIcon } from '../hub/icons';
-import { isAutoGroup } from './focusGroups';
 import { NewGroupDialog } from './NewGroupDialog';
 import type { SidebarEntry } from './pinIds';
 
@@ -61,7 +60,6 @@ export function GroupsView({
     const open = !collapsedIds.includes(g.id);
     const done = isDone(g);
     const active = g.id === activeGroupId;
-    const auto = isAutoGroup(g);
     return (
       <div key={g.id} role="group" aria-label={g.name}>
         <div className="group flex items-center gap-1 rounded-md pr-1 hover:bg-zinc-900">
@@ -78,17 +76,13 @@ export function GroupsView({
                   className={`transition-transform ${open ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
               </span>
               <span className="min-w-0 flex-1 truncate font-mono">{g.name}</span>
-              {auto && (
-                <span title="Worktrees sharing this ticket group themselves" className="shrink-0 text-[10px] uppercase tracking-wider text-zinc-600">ticket</span>
-              )}
               {active && <span title="⌥⌘← / → cycles this group" className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />}
               {done
                 ? <span className="shrink-0 text-[11px] text-emerald-500/80">merged ✓</span>
                 : <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600">{members.length}</span>}
             </button>
           )}
-          {/* A ticket group follows its worktrees — nothing to rename or delete. */}
-          {!auto && renderMenu(`${g.name} group actions`, [
+          {renderMenu(`${g.name} group actions`, [
             { text: 'Rename…', onClick: () => setRenaming(g.id) },
             {
               text: 'Delete group', danger: true,
@@ -118,7 +112,7 @@ export function GroupsView({
       </div>
       {ordered.length === 0 ? (
         <div className="px-2.5 py-2 text-xs leading-relaxed text-zinc-600">
-          No groups yet. Worktrees whose branch or ticket share an ID (FX-412 in two repos) group themselves here. For anything else, press + or use a worktree's ⋯ menu → Add to group…
+          No groups yet. Bundle worktrees from different repos for one task: press + or use a worktree's ⋯ menu → Add to new group.
         </div>
       ) : (
         <div className="flex flex-col gap-0.5">{ordered.map(group)}</div>

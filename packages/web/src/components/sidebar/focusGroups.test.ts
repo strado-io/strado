@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RemoteWorktree } from '../../api';
 import type { FocusGroup } from '../../api';
 import type { Worktree } from '../../types';
-import { activeGroupOf, allGroups, isAutoGroup, isGroupDone, nextMember, resolveMembers, ticketGroups, ticketKey } from './focusGroups';
+import { activeGroupOf, isGroupDone, nextMember, resolveMembers } from './focusGroups';
 
 const wt = (path: string, repoId = 'r1') => ({ path, repoId } as Worktree);
 const rw = (path: string, runnerId = 'run1') => ({ path, runnerId, localRepoId: 'r2' } as RemoteWorktree);
@@ -62,48 +62,5 @@ describe('activeGroupOf', () => {
     expect(activeGroupOf(gs, 'g')?.id).toBe('g');
     expect(activeGroupOf(gs, 'deleted-elsewhere')).toBeNull();
     expect(activeGroupOf(gs, null)).toBeNull();
-  });
-});
-
-describe('ticketKey', () => {
-  it('prefers the worktree ticket id, then a ticket-shaped branch', () => {
-    expect(ticketKey('FX-412', 'whatever')).toBe('FX-412');
-    expect(ticketKey('', 'FD-00029_hotfix')).toBe('FD-00029');
-    expect(ticketKey(undefined, 'feature/fx-412-login')).toBe('FX-412');
-  });
-  it('ignores branches with no ticket in them', () => {
-    expect(ticketKey(undefined, 'main')).toBeNull();
-    expect(ticketKey('', null)).toBeNull();
-  });
-});
-
-describe('ticketGroups', () => {
-  const lw = (path: string, branch: string, repoId: string, ticketId = '') =>
-    ({ path, branch, repoId, meta: ticketId ? { ticketId } : null } as Worktree);
-  const rb = (path: string, branch: string) => ({ path, branch, runnerId: 'run1', localRepoId: 'r3' } as RemoteWorktree);
-
-  it('bundles worktrees that share a ticket, across repos and runners', () => {
-    const out = ticketGroups(
-      [lw('/api/a', 'FX-412-api', 'r1'), lw('/web/a', 'fx-412_web', 'r2'), lw('/api/main', 'main', 'r1')],
-      [rb('/svc/a', 'FX-412')],
-    );
-    expect(out).toEqual([{
-      id: 'ticket:FX-412', name: 'FX-412', createdAt: '',
-      members: ['local:/api/a', 'local:/web/a', 'remote:run1:/svc/a'],
-    }]);
-    expect(isAutoGroup(out[0]!)).toBe(true);
-  });
-
-  it('needs at least two worktrees to make a group', () => {
-    expect(ticketGroups([lw('/a', 'FX-1', 'r1'), lw('/b', 'FX-2', 'r2')], [])).toEqual([]);
-  });
-});
-
-describe('allGroups', () => {
-  const lw = (path: string, branch: string) => ({ path, branch, repoId: 'r1', meta: null } as Worktree);
-  it('adds ticket groups after manual ones, skipping a ticket a manual group already names', () => {
-    const manual: FocusGroup = { id: 'g1', name: 'fx-412', members: [], createdAt: 't' };
-    const wts = [lw('/a', 'FX-412'), lw('/b', 'FX-412'), lw('/c', 'FD-9'), lw('/d', 'FD-9')];
-    expect(allGroups([manual], wts, []).map((g) => g.id)).toEqual(['g1', 'ticket:FD-9']);
   });
 });

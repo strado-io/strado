@@ -29,7 +29,7 @@ import { useFocusShortcut } from '../hooks/focusShortcut';
 import { useFocusGroups } from '../hooks/useFocusGroups';
 import { useFocusPrefs } from '../hooks/focusPrefs';
 import { useMrSummaries } from '../hooks/mrSummaries';
-import { activeGroupOf, allGroups, isGroupDone, nextMember, resolveMembers } from '../components/sidebar/focusGroups';
+import { activeGroupOf, isGroupDone, nextMember, resolveMembers } from '../components/sidebar/focusGroups';
 import { worktreeLabel } from '../components/sidebar/labels';
 import type { SidebarEntry } from '../components/sidebar/pinIds';
 import { TaskBoard } from '../components/TaskBoard';
@@ -557,15 +557,10 @@ export function Dashboard(props: {
   // ⌥⌘←/→ walks the active focus group's worktrees (any repo, local or runner).
   const focusGroups = useFocusGroups(wsId);
   const focusPrefs = useFocusPrefs(wsId);
-  // Manual groups plus the ones worktrees sharing a ticket form on their own.
-  const groups = useMemo(
-    () => allGroups(focusGroups.groups, state.worktrees, remote.worktrees),
-    [focusGroups.groups, state.worktrees, remote.worktrees],
-  );
   const activeFocusMembers = useMemo(() => {
-    const g = activeGroupOf(groups, focusPrefs.activeFocusGroupId);
+    const g = activeGroupOf(focusGroups.groups, focusPrefs.activeFocusGroupId);
     return g ? resolveMembers(g, state.worktrees, remote.worktrees) : [];
-  }, [groups, focusPrefs.activeFocusGroupId, state.worktrees, remote.worktrees]);
+  }, [focusGroups.groups, focusPrefs.activeFocusGroupId, state.worktrees, remote.worktrees]);
   const openFocusMember = useCallback((m: SidebarEntry) => {
     if (m.kind === 'local') openInlineHub(m.w);
     else openRemoteWorktree(m.w);
@@ -583,7 +578,7 @@ export function Dashboard(props: {
   // ⌘K rows for the focus groups. Same cached MR hook the sidebar uses, so
   // the Done check costs no extra requests within its TTL.
   const mrByPath = useMrSummaries(wsId, state.worktrees.map((w) => w.path));
-  const paletteGroups = useMemo(() => groups.map((group) => {
+  const paletteGroups = useMemo(() => focusGroups.groups.map((group) => {
     const members = resolveMembers(group, state.worktrees, remote.worktrees);
     const repoNames = [...new Set(members.map((m) => state.repos.find((r) => r.id === m.repoId)?.name).filter(Boolean))];
     const first = members[0];
@@ -593,11 +588,11 @@ export function Dashboard(props: {
       detail: [label, repoNames.join(', ')].filter(Boolean).join(' · '),
       done: isGroupDone(members, (p) => mrByPath.get(p)?.state ?? null),
     };
-  }), [groups, state.worktrees, state.repos, remote.worktrees, mrByPath]);
+  }), [focusGroups.groups, state.worktrees, state.repos, remote.worktrees, mrByPath]);
   // Picking a group in ⌘K makes it active and opens its most recently used member.
   const pickFocusGroup = (id: string) => {
     focusPrefs.setActiveFocusGroupId(id);
-    const group = groups.find((g) => g.id === id);
+    const group = focusGroups.groups.find((g) => g.id === id);
     if (!group) return;
     const members = resolveMembers(group, state.worktrees, remote.worktrees);
     const lru = readWorktreeLru();
