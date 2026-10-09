@@ -1,4 +1,4 @@
-import { DRAG, NO_DRAG, SidebarToggleButton, TITLE_BAR_HEIGHT, TrafficLightsSpacer, insetTitleBar } from './SidebarToggle';
+import { DRAG, NO_DRAG, SidebarToggleButton, TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from './SidebarToggle';
 import { useEffect, useRef, useState } from 'react';
 import type { RemoteWorktree, RunnerStatus } from '../api';
 import type { MergeRequest, RepoConfig, Workspace, Worktree } from '../types';
@@ -270,6 +270,7 @@ export function Sidebar({
   };
 
   useSpaceShortcut((dir) => carousel.current?.goTo(dir));
+  const insetTitleBar = useInsetTitleBar();
 
   return (
     <aside className="relative flex h-screen shrink-0 flex-col border-r border-zinc-900 bg-zinc-950" style={{ width }}>
@@ -280,7 +281,7 @@ export function Sidebar({
         className={`absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize ${resizing ? 'bg-sky-500/50' : 'hover:bg-sky-500/30'}`}
         {...handleProps}
       />
-      {insetTitleBar() ? (
+      {insetTitleBar ? (
         // macOS: one row — the traffic lights (no native title bar), the space
         // switcher, then « at the far right. The row's blank parts drag the window.
         <div className={`${DRAG} flex shrink-0 items-center gap-1 border-b border-zinc-900 pl-2 pr-3`}

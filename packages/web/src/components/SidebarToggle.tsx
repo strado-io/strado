@@ -3,9 +3,19 @@
 // so the lights float over the top-left of the app: whatever sits there —
 // the sidebar's top row, or a page toolbar when the sidebar is closed — pads
 // past them and lets that strip drag the window.
+import { useEffect, useState } from 'react';
 
-/** True in the macOS desktop shell, where the traffic lights sit inside the app. */
-export const insetTitleBar = (): boolean => typeof window !== 'undefined' && !!window.strado?.insetTitleBar;
+/**
+ * True while the macOS traffic lights sit inside the app: the desktop shell on
+ * macOS, except in full screen, where macOS hides them (and the room for them
+ * would be a blank gap).
+ */
+export function useInsetTitleBar(): boolean {
+  const bridge = typeof window !== 'undefined' ? window.strado : undefined;
+  const [fullScreen, setFullScreen] = useState(() => bridge?.isFullScreen?.() ?? false);
+  useEffect(() => bridge?.onFullScreen?.(setFullScreen), [bridge]);
+  return !!bridge?.insetTitleBar && !fullScreen;
+}
 
 /** Room for the three traffic lights (shell places them at x=16). */
 const LIGHTS_WIDTH = 72;
@@ -44,7 +54,7 @@ export function SidebarToggleButton({ open, onClick }: { open: boolean; onClick:
 
 /** A blank, draggable slot under the traffic lights; nothing outside the macOS shell. */
 export function TrafficLightsSpacer() {
-  if (!insetTitleBar()) return null;
+  if (!useInsetTitleBar()) return null;
   return <span aria-hidden className={`${DRAG} shrink-0 self-stretch`} style={{ width: LIGHTS_WIDTH }} />;
 }
 
