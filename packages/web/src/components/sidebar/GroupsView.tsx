@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import type { FocusGroup } from '../../api';
 import { PlusIcon } from '../hub/icons';
-import { NewGroupDialog } from './NewGroupDialog';
+import { NewGroupDialog, type GroupCandidate } from './NewGroupDialog';
 import type { SidebarEntry } from './pinIds';
 
 export type MenuItem = { text: string; danger?: boolean; onClick: () => void };
@@ -16,7 +16,9 @@ export type GroupsViewProps = {
   membersOf: (g: FocusGroup) => SidebarEntry[];
   collapsedIds: string[];
   onToggleCollapsed: (id: string) => void;
-  onCreate: (name: string) => void;
+  /** Worktrees the New group dialog offers to start a group with. */
+  candidates: GroupCandidate[];
+  onCreate: (name: string, members: string[]) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   renderMember: (e: SidebarEntry, g: FocusGroup) => React.ReactNode;
@@ -48,7 +50,7 @@ function RenameInput({ initial, onSubmit, onCancel }: {
 
 export function GroupsView({
   groups, activeGroupId, isDone, membersOf, collapsedIds, onToggleCollapsed,
-  onCreate, onRename, onDelete, renderMember, renderMenu,
+  candidates, onCreate, onRename, onDelete, renderMember, renderMenu,
 }: GroupsViewProps) {
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -118,8 +120,8 @@ export function GroupsView({
         <div className="flex flex-col gap-0.5">{ordered.map(group)}</div>
       )}
       {creating && (
-        <NewGroupDialog onCancel={() => setCreating(false)}
-          onCreate={(name) => { setCreating(false); onCreate(name); }} />
+        <NewGroupDialog candidates={candidates} onCancel={() => setCreating(false)}
+          onCreate={(name, members) => { setCreating(false); onCreate(name, members); }} />
       )}
     </section>
   );

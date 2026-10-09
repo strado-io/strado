@@ -550,7 +550,17 @@ export function SidebarBody({
           membersOf={(g) => resolveMembers(g, worktrees, remoteWorktrees)}
           collapsedIds={focusPrefs.collapsedGroupIds}
           onToggleCollapsed={focusPrefs.toggleGroupCollapsed}
-          onCreate={(name) => { focus.create(name).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
+          candidates={[
+            ...worktrees.map((w) => ({
+              pinId: localPinId(w), label: worktreeLabel(w),
+              repoName: repos.find((r) => r.id === w.repoId)?.name ?? '',
+            })),
+            ...remoteWorktrees.map((w) => ({
+              pinId: remotePinId(w), label: w.branch ?? w.name,
+              repoName: `${repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''} · ${w.runnerName}`,
+            })),
+          ]}
+          onCreate={(name, members) => { focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
           onRename={(id, name) => { focus.rename(id, name).catch(report); }}
           onDelete={(id) => {
             focus.remove(id)

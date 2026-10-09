@@ -83,10 +83,12 @@ describe('SidebarBody groups view', () => {
     showGroups();
     render(<SidebarBody {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: 'New group' }));
-    const input = screen.getByRole('textbox', { name: 'New group name' });
-    fireEvent.change(input, { target: { value: 'FX-500' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(focus.create).toHaveBeenCalledWith('FX-500');
+    const dialog = screen.getByRole('dialog', { name: 'New group' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'FX-500' } });
+    // Any worktree, from any repo, can start the group.
+    fireEvent.click(within(dialog).getAllByRole('checkbox', { name: 'web fx-412' })[0]!);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }));
+    expect(focus.create).toHaveBeenCalledWith('FX-500', [expect.stringMatching(/^local:\/r2\//)]);
   });
 
   it('renames a group from its menu', () => {
