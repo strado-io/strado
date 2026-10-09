@@ -120,7 +120,6 @@ export function FocusSection(props: FocusSectionProps) {
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [kept, setKept] = useState<string | null>(null);
   useEffect(() => setKept(null), [activeGroup?.id]);
-  if (groups.length === 0) return null;
 
   const openPicker = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();

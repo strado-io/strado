@@ -15,6 +15,7 @@ import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './Wo
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
 import { FocusSection } from './FocusSection';
+import { NewGroupDialog } from './NewGroupDialog';
 import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
@@ -345,6 +346,8 @@ export function SidebarBody({
     isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
   const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
   const focusMembers = activeGroup ? resolveMembers(activeGroup, worktrees, remoteWorktrees) : [];
+  // The worktree a pending "Add to new group…" will seed the group with.
+  const [newGroupFor, setNewGroupFor] = useState<string | null>(null);
   // Row-menu entries: one Add/Remove per open group, plus "new group" — a flat
   // list because Menu has no submenus and a handful of groups fits fine.
   const groupMenuItems = (memberId: string) => [
@@ -357,11 +360,7 @@ export function SidebarBody({
     }),
     {
       text: 'Add to new group…',
-      onClick: () => {
-        const name = window.prompt('New focus group name')?.trim();
-        if (!name) return;
-        focus.create(name, [memberId]).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
-      },
+      onClick: () => setNewGroupFor(memberId),
     },
   ];
   const vscodeTabs = useVscodeTabs();
@@ -727,6 +726,15 @@ export function SidebarBody({
           ))}
       </div>
 
+      {newGroupFor && (
+        <NewGroupDialog
+          onCancel={() => setNewGroupFor(null)}
+          onCreate={(name) => {
+            setNewGroupFor(null);
+            focus.create(name, [newGroupFor]).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
+          }}
+        />
+      )}
     </div>
   );
 }
