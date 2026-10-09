@@ -61,6 +61,8 @@ export type Props = {
   onOpenDiff?: (w: Worktree) => void;
   activeWorktreePath: string | null;
   onNewWorktreeForRepo: (repo: RepoConfig) => void;
+  /** New worktree with the repo still to pick (the sidebar's blank-space menu). */
+  onNewWorktree?: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   update: UpdateFooterProps;
@@ -167,7 +169,7 @@ function WorkspaceSwitcher({
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
   taskCount, onCollapse, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree,
-  activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree, update,
+  activeWorktreePath, onNewWorktreeForRepo, onNewWorktree, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
   onOpenMr,
   onOpenDiff,
@@ -206,7 +208,7 @@ export function Sidebar({
   // props, a neighbour pane gets its snapshot.
   const bodyProps = {
     onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
-    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
+    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
   };

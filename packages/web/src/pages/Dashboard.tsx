@@ -820,6 +820,7 @@ export function Dashboard(props: {
           onOpenDiff={props.onOpenDiff}
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
           onNewWorktreeForRepo={(repo) => props.onNewWorktree(repo.id)}
+          onNewWorktree={() => props.onNewWorktree()}
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
