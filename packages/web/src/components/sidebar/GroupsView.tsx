@@ -1,6 +1,7 @@
-// The sidebar's Groups view: every focus group with its worktrees (any repo)
-// under it, the way the Repos view lists a repo's worktrees. Presentational —
-// SidebarBody owns the data, renders each member row and the ⋯ menus.
+// The sidebar's Groups section: every open focus group with its worktrees (any
+// repo) under it, the way Repos lists a repo's worktrees. Finished groups live
+// in the Settled section at the bottom (SettledSection), which reuses GroupList.
+// Presentational — SidebarBody owns the data, member rows and ⋯ menus.
 import { useState } from 'react';
 import type { FocusGroup } from '../../api';
 import { PlusIcon } from '../hub/icons';
@@ -48,18 +49,16 @@ function RenameInput({ initial, onSubmit, onCancel }: {
   );
 }
 
-export function GroupsView({
-  groups, activeGroupId, isDone, membersOf, collapsedIds, onToggleCollapsed,
-  candidates, onCreate, onRename, onDelete, renderMember, renderMenu,
-}: GroupsViewProps) {
-  const [creating, setCreating] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [settledOpen, setSettledOpen] = useState(false);
-  // Groups whose PRs are all merged/closed fold away under Settled, so the
-  // list stays short as finished work piles up. Still openable and deletable.
-  const openGroups = groups.filter((g) => !isDone(g));
-  const settledGroups = groups.filter((g) => isDone(g));
+/** The rows of some groups: a foldable header (rename/delete menu) and the members. */
+export type GroupListProps = Pick<GroupsViewProps,
+  'activeGroupId' | 'isDone' | 'membersOf' | 'collapsedIds' | 'onToggleCollapsed'
+  | 'onRename' | 'onDelete' | 'renderMember' | 'renderMenu'> & { groups: FocusGroup[] };
 
+export function GroupList({
+  groups, activeGroupId, isDone, membersOf, collapsedIds, onToggleCollapsed,
+  onRename, onDelete, renderMember, renderMenu,
+}: GroupListProps) {
+  const [renaming, setRenaming] = useState<string | null>(null);
   const group = (g: FocusGroup) => {
     const members = membersOf(g);
     const open = !collapsedIds.includes(g.id);
@@ -82,9 +81,7 @@ export function GroupsView({
               </span>
               <span className="min-w-0 flex-1 truncate font-mono">{g.name}</span>
               {active && <span title="⌥⌘← / → cycles this group" className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />}
-              {done
-                ? <span className="shrink-0 text-[11px] text-emerald-500/80">merged ✓</span>
-                : <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600">{members.length}</span>}
+              <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600">{members.length}</span>
             </button>
           )}
           {renderMenu(`${g.name} group actions`, [
@@ -105,7 +102,13 @@ export function GroupsView({
       </div>
     );
   };
+  return <div className="flex flex-col gap-0.5">{groups.map(group)}</div>;
+}
 
+/** Open groups only — finished ones are shown by SettledSection at the bottom. */
+export function GroupsView({ candidates, onCreate, ...list }: GroupsViewProps) {
+  const [creating, setCreating] = useState(false);
+  const openGroups = list.groups.filter((g) => !list.isDone(g));
   return (
     <section aria-label="Focus groups">
       <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
@@ -115,23 +118,12 @@ export function GroupsView({
           <PlusIcon size={12} />
         </button>
       </div>
-      {groups.length === 0 ? (
+      {list.groups.length === 0 ? (
         <div className="px-2.5 py-1 text-xs text-zinc-600">
           Bundle worktrees from any repo: + or a worktree's ⋯ → Add to group…
         </div>
       ) : (
-        <div className="flex flex-col gap-0.5">{openGroups.map(group)}</div>
-      )}
-      {settledGroups.length > 0 && (
-        <div className="mt-3">
-          <button onClick={() => setSettledOpen((v) => !v)} aria-expanded={settledOpen}
-            className="flex w-full items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-600 hover:text-zinc-400">
-            <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden {...stroke}
-              className={`transition-transform ${settledOpen ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
-            {`Settled (${settledGroups.length})`}
-          </button>
-          {settledOpen && <div className="flex flex-col gap-0.5">{settledGroups.map(group)}</div>}
-        </div>
+        <GroupList {...list} groups={openGroups} />
       )}
       {creating && (
         <NewGroupDialog candidates={candidates} onCancel={() => setCreating(false)}
