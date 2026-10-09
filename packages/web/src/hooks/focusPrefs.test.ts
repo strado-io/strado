@@ -5,17 +5,14 @@ import { useFocusPrefs } from './focusPrefs';
 beforeEach(() => localStorage.clear());
 
 describe('useFocusPrefs', () => {
-  it('stores the active group, view and folded groups per workspace', () => {
+  it('stores the active group and folded groups per workspace', () => {
     const a = renderHook(() => useFocusPrefs('w1'));
     const b = renderHook(() => useFocusPrefs('w2'));
     act(() => a.result.current.setActiveFocusGroupId('g1'));
-    act(() => a.result.current.setSidebarMode('groups'));
     act(() => a.result.current.toggleGroupCollapsed('g1'));
     expect(a.result.current.activeFocusGroupId).toBe('g1');
-    expect(a.result.current.sidebarMode).toBe('groups');
     expect(a.result.current.collapsedGroupIds).toEqual(['g1']);
     expect(b.result.current.activeFocusGroupId).toBeNull();
-    expect(b.result.current.sidebarMode).toBe('repos');
     expect(b.result.current.collapsedGroupIds).toEqual([]);
     act(() => a.result.current.toggleGroupCollapsed('g1'));
     expect(a.result.current.collapsedGroupIds).toEqual([]);

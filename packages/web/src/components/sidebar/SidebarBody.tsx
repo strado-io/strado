@@ -530,65 +530,53 @@ export function SidebarBody({
           label="Usage" count={null} icon={usageIcon} />
       </div>
 
-      {/* Repos lists worktrees by repo; Groups by focus group (any repo). */}
-      <div role="tablist" aria-label="Sidebar view" className="mt-4 flex rounded-md bg-zinc-900/60 p-0.5">
-        {(['repos', 'groups'] as const).map((m) => (
-          <button key={m} role="tab" aria-selected={focusPrefs.sidebarMode === m}
-            onClick={() => focusPrefs.setSidebarMode(m)}
-            className={`flex-1 rounded px-2 py-1 text-xs ${focusPrefs.sidebarMode === m
-              ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}>
-            {m === 'repos' ? 'Repos' : 'Groups'}
-          </button>
-        ))}
-      </div>
+      {/* Groups first: the cross-repo bundles for the tasks at hand, then the repo tree. */}
+      <GroupsView
+        groups={focus.groups}
+        activeGroupId={activeGroup?.id ?? null}
+        isDone={doneOf}
+        membersOf={(g) => resolveMembers(g, worktrees, remoteWorktrees)}
+        collapsedIds={focusPrefs.collapsedGroupIds}
+        onToggleCollapsed={focusPrefs.toggleGroupCollapsed}
+        candidates={[
+          ...worktrees.map((w) => ({
+            pinId: localPinId(w), label: worktreeLabel(w),
+            repoName: repos.find((r) => r.id === w.repoId)?.name ?? '',
+          })),
+          ...remoteWorktrees.map((w) => ({
+            pinId: remotePinId(w), label: w.branch ?? w.name,
+            repoName: `${repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''} · ${w.runnerName}`,
+          })),
+        ]}
+        onCreate={(name, members) => { focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
+        onRename={(id, name) => { focus.rename(id, name).catch(report); }}
+        onDelete={(id) => {
+          focus.remove(id)
+            .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
+            .catch(report);
+        }}
+        renderMenu={(label, items) => <Menu alwaysVisible label={label} items={items} />}
+        renderMember={(e: SidebarEntry, g: FocusGroup) => {
+          const repoName = repos.find((r) => r.id === e.repoId)?.name ?? '';
+          if (e.kind === 'local') return localRow(e.w, repoName, 'focus', g);
+          return (
+            <RemoteRow
+              key={`focus:${e.pinId}`}
+              w={e.w}
+              repoName={repoName || e.w.remoteRepoName || ''}
+              reachable={runnerOnline(e.w.runnerId)}
+              activeRow={e.w.path === activeWorktreePath}
+              pinned={pinnedIds.has(e.pinId)}
+              placement="focus"
+              groupItems={groupMenuItems(e.pinId)}
+              onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
+              onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
+              onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+            />
+          );
+        }}
+      />
 
-      {focusPrefs.sidebarMode === 'groups' ? (
-        <GroupsView
-          groups={focus.groups}
-          activeGroupId={activeGroup?.id ?? null}
-          isDone={doneOf}
-          membersOf={(g) => resolveMembers(g, worktrees, remoteWorktrees)}
-          collapsedIds={focusPrefs.collapsedGroupIds}
-          onToggleCollapsed={focusPrefs.toggleGroupCollapsed}
-          candidates={[
-            ...worktrees.map((w) => ({
-              pinId: localPinId(w), label: worktreeLabel(w),
-              repoName: repos.find((r) => r.id === w.repoId)?.name ?? '',
-            })),
-            ...remoteWorktrees.map((w) => ({
-              pinId: remotePinId(w), label: w.branch ?? w.name,
-              repoName: `${repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''} · ${w.runnerName}`,
-            })),
-          ]}
-          onCreate={(name, members) => { focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
-          onRename={(id, name) => { focus.rename(id, name).catch(report); }}
-          onDelete={(id) => {
-            focus.remove(id)
-              .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
-              .catch(report);
-          }}
-          renderMenu={(label, items) => <Menu alwaysVisible label={label} items={items} />}
-          renderMember={(e: SidebarEntry, g: FocusGroup) => {
-            const repoName = repos.find((r) => r.id === e.repoId)?.name ?? '';
-            if (e.kind === 'local') return localRow(e.w, repoName, 'focus', g);
-            return (
-              <RemoteRow
-                key={`focus:${e.pinId}`}
-                w={e.w}
-                repoName={repoName || e.w.remoteRepoName || ''}
-                reachable={runnerOnline(e.w.runnerId)}
-                activeRow={e.w.path === activeWorktreePath}
-                pinned={pinnedIds.has(e.pinId)}
-                placement="focus"
-                groupItems={groupMenuItems(e.pinId)}
-                onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
-                onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
-                onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-              />
-            );
-          }}
-        />
-      ) : (<>
       {pinnedRows.length > 0 && (
         <section aria-label="Pinned worktrees">
           <div className="mb-1 mt-4 flex items-center gap-1.5 pl-2.5 pr-1">
@@ -740,7 +728,6 @@ export function SidebarBody({
             </div>
           ))}
       </div>
-      </>)}
 
       {pickerFor && (
         <GroupPickerDialog
@@ -749,11 +736,7 @@ export function SidebarBody({
           onClose={() => setPickerFor(null)}
           onToggle={(id, add) => { focus.setMembership(id, pickerFor, add).catch(report); }}
           onCreate={(name) => {
-            // Land in the Groups view so the new group is visible straight away.
-            focus.create(name, [pickerFor]).then((g) => {
-              focusPrefs.setActiveFocusGroupId(g.id);
-              focusPrefs.setSidebarMode('groups');
-            }).catch(report);
+            focus.create(name, [pickerFor]).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
           }}
         />
       )}

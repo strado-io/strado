@@ -116,8 +116,8 @@ export function GroupsView({
         </button>
       </div>
       {groups.length === 0 ? (
-        <div className="px-2.5 py-2 text-xs leading-relaxed text-zinc-600">
-          No groups yet. Bundle worktrees from different repos for one task: press + or use a worktree's ⋯ menu → Add to group…
+        <div className="px-2.5 py-1 text-xs text-zinc-600">
+          Bundle worktrees from any repo: + or a worktree's ⋯ → Add to group…
         </div>
       ) : (
         <div className="flex flex-col gap-0.5">{openGroups.map(group)}</div>

@@ -41,27 +41,19 @@ beforeEach(() => {
   focus.rename.mockClear();
 });
 
-const showGroups = () => localStorage.setItem('strado:sidebar-view', JSON.stringify({ w1: 'groups' }));
 
-describe('SidebarBody groups view', () => {
-  it('starts on Repos, with no group rows mixed into the repo list', () => {
+describe('SidebarBody groups section', () => {
+  it('lists each group with its members and repo chips, above the repo tree in one list', () => {
     render(<SidebarBody {...props()} />);
-    expect(screen.getByRole('tab', { name: 'Repos' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.queryByRole('region', { name: 'Focus groups' })).not.toBeInTheDocument();
-    expect(screen.getByText('Repos', { selector: 'span' })).toBeInTheDocument();
-  });
-
-  it('lists each group with its members and repo chips in the Groups view', () => {
-    render(<SidebarBody {...props()} />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Groups' }));
     const g = screen.getByRole('group', { name: 'FX-412' });
     expect(within(g).getByText('api')).toBeInTheDocument();
     expect(within(g).getByText('web')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Add repo' })).not.toBeInTheDocument();
+    const repos = screen.getByText('Repos', { selector: 'span' });
+    expect(g.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
 
   it('folds a group from its header', () => {
-    showGroups();
     render(<SidebarBody {...props()} />);
     const g = screen.getByRole('group', { name: 'FX-412' });
     fireEvent.click(within(g).getByRole('button', { name: /FX-412/, expanded: true }));
@@ -69,7 +61,6 @@ describe('SidebarBody groups view', () => {
   });
 
   it('opening a member makes its group the active one', () => {
-    showGroups();
     const onOpenWorktree = vi.fn();
     render(<SidebarBody {...props({ onOpenWorktree })} />);
     const g = screen.getByRole('group', { name: 'FX-412' });
@@ -80,7 +71,6 @@ describe('SidebarBody groups view', () => {
 
   it('creates a group from the Groups header', () => {
     focus.create.mockResolvedValue({ ...group, id: 'g2', name: 'FX-500' });
-    showGroups();
     render(<SidebarBody {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: 'New group' }));
     const dialog = screen.getByRole('dialog', { name: 'New group' });
@@ -92,7 +82,6 @@ describe('SidebarBody groups view', () => {
   });
 
   it('renames a group from its menu', () => {
-    showGroups();
     render(<SidebarBody {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: 'FX-412 group actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Rename…' }));
@@ -106,7 +95,6 @@ describe('SidebarBody groups view', () => {
     const shipped: FocusGroup = { id: 'g2', name: 'FX-300', members: ['local:/r2/other'], createdAt: 't' };
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, shipped] });
     vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r2/other', { state: 'merged' }]]) as ReturnType<typeof useMrSummaries>);
-    showGroups();
     render(<SidebarBody {...props()} />);
     expect(screen.getByRole('group', { name: 'FX-412' })).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
@@ -116,9 +104,8 @@ describe('SidebarBody groups view', () => {
 
   it('explains how to start when there are no groups', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
-    showGroups();
     render(<SidebarBody {...props()} />);
-    expect(screen.getByText(/No groups yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Bundle worktrees from any repo/)).toBeInTheDocument();
   });
   // One "Add to group…" item, however many groups exist — the picker holds the list.
   const openPicker = () => {
@@ -151,6 +138,6 @@ describe('SidebarBody groups view', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(focus.create).toHaveBeenCalledWith('FX-500', [expect.stringMatching(/^local:\/r2\//)]);
     expect(screen.queryByRole('dialog', { name: 'Add to group' })).not.toBeInTheDocument();
-    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:sidebar-view')!)).toEqual({ w1: 'groups' }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ w1: 'g2' }));
   });
 });
