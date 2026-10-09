@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { AppError } from './errors.js';
 import { createRepoConfigStore, RepoConfigStore } from './repoConfig.js';
+import { createFocusGroupStore, FocusGroupStore } from './focusGroups.js';
 import { createStateStore, StateStore } from './state.js';
 import { WorkspaceConfigStore } from './workspaceConfig.js';
 
-export type WorkspaceStores = { repos: RepoConfigStore; state: StateStore };
+export type WorkspaceStores = { repos: RepoConfigStore; state: StateStore; groups: FocusGroupStore };
 
 export type WorkspaceStoreRegistry = {
   get(wsId: string): Promise<WorkspaceStores>;
@@ -36,6 +37,7 @@ export function createWorkspaceStoreRegistry(
         return {
           repos: createRepoConfigStore(path.join(dir, 'repos.json')),
           state: createStateStore(path.join(dir, 'state.json')),
+          groups: createFocusGroupStore(path.join(dir, 'groups.json')),
         };
       })();
       cache.set(wsId, p);

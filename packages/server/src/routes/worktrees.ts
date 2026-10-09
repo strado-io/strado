@@ -518,7 +518,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
   app.delete<{ Params: { encodedPath: string }; Querystring: { force?: string; deleteBranch?: string } }>(
     '/worktrees/:encodedPath',
     async (req, reply) => {
-      const { repos, state } = req.workspace!.stores;
+      const { repos, state, groups } = req.workspace!.stores;
       const target = decodeURIComponent(req.params.encodedPath);
       const allRepos = await repos.list();
       const repo = findOwningRepo(allRepos, target, app.deps.homeStateDir);
@@ -617,6 +617,9 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         }
 
         await state.remove(target);
+        // A deleted worktree leaves every focus group it was in (the group
+        // itself stays, even if this empties it).
+        await groups.removeMemberEverywhere(`local:${target}`);
         // Unconditional: a path that no longer exists must not keep routing
         // terminals into a container that was just removed, and re-creating
         // the same worktree would otherwise inherit a stale slug.
