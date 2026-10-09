@@ -103,8 +103,8 @@ describe('SidebarBody groups view', () => {
   it('groups worktrees that share a ticket on their own, with no rename/delete menu', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     showGroups();
-    const t = (path: string, repoId: string, branch: string) => ({ ...wt(path, repoId), branch });
-    render(<SidebarBody {...props({ worktrees: [t('/r1/fd', 'r1', 'FD-29_api'), t('/r2/fd', 'r2', 'fd-29-web'), t('/r2/main', 'r2', 'main')] })} />);
+    const t = (path: string, repoId: string, ticketId: string) => ({ ...wt(path, repoId), meta: { ticketId } } as Worktree);
+    render(<SidebarBody {...props({ worktrees: [t('/r1/fd', 'r1', 'FD-29'), t('/r2/fd', 'r2', 'FD-29'), t('/r2/main', 'r2', '')] })} />);
     const g = screen.getByRole('group', { name: 'FD-29' });
     expect(within(g).getByText('ticket')).toBeInTheDocument();
     expect(within(g).getByText('api')).toBeInTheDocument();
