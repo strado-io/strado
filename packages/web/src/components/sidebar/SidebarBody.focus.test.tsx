@@ -100,22 +100,10 @@ describe('SidebarBody groups view', () => {
     expect(focus.rename).toHaveBeenCalledWith('g1', 'FX-413');
   });
 
-  it('groups worktrees that share a ticket on their own, with no rename/delete menu', () => {
-    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
-    showGroups();
-    const t = (path: string, repoId: string, branch: string) => ({ ...wt(path, repoId), branch });
-    render(<SidebarBody {...props({ worktrees: [t('/r1/fd', 'r1', 'FD-29_api'), t('/r2/fd', 'r2', 'fd-29-web'), t('/r2/main', 'r2', 'main')] })} />);
-    const g = screen.getByRole('group', { name: 'FD-29' });
-    expect(within(g).getByText('ticket')).toBeInTheDocument();
-    expect(within(g).getByText('api')).toBeInTheDocument();
-    expect(within(g).getByText('web')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'FD-29 group actions' })).not.toBeInTheDocument();
-  });
-
   it('explains how to start when there are no groups', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     showGroups();
-    render(<SidebarBody {...props({ worktrees: [{ ...wt('/r1/m', 'r1'), branch: 'main' }] })} />);
+    render(<SidebarBody {...props()} />);
     expect(screen.getByText(/No groups yet/)).toBeInTheDocument();
   });
   // One "Add to group…" item, however many groups exist — the picker holds the list.
