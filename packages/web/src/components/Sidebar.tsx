@@ -301,17 +301,20 @@ export function Sidebar({
 
       <div className="flex flex-col gap-1 border-t border-zinc-900 p-2">
         <SidebarNav selected={selected} onSelect={onSelect} taskCount={taskCount}
-          reviewCount={reviewCount} reviewLoading={reviewLoading} onOpenSettings={onOpenSettings} />
+          reviewCount={reviewCount} reviewLoading={reviewLoading} onOpenSettings={onOpenSettings}
+          account={(
+            <AccountMenu
+              compact
+              onOpenSettings={(section) => section === 'organization' ? onOpenOrgSettings(section) : onOpenSettings()}
+              onOpenFeedback={onOpenFeedback}
+            />
+          )} />
         <SpaceDots
           spaces={allWorkspaces}
           activeId={workspace.id}
           onSelect={selectSpace}
         />
         <UpdateFooter {...update} />
-        <AccountMenu
-          onOpenSettings={(section) => section === 'organization' ? onOpenOrgSettings(section) : onOpenSettings()}
-          onOpenFeedback={onOpenFeedback}
-        />
       </div>
     </aside>
   );

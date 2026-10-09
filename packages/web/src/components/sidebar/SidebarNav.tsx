@@ -17,10 +17,11 @@ const usageIcon = (
     <path d="M8 8.5 11 5.8" />
   </svg>
 );
+// Lucide "settings".
 const settingsIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden {...stroke}>
-    <circle cx="8" cy="8" r="2" />
-    <path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" />
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+    <circle cx="12" cy="12" r="3" />
   </svg>
 );
 
@@ -46,13 +47,15 @@ function NavButton({ label, icon, active = false, count = null, loading = false,
   );
 }
 
-export function SidebarNav({ selected, onSelect, taskCount, reviewCount = 0, reviewLoading = false, onOpenSettings }: {
+export function SidebarNav({ selected, onSelect, taskCount, reviewCount = 0, reviewLoading = false, onOpenSettings, account }: {
   selected: SidebarView;
   onSelect: (view: SidebarView) => void;
   taskCount: number;
   reviewCount?: number;
   reviewLoading?: boolean;
   onOpenSettings: () => void;
+  /** The account avatar, at the far right of the row. */
+  account?: React.ReactNode;
 }) {
   return (
     <nav aria-label="Pages" className="flex items-center gap-1 px-1">
@@ -66,6 +69,7 @@ export function SidebarNav({ selected, onSelect, taskCount, reviewCount = 0, rev
         onClick={() => onSelect({ kind: 'usage' })} />
       <span className="flex-1" />
       <NavButton label="Open settings" icon={settingsIcon} onClick={onOpenSettings} />
+      {account}
     </nav>
   );
 }
