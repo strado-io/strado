@@ -618,8 +618,11 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
 
         await state.remove(target);
         // A deleted worktree leaves every focus group it was in (the group
-        // itself stays, even if this empties it).
-        await groups.removeMemberEverywhere(`local:${target}`);
+        // itself stays, even if this empties it). Best-effort: groups are an
+        // add-on, and a corrupt groups.json must never fail a delete whose
+        // worktree is already gone.
+        await groups.removeMemberEverywhere(`local:${target}`).catch((err) =>
+          app.deps.debugLog.log('server', `focus-group prune skipped for ${target}: ${String(err)}`));
         // Unconditional: a path that no longer exists must not keep routing
         // terminals into a container that was just removed, and re-creating
         // the same worktree would otherwise inherit a stale slug.

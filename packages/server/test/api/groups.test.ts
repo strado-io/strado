@@ -84,4 +84,23 @@ describe('focus group routes', () => {
     const groups = (await app.inject({ method: 'GET', url })).json().groups;
     expect(groups[0].members).toEqual(['local:/other']);
   });
+
+  it('still deletes a worktree cleanly when groups.json is corrupt', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/worktrees',
+      payload: { repoId: 'react-app', ticketId: 'FD-10', title: 'corrupt groups', sourceBranch: 'main', sourceWorktree: repo },
+    });
+    await app.deps.jobs.wait(create.json().jobId);
+    const list = await app.inject({ method: 'GET', url: '/api/w/default/worktrees' });
+    const target = list.json().worktrees.find((w: any) => w.meta?.ticketId === 'FD-10').path as string;
+
+    await fs.writeFile(path.join(tmp, 'config', 'workspaces', 'default', 'groups.json'), '{not json');
+
+    const del = await app.inject({ method: 'DELETE', url: `/api/w/default/worktrees/${encodeURIComponent(target)}` });
+    const final = await app.deps.jobs.wait(del.json().jobId);
+    expect(final.status, JSON.stringify(final)).toBe('done');
+    const after = await app.inject({ method: 'GET', url: '/api/w/default/worktrees' });
+    expect(after.json().worktrees.map((w: any) => w.path)).not.toContain(target);
+  });
 });
