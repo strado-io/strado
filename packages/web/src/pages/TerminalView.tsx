@@ -1,3 +1,4 @@
+import { OpenSidebarButton } from '../components/SidebarToggle';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -2662,16 +2663,7 @@ export function TerminalView({
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {banner && <EscalationBanner escalation={banner} onAnswer={(id) => onOpenIntercom?.(id)} />}
         <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
-          {sidebarCollapsed && (
-            <button
-              aria-label="Open sidebar"
-              title="Open sidebar (⌘B)"
-              onClick={() => onExpandSidebar?.()}
-              className="-ml-1 shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-            >
-              »
-            </button>
-          )}
+          {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
           <div className="flex min-w-0 flex-1 items-center overflow-x-auto">

@@ -263,6 +263,10 @@ function createWindow() {
     minHeight: 600,
     title: PROFILE.name === 'dev' ? 'Strado Dev' : 'Strado',
     backgroundColor: '#0b0c0f', // zinc-950 (graphite) — no white flash on load
+    // macOS: no title bar strip — the traffic lights sit inside the app, beside
+    // the sidebar toggle. The renderer pads past them and makes that row
+    // draggable (preload's insetTitleBar tells it to).
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 16 } } : {}),
     webPreferences: {
       // The renderer is our own dashboard talking HTTP to localhost; it
       // needs no Node access.

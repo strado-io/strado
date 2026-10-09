@@ -1,3 +1,4 @@
+import { OpenSidebarButton } from '../components/SidebarToggle';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
@@ -832,16 +833,7 @@ export function Dashboard(props: {
           && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (
         <FilterBar
           leading={
-            sidebarCollapsed ? (
-              <button
-                aria-label="Open sidebar"
-                title="Open sidebar (⌘B)"
-                onClick={() => setSidebarCollapsed(false)}
-                className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-              >
-                »
-              </button>
-            ) : undefined
+            sidebarCollapsed ? <OpenSidebarButton onClick={() => setSidebarCollapsed(false)} /> : undefined
           }
           trailing={
             <div className="flex items-center gap-2">

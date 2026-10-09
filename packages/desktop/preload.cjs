@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('strado', {
   // download URL externally — .deb installs), 'none'. Absent on older shells;
   // the renderer falls back to platform sniffing.
   updateMode: ipcRenderer.sendSync('strado:update-mode'),
+  // macOS windows hide the title bar (titleBarStyle: 'hiddenInset'): the
+  // traffic lights float over the app's top-left, so the renderer leaves room
+  // and provides the drag strip. Absent on older shells.
+  insetTitleBar: process.platform === 'darwin',
   // Open a runner's dashboard in its own window (single-use attach URL).
   openRunner: (url) => ipcRenderer.invoke('strado:open-runner', url),
 

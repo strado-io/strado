@@ -1,3 +1,4 @@
+import { OpenSidebarButton } from './SidebarToggle';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { CodeReview, CodeReviewCounts, CodeReviewRepository, MergeRequest, RepoConfig, Worktree } from '../types';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './sidebar/prVisuals';
@@ -321,14 +322,7 @@ export function CodeReviewsPage({
         <div className="shrink-0 border-b border-zinc-900 bg-zinc-950">
           <div className="flex flex-col gap-1.5 px-2.5 py-2">
             <div className="flex items-center gap-2">
-              {sidebarCollapsed && (
-                <button
-                  aria-label="Open sidebar"
-                  title="Open sidebar (⌘B)"
-                  onClick={() => onExpandSidebar?.()}
-                  className="-ml-1 shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-                >»</button>
-              )}
+              {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
               <div className="flex min-w-0 flex-1 rounded-md bg-zinc-900 p-0.5">
                 {(['open', 'merged', 'closed'] as const).map((value) => (
                   <button
