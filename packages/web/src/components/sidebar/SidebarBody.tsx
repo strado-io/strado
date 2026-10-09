@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { RemoteWorktree, RunnerStatus } from '../../api';
+import type { FocusGroup, RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { chipStatus, sessionChips } from '../../hooks/sessions';
@@ -12,6 +12,11 @@ import { SESSION_COLOR, SessionAvatarIcon, SessionAvatarStack } from './sessionA
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { worktreeLabel, worktreeTitle } from './labels';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
+import { useFocusGroups } from '../../hooks/useFocusGroups';
+import { useFocusPrefs } from '../../hooks/focusPrefs';
+import { FocusSection } from './FocusSection';
+import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
+import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
 export type SidebarBodyProps = {
   wsId: string;
@@ -44,6 +49,8 @@ export type SidebarBodyProps = {
   /** Stable local/runner worktree ids pinned in this workspace, in pin order. */
   pinnedWorktreeIds: string[];
   onTogglePinnedWorktree: (pinId: string) => void;
+  /** Surfaces a failed focus-group change in the dashboard's error banner. */
+  onError?: (message: string) => void;
 };
 
 function isRunning(w: Worktree): boolean {
@@ -126,9 +133,6 @@ function HoverActions({ active, children }: { active: boolean; children: React.R
     </span>
   );
 }
-
-const localPinId = (w: Worktree) => `local:${w.path}`;
-const remotePinId = (w: RemoteWorktree) => `remote:${w.runnerId}:${w.path}`;
 
 // The row's leading glyph when a branch has an open/merged/closed PR. The
 // detail (title, checks, branches) belongs to the row's hover card — the icon
@@ -237,19 +241,22 @@ function Menu({ label, items, alwaysVisible = false }: {
  * that adjacency is the point — but always badged with the machine, because
  * where it runs decides what it can see.
  */
-function RemoteRow({ w, reachable, activeRow, pinned, placement, onTogglePinned, onOpenRemoteWorktree, onDeleteRemoteWorktree }: {
+function RemoteRow({ w, repoName, reachable, activeRow, pinned, placement, groupItems = [], onTogglePinned, onOpenRemoteWorktree, onDeleteRemoteWorktree }: {
 w: RemoteWorktree;
+/** Shown as a chip in the Focus section, where rows from many repos sit together. */
+repoName?: string;
 reachable: boolean;
 activeRow: boolean;
 pinned: boolean;
-placement: 'repo' | 'pinned';
+placement: 'repo' | 'pinned' | 'focus';
+groupItems?: { text: string; onClick: () => void }[];
 onTogglePinned: () => void;
 onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 }) {
   const chips = sessionChips([w as unknown as Worktree]);
   const hasSessions = chips.length > 0;
-  const testIdSuffix = placement === 'pinned' ? `pinned-${w.runnerId}:${w.path}` : `${w.runnerId}:${w.path}`;
+  const testIdSuffix = placement === 'repo' ? `${w.runnerId}:${w.path}` : `${placement}-${w.runnerId}:${w.path}`;
   return (
     <WorktreeRowItem
       worktree={w as unknown as Worktree}
@@ -266,7 +273,7 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
           className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
         />
       )}
-      <span className={`${placement === 'pinned' ? 'ml-2.5' : 'ml-5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+      <span className={`${placement === 'repo' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
         <BranchIcon className={activeRow ? 'text-sky-400' : reachable ? 'text-zinc-600' : 'text-zinc-700'} />
       </span>
       <button
@@ -281,6 +288,9 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
         </span>
       </button>
       <span className="mr-1 flex shrink-0 items-center gap-1.5">
+        {placement === 'focus' && repoName && (
+          <span className="max-w-[6rem] truncate text-[10px] text-zinc-600">{repoName}</span>
+        )}
         <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
         <span
           data-testid={`runner-icon-${testIdSuffix}`}
@@ -303,16 +313,15 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
           onToggle={onTogglePinned}
         />
         {/* A repo's main working tree is not removable as a worktree — the
-            delete route refuses it — so no menu rather than a dead action. */}
-        {!w.isRepoRoot && onDeleteRemoteWorktree ? (
+            delete route refuses it — so its menu holds only the group items. */}
+        {(!w.isRepoRoot && onDeleteRemoteWorktree) || groupItems.length > 0 ? (
           <Menu
             label={`${w.branch ?? w.name} on ${w.runnerName}${placement === 'pinned' ? ' pinned' : ''} actions`}
             items={[
-              {
-                text: 'Delete worktree',
-                danger: true,
-                onClick: () => onDeleteRemoteWorktree(w),
-              },
+              ...groupItems,
+              ...(!w.isRepoRoot && onDeleteRemoteWorktree
+                ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
+                : []),
             ]}
           />
         ) : null}
@@ -326,9 +335,35 @@ export function SidebarBody({
   onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, reviewLoading = false, pinnedWorktreeIds, onTogglePinnedWorktree,
+  remoteLoading = false, reviewLoading = false, pinnedWorktreeIds, onTogglePinnedWorktree, onError,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
+  const focus = useFocusGroups(wsId);
+  const focusPrefs = useFocusPrefs(wsId);
+  const report = (err: unknown) => onError?.((err as Error).message);
+  const doneOf = (g: FocusGroup) =>
+    isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
+  const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
+  const focusMembers = activeGroup ? resolveMembers(activeGroup, worktrees, remoteWorktrees) : [];
+  // Row-menu entries: one Add/Remove per open group, plus "new group" — a flat
+  // list because Menu has no submenus and a handful of groups fits fine.
+  const groupMenuItems = (memberId: string) => [
+    ...focus.groups.filter((g) => !doneOf(g)).map((g) => {
+      const member = g.members.includes(memberId);
+      return {
+        text: `${member ? 'Remove from' : 'Add to'} ${g.name}`,
+        onClick: () => { focus.setMembership(g.id, memberId, !member).catch(report); },
+      };
+    }),
+    {
+      text: 'Add to new group…',
+      onClick: () => {
+        const name = window.prompt('New focus group name')?.trim();
+        if (!name) return;
+        focus.create(name, [memberId]).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
+      },
+    },
+  ];
   const vscodeTabs = useVscodeTabs();
   const browserTabs = useBrowserTabs();
   const runnerOnline = (runnerId: string) =>
@@ -388,13 +423,13 @@ export function SidebarBody({
     <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden {...stroke} className={`transition-transform ${open ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
   );
 
-  const localRow = (w: Worktree, repoName: string, placement: 'repo' | 'pinned') => {
+  const localRow = (w: Worktree, repoName: string, placement: 'repo' | 'pinned' | 'focus') => {
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
     const hasSessions = chips.length > 0;
     const mr = mrByPath.get(w.path);
     const pinned = pinnedIds.has(localPinId(w));
-    const testIdSuffix = placement === 'pinned' ? `pinned-${w.path}` : w.path;
+    const testIdSuffix = placement === 'repo' ? w.path : `${placement}-${w.path}`;
     return (
       <WorktreeRowItem
         key={`${placement}:${w.path}`}
@@ -415,7 +450,7 @@ export function SidebarBody({
             className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
           />
         )}
-        <span className={`${placement === 'pinned' ? 'ml-2.5' : 'ml-5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+        <span className={`${placement === 'repo' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
           {mr ? (
             <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} />
           ) : agentWorking(w) ? (
@@ -435,6 +470,9 @@ export function SidebarBody({
           </span>
         </button>
         <span className="mr-1 flex shrink-0 items-center gap-1.5">
+          {placement === 'focus' && repoName && (
+            <span className="max-w-[6rem] truncate text-[10px] text-zinc-600">{repoName}</span>
+          )}
           {diffBadge(w, testIdSuffix)}
           <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
           {isRunning(w) && (
@@ -454,6 +492,7 @@ export function SidebarBody({
           />
           <Menu label={`${worktreeLabel(w)}${placement === 'pinned' ? ' pinned' : ''} actions`} items={[
             { text: 'Settings', onClick: () => onWorktreeSettings(w) },
+            ...groupMenuItems(localPinId(w)),
             { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
           ]} />
         </HoverActions>
@@ -479,6 +518,7 @@ export function SidebarBody({
         activeRow={remote.path === activeWorktreePath}
         pinned
         placement="pinned"
+        groupItems={groupMenuItems(pinId)}
         onTogglePinned={() => onTogglePinnedWorktree(pinId)}
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
@@ -498,6 +538,42 @@ export function SidebarBody({
         <TopItem active={selected.kind === 'usage'} onClick={() => onSelect({ kind: 'usage' })}
           label="Usage" count={null} icon={usageIcon} />
       </div>
+
+      <FocusSection
+        groups={focus.groups}
+        activeGroup={activeGroup}
+        members={focusMembers}
+        isDone={doneOf}
+        collapsed={focusPrefs.focusCollapsed}
+        onToggleCollapsed={() => focusPrefs.setFocusCollapsed(!focusPrefs.focusCollapsed)}
+        onActivate={focusPrefs.setActiveFocusGroupId}
+        onCreate={(name) => { focus.create(name).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report); }}
+        onRename={(id, name) => { focus.rename(id, name).catch(report); }}
+        onDelete={(id) => {
+          focus.remove(id)
+            .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
+            .catch(report);
+        }}
+        renderMember={(e: SidebarEntry) => {
+          const repoName = repos.find((r) => r.id === e.repoId)?.name ?? '';
+          if (e.kind === 'local') return localRow(e.w, repoName, 'focus');
+          return (
+            <RemoteRow
+              key={`focus:${e.pinId}`}
+              w={e.w}
+              repoName={repoName || e.w.remoteRepoName || ''}
+              reachable={runnerOnline(e.w.runnerId)}
+              activeRow={e.w.path === activeWorktreePath}
+              pinned={pinnedIds.has(e.pinId)}
+              placement="focus"
+              groupItems={groupMenuItems(e.pinId)}
+              onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
+              onOpenRemoteWorktree={onOpenRemoteWorktree}
+              onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+            />
+          );
+        }}
+      />
 
       {pinnedRows.length > 0 && (
         <section aria-label="Pinned worktrees">
@@ -581,6 +657,7 @@ export function SidebarBody({
                       activeRow={w.path === activeWorktreePath}
                       pinned={pinnedIds.has(remotePinId(w))}
                       placement="repo"
+                      groupItems={groupMenuItems(remotePinId(w))}
                       onTogglePinned={() => onTogglePinnedWorktree(remotePinId(w))}
                       onOpenRemoteWorktree={onOpenRemoteWorktree}
                       onDeleteRemoteWorktree={onDeleteRemoteWorktree}
@@ -623,6 +700,7 @@ export function SidebarBody({
                     activeRow={w.path === activeWorktreePath}
                     pinned={pinnedIds.has(remotePinId(w))}
                     placement="repo"
+                    groupItems={groupMenuItems(remotePinId(w))}
                     onTogglePinned={() => onTogglePinnedWorktree(remotePinId(w))}
                     onOpenRemoteWorktree={onOpenRemoteWorktree}
                     onDeleteRemoteWorktree={onDeleteRemoteWorktree}

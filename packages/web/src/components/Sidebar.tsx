@@ -208,6 +208,8 @@ export function Sidebar({
   const bodyProps = {
     selected, onSelect, taskCount, reviewCount, reviewLoading, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
     onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
+    // Dashboard's switch-error handler is its generic error banner.
+    onError: onSwitchError,
   };
   // A neighbour's snapshot is local-only, so it shows no runner rows — those
   // appear when you land on that space.
