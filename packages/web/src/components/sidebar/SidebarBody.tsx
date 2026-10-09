@@ -6,7 +6,7 @@ import { useMrSummaries } from '../../hooks/mrSummaries';
 import { chipStatus, sessionChips } from '../../hooks/sessions';
 import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
-import type { AddRepoAnchor, SidebarView } from '../Sidebar';
+import type { AddRepoAnchor } from '../Sidebar';
 import { PlusIcon } from '../hub/icons';
 import { SESSION_COLOR, SessionAvatarIcon, SessionAvatarStack } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
@@ -27,12 +27,6 @@ export type SidebarBodyProps = {
   worktrees: Worktree[];
   remoteWorktrees: RemoteWorktree[];
   runnerStatuses: RunnerStatus[];
-  selected: SidebarView;
-  onSelect: (view: SidebarView) => void;
-  taskCount: number;
-  reviewCount?: number;
-  /** True until the first workspace-wide code-review fetch settles. */
-  reviewLoading?: boolean;
   onAddRepo: (anchor?: AddRepoAnchor) => void;
   onDeleteRepo: (repo: RepoConfig) => void;
   expandedRepos: Set<string>;
@@ -334,11 +328,11 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 }
 
 export function SidebarBody({
-  wsId, repos, worktrees, remoteWorktrees, runnerStatuses, selected, onSelect, taskCount, reviewCount = 0,
+  wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
   onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktreeForRepo, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, reviewLoading = false, pinnedWorktreeIds, onTogglePinnedWorktree, onError,
+  remoteLoading = false, pinnedWorktreeIds, onTogglePinnedWorktree, onError,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const focus = useFocusGroups(wsId);
@@ -376,39 +370,6 @@ export function SidebarBody({
       </span>
     );
   };
-  const TopItem = ({ active, onClick, label, count, loading = false, icon }: {
-    active: boolean; onClick: () => void; label: string;
-    /** null leaves the trailing slot empty — for rows that have no count. */
-    count: number | null; loading?: boolean; icon: React.ReactNode;
-  }) => (
-    <button
-      onClick={onClick}
-      className={`group flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition ${
-        active ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}
-    >
-      <span className={`shrink-0 ${active ? 'text-zinc-300' : 'text-zinc-600 group-hover:text-zinc-400'}`}>{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className={`flex h-4 min-w-4 shrink-0 items-center justify-center font-mono text-[11px] tabular-nums ${active ? 'text-zinc-400' : 'text-zinc-600'}`}>
-        {loading ? (
-          <span role="status" aria-label={`Loading ${label.toLowerCase()}`} className="braille-spinner text-[12px] leading-none" />
-        ) : count}
-      </span>
-    </button>
-  );
-
-  const tasksIcon = (<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden {...stroke}><circle cx="8" cy="8" r="6" /><circle cx="8" cy="8" r="2.5" /></svg>);
-  const reviewsIcon = (
-    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden fill="currentColor">
-      <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354Z" />
-    </svg>
-  );
-  // A gauge: the quota dial the Usage page is mostly about.
-  const usageIcon = (
-    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden {...stroke}>
-      <path d="M2.2 11.5a6.5 6.5 0 1 1 11.6 0" />
-      <path d="M8 8.5 11 5.8" />
-    </svg>
-  );
   const chevron = (open: boolean) => (
     <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden {...stroke} className={`transition-transform ${open ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
   );
@@ -573,17 +534,6 @@ export function SidebarBody({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-      <div className="flex flex-col gap-0.5">
-        <TopItem active={selected.kind === 'tasks'} onClick={() => onSelect({ kind: 'tasks' })}
-          label="Tasks" count={taskCount} icon={tasksIcon} />
-        <TopItem active={selected.kind === 'reviews'} onClick={() => onSelect({ kind: 'reviews' })}
-          label="Code reviews" count={reviewCount} loading={reviewLoading} icon={reviewsIcon} />
-        {/* No count: a number here would be either a cost or a percentage, and
-            both need the units the page itself carries. */}
-        <TopItem active={selected.kind === 'usage'} onClick={() => onSelect({ kind: 'usage' })}
-          label="Usage" count={null} icon={usageIcon} />
-      </div>
-
       {/* Groups first: the cross-repo bundles for the tasks at hand, then the repo tree. */}
       <GroupsView
         {...groupListProps}

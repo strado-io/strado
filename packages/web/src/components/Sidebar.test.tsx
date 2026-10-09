@@ -103,41 +103,44 @@ const base = {
 };
 
 describe('Sidebar tree', () => {
-  it('shows Code reviews beneath Tasks with its open count', () => {
+  // Tasks / Code reviews / Usage / Settings live in one icon row at the
+  // bottom, leaving the rail above for groups and worktrees.
+  it('puts the page switcher in an icon row at the bottom, below the repo list', () => {
     wrap(<Sidebar {...base} reviewCount={6} expandedRepos={new Set()} />);
-    expect(activePane().getByText('Code reviews')).toBeInTheDocument();
-    expect(activePane().getByText('6')).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Pages' });
+    expect(within(nav).getByRole('button', { name: 'Code reviews' })).toHaveTextContent('6');
+    expect(activePane().queryByText('Code reviews')).not.toBeInTheDocument();
+    const repos = activePane().getByText('Repos', { selector: 'span' });
+    expect(repos.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('shows Usage beneath Code reviews and selects it on click', () => {
+  it('selects a page and opens settings from the icon row', () => {
     const onSelect = vi.fn();
-    wrap(<Sidebar {...base} onSelect={onSelect} expandedRepos={new Set()} />);
-    const rows = activePane().getAllByRole('button').map((button) => button.textContent ?? '');
-    const reviewIndex = rows.findIndex((text) => text.includes('Code reviews'));
-    const usageIndex = rows.findIndex((text) => text.includes('Usage'));
-    expect(usageIndex).toBe(reviewIndex + 1);
-
-    fireEvent.click(activePane().getByText('Usage'));
-
+    const onOpenSettings = vi.fn();
+    wrap(<Sidebar {...base} onSelect={onSelect} onOpenSettings={onOpenSettings} expandedRepos={new Set()} />);
+    const nav = screen.getByRole('navigation', { name: 'Pages' });
+    fireEvent.click(within(nav).getByRole('button', { name: 'Usage' }));
     expect(onSelect).toHaveBeenCalledWith({ kind: 'usage' });
+    fireEvent.click(within(nav).getByRole('button', { name: 'Open settings' }));
+    expect(onOpenSettings).toHaveBeenCalled();
   });
 
-  it('leaves the Usage row without a count', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set()} />);
-    const usageRow = activePane().getByText('Usage').closest('button');
-    expect(usageRow).toHaveTextContent(/^Usage$/);
+  it('marks the current page and leaves Usage without a count', () => {
+    wrap(<Sidebar {...base} selected={{ kind: 'usage' }} expandedRepos={new Set()} />);
+    const usage = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Usage' });
+    expect(usage).toHaveAttribute('aria-current', 'page');
+    expect(usage).toHaveTextContent(/^$/);
   });
 
   it('shows a spinner instead of zero while code reviews are first loading', () => {
     wrap(<Sidebar {...base} reviewCount={0} reviewLoading expandedRepos={new Set()} />);
-    const reviewRow = activePane().getByText('Code reviews').closest('button');
-    expect(reviewRow).not.toBeNull();
-    expect(reviewRow && within(reviewRow).getByRole('status', { name: 'Loading code reviews' })).toBeInTheDocument();
-    expect(reviewRow).not.toHaveTextContent('0');
+    const reviews = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Code reviews' });
+    expect(within(reviews).getByRole('status', { name: 'Loading code reviews' })).toBeInTheDocument();
+    expect(reviews).not.toHaveTextContent('0');
   });
 
   describe('pinned worktrees', () => {
-    it('shows a hover-only pin button and places the pinned shortcut below Code reviews and above Repos', () => {
+    it('shows a hover-only pin button and places the pinned shortcut above Repos', () => {
       wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
 
       const pin = activePane().getByRole('button', { name: 'Pin FD-1' });
@@ -146,9 +149,7 @@ describe('Sidebar tree', () => {
 
       const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
       expect(within(pinned).getByText('FD-1')).toBeInTheDocument();
-      const reviews = activePane().getByText('Code reviews');
       const repos = activePane().getByText('Repos', { selector: 'span' });
-      expect(reviews.compareDocumentPosition(pinned) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(pinned.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 

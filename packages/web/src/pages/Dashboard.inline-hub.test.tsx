@@ -114,7 +114,7 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     await screen.findByTestId('inline-hub');
-    fireEvent.click(screen.getByText('Tasks'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument());
   });
 
@@ -124,7 +124,7 @@ describe('Dashboard inline hub', () => {
     // Intercom is a workspace action in Tasks, even with no running servers.
     expect(screen.getByRole('button', { name: 'Open intercom' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Code reviews'));
+    fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
     expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();
     // The page has its own toolbar — the shared bar would just be a blank strip.
     expect(document.querySelector('[data-filter-bar]')).not.toBeInTheDocument();

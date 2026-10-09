@@ -64,7 +64,7 @@ describe('Dashboard ticket provider errors', () => {
     ticketsIssues.mockResolvedValue({ issues: {}, missing: [], errors: { linear: 'Linear rejected the token' } });
     renderDashboard();
     await waitFor(() => expect(screen.getAllByText('Repo One').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByText('Tasks'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
 
     expect(await screen.findByText(/Linear connection failed/)).toBeInTheDocument();
 
@@ -77,7 +77,7 @@ describe('Dashboard ticket provider errors', () => {
     ticketsIssues.mockResolvedValue({ issues: {}, missing: [], errors: { linear: 'Linear rejected the token' } });
     renderDashboard();
     await waitFor(() => expect(screen.getAllByText('Repo One').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByText('Tasks'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
     expect(await screen.findByText(/Linear connection failed/)).toBeInTheDocument();
 
     // the recovered poll's response replaces the stale error wholesale — this
@@ -91,7 +91,7 @@ describe('Dashboard ticket provider errors', () => {
     ticketsIssues.mockResolvedValue({ issues: {}, missing: [], errors: {} });
     renderDashboard();
     await waitFor(() => expect(screen.getAllByText('Repo One').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByText('Tasks'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
     await waitFor(() => expect(ticketsIssues).toHaveBeenCalled());
     expect(screen.queryByText(/connection failed/)).not.toBeInTheDocument();
   });

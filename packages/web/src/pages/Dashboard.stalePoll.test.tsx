@@ -121,7 +121,7 @@ describe('Dashboard poll vs workspace switch', () => {
   it('never sends the previous workspace repository filter after switching', async () => {
     const view = renderDashboard();
     await act(async () => {});
-    fireEvent.click(screen.getByText('Code reviews'));
+    fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
     await waitFor(() => expect(screen.getByLabelText('Filter by repository')).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Filter by repository'), { target: { value: 'ra' } });
     await waitFor(() => expect(reviewList).toHaveBeenCalledWith('ws-a', 'open', 1, '', 'ra'));

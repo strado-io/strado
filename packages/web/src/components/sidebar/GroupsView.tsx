@@ -111,7 +111,7 @@ export function GroupsView({ candidates, onCreate, ...list }: GroupsViewProps) {
   const openGroups = list.groups.filter((g) => !list.isDone(g));
   return (
     <section aria-label="Focus groups">
-      <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
+      <div className="mb-1 mt-1 flex items-center justify-between pl-2.5 pr-1">
         <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">Groups</span>
         <button onClick={() => setCreating(true)} aria-label="New group" title="New group"
           className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300">
