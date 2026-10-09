@@ -1,4 +1,4 @@
-import { DRAG, SidebarToggleButton, TrafficLightsSpacer, insetTitleBar } from './SidebarToggle';
+import { DRAG, NO_DRAG, SidebarToggleButton, TITLE_BAR_HEIGHT, TrafficLightsSpacer, insetTitleBar } from './SidebarToggle';
 import { useEffect, useRef, useState } from 'react';
 import type { RemoteWorktree, RunnerStatus } from '../api';
 import type { MergeRequest, RepoConfig, Workspace, Worktree } from '../types';
@@ -280,22 +280,27 @@ export function Sidebar({
         className={`absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize ${resizing ? 'bg-sky-500/50' : 'hover:bg-sky-500/30'}`}
         {...handleProps}
       />
-      {/* macOS: the traffic lights sit over this row (no native title bar), the
-          toggle right after them, and the row itself drags the window. */}
-      {insetTitleBar() && (
-        <div className={`${DRAG} flex h-11 shrink-0 items-center gap-1 px-2`}>
+      {insetTitleBar() ? (
+        // macOS: one row — the traffic lights (no native title bar), the
+        // toggle, then the space switcher. The row's blank parts drag the window.
+        <div className={`${DRAG} flex shrink-0 items-center gap-1 border-b border-zinc-900 pl-2 pr-3`}
+          style={{ height: TITLE_BAR_HEIGHT }}>
           <TrafficLightsSpacer />
           <SidebarToggleButton open onClick={onCollapse} />
-        </div>
-      )}
-      <div className={`border-b border-zinc-900 px-3 ${insetTitleBar() ? 'pb-3' : 'py-3'}`}>
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1">
+          <div className={`${NO_DRAG} min-w-0 flex-1`}>
             <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
           </div>
-          {!insetTitleBar() && <SidebarToggleButton open onClick={onCollapse} />}
         </div>
-      </div>
+      ) : (
+        <div className="border-b border-zinc-900 px-3 py-3">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
+            </div>
+            <SidebarToggleButton open onClick={onCollapse} />
+          </div>
+        </div>
+      )}
 
       <SpaceCarousel
         ref={carousel}
