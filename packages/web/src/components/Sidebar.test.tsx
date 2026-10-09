@@ -147,7 +147,7 @@ describe('Sidebar tree', () => {
       const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
       expect(within(pinned).getByText('FD-1')).toBeInTheDocument();
       const reviews = activePane().getByText('Code reviews');
-      const repos = activePane().getByText('Repos');
+      const repos = activePane().getByText('Repos', { selector: 'span' });
       expect(reviews.compareDocumentPosition(pinned) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(pinned.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
