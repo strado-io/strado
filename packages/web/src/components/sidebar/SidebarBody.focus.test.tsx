@@ -59,4 +59,18 @@ describe('SidebarBody focus section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add to FX-412' }));
     expect(focus.setMembership).toHaveBeenCalledWith('g1', expect.stringMatching(/^local:\/r2\//), true);
   });
+
+  // Electron has no window.prompt — the name must come from an in-app input.
+  it('names a new group in an in-app dialog from the row menu', () => {
+    focus.create.mockResolvedValue({ ...group, id: 'g2', name: 'FX-500' });
+    render(<SidebarBody {...props({ expandedRepos: new Set(['r2']) })} />);
+    const menus = screen.getAllByRole('button', { name: 'fx-412 actions' });
+    fireEvent.click(menus[menus.length - 1]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to new group…' }));
+    const input = screen.getByRole('textbox', { name: 'New group name' });
+    fireEvent.change(input, { target: { value: ' FX-500 ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(focus.create).toHaveBeenCalledWith('FX-500', [expect.stringMatching(/^local:\/r2\//)]);
+    expect(screen.queryByRole('textbox', { name: 'New group name' })).not.toBeInTheDocument();
+  });
 });

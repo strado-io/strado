@@ -20,9 +20,16 @@ function props(over: Partial<FocusSectionProps> = {}): FocusSectionProps {
 }
 
 describe('FocusSection', () => {
-  it('renders nothing when there are no groups', () => {
-    const { container } = render(<FocusSection {...props({ groups: [] })} />);
-    expect(container).toBeEmptyDOMElement();
+  // With no groups yet the picker is still the way in: it is where the first one is made.
+  it('offers New group even when there are no groups', () => {
+    const p = props({ groups: [] });
+    render(<FocusSection {...p} />);
+    fireEvent.click(screen.getByRole('button', { name: /Focus: none/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'New group…' }));
+    const input = screen.getByRole('textbox', { name: 'New group name' });
+    fireEvent.change(input, { target: { value: 'FX-500' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(p.onCreate).toHaveBeenCalledWith('FX-500');
   });
 
   it('offers a picker when no group is active, and activates the chosen one', () => {
