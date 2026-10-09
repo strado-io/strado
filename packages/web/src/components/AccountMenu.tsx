@@ -59,12 +59,15 @@ export function AccountMenu({
   onOpenFeedback,
   reload = () => window.location.reload(),
   compact = false,
+  icon,
 }: {
   onOpenSettings: (section: SettingsTarget) => void;
   onOpenFeedback: () => void;
   reload?: () => void;
-  /** Just the initials avatar (the sidebar's icon row); name, org and plan move into the menu. */
+  /** A small icon button (the sidebar's icon row); name, org and plan move into the menu. */
   compact?: boolean;
+  /** The compact button's icon; the initials avatar when absent. */
+  icon?: React.ReactNode;
 }) {
   const { view, switchTo } = useOrg();
   const [license, setLicense] = useState<StoredLicense | null>(null);
@@ -124,11 +127,14 @@ export function AccountMenu({
           aria-expanded={open}
           disabled={busy}
           onClick={() => setOpen((value) => !value)}
-          className="relative flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-900 disabled:opacity-50"
+          className={`relative flex h-8 w-8 items-center justify-center rounded-md transition disabled:opacity-50 ${
+            open ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'}`}
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium text-zinc-200">
-            {busy ? '…' : initials(avatarName)}
-          </span>
+          {icon ?? (
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium text-zinc-200">
+              {busy ? '…' : initials(avatarName)}
+            </span>
+          )}
           {hasIncoming && <span aria-label="pending invitation" className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-500" />}
         </button>
       ) : (
