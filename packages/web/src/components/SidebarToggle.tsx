@@ -31,12 +31,13 @@ function PanelIcon() {
   );
 }
 
+/** Open sidebar: « to fold it away. Closed: the panel icon to bring it back. */
 export function SidebarToggleButton({ open, onClick }: { open: boolean; onClick: () => void }) {
   const label = open ? 'Collapse sidebar' : 'Open sidebar';
   return (
     <button type="button" aria-label={label} title={`${label} (⌘B)`} onClick={onClick}
       className={`${NO_DRAG} flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200`}>
-      <PanelIcon />
+      {open ? <span aria-hidden className="text-base leading-none">«</span> : <PanelIcon />}
     </button>
   );
 }
