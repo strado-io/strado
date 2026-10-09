@@ -72,6 +72,17 @@ describe('AccountMenu', () => {
     expect(trigger).toHaveTextContent('pro');
   });
 
+  it('shows only the initials when compact, with name, org and plan inside the menu', async () => {
+    renderMenu({ compact: true });
+    const trigger = await screen.findByRole('button', { name: 'Account: Kamlesh' });
+    await waitFor(() => expect(trigger).toHaveAttribute('title', 'Kamlesh · Fleetx'));
+    expect(trigger).toHaveTextContent(/^KB$/);
+    await userEvent.click(trigger);
+    const menu = screen.getByRole('menu', { name: 'Account menu' });
+    expect(menu).toHaveTextContent('Kamlesh');
+    expect(menu).toHaveTextContent('pro');
+  });
+
   it('opens Profile and Organization settings from the account menu', async () => {
     const onOpenSettings = vi.fn();
     renderMenu({ onOpenSettings });

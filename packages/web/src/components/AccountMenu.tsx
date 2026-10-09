@@ -58,10 +58,13 @@ export function AccountMenu({
   onOpenSettings,
   onOpenFeedback,
   reload = () => window.location.reload(),
+  compact = false,
 }: {
   onOpenSettings: (section: SettingsTarget) => void;
   onOpenFeedback: () => void;
   reload?: () => void;
+  /** Just the initials avatar (the sidebar's icon row); name, org and plan move into the menu. */
+  compact?: boolean;
 }) {
   const { view, switchTo } = useOrg();
   const [license, setLicense] = useState<StoredLicense | null>(null);
@@ -112,6 +115,23 @@ export function AccountMenu({
 
   return (
     <div ref={ref} className="relative">
+      {compact ? (
+        <button
+          type="button"
+          aria-label={`Account: ${displayName}`}
+          title={activeOrg ? `${displayName} · ${activeOrg}` : displayName}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          disabled={busy}
+          onClick={() => setOpen((value) => !value)}
+          className="relative flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-900 disabled:opacity-50"
+        >
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium text-zinc-200">
+            {busy ? '…' : initials(avatarName)}
+          </span>
+          {hasIncoming && <span aria-label="pending invitation" className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+        </button>
+      ) : (
       <button
         type="button"
         aria-label={`Account: ${displayName}`}
@@ -134,12 +154,13 @@ export function AccountMenu({
           <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
+      )}
 
       {open && (
         <div
           role="menu"
           aria-label="Account menu"
-          className="absolute bottom-full left-0 z-50 mb-1 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+          className={`absolute bottom-full ${compact ? 'right-0' : 'left-0'} z-50 mb-1 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl`}
         >
           <div className="flex items-center gap-2.5 px-2 py-2">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[11px] font-medium text-zinc-200">
@@ -149,6 +170,7 @@ export function AccountMenu({
               <span className="block truncate text-sm text-zinc-100">{displayName}</span>
               {license?.email && <span className="block truncate text-xs text-zinc-500">{license.email}</span>}
             </span>
+            {compact && <span className="ml-auto shrink-0"><PlanBadge plan={view?.entitlements?.plan} /></span>}
           </div>
 
           {view && (
