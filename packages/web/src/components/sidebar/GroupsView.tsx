@@ -54,8 +54,11 @@ export function GroupsView({
 }: GroupsViewProps) {
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
-  // Open groups first; finished ones sink to the bottom, still deletable.
-  const ordered = [...groups.filter((g) => !isDone(g)), ...groups.filter((g) => isDone(g))];
+  const [settledOpen, setSettledOpen] = useState(false);
+  // Groups whose PRs are all merged/closed fold away under Settled, so the
+  // list stays short as finished work piles up. Still openable and deletable.
+  const openGroups = groups.filter((g) => !isDone(g));
+  const settledGroups = groups.filter((g) => isDone(g));
 
   const group = (g: FocusGroup) => {
     const members = membersOf(g);
@@ -112,12 +115,23 @@ export function GroupsView({
           <PlusIcon size={12} />
         </button>
       </div>
-      {ordered.length === 0 ? (
+      {groups.length === 0 ? (
         <div className="px-2.5 py-2 text-xs leading-relaxed text-zinc-600">
-          No groups yet. Bundle worktrees from different repos for one task: press + or use a worktree's ⋯ menu → Add to new group.
+          No groups yet. Bundle worktrees from different repos for one task: press + or use a worktree's ⋯ menu → Add to group…
         </div>
       ) : (
-        <div className="flex flex-col gap-0.5">{ordered.map(group)}</div>
+        <div className="flex flex-col gap-0.5">{openGroups.map(group)}</div>
+      )}
+      {settledGroups.length > 0 && (
+        <div className="mt-3">
+          <button onClick={() => setSettledOpen((v) => !v)} aria-expanded={settledOpen}
+            className="flex w-full items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-600 hover:text-zinc-400">
+            <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden {...stroke}
+              className={`transition-transform ${settledOpen ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
+            {`Settled (${settledGroups.length})`}
+          </button>
+          {settledOpen && <div className="flex flex-col gap-0.5">{settledGroups.map(group)}</div>}
+        </div>
       )}
       {creating && (
         <NewGroupDialog candidates={candidates} onCancel={() => setCreating(false)}

@@ -102,6 +102,18 @@ describe('SidebarBody groups view', () => {
     expect(focus.rename).toHaveBeenCalledWith('g1', 'FX-413');
   });
 
+  it('keeps merged groups under a folded Settled section', () => {
+    const shipped: FocusGroup = { id: 'g2', name: 'FX-300', members: ['local:/r2/other'], createdAt: 't' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, shipped] });
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r2/other', { state: 'merged' }]]) as ReturnType<typeof useMrSummaries>);
+    showGroups();
+    render(<SidebarBody {...props()} />);
+    expect(screen.getByRole('group', { name: 'FX-412' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Settled (1)' }));
+    expect(screen.getByRole('group', { name: 'FX-300' })).toBeInTheDocument();
+  });
+
   it('explains how to start when there are no groups', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     showGroups();
