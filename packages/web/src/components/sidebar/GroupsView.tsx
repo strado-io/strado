@@ -93,7 +93,7 @@ export function GroupList({
         {open && (
           <div className="flex flex-col gap-0.5">
             {members.length === 0
-              ? <div className="py-1 pl-12 pr-2 text-xs text-zinc-600">Empty — add worktrees from their ⋯ menu.</div>
+              ? <div className="py-1 pl-9 pr-2 text-xs text-zinc-600">Empty — add worktrees from their ⋯ menu.</div>
               : members.map((m) => renderMember(m, g))}
           </div>
         )}

@@ -301,7 +301,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
           className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
         />
       )}
-      <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-8' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+      <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
         <BranchIcon className={activeRow ? 'text-sky-400' : reachable ? 'text-zinc-600' : 'text-zinc-700'} />
       </span>
       <button
@@ -459,7 +459,7 @@ export function SidebarBody({
             className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
           />
         )}
-        <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-8' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+        <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
           {mr ? (
             <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} />
           ) : agentWorking(w) ? (
@@ -661,7 +661,7 @@ export function SidebarBody({
                 // dead gap); the icon's indent nests them under the repo name
                 <div className="flex flex-col gap-0.5">
                   {repoWts.length === 0 && repoRemote.length === 0 && (
-                    <div className="py-1.5 pl-12 pr-2 text-xs text-zinc-600">No worktrees</div>
+                    <div className="py-1.5 pl-9 pr-2 text-xs text-zinc-600">No worktrees</div>
                   )}
                   {repoWts.map((w) => localRow(w, repo.name, 'repo'))}
                   {/* Runner worktrees for this repo, after the local ones. An
