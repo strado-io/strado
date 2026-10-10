@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import { createDaemonTerminalManager } from './manager.js';
+import { releasePtyDaemon } from './supervisor.js';
 import type { TerminalManager } from '../terminalManager.js';
 import headlessPkg from '@xterm/headless';
 import serializePkg from '@xterm/addon-serialize';
@@ -22,6 +23,9 @@ beforeEach(async () => {
 
 afterEach(() => {
   manager.destroy();
+  // Boots the launchd job out where there is one (macOS), so a dead test
+  // daemon never lingers as a loaded job in the user's launchd domain.
+  releasePtyDaemon(stateDir);
   const manifest = path.join(stateDir, 'ptyd', 'manifest.json');
   if (fs.existsSync(manifest)) {
     const { pid } = JSON.parse(fs.readFileSync(manifest, 'utf8'));

@@ -66,6 +66,8 @@ export class PtydServer {
   private readonly conns = new Set<Conn>();
   private readonly opts: PtydServerOptions;
   private upgradeInFlight: Promise<UpgradeResult> | null = null;
+  /** After a committed handoff on macOS: the successor this process waits on (see linger). */
+  private successor: childProcess.ChildProcess | null = null;
   /** The conn that asked for the upgrade — its reply must flush before exit. */
   private pendingUpgradeConn: Conn | null = null;
   /**
@@ -495,6 +497,7 @@ export class PtydServer {
       clearSnapshot(snapshotPath);
       return result;
     }
+    if (process.platform === 'darwin') this.successor = child;
 
     // The successor owns the sessions now — stop accepting new clients
     // immediately so a fast reconnect gets ECONNREFUSED (and retries into
@@ -547,7 +550,40 @@ export class PtydServer {
     }
     // killSessions:false — the master fds now live in the successor.
     await this.close({ killSessions: false });
+    if (this.successor) { this.linger(this.successor); return; }
     setTimeout(() => process.exit(0), 50).unref();
+  }
+
+  /**
+   * macOS: stay alive, idle, until the successor exits — then exit with it.
+   *
+   * macOS fixes a process's "responsible process" (the identity its privacy
+   * grants — Desktop, Documents — are checked against) at spawn, and children
+   * inherit it. Ours is this process when launchd started it; the successor
+   * and every shell it spawns inherit THIS pid. Were this process to exit,
+   * they would all be attributed to a dead pid, the grants would stop
+   * applying, and `git` in a Desktop checkout would fail with EPERM until the
+   * daemon was restarted by hand (losing every session). One idle Node
+   * process per upgrade, gone at the next reboot, is the price.
+   *
+   * Signals are forwarded: launchd (or a person) stopping this job must stop
+   * the daemon that is actually serving.
+   */
+  private linger(successor: childProcess.ChildProcess): void {
+    process.stderr.write(
+      `[ptyd] handed off to pid ${successor.pid}; staying as its responsible process until it exits\n`,
+    );
+    successor.on('exit', (code, signal) => {
+      process.stderr.write(`[ptyd] successor ${successor.pid} exited (${signal ?? code}); exiting\n`);
+      process.exit(code ?? 0);
+    });
+  }
+
+  /** The signal belongs to the successor once we have handed off; true when forwarded. */
+  forwardSignalToSuccessor(signal: NodeJS.Signals): boolean {
+    if (!this.successor || this.successor.exitCode !== null) return false;
+    try { this.successor.kill(signal); } catch { /* already gone */ }
+    return true;
   }
 
   /**

@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 
 const HEALTH_TIMEOUT_MS = 20_000;
 
@@ -96,10 +96,14 @@ async function stopServer() {
     while (!exited && Date.now() < deadline) await sleep(50);
     if (!exited) child.kill('SIGKILL');
   }
-  // ptyd is a detached daemon and outlives the server on purpose; it must not
-  // outlive the smoke test.
+  // ptyd outlives the server on purpose; it must not outlive the smoke test.
+  // On macOS it is a launchd job (manifest.launchdLabel): boot that out, or
+  // the runner keeps a loaded job pointing at a scratch home.
   try {
     const m = JSON.parse(fs.readFileSync(path.join(home, 'ptyd', 'manifest.json'), 'utf8'));
+    if (typeof m.launchdLabel === 'string') {
+      spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${m.launchdLabel}`], { stdio: 'ignore' });
+    }
     if (typeof m.pid === 'number') process.kill(m.pid, 'SIGTERM');
   } catch { /* no daemon came up, or it is already gone */ }
 }
