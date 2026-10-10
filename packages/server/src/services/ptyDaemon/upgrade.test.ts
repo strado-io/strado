@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDaemonTerminalManager } from './manager.js';
-import { probeDaemon } from './supervisor.js';
+import { probeDaemon, releasePtyDaemon } from './supervisor.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const realBundle = path.resolve(here, '../../../../ptyd/dist/ptyd.cjs');
@@ -37,6 +37,10 @@ beforeEach(() => {
 afterEach(async () => {
   const manifest = path.join(stateDir, 'ptyd', 'manifest.json');
   let manifestPid = -1;
+  // macOS: the manifest daemon is a launchd job — boot it out, or a loaded
+  // job outlives the test. The lingering predecessor forwards the stop to
+  // its successor (PtydServer.linger).
+  releasePtyDaemon(stateDir);
   // The upgrade replaces the manifest daemon with a successor. If the test
   // failed mid-handoff the manifest can still name the predecessor, so probe
   // the socket for the CURRENT owner and reap that too.

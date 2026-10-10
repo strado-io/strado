@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensurePtyDaemon, readExpectedDaemonVersion, versionLess } from './supervisor.js';
+import { execFileSync } from 'node:child_process';
+import { ensurePtyDaemon, readExpectedDaemonVersion, readManifest, releasePtyDaemon, versionLess } from './supervisor.js';
+import { launchdEnabled } from './launchd.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Repo-relative path to the built daemon bundle. Task 5 must have run
@@ -20,12 +22,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Kill any daemon this test spawned (manifest records the pid).
-  const manifest = path.join(stateDir, 'ptyd', 'manifest.json');
-  if (fs.existsSync(manifest)) {
-    const { pid } = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-    try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
-  }
+  // Stop any daemon this test spawned: boots the launchd job out where there
+  // is one (a loaded job with a dead process would otherwise linger in the
+  // user's launchd domain), else SIGTERMs the manifest pid.
+  releasePtyDaemon(stateDir);
   for (const pid of spawned.splice(0)) {
     try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
   }
@@ -83,6 +83,34 @@ describe('ensurePtyDaemon', () => {
     expect(versionLess('0.10.0', '0.9.0')).toBe(false);
     expect(versionLess('garbage', '0.2.0')).toBe(false);
   });
+
+  // launchd makes the daemon its own "responsible process" for macOS privacy
+  // grants (launchd.ts). Skipped where launchd is off; a GUI-less box (CI)
+  // that refuses the job falls back to the detached spawn, which the test
+  // reports rather than fails on.
+  it.skipIf(!launchdEnabled())('macOS: the daemon runs under launchd and releasePtyDaemon boots it out', async () => {
+    await ensurePtyDaemon({ stateDir, daemonScript });
+    const m = readManifest(stateDir)!;
+    if (!m.launchdLabel) {
+      console.warn('launchd refused the job here; detached fallback exercised instead');
+      spawned.push(m.pid);
+      return;
+    }
+    expect(m.launchdLabel).toMatch(/^io\.strado\.ptyd\.[0-9a-f]{10}$/);
+    const ppid = execFileSync('ps', ['-o', 'ppid=', '-p', String(m.pid)], { encoding: 'utf8' }).trim();
+    expect(ppid).toBe('1');
+    expect(execFileSync('launchctl', ['print', `gui/${process.getuid!()}/${m.launchdLabel}`], { encoding: 'utf8' }))
+      .toContain(m.launchdLabel);
+
+    releasePtyDaemon(stateDir);
+    const start = Date.now();
+    for (;;) {
+      try { process.kill(m.pid, 0); } catch { break; }
+      if (Date.now() - start > 5000) throw new Error('daemon survived releasePtyDaemon');
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(() => execFileSync('launchctl', ['print', `gui/${process.getuid!()}/${m.launchdLabel}`], { stdio: 'pipe' })).toThrow();
+  }, 20000);
 
   it('ensurePtyDaemon reports the running daemon version', async () => {
     const { daemonVersion } = await ensurePtyDaemon({ stateDir, daemonScript });

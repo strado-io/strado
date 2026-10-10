@@ -180,4 +180,44 @@ describe('fd handoff', () => {
     await b.waitFor((f) => (f.message as { type: string }).type === 'exit');
     b.close();
   }, 30000);
+
+  // macOS ties privacy grants to the "responsible process" fixed at spawn; the
+  // successor (and its shells) inherit the predecessor's pid, so the
+  // predecessor must outlive the handoff or every shell is attributed to a
+  // dead process. See PtydServer.linger.
+  it.skipIf(process.platform !== 'darwin')(
+    'macOS: the predecessor lingers while the successor serves, and a signal to it stops both',
+    async () => {
+      const predecessor = await startDaemon();
+      const a = await connect(sock);
+      await daemonPid(a);
+      a.send({ type: 'prepare-upgrade' });
+      const prepared = await a.waitFor((f) => (f.message as { type: string }).type === 'upgrade-prepared', 10000);
+      const result = (prepared.message as { result: { ok: boolean; successorPid?: number } }).result;
+      expect(result.ok).toBe(true);
+      const successorPid = result.successorPid!;
+      successorPids.push(successorPid);
+      a.close();
+
+      const { client: b } = await reconnectWithHello(sock);
+      b.close();
+      // Served by the successor, and the predecessor is still here.
+      await new Promise((r) => setTimeout(r, 500));
+      expect(predecessor.exitCode).toBeNull();
+      expect(predecessor.signalCode).toBeNull();
+
+      // Stopping the predecessor (launchd booting the job out, say) must stop
+      // the daemon that is actually serving, then exit itself.
+      const exited = new Promise<void>((r) => predecessor.once('exit', () => r()));
+      predecessor.kill('SIGTERM');
+      await exited;
+      const start = Date.now();
+      for (;;) {
+        try { process.kill(successorPid, 0); } catch { break; }
+        if (Date.now() - start > 5000) throw new Error('successor outlived the predecessor');
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    },
+    30000,
+  );
 });

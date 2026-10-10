@@ -1,13 +1,15 @@
 // Spawn-or-adopt the strado-ptyd daemon. The daemon outlives the server —
-// that's the whole point — so it is spawned detached and never killed on
-// server shutdown. Manifest file records pid+socket for adoption on the
-// next server boot.
+// that's the whole point — so it is never killed on server shutdown. On macOS
+// it runs as a launchd user agent (see launchd.ts for why that, and not a
+// detached child); elsewhere, or when launchd refuses, it is spawned detached.
+// Manifest file records pid+socket for adoption on the next server boot.
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { encodeFrame, FrameDecoder, PROTOCOL_VERSION } from '@strado/ptyd/protocol';
+import { bootoutLaunchdJob, bootstrapLaunchdJob, launchdEnabled, writeLaunchdPlist } from './launchd.js';
 
 export interface PtyDaemonHandle {
   socketPath: string;
@@ -19,6 +21,8 @@ interface Manifest {
   socketPath: string;
   daemonVersion: string;
   startedAt: number;
+  /** Set when launchd owns the daemon: what to boot out to stop it. */
+  launchdLabel?: string;
 }
 
 const PROBE_TIMEOUT_MS = 1_000;
@@ -375,7 +379,7 @@ export async function ensurePtyDaemon(opts: {
       // the manifest tracks whoever actually answers (Task 7's upgrade test
       // depends on this: it probes the manifest after an in-place upgrade).
       if (daemonPid !== -1 && daemonPid !== manifest.pid) {
-        const m: Manifest = { pid: daemonPid, socketPath, daemonVersion, startedAt: Date.now() };
+        const m: Manifest = { ...manifest, pid: daemonPid, daemonVersion, startedAt: Date.now() };
         const tmp = `${manifestPath(opts.stateDir)}.tmp`;
         fs.writeFileSync(tmp, JSON.stringify(m, null, 2));
         fs.renameSync(tmp, manifestPath(opts.stateDir));
@@ -391,20 +395,24 @@ export async function ensurePtyDaemon(opts: {
   try {
     if (fs.existsSync(logPath) && fs.statSync(logPath).size > MAX_LOG_BYTES) fs.truncateSync(logPath, 0);
   } catch { /* best-effort */ }
-  const logFd = fs.openSync(logPath, 'a');
+
+  // macOS: hand the daemon to launchd, which makes it its own "responsible
+  // process" for privacy grants (launchd.ts). Any refusal — no GUI session on
+  // a CI box, launchctl missing — falls back to the detached spawn below.
+  let launchdLabel: string | undefined;
+  if (launchdEnabled()) {
+    const job = writeLaunchdPlist({
+      stateDir: opts.stateDir, execPath: installed.execPath, script: installed.script, socketPath, logPath,
+    });
+    const res = bootstrapLaunchdJob(job.label, job.plistPath);
+    if (res.ok) launchdLabel = job.label;
+    else process.stderr.write(`[ptyd-supervisor] launchd refused the daemon job (${res.error}); spawning detached\n`);
+  }
 
   // detached + unref: the daemon must survive this server exiting. Both
   // argv[0] and argv[1] come from the install — the installed interpreter
   // where we copied one (Linux), else the server's own Node binary.
-  const child = spawn(installed.execPath, [installed.script, `--socket=${socketPath}`], {
-    detached: true,
-    stdio: ['ignore', 'ignore', logFd],
-  });
-  fs.closeSync(logFd);
-  const pid = child.pid;
-  child.unref();
-  if (!pid) throw new Error('ptyd spawn returned no pid');
-
+  let child: ReturnType<typeof spawn> | null = null;
   // spawn() failures (e.g. ENOENT) can surface asynchronously as an 'error'
   // event rather than a thrown exception. Unhandled, that crashes the whole
   // server. Record it and let the wait loop below fail fast instead.
@@ -412,7 +420,17 @@ export async function ensurePtyDaemon(opts: {
   // control-flow analysis, which can't see the reassignment happening
   // inside the `once` closure.)
   const spawnErrBox: { err: Error | null } = { err: null };
-  child.once('error', (err) => { spawnErrBox.err = err; });
+  if (!launchdLabel) {
+    const logFd = fs.openSync(logPath, 'a');
+    child = spawn(installed.execPath, [installed.script, `--socket=${socketPath}`], {
+      detached: true,
+      stdio: ['ignore', 'ignore', logFd],
+    });
+    fs.closeSync(logFd);
+    child.unref();
+    if (!child.pid) throw new Error('ptyd spawn returned no pid');
+    child.once('error', (err) => { spawnErrBox.err = err; });
+  }
 
   // Wait for the socket to answer.
   const start = Date.now();
@@ -420,8 +438,10 @@ export async function ensurePtyDaemon(opts: {
   while (Date.now() - start < SPAWN_WAIT_MS) {
     if (spawnErrBox.err) throw new Error(`ptyd spawn failed: ${spawnErrBox.err.message} (log: ${logPath})`);
     try {
-      const { daemonVersion } = await probeDaemon(socketPath, 500);
-      const m: Manifest = { pid, socketPath, daemonVersion, startedAt: Date.now() };
+      const { daemonVersion, daemonPid } = await probeDaemon(socketPath, 500);
+      // launchd knows the pid, we don't — the daemon tells us in hello-ack.
+      const pid = daemonPid !== -1 ? daemonPid : child?.pid ?? -1;
+      const m: Manifest = { pid, socketPath, daemonVersion, startedAt: Date.now(), ...(launchdLabel ? { launchdLabel } : {}) };
       const tmp = `${manifestPath(opts.stateDir)}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(m, null, 2));
       fs.renameSync(tmp, manifestPath(opts.stateDir));
@@ -433,6 +453,19 @@ export async function ensurePtyDaemon(opts: {
   }
   // This call's spawn never became reachable — reap it. Only a daemon that
   // passed the probe (and is recorded in the manifest) may outlive us.
-  try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+  if (launchdLabel) bootoutLaunchdJob(launchdLabel);
+  else if (child?.pid) { try { process.kill(child.pid, 'SIGTERM'); } catch { /* already gone */ } }
   throw new Error(`ptyd did not come up within ${SPAWN_WAIT_MS}ms: ${lastErr?.message ?? 'unknown'} (log: ${logPath})`);
+}
+
+/**
+ * Stop the daemon this stateDir records and forget it: boot the launchd job
+ * out where there is one, else SIGTERM the pid. For tests and tooling —
+ * the server itself never stops the daemon.
+ */
+export function releasePtyDaemon(stateDir: string): void {
+  const m = readManifest(stateDir);
+  if (!m) return;
+  if (m.launchdLabel) bootoutLaunchdJob(m.launchdLabel);
+  try { process.kill(m.pid, 'SIGTERM'); } catch { /* already gone */ }
 }

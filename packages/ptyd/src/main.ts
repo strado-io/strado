@@ -11,7 +11,7 @@ import { PtydServer } from './server.js';
 import { readSnapshot, clearSnapshot, type HandoffSnapshot } from './snapshot.js';
 import { type HandoffMessage } from './protocol.js';
 
-const DAEMON_VERSION = '0.2.1'; // bump alongside package.json
+const DAEMON_VERSION = '0.2.2'; // bump alongside package.json
 
 function arg(name: string): string | undefined {
   const prefix = `--${name}=`;
@@ -117,7 +117,10 @@ async function runHandoffReceiver(): Promise<void> {
 
 function wireShutdown(server: PtydServer): void {
   let shuttingDown = false;
-  const shutdown = (signal: string) => {
+  const shutdown = (signal: NodeJS.Signals) => {
+    // After a handoff this process only lingers for the successor (macOS,
+    // see PtydServer.linger); the signal is the successor's to act on.
+    if (server.forwardSignalToSuccessor(signal)) return;
     if (shuttingDown) return;
     shuttingDown = true;
     process.stderr.write(`[ptyd] received ${signal}, shutting down (killing sessions)\n`);
