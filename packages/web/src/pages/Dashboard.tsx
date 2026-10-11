@@ -37,6 +37,7 @@ import { TerminalView } from './TerminalView';
 import { CodeReviewsPage } from '../components/CodeReviewsPage';
 import { RendererOverlayContext, useRendererOverlayRegistry } from '../contexts/RendererOverlay';
 import { UsagePage } from '../components/usage/UsagePage';
+import { WorktreesPage } from '../components/worktrees/WorktreesPage';
 import { useCodeReviews } from '../hooks/codeReviews';
 
 type State = {
@@ -765,6 +766,7 @@ export function Dashboard(props: {
             setShowAddRepo(true);
           }}
           onSearch={() => setShowPalette(true)}
+          onAllWorktrees={() => selectView({ kind: 'worktrees' })}
           onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}
@@ -780,7 +782,7 @@ export function Dashboard(props: {
         {/* Code reviews carries the sidebar toggle and running-servers chip in
             its own toolbar, so the shared row would only be an empty strip. */}
         {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote
-          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && (
+          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && activeView.kind !== 'worktrees' && (
         <FilterBar
           leading={
             sidebarCollapsed ? <OpenSidebarButton onClick={() => setSidebarCollapsed(false)} /> : undefined
@@ -891,6 +893,38 @@ export function Dashboard(props: {
             onExpandSidebar={() => setSidebarCollapsed(false)}
             runningServers={runningServers}
           />
+        ) : activeView.kind === 'worktrees' ? (
+          <WorktreesPage
+            key={wsId}
+            wsId={wsId}
+            repos={state.repos}
+            worktrees={state.worktrees}
+            remoteWorktrees={remote.worktrees}
+            runnerStatuses={remote.runners}
+            activeWorktreePath={null /* the page shows only while no hub is open */}
+            sidebarCollapsed={sidebarCollapsed}
+            onExpandSidebar={() => setSidebarCollapsed(false)}
+            runningServers={runningServers}
+            onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
+            onNewWorktree={(repoId) => props.onNewWorktree(repoId)}
+            onRemoveRepo={async (repo) => {
+              if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
+              try {
+                await api.repos.remove(wsId, repo.id);
+                const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
+                commitTree(repos, worktrees);
+              } catch (err) {
+                dispatch({ type: 'error', message: (err as Error).message });
+              }
+            }}
+            onOpenWorktree={(w) => openInlineHub(w)}
+            onOpenRemoteWorktree={openRemoteWorktree}
+            onOpenMr={props.onOpenMr}
+            onWorktreeSettings={(w) => props.onMenu(w)}
+            onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
+            onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
+            onError={(message) => dispatch({ type: 'error', message })}
+          />
         ) : activeView.kind === 'usage' ? (
           <UsagePage
             key={wsId}
@@ -1000,11 +1034,6 @@ export function Dashboard(props: {
             refreshTicketProviders();
           }}
           onOpenFeedback={() => setFeedbackOpen(true)}
-          onNewWorktree={(repoId) => { setSettingsSection(null); props.onNewWorktree(repoId); }}
-          onReposChanged={async () => {
-            const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-            commitTree(repos, worktrees);
-          }}
         />
       )}
 

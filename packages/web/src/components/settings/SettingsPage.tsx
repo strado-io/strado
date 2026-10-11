@@ -6,13 +6,12 @@ import { IntegrationsSection, type IntegrationId } from './IntegrationsSection';
 import { OrganizationSection } from './OrganizationSection';
 import { PrivacySection } from './PrivacySection';
 import { ProfileSection } from './ProfileSection';
-import { RepositoriesSection } from './RepositoriesSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
 import { RunnersPanel } from '../RunnersPanel';
 import { useEntitlements } from '../../hooks/entitlements';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'repositories' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -61,14 +60,6 @@ function SettingsNavIcon({ id }: { id: SettingsSection | 'feedback' }) {
       </svg>
     );
   }
-  if (id === 'repositories') {
-    // GitHub's repo octicon, as the sidebar used to draw it.
-    return (
-      <svg {...props} viewBox="0 0 16 16" fill="currentColor" stroke="none">
-        <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z" />
-      </svg>
-    );
-  }
   if (id === 'agents') {
     return <svg {...props}><rect x="4" y="7" width="16" height="13" rx="3" /><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" /></svg>;
   }
@@ -112,7 +103,7 @@ const GROUPS: NavGroup[] = [
   },
   {
     title: 'Workspace',
-    items: [{ id: 'workspaces', label: 'Workspaces' }, { id: 'repositories', label: 'Repositories' }],
+    items: [{ id: 'workspaces', label: 'Workspaces' }],
   },
   { title: 'Agents', items: [{ id: 'agents', label: 'Coding agents' }] },
   { title: 'Infrastructure', items: [{ id: 'runners', label: 'Runners' }] },
@@ -152,19 +143,13 @@ export function SettingsPage({
   onClose,
   onJiraConnected,
   onOpenFeedback,
-  onNewWorktree,
-  onReposChanged,
 }: {
   section?: SettingsSection;
   onClose: () => void;
   onJiraConnected?: () => void;
   onOpenFeedback?: () => void;
-  onNewWorktree?: (repoId: string) => void;
-  onReposChanged?: () => void | Promise<void>;
 }) {
   const [search, setSearch] = useState('');
-  // A dialog inside a section owns Escape while it is open.
-  const [modalOpen, setModalOpen] = useState(false);
   const backButton = useRef<HTMLButtonElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const initialIntegration = isIntegration(section) ? section : 'github';
@@ -191,7 +176,6 @@ export function SettingsPage({
     integrations: 'github gitlab jira linear connections',
     appearance: 'theme font colors',
     profile: 'account name license',
-    repositories: 'repos git clone add remove worktrees',
   };
   const visibleGroups = GROUPS.map((group) => ({
     ...group,
@@ -200,11 +184,11 @@ export function SettingsPage({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !modalOpen) onClose();
+      if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, modalOpen]);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex bg-zinc-950 text-zinc-200" data-testid="settings-page">
@@ -281,7 +265,6 @@ export function SettingsPage({
             {active === 'organization' && <OrganizationSection />}
             {active === 'appearance' && <AppearanceSection />}
             {active === 'workspaces' && <WorkspaceManagementSection />}
-            {active === 'repositories' && <RepositoriesSection onNewWorktree={onNewWorktree} onChanged={onReposChanged} onModalChange={setModalOpen} />}
             {active === 'agents' && <AgentsSection />}
             {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel />)}
             {active === 'integrations' && (
