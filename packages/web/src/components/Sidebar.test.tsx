@@ -268,7 +268,7 @@ describe('Sidebar tree', () => {
     const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('font-medium');
-    expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
+    expect(within(card).getByText('feat/x')).toHaveClass('text-zinc-500');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();
   });
