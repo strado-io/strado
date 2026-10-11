@@ -480,7 +480,9 @@ export function SidebarBody({
   const remoteByPinId = new Map(remoteWorktrees.map((w) => [remotePinId(w), w]));
   // Ids that resolve to nothing (deleted worktree, runner offline) render nothing;
   // they are not pruned here so a runner coming back brings its row back.
-  const looseRows = loose.ids.flatMap((pinId) => {
+  // A worktree pinned and grouped before loose rows existed would show twice; its group wins.
+  const heldByOpenGroup = new Set(focus.groups.filter((g) => !doneOf(g)).flatMap((g) => g.members));
+  const looseRows = loose.ids.filter((pinId) => !heldByOpenGroup.has(pinId)).flatMap((pinId) => {
     const local = localByPinId.get(pinId);
     if (local) return isSettled(local) ? [] : [localRow(local, repos.find((r) => r.id === local.repoId)?.name ?? '', 'loose')];
     const remote = remoteByPinId.get(pinId);
@@ -614,13 +616,25 @@ export function SidebarBody({
           onToggle={(id, add) => {
             const member = pickerFor;
             // A worktree in a group is no longer loose.
-            focus.setMembership(id, member, add).then(() => { if (add) loose.remove(member); }).catch(report);
-            // Adding to a parked group means you are working on it again.
             const g = focus.groups.find((x) => x.id === id);
-            if (add && g && groupState(g) === 'parked') focus.setState(id, 'working').catch(report);
+            // Adding to a parked group means you are working on it again, once the add has saved.
+            const promote = add && g && groupState(g) === 'parked';
+            focus.setMembership(id, member, add)
+              .then(() => {
+                if (!add) return;
+                // A worktree in a group is no longer loose.
+                loose.remove(member);
+                if (promote) return focus.setState(id, 'working');
+              })
+              .catch(report);
           }}
           onCreate={(name) => {
-            focus.create(name, [pickerFor]).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
+            // The dialog closes right after this, clearing pickerFor.
+            const member = pickerFor;
+            focus.create(name, [member]).then((g) => {
+              loose.remove(member);
+              focusPrefs.setActiveFocusGroupId(g.id);
+            }).catch(report);
           }}
         />
       )}
