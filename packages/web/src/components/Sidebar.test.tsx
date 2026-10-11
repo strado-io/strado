@@ -371,6 +371,12 @@ describe('Sidebar tree', () => {
     expect(actions.parentElement).toHaveClass('absolute', 'right-1');
   });
 
+  it('the new-focus event opens one switcher, in the active pane only', () => {
+    wrap(<Sidebar {...base} />);
+    fireEvent(window, new Event('strado:new-focus'));
+    expect(screen.getAllByRole('dialog', { name: 'Switch focus' })).toHaveLength(1);
+  });
+
   it('toolbar buttons search and start a worktree; Add repo lives in the blank-space menu', () => {
     const onNewWorktree = vi.fn(); const onAddRepo = vi.fn(); const onSearch = vi.fn();
     wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} onSearch={onSearch} />);

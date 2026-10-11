@@ -49,6 +49,8 @@ export type SidebarBodyProps = {
   onSearch: () => void;
   /** Surfaces a failed change in the dashboard's error banner. */
   onError?: (message: string) => void;
+  /** False for a neighbour space's pane in the carousel: it shows, but does not answer global events. */
+  isActivePane?: boolean;
 };
 
 /**
@@ -138,7 +140,7 @@ export function SidebarBody({
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, onSearch, onError,
+  remoteLoading = false, onSearch, onError, isActivePane = true,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const { focuses, active, activeId, activate, create, rename, remove, setMembership } = useFocuses(wsId);
@@ -148,12 +150,14 @@ export function SidebarBody({
   const [switcher, setSwitcher] = useState<null | 'browse' | 'create'>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const openSwitcher = (mode: 'browse' | 'create') => setSwitcher(mode);
-  // ⇧⌘N, from the Dashboard's shortcut hook or the shell.
+  // ⇧⌘N, from the Dashboard's shortcut hook or the shell. Only the active
+  // pane answers: the carousel's neighbour panes would each open one too.
   useEffect(() => {
+    if (!isActivePane) return;
     const onNew = () => setSwitcher('create');
     window.addEventListener(NEW_FOCUS_EVENT, onNew);
     return () => window.removeEventListener(NEW_FOCUS_EVENT, onNew);
-  }, []);
+  }, [isActivePane]);
   // Right-click on a worktree row: its ⋯ menu, at the cursor.
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
