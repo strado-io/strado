@@ -56,7 +56,9 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
 }) {
   const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-50' : 'text-zinc-200';
   return (
-    <div className="flex min-w-0 flex-1 flex-col py-1.5 pl-2.5 pr-1">
+    // The whole card opens the worktree; the title button carries the
+    // accessible name and keyboard focus, and its click bubbles up here.
+    <div onClick={onOpen} className="flex min-w-0 flex-1 cursor-pointer flex-col py-1.5 pl-2.5 pr-1">
       {repo && (
         <div data-card-repo className="flex items-center gap-1.5 text-[11px] text-zinc-500">
           <RepoAvatar id={repo.id} name={repo.name} />
@@ -64,7 +66,7 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
           {time && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{time}</span>}
         </div>
       )}
-      <button type="button" onClick={onOpen} aria-label={label} title={label}
+      <button type="button" aria-label={label} title={label}
         className={`block w-full truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
         {title}
       </button>
