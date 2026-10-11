@@ -59,8 +59,8 @@ export function CommandPalette({
   onGoRepo: (repoId: string) => void;
   onSwitchWorkspace: (wsId: string) => void;
   onClose: () => void;
-  // This workspace's runner worktrees. With no Repos tree, ⌘K is how one that
-  // is neither loose nor grouped gets opened.
+  // This workspace's runner worktrees: ⌘K and the Worktrees page are how one
+  // outside the active Focus gets opened.
   remoteWorktrees?: RemoteWorktree[];
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   /** The active Focus: its members get a small tag, so you can tell what opening will add. */
