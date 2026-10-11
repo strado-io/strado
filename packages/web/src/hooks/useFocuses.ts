@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { api, type Focus } from '../api';
-import { readLooseWorktrees, removeLooseWorktree } from './looseWorktrees';
+import { clearLooseWorktrees, readLooseWorktrees } from './looseWorktrees';
 
 // Focuses for one workspace, shared by every consumer (the sidebar's panes,
 // the pill popover, ⌘K, the Dashboard's open-adds-to-focus). A mutation
@@ -66,7 +66,7 @@ async function migrateLoose(wsId: string, focuses: Focus[]): Promise<Focus[]> {
   const ids = readLooseWorktrees(wsId);
   if (ids.length === 0 || focuses.length > 0) return focuses;
   const created = await api.focuses.create(wsId, { name: 'Working on', members: ids });
-  for (const id of ids) removeLooseWorktree(wsId, id);
+  clearLooseWorktrees(wsId);
   writeActive(wsId, created.id);
   return [created];
 }
