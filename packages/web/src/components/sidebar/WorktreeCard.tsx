@@ -1,4 +1,4 @@
-// The worktree card: what a row in Working on or Settled looks like. Three
+// The worktree card: what a row in the sidebar's Focus looks like. Three
 // lines — the repo it belongs to and when it was last opened, the most human
 // name we have for the work, then the branch with whatever is live on it
 // (PR state, changes, sessions). Behaviour (open, hover card, menus) is the

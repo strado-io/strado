@@ -27,9 +27,9 @@ function matches(q: string, ...fields: (string | null | undefined)[]): boolean {
   return fields.some((f) => f?.toLowerCase().includes(q));
 }
 
-// ⌘K global search: one box over everything navigable — focus groups (activate
-// + open a member), worktrees (opens the hub), repos (switches the view),
-// workspaces (switches context).
+// ⌘K global search: one box over everything navigable — worktrees (opens the
+// hub, into the active Focus), repos (starts a worktree), workspaces (switches
+// context).
 export function CommandPalette({
   repos,
   worktrees,
@@ -41,6 +41,8 @@ export function CommandPalette({
   onClose,
   remoteWorktrees = NO_REMOTE,
   onOpenRemoteWorktree,
+  focusName,
+  focusMemberIds,
 }: {
   repos: RepoConfig[];
   worktrees: Worktree[];
@@ -55,6 +57,9 @@ export function CommandPalette({
   // is neither loose nor grouped gets opened.
   remoteWorktrees?: RemoteWorktree[];
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
+  /** The active Focus: its members get a small tag, so you can tell what opening will add. */
+  focusName?: string;
+  focusMemberIds?: Set<string>;
 }) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
@@ -250,6 +255,9 @@ export function CommandPalette({
                   {r.kind === 'worktree' && <ShellIcon className="shrink-0 text-zinc-600" />}
                   <span className={`shrink-0 ${r.kind === 'worktree' ? 'font-mono text-xs' : ''}`}>{r.label}</span>
                   {r.detail && <span className="min-w-0 truncate text-xs text-zinc-600">{r.detail}</span>}
+                  {r.kind === 'worktree' && focusName && focusMemberIds?.has(r.remote ? `remote:${r.remote.runnerId}:${r.remote.path}` : `local:${r.worktree!.path}`) && (
+                    <span title={`In ${focusName}`} className="shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">{focusName}</span>
+                  )}
                   {r.kind === 'worktree' && r.worktree && (() => {
                     const w = r.worktree;
                     const running = w.process?.status === 'running';

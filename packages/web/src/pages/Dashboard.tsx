@@ -26,8 +26,8 @@ import { useDensity } from '../hooks/useDensity';
 import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
-import { useMrSummaries } from '../hooks/mrSummaries';
-import { addLooseWorktree } from '../hooks/looseWorktrees';
+import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
+import { worktreeLabel } from '../components/sidebar/labels';
 import { TaskBoard } from '../components/TaskBoard';
 import { computeReorderPatches } from '../hooks/rowOrder';
 import { bumpWorktreeOpened } from '../lib/worktreeLru';
@@ -269,16 +269,16 @@ export function Dashboard(props: {
     setSelectedRemote(null);
     setSelectedPath(readSelMap()[wsId] ?? null);
   }, [wsId]);
-  // Every open path (sidebar row, ⌘K, notification, review link, ⌥⌘-arrow)
-  // funnels through openInlineHub / openRemoteWorktree, so this is the one
-  // place a worktree being opened reaches Working on. A ref, because those
-  // callbacks are created before the groups and MR state they need exist.
-  const noteOpenedRef = useRef<(pinId: string) => void>(() => {});
+  // Every open path (sidebar row, ⌘K, notification, review link) funnels
+  // through openInlineHub / openRemoteWorktree, so this is the one place a
+  // worktree being opened joins the active Focus. A ref, because those
+  // callbacks are created before the Focus state they need exists.
+  const noteOpenedRef = useRef<(pinId: string, label: string) => void>(() => {});
   const openInlineHub = useCallback((w: Worktree, mode?: typeof selectedMode, sessionId?: string) => {
     track('hub_opened', { tab: mode ?? 'restored' });
     // Record the open so the ⌘K palette can rank recently-used worktrees on top.
     bumpWorktreeOpened(w.path);
-    noteOpenedRef.current(`local:${w.path}`);
+    noteOpenedRef.current(`local:${w.path}`, worktreeLabel(w));
     // Explicitly opening an agent lifts any persisted "closed" flag so the hub
     // shows the tab even after a prior close (reload restores mode='claude').
     if (mode === 'claude' || mode === 'codex' || mode === 'opencode' || mode === 'pi') rememberClosedAgent(mode, w.path, false);
@@ -543,7 +543,7 @@ export function Dashboard(props: {
   // a quiet loading hint instead of runner rows popping in a beat late.
   const [remoteLoading, setRemoteLoading] = useState(true);
   const openRemoteWorktree = useCallback((w: RemoteWorktree) => {
-    noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
+    noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`, w.branch ?? w.name);
     setSelectedPath(null); // one hub at a time
     setSelectedRemote(w);
     setActiveView(INITIAL_VIEW);
@@ -551,16 +551,18 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onOpenRemoteWorktree]);
 
-  // The MR state decides whether an opened worktree is settled (Settled keeps
-  // it) or joins Working on as a loose row. Assigned every render so the open
-  // callbacks above always see the current state.
-  const mrByPath = useMrSummaries(wsId, state.worktrees.map((w) => w.path));
-  noteOpenedRef.current = (pinId) => {
-    const path = pinId.startsWith('local:') ? pinId.slice('local:'.length) : null;
-    const mrState = path ? mrByPath.get(path)?.state : undefined;
-    const isRoot = !!path && state.repos.some((r) => r.path === path);
-    const settled = (mrState === 'merged' || mrState === 'closed') && !isRoot;
-    if (!settled) addLooseWorktree(wsId, pinId);
+  // An opened worktree joins the active Focus; with no Focus yet, one is made
+  // and named after the worktree. The list is awaited first so a restore-time
+  // open can't race the load into a duplicate. Assigned every render so the
+  // open callbacks above always see the current Focus.
+  const focusApi = useFocuses(wsId);
+  noteOpenedRef.current = (pinId, label) => {
+    void (async () => {
+      await ensureFocusesLoaded(wsId);
+      const active = activeFocusOf(wsId);
+      if (!active) await focusApi.create(label, [pinId]);
+      else if (!active.members.includes(pinId)) await focusApi.setMembership(active.id, pinId, true);
+    })().catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }));
   };
   useEffect(() => {
     // A space switch clears the previous space's rows rather than letting them
@@ -768,17 +770,6 @@ export function Dashboard(props: {
           onOpenDiff={props.onOpenDiff}
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
           onNewWorktree={() => props.onNewWorktree()}
-          onNewWorktreeForRepo={(repo) => props.onNewWorktree(repo.id)}
-          onDeleteRepo={async (repo) => {
-            if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
-            try {
-              await api.repos.remove(wsId, repo.id);
-              const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-              commitTree(repos, worktrees);
-            } catch (err) {
-              dispatch({ type: 'error', message: (err as Error).message });
-            }
-          }}
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
@@ -969,6 +960,8 @@ export function Dashboard(props: {
 
       {showPalette && (
         <CommandPalette
+          focusName={focusApi.active?.name}
+          focusMemberIds={focusApi.active ? new Set(focusApi.active.members) : undefined}
           repos={state.repos}
           worktrees={state.worktrees}
           workspaces={allWorkspaces}

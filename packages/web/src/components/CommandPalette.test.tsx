@@ -110,4 +110,12 @@ describe('CommandPalette runner worktrees', () => {
     expect(onOpenRemoteWorktree).toHaveBeenCalledWith(runnerWt);
     expect(onOpenWorktree).not.toHaveBeenCalled();
   });
+
+  it('tags worktrees that are already in the active Focus', () => {
+    render(<CommandPalette repos={repos} worktrees={[wt('/wt/FD-1', 'FD-1', 'fix login')]} workspaces={workspaces} activeWorkspaceId="default"
+      onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
+      remoteWorktrees={[runnerWt]} focusName="Billing" focusMemberIds={new Set(['remote:rn1:/srv/wt/FX-77'])} />);
+    expect(screen.getByTitle('In Billing')).toHaveTextContent('Billing');
+    expect(screen.getAllByTitle('In Billing')).toHaveLength(1);
+  });
 });
