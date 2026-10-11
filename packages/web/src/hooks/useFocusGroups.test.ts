@@ -102,6 +102,18 @@ describe('useFocusGroups', () => {
     await waitFor(() => expect(result.current.groups).toEqual([]));
   });
 
+  it('setState patches the group and shows the answer', async () => {
+    vi.mocked(api.groups.list)
+      .mockResolvedValueOnce([g({ id: 'g1' })])
+      .mockResolvedValue([g({ id: 'g1', state: 'parked' })]);
+    vi.mocked(api.groups.update).mockImplementation(async (_ws, id, patch) => g({ id, state: patch.state }));
+    const { result } = renderHook(() => useFocusGroups('w1'));
+    await waitFor(() => expect(result.current.groups).toHaveLength(1));
+    await act(async () => { await result.current.setState('g1', 'parked'); });
+    expect(api.groups.update).toHaveBeenCalledWith('w1', 'g1', { state: 'parked' });
+    expect(result.current.groups[0]!.state).toBe('parked');
+  });
+
   it('ignores an older list reply that lands after a newer one', async () => {
     const replies: ((v: FocusGroup[]) => void)[] = [];
     vi.mocked(api.groups.list).mockImplementation(() => new Promise((r) => { replies.push(r); }));
