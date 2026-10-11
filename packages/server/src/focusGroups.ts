@@ -8,13 +8,14 @@ import path from 'node:path';
 import { backupBeforeWrite } from './backups.js';
 import { AppError } from './errors.js';
 
-export type FocusGroup = { id: string; name: string; members: string[]; createdAt: string };
+export type FocusGroupState = 'working' | 'parked';
+export type FocusGroup = { id: string; name: string; members: string[]; createdAt: string; state?: FocusGroupState };
 type GroupsFile = { groups: FocusGroup[] };
 
 export type FocusGroupStore = {
   list(): Promise<FocusGroup[]>;
   create(input: { name: string; members?: string[] }): Promise<FocusGroup>;
-  update(id: string, patch: { name?: string; addMembers?: string[]; removeMembers?: string[] }): Promise<FocusGroup>;
+  update(id: string, patch: { name?: string; addMembers?: string[]; removeMembers?: string[]; state?: FocusGroupState }): Promise<FocusGroup>;
   remove(id: string): Promise<void>;
   removeMemberEverywhere(memberId: string): Promise<void>;
 };
@@ -31,6 +32,15 @@ function cleanName(raw: string): string {
 
 const dedupe = (ids: string[]) => [...new Set(ids)];
 
+// A hand-edited row missing its members array used to take the whole sidebar
+// down on render. It is dropped (and so gone after the next write) rather
+// than fatal; the rest of the file still counts.
+function isGroupRow(g: unknown): g is FocusGroup {
+  if (!g || typeof g !== 'object') return false;
+  const r = g as Record<string, unknown>;
+  return typeof r.id === 'string' && typeof r.name === 'string' && Array.isArray(r.members);
+}
+
 export function createFocusGroupStore(filePath: string): FocusGroupStore {
   let queue: Promise<void> = Promise.resolve();
 
@@ -39,7 +49,7 @@ export function createFocusGroupStore(filePath: string): FocusGroupStore {
     const raw = await fsp.readFile(filePath, 'utf8');
     try {
       const parsed = JSON.parse(raw) as GroupsFile;
-      return { groups: Array.isArray(parsed.groups) ? parsed.groups : [] };
+      return { groups: Array.isArray(parsed.groups) ? parsed.groups.filter(isGroupRow) : [] };
     } catch (err) {
       // Same rule as state.json: a corrupt file is never "no groups" — the
       // next write would persist the empty list and erase every group.
@@ -99,6 +109,7 @@ export function createFocusGroupStore(filePath: string): FocusGroupStore {
       return mutate((file) => {
         const g = find(file, id);
         if (name !== undefined) g.name = name;
+        if (patch.state !== undefined) g.state = patch.state;
         const drop = new Set(patch.removeMembers ?? []);
         g.members = dedupe([...g.members, ...(patch.addMembers ?? [])]).filter((m) => !drop.has(m));
         return g;

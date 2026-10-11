@@ -102,4 +102,18 @@ describe('focus group routes', () => {
     const after = await app.inject({ method: 'GET', url: '/api/w/default/worktrees' });
     expect(after.json().worktrees.map((w: any) => w.path)).not.toContain(target);
   });
+
+  it('parks and unparks a group, and rejects any other state', async () => {
+    const created = await app.inject({ method: 'POST', url, payload: { name: 'FX-9' } });
+    const id = created.json().group.id as string;
+    expect(created.json().group.state).toBeUndefined();
+
+    const parked = await app.inject({ method: 'PATCH', url: `${url}/${id}`, payload: { state: 'parked' } });
+    expect(parked.json().group.state).toBe('parked');
+    const working = await app.inject({ method: 'PATCH', url: `${url}/${id}`, payload: { state: 'working' } });
+    expect(working.json().group.state).toBe('working');
+
+    const bad = await app.inject({ method: 'PATCH', url: `${url}/${id}`, payload: { state: 'done' } });
+    expect(bad.statusCode).toBe(400);
+  });
 });
