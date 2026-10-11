@@ -385,13 +385,15 @@ if (!gotLock) {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return null;
     if (input.key === ',' && !input.alt && !input.shift && input.meta !== input.control) return 'settings';
     if (!input.meta || input.control) return null;
-    // Cmd+Arrow = tabs, Cmd+Shift+Arrow = spaces. Cmd+Opt+Arrow is left to the page.
+    // Cmd+Arrow = tabs, Cmd+Shift+Arrow = spaces, Cmd+Opt+Arrow = Focuses.
     // Shift used to fall through to the tab move, which silently ate the space
     // chord inside the Browser and VS Code embeds.
     if (input.key === 'ArrowRight')
-      return input.alt ? null : input.shift ? 'space-next' : 'tab-next';
+      return input.alt ? (input.shift ? null : 'focus-next') : input.shift ? 'space-next' : 'tab-next';
     if (input.key === 'ArrowLeft')
-      return input.alt ? null : input.shift ? 'space-prev' : 'tab-prev';
+      return input.alt ? (input.shift ? null : 'focus-prev') : input.shift ? 'space-prev' : 'tab-prev';
+    // Shift+Cmd+N: a new Focus. Cmd+digit is left to the embed (VS Code's editor groups).
+    if (input.key.toLowerCase() === 'n' && !input.alt && input.shift) return 'new-focus';
     if (input.key.toLowerCase() === 'k' && !input.alt && !input.shift) return 'palette';
     if (input.key.toLowerCase() === 'l' && !input.alt && !input.shift) return 'changes';
     // Cmd+W inside a Browser preview: the renderer closes the active tab

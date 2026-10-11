@@ -27,6 +27,7 @@ import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
+import { useFocusShortcut } from '../hooks/focusShortcut';
 import { worktreeLabel } from '../components/sidebar/labels';
 import { TaskBoard } from '../components/TaskBoard';
 import { computeReorderPatches } from '../hooks/rowOrder';
@@ -557,6 +558,7 @@ export function Dashboard(props: {
   // open can't race the load into a duplicate. Assigned every render so the
   // open callbacks above always see the current Focus.
   const focusApi = useFocuses(wsId);
+  useFocusShortcut({ focuses: focusApi.focuses, activeId: focusApi.activeId, activate: focusApi.activate });
   noteOpenedRef.current = (pinId, label) => {
     void (async () => {
       await ensureFocusesLoaded(wsId);
@@ -996,6 +998,9 @@ export function Dashboard(props: {
         <CommandPalette
           focusName={focusApi.active?.name}
           focusMemberIds={focusApi.active ? new Set(focusApi.active.members) : undefined}
+          focuses={focusApi.focuses}
+          activeFocusId={focusApi.activeId}
+          onSwitchFocus={focusApi.activate}
           repos={state.repos}
           worktrees={state.worktrees}
           workspaces={allWorkspaces}

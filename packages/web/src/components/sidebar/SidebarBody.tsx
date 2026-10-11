@@ -2,7 +2,7 @@
 // beside it), then the active Focus's worktrees as cards. Nothing else: a
 // Focus is one task's set of worktrees, and everything else is a ⌘K or a
 // Focus switch away.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
@@ -18,6 +18,7 @@ import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
 import { BrailleSpinner, HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
 import { useFocuses } from '../../hooks/useFocuses';
+import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
 import { FocusPill, FocusPopover } from './FocusSwitcher';
 export { BranchIcon, RepoIcon, type MenuItem } from './rowBits';
 import { shortRelativeTime } from '../../lib/relativeTime';
@@ -149,6 +150,12 @@ export function SidebarBody({
   const [switcher, setSwitcher] = useState<null | 'browse' | 'create'>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const openSwitcher = (mode: 'browse' | 'create') => setSwitcher(mode);
+  // ⇧⌘N, from the Dashboard's shortcut hook or the shell.
+  useEffect(() => {
+    const onNew = () => setSwitcher('create');
+    window.addEventListener(NEW_FOCUS_EVENT, onNew);
+    return () => window.removeEventListener(NEW_FOCUS_EVENT, onNew);
+  }, []);
   // Right-click on a worktree row: its ⋯ menu, at the cursor.
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
