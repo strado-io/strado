@@ -55,9 +55,19 @@ describe('SettingsPage', () => {
 
   it('shows an icon for every settings navigation item', () => {
     render(<SettingsPage onClose={() => {}} onOpenFeedback={() => {}} />);
-    for (const id of ['profile', 'organization', 'appearance', 'workspaces', 'runners', 'integrations', 'privacy', 'feedback']) {
+    for (const id of ['profile', 'organization', 'appearance', 'workspaces', 'repositories', 'runners', 'integrations', 'privacy', 'feedback']) {
       expect(screen.getByTestId(`settings-icon-${id}`)).toBeInTheDocument();
     }
+  });
+
+  it('lists the workspace repositories inside Settings', async () => {
+    render(
+      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
+        <SettingsPage section="repositories" onClose={() => {}} />
+      </WorkspaceContext.Provider>,
+    );
+    expect(await screen.findByRole('heading', { name: 'Repositories' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add repository' })).toBeInTheDocument();
   });
 
   it('switches panes when a nav item is clicked', () => {
