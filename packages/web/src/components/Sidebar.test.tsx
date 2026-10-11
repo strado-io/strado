@@ -267,12 +267,14 @@ describe('Sidebar tree', () => {
     expect(onOpenWorktree).not.toHaveBeenCalled();
   });
 
-  it('uses the same-size branch icon when a worktree has no PR', () => {
+  it('lays a worktree out as a card: repo line, ticket as title, branch underneath, no PR icon without a PR', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
-    const icon = screen.getByText('FD-1').closest('.group')!.querySelector('[data-worktree-icon="branch"]');
-    expect(icon).toHaveAttribute('width', '14');
-    expect(icon).toHaveAttribute('height', '14');
-    expect(icon?.parentElement).toHaveClass('ml-2.5');
+    const card = screen.getByText('FD-1').closest('.group') as HTMLElement;
+    expect(within(card).getByText('Repo One')).toBeInTheDocument();
+    expect(within(card).getByText('FD-1')).toHaveClass('font-medium');
+    expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
+    expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
+    expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();
   });
 
   it('shows at most three overlapping session avatars plus a count, and lists every session on hover', () => {
