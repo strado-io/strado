@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { api, type FocusGroup } from '../api';
+import { api, type FocusGroup, type FocusGroupState } from '../api';
 
 // One list per workspace, shared by every consumer (three sidebar panes, the
 // dashboard's ⌥⌘-arrow cycling, ⌘K). A mutation shows the server's answer at
@@ -82,6 +82,9 @@ export function useFocusGroups(wsId: string) {
   const remove = useCallback(async (id: string) => {
     await mutate(() => api.groups.remove(wsId, id), () => setGroups(wsId, (gs) => gs.filter((x) => x.id !== id)));
   }, [wsId, mutate]);
+  const setState = useCallback(async (id: string, state: FocusGroupState) => {
+    await mutate(() => api.groups.update(wsId, id, { state }), replace);
+  }, [wsId, mutate, replace]);
 
-  return { groups: snap.groups, loaded: snap.loaded, create, rename, setMembership, remove };
+  return { groups: snap.groups, loaded: snap.loaded, create, rename, setMembership, remove, setState };
 }
