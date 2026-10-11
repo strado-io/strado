@@ -18,19 +18,21 @@ const wt = (path: string, repoId: string): Worktree => ({
 const group: FocusGroup = { id: 'g1', name: 'FX-412', members: ['local:/r1/wt', 'local:/r2/wt'], createdAt: 't' };
 const focus = {
   groups: [group], loaded: true,
-  create: vi.fn(), rename: vi.fn(() => Promise.resolve()), setMembership: vi.fn(() => Promise.resolve()), remove: vi.fn(() => Promise.resolve()),
+  create: vi.fn(), rename: vi.fn(() => Promise.resolve()), setMembership: vi.fn(() => Promise.resolve()),
+  remove: vi.fn(() => Promise.resolve()), setState: vi.fn(() => Promise.resolve()),
 };
 
 function props(over: Partial<SidebarBodyProps> = {}): SidebarBodyProps {
   return {
     wsId: 'w1', repos: [r1, r2], worktrees: [wt('/r1/wt', 'r1'), wt('/r2/wt', 'r2'), wt('/r2/other', 'r2')],
     remoteWorktrees: [], runnerStatuses: [],
-    onAddRepo: vi.fn(), onDeleteRepo: vi.fn(), expandedRepos: new Set(), onToggleRepo: vi.fn(),
-    onOpenWorktree: vi.fn(), activeWorktreePath: null, onNewWorktreeForRepo: vi.fn(),
-    onWorktreeSettings: vi.fn(), onDeleteWorktree: vi.fn(), pinnedWorktreeIds: [], onTogglePinnedWorktree: vi.fn(),
+    onAddRepo: vi.fn(), onOpenWorktree: vi.fn(), activeWorktreePath: null, onNewWorktree: vi.fn(),
+    onWorktreeSettings: vi.fn(), onDeleteWorktree: vi.fn(), onSearch: vi.fn(), onShowParked: vi.fn(),
     ...over,
   };
 }
+// Loose rows come from storage, the way the Dashboard adds them.
+const loose = (...ids: string[]) => localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ w1: ids }));
 
 beforeEach(() => {
   localStorage.clear();
@@ -39,18 +41,95 @@ beforeEach(() => {
   focus.setMembership.mockClear();
   focus.create.mockReset();
   focus.rename.mockClear();
+  focus.setState.mockClear();
 });
 
 
-describe('SidebarBody groups section', () => {
-  it('lists each group with its members and repo chips, above the repo tree in one list', () => {
+describe('SidebarBody: Working on and Settled only', () => {
+  it('shows groups with their members under Working on, and no Repos or Pinned sections', () => {
     render(<SidebarBody {...props()} />);
-    const g = screen.getByRole('group', { name: 'FX-412' });
+    const working = screen.getByRole('region', { name: 'Working on' });
+    const g = within(working).getByRole('group', { name: 'FX-412' });
     expect(within(g).getByText('api')).toBeInTheDocument();
     expect(within(g).getByText('web')).toBeInTheDocument();
-    const repos = screen.getByText('Repos', { selector: 'span' });
-    expect(g.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    expect(screen.queryByText('Repos')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pinned')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Pin / })).not.toBeInTheDocument();
+  });
+
+  it('puts loose worktrees above the groups and ignores a loose id that no longer exists', () => {
+    loose('local:/r2/other', 'local:/gone');
+    render(<SidebarBody {...props()} />);
+    const working = screen.getByRole('region', { name: 'Working on' });
+    const row = within(working).getAllByText('fx-412')[0]!; // /r2/other's branch label
+    const g = within(working).getByRole('group', { name: 'FX-412' });
+    expect(row.compareDocumentPosition(g) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(working).getAllByText('fx-412')).toHaveLength(3); // 1 loose + 2 members
+  });
+
+  it('removes a loose row from its menu, leaving the worktree alone', () => {
+    loose('local:/r2/other');
+    const onDeleteWorktree = vi.fn();
+    render(<SidebarBody {...props({ onDeleteWorktree })} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'fx-412 actions' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from Working on' }));
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: [] });
+    expect(onDeleteWorktree).not.toHaveBeenCalled();
+  });
+
+  it('parks a group from its menu and counts it in the header', () => {
+    const parked: FocusGroup = { id: 'g2', name: 'FX-900', members: ['local:/r2/other'], createdAt: 't', state: 'parked' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, parked] });
+    const onShowParked = vi.fn();
+    render(<SidebarBody {...props({ onShowParked })} />);
+    expect(screen.queryByRole('group', { name: 'FX-900' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '1 more' }));
+    expect(onShowParked).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'FX-412 group actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Park' }));
+    expect(focus.setState).toHaveBeenCalledWith('g1', 'parked');
+  });
+
+  it('does not count a parked group that has settled as "more"', () => {
+    const parked: FocusGroup = { id: 'g2', name: 'FX-900', members: ['local:/r2/other'], createdAt: 't', state: 'parked' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, parked] });
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r2/other', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
+    render(<SidebarBody {...props()} />);
+    expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Settled' })).getByRole('group', { name: 'FX-900' })).toBeInTheDocument();
+  });
+
+  it('removes a member from its group via the row menu', () => {
+    render(<SidebarBody {...props()} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'fx-412 actions' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from group' }));
+    expect(focus.setMembership).toHaveBeenCalledWith('g1', 'local:/r1/wt', false);
+  });
+
+  it('shows the empty state when nothing is being worked on', () => {
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    render(<SidebarBody {...props()} />);
+    expect(screen.getByText('Nothing yet. Search to open a worktree, or ✎ to start one.')).toBeInTheDocument();
+  });
+
+  it('toolbar: Search opens the palette and New group opens the dialog', () => {
+    const onSearch = vi.fn();
+    render(<SidebarBody {...props({ onSearch })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(onSearch).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'New group' }));
+    expect(screen.getByRole('dialog', { name: 'New group' })).toBeInTheDocument();
+  });
+
+  it('adding a worktree to a parked group brings the group back', () => {
+    const parked: FocusGroup = { id: 'g2', name: 'FX-900', members: [], createdAt: 't', state: 'parked' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, parked] });
+    render(<SidebarBody {...props()} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'fx-412 actions' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to group…' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Add to group' })).getByRole('checkbox', { name: 'FX-900' }));
+    expect(focus.setMembership).toHaveBeenCalledWith('g2', 'local:/r1/wt', true);
+    expect(focus.setState).toHaveBeenCalledWith('g2', 'working');
   });
 
   it('folds a group from its header', () => {
@@ -69,18 +148,6 @@ describe('SidebarBody groups section', () => {
     expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ w1: 'g1' });
   });
 
-  it('creates a group from the Groups header', () => {
-    focus.create.mockResolvedValue({ ...group, id: 'g2', name: 'FX-500' });
-    render(<SidebarBody {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'New group' }));
-    const dialog = screen.getByRole('dialog', { name: 'New group' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'FX-500' } });
-    // Any worktree, from any repo, can start the group.
-    fireEvent.click(within(dialog).getAllByRole('checkbox', { name: 'web fx-412' })[0]!);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }));
-    expect(focus.create).toHaveBeenCalledWith('FX-500', [expect.stringMatching(/^local:\/r2\//)]);
-  });
-
   it('renames a group from its menu', () => {
     render(<SidebarBody {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: 'FX-412 group actions' }));
@@ -91,12 +158,12 @@ describe('SidebarBody groups section', () => {
     expect(focus.rename).toHaveBeenCalledWith('g1', 'FX-413');
   });
 
-  it('moves a merged group out of Groups into Settled at the bottom', () => {
+  it('moves a merged group out of Working on into Settled at the bottom', () => {
     const shipped: FocusGroup = { id: 'g2', name: 'FX-300', members: ['local:/r2/other'], createdAt: 't' };
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, shipped] });
     vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r2/other', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
     render(<SidebarBody {...props()} />);
-    const groups = screen.getByRole('region', { name: 'Focus groups' });
+    const groups = screen.getByRole('region', { name: 'Working on' });
     const settled = screen.getByRole('region', { name: 'Settled' });
     expect(within(groups).getByRole('group', { name: 'FX-412' })).toBeInTheDocument();
     expect(within(groups).queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
@@ -105,7 +172,7 @@ describe('SidebarBody groups section', () => {
     expect(within(settled).queryByRole('group', { name: 'FX-300' })).not.toBeInTheDocument();
   });
 
-  it('moves a worktree with a merged PR from its repo into Settled; a repo checkout never settles', () => {
+  it('moves a worktree with a merged PR into Settled; a repo checkout never settles', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     const root = { ...wt('/r1', 'r1'), branch: 'master' } as Worktree;
     const done = { ...wt('/r2/done', 'r2'), branch: 'fx-old' } as Worktree;
@@ -113,7 +180,8 @@ describe('SidebarBody groups section', () => {
       ['/r2/done', { state: 'merged', updatedAt: '2026-01-01' }],
       ['/r1', { state: 'merged', updatedAt: '2026-01-01' }],
     ]) as ReturnType<typeof useMrSummaries>);
-    render(<SidebarBody {...props({ worktrees: [root, done], expandedRepos: new Set(['r1', 'r2']) })} />);
+    loose('local:/r1'); // master would show here if it settled like a worktree
+    render(<SidebarBody {...props({ worktrees: [root, done] })} />);
     const settled = screen.getByRole('region', { name: 'Settled' });
     expect(within(settled).getByText('fx-old')).toBeInTheDocument();
     expect(within(settled).queryByText('master')).not.toBeInTheDocument();
@@ -125,22 +193,9 @@ describe('SidebarBody groups section', () => {
     expect(screen.queryByRole('region', { name: 'Settled' })).not.toBeInTheDocument();
   });
 
-  it('puts Pinned above Groups', () => {
-    render(<SidebarBody {...props({ pinnedWorktreeIds: ['local:/r1/wt'] })} />);
-    const pinned = screen.getByRole('region', { name: 'Pinned worktrees' });
-    const groups = screen.getByRole('region', { name: 'Focus groups' });
-    expect(pinned.compareDocumentPosition(groups) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('shows no Groups section at all when there are no groups', () => {
-    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
-    render(<SidebarBody {...props({ worktrees: [{ ...wt('/r1/m', 'r1'), branch: 'main' }] })} />);
-    expect(screen.queryByRole('region', { name: 'Focus groups' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
-  });
   // One "Add to group…" item, however many groups exist — the picker holds the list.
   const openPicker = () => {
-    render(<SidebarBody {...props({ expandedRepos: new Set(['r2']) })} />);
+    render(<SidebarBody {...props()} />);
     const menus = screen.getAllByRole('button', { name: 'fx-412 actions' });
     fireEvent.click(menus[menus.length - 1]!);
     expect(screen.queryByRole('button', { name: 'Add to FX-412' })).not.toBeInTheDocument();
@@ -149,13 +204,16 @@ describe('SidebarBody groups section', () => {
   };
 
   it('adds a worktree to a group from the row menu picker', () => {
+    // The picker's row is a member of FX-412 already, so add it to a second group.
+    const other: FocusGroup = { id: 'g2', name: 'FX-500', members: [], createdAt: 't' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, other] });
     const dialog = openPicker();
-    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'FX-412' }));
-    expect(focus.setMembership).toHaveBeenCalledWith('g1', expect.stringMatching(/^local:\/r2\//), true);
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'FX-500' }));
+    expect(focus.setMembership).toHaveBeenCalledWith('g2', expect.stringMatching(/^local:\/r2\//), true);
   });
 
   it('right-clicking a worktree opens its menu at the cursor, with Add to group', () => {
-    render(<SidebarBody {...props({ expandedRepos: new Set(['r2']) })} />);
+    render(<SidebarBody {...props()} />);
     const row = screen.getAllByText('fx-412').at(-1)!;
     fireEvent.contextMenu(row, { clientX: 40, clientY: 80 });
     const menu = screen.getByRole('menu');
@@ -164,10 +222,11 @@ describe('SidebarBody groups section', () => {
     expect(screen.getByRole('dialog', { name: 'Add to group' })).toBeInTheDocument();
   });
 
-  it('starts a new group from a worktree menu, with that worktree ticked', () => {
+  it('starts a new group from a worktree menu, with that worktree ticked', async () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     focus.create.mockResolvedValue({ ...group, id: 'g9', name: 'Fresh' });
-    render(<SidebarBody {...props({ expandedRepos: new Set(['r1']) })} />);
+    loose('local:/r1/wt');
+    render(<SidebarBody {...props()} />);
     fireEvent.contextMenu(screen.getAllByText('fx-412')[0]!, { clientX: 10, clientY: 10 });
     fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'New group…' }));
     const dialog = screen.getByRole('dialog', { name: 'New group' });
@@ -175,6 +234,9 @@ describe('SidebarBody groups section', () => {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Fresh' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }));
     expect(focus.create).toHaveBeenCalledWith('Fresh', ['local:/r1/wt']);
+    // Grouped, so no longer loose; and the new group becomes the active one.
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: [] });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ w1: 'g9' }));
   });
 
   it('right-clicking blank sidebar space offers New group and Add repo', () => {
@@ -188,22 +250,21 @@ describe('SidebarBody groups section', () => {
     expect(screen.getByRole('dialog', { name: 'New group' })).toBeInTheDocument();
   });
 
-  it('blank-space menu starts a new worktree and collapses every repo and group', () => {
+  it('blank-space menu starts a new worktree and collapses every group', () => {
     const onNewWorktree = vi.fn();
-    const onToggleRepo = vi.fn();
-    const { container } = render(<SidebarBody {...props({ onNewWorktree, onToggleRepo, expandedRepos: new Set(['r1', 'r2']) })} />);
+    const { container } = render(<SidebarBody {...props({ onNewWorktree })} />);
     const blank = container.querySelector('.overflow-y-auto')!;
     fireEvent.contextMenu(blank, { clientX: 20, clientY: 300 });
     fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'New worktree…' }));
     expect(onNewWorktree).toHaveBeenCalled();
     fireEvent.contextMenu(blank, { clientX: 20, clientY: 300 });
     fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Collapse all' }));
-    expect(onToggleRepo.mock.calls.map((c) => c[0]).sort()).toEqual(['r1', 'r2']);
     expect(JSON.parse(localStorage.getItem('strado:focus-groups-collapsed')!)).toEqual({ w1: ['g1'] });
   });
 
   it('a worktree row keeps its own menu on right-click', () => {
-    render(<SidebarBody {...props({ expandedRepos: new Set(['r1']) })} />);
+    loose('local:/r1/wt');
+    render(<SidebarBody {...props()} />);
     fireEvent.contextMenu(screen.getAllByText('fx-412')[0]!, { clientX: 10, clientY: 10 });
     expect(within(screen.getByRole('menu')).getByRole('button', { name: 'Delete worktree' })).toBeInTheDocument();
   });

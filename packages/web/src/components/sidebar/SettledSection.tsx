@@ -1,7 +1,6 @@
 // Finished work, pinned to the bottom of the sidebar: worktrees whose PR is
-// merged or closed, and groups whose every PR is. They leave the repo tree and
-// the Groups section so those stay about what is still in flight — still here
-// to open or delete. SidebarBody decides what is settled and renders the rows.
+// merged or closed, and groups whose every PR is. They leave Working on so it
+// stays about what is still in flight, and are still here to open or delete. SidebarBody decides what is settled and renders the rows.
 import { useState } from 'react';
 import { GroupList, type GroupListProps } from './GroupsView';
 

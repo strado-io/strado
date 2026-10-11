@@ -1,23 +1,19 @@
-// The sidebar's Groups section: every open focus group with its worktrees (any
-// repo) under it, the way Repos lists a repo's worktrees. Finished groups live
-// in the Settled section at the bottom (SettledSection), which reuses GroupList.
+// The rows of a list of groups: a foldable header with a menu, and the members.
+// Working on and Settled both render through GroupList.
 // Presentational — SidebarBody owns the data, member rows and ⋯ menus.
 import { useState } from 'react';
 import type { FocusGroup } from '../../api';
-import { PlusIcon } from '../hub/icons';
 import type { SidebarEntry } from './pinIds';
 
 export type MenuItem = { text: string; danger?: boolean; onClick: () => void };
 
-export type GroupsViewProps = {
+export type GroupListBaseProps = {
   groups: FocusGroup[];
   activeGroupId: string | null;
   isDone: (g: FocusGroup) => boolean;
   membersOf: (g: FocusGroup) => SidebarEntry[];
   collapsedIds: string[];
   onToggleCollapsed: (id: string) => void;
-  /** Opens the New group dialog (SidebarBody owns it: worktree menus open it too). */
-  onNewGroup: () => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   renderMember: (e: SidebarEntry, g: FocusGroup) => React.ReactNode;
@@ -47,14 +43,18 @@ function RenameInput({ initial, onSubmit, onCancel }: {
   );
 }
 
-/** The rows of some groups: a foldable header (rename/delete menu) and the members. */
-export type GroupListProps = Pick<GroupsViewProps,
+/** The rows of some groups: a foldable header (rename/park/delete menu) and the members. */
+export type GroupListProps = Pick<GroupListBaseProps,
   'activeGroupId' | 'isDone' | 'membersOf' | 'collapsedIds' | 'onToggleCollapsed'
-  | 'onRename' | 'onDelete' | 'renderMember' | 'renderMenu'> & { groups: FocusGroup[] };
+  | 'onRename' | 'onDelete' | 'renderMember' | 'renderMenu'> & {
+  groups: FocusGroup[];
+  /** Working on only: parks the group (it leaves the sidebar until opened again). */
+  onPark?: (id: string) => void;
+};
 
 export function GroupList({
   groups, activeGroupId, isDone, membersOf, collapsedIds, onToggleCollapsed,
-  onRename, onDelete, renderMember, renderMenu,
+  onRename, onDelete, onPark, renderMember, renderMenu,
 }: GroupListProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const group = (g: FocusGroup) => {
@@ -84,6 +84,7 @@ export function GroupList({
           )}
           {renderMenu(`${g.name} group actions`, [
             { text: 'Rename…', onClick: () => setRenaming(g.id) },
+            ...(onPark ? [{ text: 'Park', onClick: () => onPark(g.id) }] : []),
             {
               text: 'Delete group', danger: true,
               onClick: () => { if (confirm(`Delete focus group "${g.name}"? Worktrees are not touched.`)) onDelete(g.id); },
@@ -101,26 +102,4 @@ export function GroupList({
     );
   };
   return <div className="flex flex-col gap-0.5">{groups.map(group)}</div>;
-}
-
-/**
- * Open groups only — finished ones are shown by SettledSection at the bottom.
- * Nothing at all when there are none: the first group comes from a worktree's
- * menu (New group… / Add to group…), so an empty header would only take room.
- */
-export function GroupsView({ onNewGroup, ...list }: GroupsViewProps) {
-  const openGroups = list.groups.filter((g) => !list.isDone(g));
-  if (openGroups.length === 0) return null;
-  return (
-    <section aria-label="Focus groups">
-      <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
-        <span className="text-xs text-zinc-500">Groups</span>
-        <button onClick={onNewGroup} aria-label="New group" title="New group"
-          className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300">
-          <PlusIcon size={12} />
-        </button>
-      </div>
-      <GroupList {...list} groups={openGroups} />
-    </section>
-  );
 }
