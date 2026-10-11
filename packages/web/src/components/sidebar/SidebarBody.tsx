@@ -593,9 +593,11 @@ export function SidebarBody({
           onCancel={() => setNewGroupWith(null)}
           onCreate={(name, members) => {
             setNewGroupWith(null);
-            focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
-            // A worktree in a group is no longer loose.
-            members.forEach(loose.remove);
+            focus.create(name, members).then((g) => {
+              // A worktree in a group is no longer loose; only once the group exists.
+              members.forEach(loose.remove);
+              focusPrefs.setActiveFocusGroupId(g.id);
+            }).catch(report);
           }}
         />
       )}

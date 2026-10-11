@@ -224,7 +224,8 @@ describe('SidebarBody: Working on and Settled only', () => {
 
   it('starts a new group from a worktree menu, with that worktree ticked', async () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
-    focus.create.mockResolvedValue({ ...group, id: 'g9', name: 'Fresh' });
+    let resolveCreate!: (g: FocusGroup) => void;
+    focus.create.mockReturnValue(new Promise<FocusGroup>((r) => { resolveCreate = r; }));
     loose('local:/r1/wt');
     render(<SidebarBody {...props()} />);
     fireEvent.contextMenu(screen.getAllByText('fx-412')[0]!, { clientX: 10, clientY: 10 });
@@ -234,9 +235,26 @@ describe('SidebarBody: Working on and Settled only', () => {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Fresh' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }));
     expect(focus.create).toHaveBeenCalledWith('Fresh', ['local:/r1/wt']);
-    // Grouped, so no longer loose; and the new group becomes the active one.
-    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: [] });
+    // Still loose until the group exists: a failed create must not lose the row.
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: ['local:/r1/wt'] });
+    resolveCreate({ ...group, id: 'g9', name: 'Fresh' });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: [] }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ w1: 'g9' }));
+  });
+
+  it('keeps the loose row when creating its group fails', async () => {
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    focus.create.mockRejectedValue(new Error('disk full'));
+    const onError = vi.fn();
+    loose('local:/r1/wt');
+    render(<SidebarBody {...props({ onError })} />);
+    fireEvent.contextMenu(screen.getAllByText('fx-412')[0]!, { clientX: 10, clientY: 10 });
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'New group…' }));
+    const dialog = screen.getByRole('dialog', { name: 'New group' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Fresh' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('disk full'));
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: ['local:/r1/wt'] });
   });
 
   it('right-clicking blank sidebar space offers New group and Add repo', () => {
