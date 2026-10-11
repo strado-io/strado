@@ -127,7 +127,7 @@ export function FocusPopover({ anchor, focuses, activeId, rowInfo, onActivate, o
       </div>
       <div className="mt-1.5 flex max-h-72 flex-col gap-px overflow-y-auto">
         {options.length === 0 && (
-          <p className="px-2 py-2 text-xs text-zinc-600">{focuses.length === 0 ? 'No focuses yet. Type a name to make one.' : 'No match.'}</p>
+          <p className="px-2 py-2 text-xs text-zinc-600">{focuses.length === 0 ? 'No focuses yet.' : 'No match.'}</p>
         )}
         {options.map((o, i) => {
           const hl = i === selIdx;
@@ -186,7 +186,7 @@ export function FocusPopover({ anchor, focuses, activeId, rowInfo, onActivate, o
         <button type="button" onClick={() => { onNewFocus(); onClose(); }}
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100">
           <span className="flex w-4 shrink-0 justify-center text-zinc-500"><PlusIcon /></span>
-          <span className="min-w-0 flex-1">New focus<span className="ml-1.5 text-xs text-zinc-600">from a ticket or worktrees</span></span>
+          <span className="min-w-0 flex-1 truncate">New focus</span>
           <span className="shrink-0 font-mono text-[11px] text-zinc-600">⇧⌘N</span>
         </button>
       </div>
