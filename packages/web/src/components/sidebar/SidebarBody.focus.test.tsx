@@ -4,6 +4,7 @@ import type { FocusGroup } from '../../api';
 import type { RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { useFocusGroups } from '../../hooks/useFocusGroups';
+import { publishTickets } from '../../hooks/tickets';
 import { SidebarBody, type SidebarBodyProps } from './SidebarBody';
 
 vi.mock('../../hooks/mrSummaries', () => ({ useMrSummaries: vi.fn(() => new Map()) }));
@@ -146,6 +147,18 @@ describe('SidebarBody: Working on and Settled only', () => {
     expect(within(looseCard).getAllByText('fx-412')).toHaveLength(2); // title and the branch line
     const settled = screen.getByRole('region', { name: 'Settled' });
     expect(within(settled).getByText('3d')).toBeInTheDocument();
+  });
+
+  it('titles a card from its ticket summary, else its PR title, when the worktree has no title of its own', () => {
+    const ticketed = { ...wt('/r2/other', 'r2'), branch: 'FD-9-login', meta: { ticketId: 'FD-9', ticketProvider: 'jira' } } as Worktree;
+    const pr = { ...wt('/r1/wt', 'r1'), branch: 'feat/x' } as Worktree;
+    publishTickets({ issues: { 'jira:FD-9': { key: 'FD-9', summary: 'Fix login redirect', provider: 'jira', url: '' } as never } });
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1/wt', { state: 'open', title: 'Add rate limiting', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
+    loose('local:/r2/other', 'local:/r1/wt');
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    render(<SidebarBody {...props({ worktrees: [ticketed, pr] })} />);
+    expect(screen.getByRole('button', { name: 'FD-9' })).toHaveTextContent('Fix login redirect');
+    expect(screen.getByRole('button', { name: 'feat/x' })).toHaveTextContent('Add rate limiting');
   });
 
   it('shows the empty state when nothing is being worked on', () => {
