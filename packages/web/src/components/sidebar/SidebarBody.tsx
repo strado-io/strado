@@ -1,11 +1,9 @@
-// One space's sidebar pane: a toolbar (Search, Add repo, New group, New
-// worktree), then Working on, which holds loose worktree rows followed by the
-// groups in the working state with their members, and Settled at the bottom
-// for finished work. Parked groups have no rows here; the header counts them
-// and ⌘K finds them.
+// One space's sidebar pane: a toolbar (Search, Add repo, New worktree), then
+// Working on — the worktrees you have opened here, as cards — and Settled at
+// the bottom for finished work. Everything else is one ⌘K away.
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { FocusGroup, RemoteWorktree, RunnerStatus } from '../../api';
+import type { RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { chipStatus, sessionChips } from '../../hooks/sessions';
@@ -19,17 +17,11 @@ import { WorktreeCard } from './WorktreeCard';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
-import { useFocusGroups } from '../../hooks/useFocusGroups';
-import { useFocusPrefs } from '../../hooks/focusPrefs';
-import { GroupList, type MenuItem } from './GroupsView';
 import { SettledSection } from './SettledSection';
 import { shortRelativeTime } from '../../lib/relativeTime';
-import { GroupPickerDialog } from './GroupPickerDialog';
-import { NewGroupDialog } from './NewGroupDialog';
-import { activeGroupOf, groupState, groupsContaining, isGroupDone, resolveMembers } from './focusGroups';
 import { SidebarToolbar } from './SidebarToolbar';
 import { useLooseWorktrees } from '../../hooks/looseWorktrees';
-import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
+import { localPinId, remotePinId } from './pinIds';
 
 export type SidebarBodyProps = {
   wsId: string;
@@ -53,8 +45,6 @@ export type SidebarBodyProps = {
   remoteLoading?: boolean;
   /** Toolbar Search: opens ⌘K. */
   onSearch: () => void;
-  /** The header's "N more": opens ⌘K showing only groups. */
-  onShowParked: () => void;
   /** Surfaces a failed focus-group change in the dashboard's error banner. */
   onError?: (message: string) => void;
 };
@@ -149,6 +139,7 @@ export function RepoIcon() {
 }
 
 // small kebab (⋯) button + popover; closes on outside-click via a fixed backdrop
+export type MenuItem = { text: string; danger?: boolean; onClick: () => void };
 
 /**
  * A menu's floating list. `anchor: 'right'` hangs it left of the point (under
@@ -232,15 +223,14 @@ function Menu({ label, items, alwaysVisible = false }: {
  * that adjacency is the point — but always badged with the machine, because
  * where it runs decides what it can see.
  */
-function RemoteRow({ w, repoName, reachable, activeRow, placement, groupItems = [], onOpenRemoteWorktree, onDeleteRemoteWorktree, onContextMenu }: {
+function RemoteRow({ w, repoName, reachable, activeRow, onRemove, onOpenRemoteWorktree, onDeleteRemoteWorktree, onContextMenu }: {
 w: RemoteWorktree;
 /** The repo it belongs to, for the card's first line. */
 repoName?: string;
 reachable: boolean;
 activeRow: boolean;
-placement: 'loose' | 'focus';
-/** Group and Working on items, shown before Delete. */
-groupItems?: { text: string; onClick: () => void }[];
+/** Takes the row out of Working on; the worktree itself is untouched. */
+onRemove: () => void;
 onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 /** Right-click: the row's menu at the cursor. */
@@ -248,10 +238,10 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 }) {
   const chips = sessionChips([w as unknown as Worktree]);
   // A worktree appears once, so a loose row keeps the plain id; a member is prefixed.
-  const testIdSuffix = placement === 'focus' ? `focus-${w.runnerId}:${w.path}` : `${w.runnerId}:${w.path}`;
+  const testIdSuffix = `${w.runnerId}:${w.path}`;
   const label = w.branch ?? w.name;
   const menuItems: MenuItem[] = [
-    ...groupItems,
+    { text: 'Remove from Working on', onClick: onRemove },
     ...(!w.isRepoRoot && onDeleteRemoteWorktree
       ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
       : []),
@@ -264,7 +254,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       mr={null}
       runnerName={w.runnerName}
       onOpen={open}
-      onContextMenu={menuItems.length > 0 && onContextMenu ? (e) => onContextMenu(e, menuItems) : undefined}
+      onContextMenu={onContextMenu ? (e) => onContextMenu(e, menuItems) : undefined}
       className={`group relative flex items-stretch rounded-lg ${activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
     >
       <WorktreeCard
@@ -297,13 +287,11 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       />
       <HoverActions active={activeRow}>
         {/* A repo's main working tree is not removable as a worktree — the
-            delete route refuses it — so its menu holds only the group items. */}
-        {(!w.isRepoRoot && onDeleteRemoteWorktree) || groupItems.length > 0 ? (
-          <Menu
-            label={`${label} on ${w.runnerName} actions`}
-            items={menuItems}
-          />
-        ) : null}
+            delete route refuses it — so its menu only offers Remove. */}
+        <Menu
+          label={`${label} on ${w.runnerName} actions`}
+          items={menuItems}
+        />
       </HoverActions>
     </WorktreeRowItem>
   );
@@ -314,20 +302,10 @@ export function SidebarBody({
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, onSearch, onShowParked, onError,
+  remoteLoading = false, onSearch, onError,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
-  const focus = useFocusGroups(wsId);
-  const focusPrefs = useFocusPrefs(wsId);
   const loose = useLooseWorktrees(wsId);
-  const report = (err: unknown) => onError?.((err as Error).message);
-  const doneOf = (g: FocusGroup) =>
-    isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
-  const activeGroup = activeGroupOf(focus.groups, focusPrefs.activeFocusGroupId);
-  // The worktree whose "Add to group…" picker is open.
-  const [pickerFor, setPickerFor] = useState<string | null>(null);
-  // The New group dialog, with the worktrees it starts ticked (none from the + button).
-  const [newGroupWith, setNewGroupWith] = useState<string[] | null>(null);
   // Right-click on a worktree row: its ⋯ menu, at the cursor.
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
@@ -335,31 +313,11 @@ export function SidebarBody({
     e.stopPropagation(); // a row's menu, not the blank-space one below
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
-  // Fold every group, e.g. to get back to a short list.
-  const collapseAll = () => {
-    for (const g of focus.groups) if (!focusPrefs.collapsedGroupIds.includes(g.id)) focusPrefs.toggleGroupCollapsed(g.id);
-  };
-  // Right-click on blank sidebar space: what you can make from here, and tidying up.
+  // Right-click on blank sidebar space: what you can make from here.
   const openBlankContextMenu = (e: React.MouseEvent) => openContextMenu(e, [
     { text: 'New worktree…', onClick: onNewWorktree },
-    { text: 'New group…', onClick: () => setNewGroupWith([]) },
     { text: 'Add repo…', onClick: () => onAddRepo({ left: e.clientX, right: e.clientX, bottom: e.clientY }) },
-    { text: 'Collapse all', onClick: collapseAll },
   ]);
-  // Row-menu entry: a single "Add to group…" that opens the picker, so the
-  // menu stays short however many groups exist.
-  const groupMenuItems = (memberId: string) => [
-    { text: 'Add to group…', onClick: () => setPickerFor(memberId) },
-    { text: 'New group…', onClick: () => setNewGroupWith([memberId]) },
-  ];
-  // Leaving its only open group must not make a worktree vanish: unless it
-  // has settled, it stays in Working on as a loose row.
-  const removeFromGroup = (group: FocusGroup, pinId: string, settled = false) => {
-    const elsewhere = groupsContaining(focus.groups.filter((g) => g.id !== group.id && !doneOf(g)), pinId).length > 0;
-    focus.setMembership(group.id, pinId, false)
-      .then(() => { if (!elsewhere && !settled) loose.add(pinId); })
-      .catch(report);
-  };
   const vscodeTabs = useVscodeTabs();
   // Last-opened times for the cards; the same map ⌘K ranks by.
   const lru = readWorktreeLru();
@@ -393,21 +351,15 @@ export function SidebarBody({
       </span>
     );
   };
-  // A member opened from its group makes that group the active one, so
-  // ⌥⌘←/→ cycles the group the user is working in.
-  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'focus' | 'settled', group?: FocusGroup) => {
-    const open: OpenWorktree = (...args) => { if (group) focusPrefs.setActiveFocusGroupId(group.id); onOpenWorktree(...args); };
+  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled') => {
+    const open: OpenWorktree = onOpenWorktree;
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
     const mr = mrByPath.get(w.path);
-    // Members and loose cards share one column: the group header above says where a card belongs.
-    // A worktree appears once, so loose and settled rows keep the plain path id; a member is prefixed.
-    const testIdSuffix = placement === 'focus' ? `focus-${w.path}` : w.path;
+    const testIdSuffix = w.path;
     const pinId = localPinId(w);
     const menuItems: MenuItem[] = [
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
-      ...groupMenuItems(pinId),
-      ...(group ? [{ text: 'Remove from group', onClick: () => removeFromGroup(group, pinId, isSettled(w)) }] : []),
       ...(placement === 'loose' ? [{ text: 'Remove from Working on', onClick: () => loose.remove(pinId) }] : []),
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];
@@ -472,88 +424,31 @@ export function SidebarBody({
   const remoteByPinId = new Map(remoteWorktrees.map((w) => [remotePinId(w), w]));
   // Ids that resolve to nothing (deleted worktree, runner offline) render nothing;
   // they are not pruned here so a runner coming back brings its row back.
-  // A worktree pinned and grouped before loose rows existed would show twice; its group wins.
-  const heldByOpenGroup = new Set(focus.groups.filter((g) => !doneOf(g)).flatMap((g) => g.members));
-  const looseRows = loose.ids.filter((pinId) => !heldByOpenGroup.has(pinId)).flatMap((pinId) => {
+  const looseRows = loose.ids.flatMap((pinId) => {
     const local = localByPinId.get(pinId);
     if (local) return isSettled(local) ? [] : [localRow(local, repos.find((r) => r.id === local.repoId)?.name ?? '', 'loose')];
     const remote = remoteByPinId.get(pinId);
     if (!remote) return [];
     return [(
       <RemoteRow key={`loose:${pinId}`} w={remote} repoName={repos.find((r) => r.id === remote.localRepoId)?.name ?? remote.remoteRepoName ?? ''}
-        reachable={runnerOnline(remote.runnerId)} activeRow={remote.path === activeWorktreePath} placement="loose"
-        groupItems={[...groupMenuItems(pinId), { text: 'Remove from Working on', onClick: () => loose.remove(pinId) }]}
+        reachable={runnerOnline(remote.runnerId)} activeRow={remote.path === activeWorktreePath}
+        onRemove={() => loose.remove(pinId)}
         onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} />
     )];
   });
 
-  // Shared by Working on (open groups) and Settled (finished ones).
-  const groupListProps = {
-    activeGroupId: activeGroup?.id ?? null,
-    isDone: doneOf,
-    membersOf: (g: FocusGroup) => resolveMembers(g, worktrees, remoteWorktrees),
-    collapsedIds: focusPrefs.collapsedGroupIds,
-    onToggleCollapsed: focusPrefs.toggleGroupCollapsed,
-    onRename: (id: string, name: string) => { focus.rename(id, name).catch(report); },
-    onDelete: (id: string) => {
-      focus.remove(id)
-        .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
-        .catch(report);
-    },
-    renderMenu: (label: string, items: MenuItem[]) => <Menu alwaysVisible label={label} items={items} />,
-    renderMember: (e: SidebarEntry, g: FocusGroup) => {
-      const repoName = repos.find((r) => r.id === e.repoId)?.name ?? '';
-      if (e.kind === 'local') return localRow(e.w, repoName, 'focus', g);
-      return (
-        <RemoteRow
-          key={`focus:${e.pinId}`}
-          w={e.w}
-          repoName={repoName || e.w.remoteRepoName || ''}
-          reachable={runnerOnline(e.w.runnerId)}
-          activeRow={e.w.path === activeWorktreePath}
-          placement="focus"
-          groupItems={[...groupMenuItems(e.pinId), { text: 'Remove from group', onClick: () => removeFromGroup(g, e.pinId) }]}
-          onContextMenu={openContextMenu}
-          onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
-          onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-        />
-      );
-    },
-  };
-  const openGroups = focus.groups.filter((g) => !doneOf(g));
-  const workingGroups = openGroups.filter((g) => groupState(g) === 'working');
-  const parkedCount = openGroups.length - workingGroups.length;
-  const park = (id: string) => {
-    focus.setState(id, 'parked')
-      .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
-      .catch(report);
-  };
   const settledWorktreeRows = worktrees.filter(isSettled).map((w) =>
     localRow(w, repos.find((r) => r.id === w.repoId)?.name ?? '', 'settled'));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarToolbar onSearch={onSearch} onAddRepo={onAddRepo}
-        onNewGroup={() => setNewGroupWith([])} onNewWorktree={onNewWorktree} />
+      <SidebarToolbar onSearch={onSearch} onAddRepo={onAddRepo} onNewWorktree={onNewWorktree} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
-        <section aria-label="Working on">
-          {/* No heading: the section is the sidebar. Parked groups have no rows,
-              so a count says they exist and ⌘K finds them. */}
-          {parkedCount > 0 ? (
-            <div className="mb-1 mt-2 flex items-center justify-end pr-1">
-              <button type="button" onClick={onShowParked} title="Parked groups — open one from search"
-                className="rounded px-1 font-mono text-[11px] tabular-nums text-zinc-600 hover:text-zinc-300">
-                {parkedCount} more
-              </button>
-            </div>
-          ) : <div className="mt-2" />}
-          {looseRows.length === 0 && workingGroups.length === 0 ? (
+        <section aria-label="Working on" className="mt-2">
+          {looseRows.length === 0 ? (
             <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing yet. Search to open a worktree, or ✎ to start one.</p>
           ) : (
-            <>
-              {looseRows.length > 0 && <div className="mb-1.5 flex flex-col gap-1.5">{looseRows}</div>}
-              {workingGroups.length > 0 && <GroupList {...groupListProps} groups={workingGroups} onPark={park} />}
-            </>
+            <div className="mb-1.5 flex flex-col gap-1.5">{looseRows}</div>
           )}
           {/* First runner fetch still in flight: say so, quietly. Runner rows
               appearing a beat after the local ones otherwise looks like a bug. */}
@@ -569,66 +464,10 @@ export function SidebarBody({
         </section>
       </div>
 
-      <SettledSection {...groupListProps} groups={focus.groups.filter(doneOf)} worktreeRows={settledWorktreeRows} />
-
-      {newGroupWith && (
-        <NewGroupDialog
-          initialMembers={newGroupWith}
-          candidates={[
-            ...worktrees.map((w) => ({
-              pinId: localPinId(w), label: worktreeLabel(w),
-              repoName: repos.find((r) => r.id === w.repoId)?.name ?? '',
-            })),
-            ...remoteWorktrees.map((w) => ({
-              pinId: remotePinId(w), label: w.branch ?? w.name,
-              repoName: `${repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''} · ${w.runnerName}`,
-            })),
-          ]}
-          onCancel={() => setNewGroupWith(null)}
-          onCreate={(name, members) => {
-            setNewGroupWith(null);
-            focus.create(name, members).then((g) => {
-              // A worktree in a group is no longer loose; only once the group exists.
-              members.forEach(loose.remove);
-              focusPrefs.setActiveFocusGroupId(g.id);
-            }).catch(report);
-          }}
-        />
-      )}
+      <SettledSection worktreeRows={settledWorktreeRows} />
 
       {contextMenu && (
         <MenuPopover pos={contextMenu} items={contextMenu.items} anchor="left" onClose={() => setContextMenu(null)} />
-      )}
-
-      {pickerFor && (
-        <GroupPickerDialog
-          groups={focus.groups.filter((g) => !doneOf(g))}
-          memberId={pickerFor}
-          onClose={() => setPickerFor(null)}
-          onToggle={(id, add) => {
-            const member = pickerFor;
-            // A worktree in a group is no longer loose.
-            const g = focus.groups.find((x) => x.id === id);
-            // Adding to a parked group means you are working on it again, once the add has saved.
-            const promote = add && g && groupState(g) === 'parked';
-            focus.setMembership(id, member, add)
-              .then(() => {
-                if (!add) return;
-                // A worktree in a group is no longer loose.
-                loose.remove(member);
-                if (promote) return focus.setState(id, 'working');
-              })
-              .catch(report);
-          }}
-          onCreate={(name) => {
-            // The dialog closes right after this, clearing pickerFor.
-            const member = pickerFor;
-            focus.create(name, [member]).then((g) => {
-              loose.remove(member);
-              focusPrefs.setActiveFocusGroupId(g.id);
-            }).catch(report);
-          }}
-        />
       )}
     </div>
   );

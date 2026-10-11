@@ -3,13 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { SidebarToolbar } from './SidebarToolbar';
 
 describe('SidebarToolbar', () => {
-  it('offers Search and the three create actions', () => {
-    const p = { onSearch: vi.fn(), onAddRepo: vi.fn(), onNewGroup: vi.fn(), onNewWorktree: vi.fn() };
+  it('offers Search, Add repo and New worktree', () => {
+    const p = { onSearch: vi.fn(), onAddRepo: vi.fn(), onNewWorktree: vi.fn() };
     render(<SidebarToolbar {...p} />);
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect(p.onSearch).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'New group' }));
-    expect(p.onNewGroup).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'New worktree' }));
     expect(p.onNewWorktree).toHaveBeenCalled();
     // Add repo anchors its popover to the button it came from.

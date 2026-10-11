@@ -26,17 +26,11 @@ import { useDensity } from '../hooks/useDensity';
 import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
-import { useFocusShortcut } from '../hooks/focusShortcut';
-import { useFocusGroups } from '../hooks/useFocusGroups';
-import { useFocusPrefs } from '../hooks/focusPrefs';
 import { useMrSummaries } from '../hooks/mrSummaries';
-import { activeGroupOf, groupState, groupsContaining, isGroupDone, nextMember, openEffects, resolveMembers } from '../components/sidebar/focusGroups';
 import { addLooseWorktree } from '../hooks/looseWorktrees';
-import { worktreeLabel } from '../components/sidebar/labels';
-import type { SidebarEntry } from '../components/sidebar/pinIds';
 import { TaskBoard } from '../components/TaskBoard';
 import { computeReorderPatches } from '../hooks/rowOrder';
-import { bumpWorktreeOpened, readWorktreeLru } from '../lib/worktreeLru';
+import { bumpWorktreeOpened } from '../lib/worktreeLru';
 import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
@@ -305,23 +299,16 @@ export function Dashboard(props: {
   // Palette pick of a worktree in ANOTHER workspace: switch first, and open
   // the hub only once the workspace context has actually landed — opening
   // immediately would spawn its sessions against the old workspace.
-  // It also waits for that workspace's focus groups: the open decides whether
-  // a parked group comes back or the worktree gets a loose row, and with no
-  // groups loaded yet it would always pick the loose row.
-  const focusGroups = useFocusGroups(wsId);
-  const focusPrefs = useFocusPrefs(wsId);
   const pendingOpenRef = useRef<{ wsId: string; worktree: Worktree } | null>(null);
   useEffect(() => {
     const pending = pendingOpenRef.current;
-    if (pending && pending.wsId === wsId && focusGroups.loaded) {
+    if (pending && pending.wsId === wsId) {
       pendingOpenRef.current = null;
       openInlineHub(pending.worktree);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsId, focusGroups.loaded]);
+  }, [wsId]);
   const [showPalette, setShowPalette] = useState(false);
-  const [paletteFilter, setPaletteFilter] = useState<'groups' | null>(null);
-  const openPalette = (filter: 'groups' | null = null) => { setPaletteFilter(filter); setShowPalette(true); };
   const [density, setDensity] = useDensity();
   const [boardPrefs, patchBoardPrefs] = useBoardPrefs(wsId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
@@ -508,7 +495,7 @@ export function Dashboard(props: {
         // Opening or closing, ⌘K always means the full palette: a filter set
         // by the parked-groups link must not survive into the next open.
         setShowPalette((p) => !p);
-        setPaletteFilter(null);
+        
       } else if (e.key === ',') {
         e.preventDefault();
         setSettingsSection('profile');
@@ -520,7 +507,7 @@ export function Dashboard(props: {
     // Shortcuts pressed inside an embed (Browser preview view, VS Code iframe)
     // never reach window listeners; the shell forwards them over IPC.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
-      if (combo === 'palette') { setShowPalette((p) => !p); setPaletteFilter(null); }
+      if (combo === 'palette') { setShowPalette((p) => !p);  }
       else if (combo === 'settings') setSettingsSection('profile');
     });
     return () => {
@@ -564,68 +551,16 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onOpenRemoteWorktree]);
 
-  // ⌥⌘←/→ walks the active focus group's worktrees (any repo, local or runner).
-  const activeFocusMembers = useMemo(() => {
-    const g = activeGroupOf(focusGroups.groups, focusPrefs.activeFocusGroupId);
-    return g ? resolveMembers(g, state.worktrees, remote.worktrees) : [];
-  }, [focusGroups.groups, focusPrefs.activeFocusGroupId, state.worktrees, remote.worktrees]);
-  const openFocusMember = useCallback((m: SidebarEntry) => {
-    if (m.kind === 'local') openInlineHub(m.w);
-    else openRemoteWorktree(m.w);
-  }, [openInlineHub, openRemoteWorktree]);
-  useFocusShortcut((dir) => {
-    const currentId = selectedRemote
-      ? `remote:${selectedRemote.runnerId}:${selectedRemote.path}`
-      : selectedPath ? `local:${selectedPath}` : null;
-    const next = nextMember(activeFocusMembers, currentId, dir);
-    if (!next) return false;
-    openFocusMember(next);
-    return true;
-  });
-
-  // ⌘K rows for the focus groups. Same cached MR hook the sidebar uses, so
-  // the Done check costs no extra requests within its TTL.
+  // The MR state decides whether an opened worktree is settled (Settled keeps
+  // it) or joins Working on as a loose row. Assigned every render so the open
+  // callbacks above always see the current state.
   const mrByPath = useMrSummaries(wsId, state.worktrees.map((w) => w.path));
-  const paletteGroups = useMemo(() => focusGroups.groups.map((group) => {
-    const members = resolveMembers(group, state.worktrees, remote.worktrees);
-    const repoNames = [...new Set(members.map((m) => state.repos.find((r) => r.id === m.repoId)?.name).filter(Boolean))];
-    const first = members[0];
-    const label = first ? (first.kind === 'local' ? worktreeLabel(first.w) : (first.w.branch ?? first.w.name)) : '';
-    return {
-      group,
-      detail: [label, repoNames.join(', ')].filter(Boolean).join(' · '),
-      done: isGroupDone(members, (p) => mrByPath.get(p)?.state ?? null),
-      parked: groupState(group) === 'parked',
-    };
-  }), [focusGroups.groups, state.worktrees, state.repos, remote.worktrees, mrByPath]);
-  // Assigned every render so the open callbacks above always see current
-  // groups and MR state. Opening a worktree brings back any parked group
-  // holding it; one in no group (and not settled) gets a loose row.
   noteOpenedRef.current = (pinId) => {
     const path = pinId.startsWith('local:') ? pinId.slice('local:'.length) : null;
     const mrState = path ? mrByPath.get(path)?.state : undefined;
     const isRoot = !!path && state.repos.some((r) => r.path === path);
     const settled = (mrState === 'merged' || mrState === 'closed') && !isRoot;
-    const { promote, addLoose } = openEffects(focusGroups.groups, pinId, settled);
-    if (addLoose) addLooseWorktree(wsId, pinId);
-    for (const id of promote) {
-      focusGroups.setState(id, 'working').catch((e) => dispatch({ type: 'error', message: (e as Error).message }));
-    }
-    // A working group already holding it keeps (or was just made) active by
-    // the row click; the parked one comes back without taking that over.
-    const inWorking = groupsContaining(focusGroups.groups, pinId).some((g) => groupState(g) === 'working');
-    if (promote[0] && !inWorking) focusPrefs.setActiveFocusGroupId(promote[0]);
-  };
-  // Picking a group in ⌘K makes it active and opens its most recently used member.
-  const pickFocusGroup = (id: string) => {
-    const group = focusGroups.groups.find((g) => g.id === id);
-    if (group && groupState(group) === 'parked') focusGroups.setState(id, 'working').catch((e) => dispatch({ type: 'error', message: (e as Error).message }));
-    focusPrefs.setActiveFocusGroupId(id);
-    if (!group) return;
-    const members = resolveMembers(group, state.worktrees, remote.worktrees);
-    const lru = readWorktreeLru();
-    const best = [...members].sort((a, b) => (lru[b.w.path] ?? 0) - (lru[a.w.path] ?? 0))[0];
-    if (best) openFocusMember(best);
+    if (!settled) addLooseWorktree(wsId, pinId);
   };
   useEffect(() => {
     // A space switch clears the previous space's rows rather than letting them
@@ -827,8 +762,7 @@ export function Dashboard(props: {
             setAddRepoAnchor(anchor ?? null);
             setShowAddRepo(true);
           }}
-          onSearch={() => openPalette()}
-          onShowParked={() => openPalette('groups')}
+          onSearch={() => setShowPalette(true)}
           onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}
@@ -1028,9 +962,6 @@ export function Dashboard(props: {
           worktrees={state.worktrees}
           workspaces={allWorkspaces}
           activeWorkspaceId={wsId}
-          focusGroups={paletteGroups}
-          onPickGroup={pickFocusGroup}
-          filter={paletteFilter}
           remoteWorktrees={remote.worktrees}
           onOpenRemoteWorktree={openRemoteWorktree}
           onOpenWorktree={(w, fromWs) => {
@@ -1051,7 +982,7 @@ export function Dashboard(props: {
             props.onCloseOverlays();
             void switchTo(id);
           }}
-          onClose={() => { setShowPalette(false); setPaletteFilter(null); }}
+          onClose={() => { setShowPalette(false);  }}
         />
       )}
 

@@ -1,17 +1,17 @@
 // Finished work, pinned to the bottom of the sidebar: worktrees whose PR is
-// merged or closed, and groups whose every PR is. They leave Working on so it
-// stays about what is still in flight, and are still here to open or delete. SidebarBody decides what is settled and renders the rows.
+// merged or closed. They leave Working on so it stays about what is still in
+// flight, and are still here to open or delete. SidebarBody decides what is
+// settled and renders the rows.
 import { useState } from 'react';
-import { GroupList, type GroupListProps } from './GroupsView';
 
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
-export function SettledSection({ worktreeRows, ...groupList }: GroupListProps & {
+export function SettledSection({ worktreeRows }: {
   /** Settled worktree rows, already rendered. */
   worktreeRows: React.ReactNode[];
 }) {
   const [open, setOpen] = useState(true);
-  const count = groupList.groups.length + worktreeRows.length;
+  const count = worktreeRows.length;
   if (count === 0) return null;
   return (
     <section aria-label="Settled" className="flex max-h-[40%] shrink-0 flex-col border-t border-zinc-900 px-2 pb-2 pt-2">
@@ -25,7 +25,6 @@ export function SettledSection({ worktreeRows, ...groupList }: GroupListProps & 
       </button>
       {open && (
         <div className="min-h-0 overflow-y-auto">
-          {groupList.groups.length > 0 && <GroupList {...groupList} />}
           <div className="flex flex-col gap-1.5">{worktreeRows}</div>
         </div>
       )}

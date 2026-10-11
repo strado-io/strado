@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type FocusGroup, type RemoteWorktree } from '../api';
+import { api, type RemoteWorktree } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
 import { ShellIcon, ClaudeIcon, CodexIcon, VsCodeIcon, GlobeIcon, BookIcon } from './hub/icons';
 import { hasSession } from '../hooks/sessions';
@@ -13,14 +13,12 @@ type Result =
   // A runner worktree in this workspace (opened through the remote hub).
   | { kind: 'worktree'; id: string; label: string; detail: string; remote: RemoteWorktree; worktree?: undefined; wsId?: undefined }
   | { kind: 'repo'; id: string; label: string; detail: string; repoId: string }
-  | { kind: 'workspace'; id: string; label: string; detail: string; wsId: string }
-  | { kind: 'group'; id: string; label: string; detail: string; done: boolean; parked: boolean };
+  | { kind: 'workspace'; id: string; label: string; detail: string; wsId: string };
 
 const GROUP_LABEL: Record<Result['kind'], string> = {
   worktree: 'Worktrees',
   repo: 'Repos',
   workspace: 'Workspaces',
-  group: 'Focus groups',
 };
 
 const NO_REMOTE: RemoteWorktree[] = [];
@@ -41,9 +39,6 @@ export function CommandPalette({
   onGoRepo,
   onSwitchWorkspace,
   onClose,
-  focusGroups = [],
-  onPickGroup,
-  filter = null,
   remoteWorktrees = NO_REMOTE,
   onOpenRemoteWorktree,
 }: {
@@ -56,11 +51,6 @@ export function CommandPalette({
   onGoRepo: (repoId: string) => void;
   onSwitchWorkspace: (wsId: string) => void;
   onClose: () => void;
-  // Listed first so they survive the result cap; Done ones rank last.
-  focusGroups?: { group: FocusGroup; detail: string; done: boolean; parked?: boolean }[];
-  onPickGroup?: (groupId: string) => void;
-  // 'groups' narrows the palette to focus groups (the sidebar's Parked link).
-  filter?: 'groups' | null;
   // This workspace's runner worktrees. With no Repos tree, ⌘K is how one that
   // is neither loose nor grouped gets opened.
   remoteWorktrees?: RemoteWorktree[];
@@ -101,21 +91,6 @@ export function CommandPalette({
     const lru = readWorktreeLru();
     const out: Result[] = [];
 
-    const rank = (x: { done: boolean; parked?: boolean }) => (x.done ? 2 : x.parked ? 1 : 0);
-    const groupResults = focusGroups
-      // Done groups are kept forever; with no query they'd crowd the recent
-      // worktrees out of the capped list, so they only show when searched for.
-      .filter(({ group, done }) => (q ? matches(q, group.name) : !done))
-      .sort((a, b) => rank(a) - rank(b))
-      .map(({ group, detail, done, parked = false }): Result => ({ kind: 'group', id: group.id, label: group.name, detail, done, parked }));
-    // "N more" in the sidebar: just the groups, until the user starts searching.
-    if (filter === 'groups' && !q) return groupResults;
-    out.push(...groupResults);
-    const groupNamesByMember = new Map<string, string[]>();
-    for (const { group } of focusGroups) {
-      for (const m of group.members) groupNamesByMember.set(m, [...(groupNamesByMember.get(m) ?? []), group.name]);
-    }
-
     // Collect every matching worktree (local + remote) into one list, then rank
     // by activity + recency so the ones the user is working in float to the top.
     const isActive = (w: Worktree) => hasSession(w) || w.process?.status === 'running';
@@ -134,7 +109,7 @@ export function CommandPalette({
           kind: 'worktree',
           id: w.path,
           label: ticket || w.branch || w.path.split('/').pop() || w.path,
-          detail: [title, repo, ...(groupNamesByMember.get(`local:${w.path}`) ?? [])].filter(Boolean).join(' · '),
+          detail: [title, repo].filter(Boolean).join(' · '),
           worktree: w,
         },
       });
@@ -151,7 +126,7 @@ export function CommandPalette({
           kind: 'worktree',
           id,
           label: w.branch ?? w.name,
-          detail: [repo, w.runnerName, ...(groupNamesByMember.get(id) ?? [])].filter(Boolean).join(' · '),
+          detail: [repo, w.runnerName].filter(Boolean).join(' · '),
           remote: w,
         },
       });
@@ -189,7 +164,7 @@ export function CommandPalette({
       out.push({ kind: 'workspace', id: ws.id, label: ws.name, detail: 'switch workspace', wsId: ws.id });
     }
     return out.slice(0, 15);
-  }, [query, worktrees, remote, remoteWorktrees, repos, workspaces, activeWorkspaceId, repoName, focusGroups, filter]);
+  }, [query, worktrees, remote, remoteWorktrees, repos, workspaces, activeWorkspaceId, repoName]);
 
   useEffect(() => setSel(0), [query]);
   useEffect(() => inputRef.current?.focus(), []);
@@ -201,8 +176,7 @@ export function CommandPalette({
 
   const pick = (r: Result) => {
     onClose();
-    if (r.kind === 'group') onPickGroup?.(r.id);
-    else if (r.kind === 'worktree') {
+    if (r.kind === 'worktree') {
       if (r.remote) onOpenRemoteWorktree?.(r.remote);
       else onOpenWorktree(r.worktree, r.wsId);
     }
@@ -245,7 +219,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={filter === 'groups' ? 'Parked and working groups — type to search everything' : 'Search worktrees, groups, repos, workspaces…'}
+            placeholder="Search worktrees, repos, workspaces…"
             aria-label="Global search"
             className="h-11 w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
           />
@@ -276,12 +250,6 @@ export function CommandPalette({
                   {r.kind === 'worktree' && <ShellIcon className="shrink-0 text-zinc-600" />}
                   <span className={`shrink-0 ${r.kind === 'worktree' ? 'font-mono text-xs' : ''}`}>{r.label}</span>
                   {r.detail && <span className="min-w-0 truncate text-xs text-zinc-600">{r.detail}</span>}
-                  {r.kind === 'group' && r.done && (
-                    <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">done</span>
-                  )}
-                  {r.kind === 'group' && !r.done && r.parked && (
-                    <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">parked</span>
-                  )}
                   {r.kind === 'worktree' && r.worktree && (() => {
                     const w = r.worktree;
                     const running = w.process?.status === 'running';

@@ -8,9 +8,6 @@ export type WorktreeMergeRequests =
   | { kind: 'list'; provider: 'gitlab' | 'github'; mergeRequests: MergeRequest[] }
   | { kind: 'error'; message: string };
 
-export type FocusGroupState = 'working' | 'parked';
-/** A named, cross-repo bundle of worktrees. Members are sidebar pin ids. A parked group stays out of the sidebar until opened. */
-export type FocusGroup = { id: string; name: string; members: string[]; createdAt: string; state?: FocusGroupState };
 
 export class ApiClientError extends Error {
   code: string;
@@ -237,16 +234,6 @@ function agentQuery(opts: AgentReadOpts): string {
 export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 
 export const api = {
-  groups: {
-    list: (wsId: string) =>
-      request<{ groups: FocusGroup[] }>(`${wsBase(wsId)}/groups`).then((b) => b.groups),
-    create: (wsId: string, body: { name: string; members?: string[] }) =>
-      request<{ group: FocusGroup }>(`${wsBase(wsId)}/groups`, { method: 'POST', body: JSON.stringify(body) }).then((b) => b.group),
-    update: (wsId: string, id: string, body: { name?: string; addMembers?: string[]; removeMembers?: string[]; state?: FocusGroupState }) =>
-      request<{ group: FocusGroup }>(`${wsBase(wsId)}/groups/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }).then((b) => b.group),
-    remove: (wsId: string, id: string) =>
-      request<void>(`${wsBase(wsId)}/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(() => undefined),
-  },
   terminal: {
     peek: (ws: string, path: string, mode: string, session = '1') =>
       request<{ lines: string[] }>(

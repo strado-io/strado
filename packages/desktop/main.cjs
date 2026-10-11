@@ -385,13 +385,13 @@ if (!gotLock) {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return null;
     if (input.key === ',' && !input.alt && !input.shift && input.meta !== input.control) return 'settings';
     if (!input.meta || input.control) return null;
-    // Cmd+Arrow = tabs, Cmd+Opt+Arrow = tab groups, Cmd+Shift+Arrow = spaces.
+    // Cmd+Arrow = tabs, Cmd+Shift+Arrow = spaces. Cmd+Opt+Arrow is left to the page.
     // Shift used to fall through to the tab move, which silently ate the space
     // chord inside the Browser and VS Code embeds.
     if (input.key === 'ArrowRight')
-      return input.alt ? 'group-next' : input.shift ? 'space-next' : 'tab-next';
+      return input.alt ? null : input.shift ? 'space-next' : 'tab-next';
     if (input.key === 'ArrowLeft')
-      return input.alt ? 'group-prev' : input.shift ? 'space-prev' : 'tab-prev';
+      return input.alt ? null : input.shift ? 'space-prev' : 'tab-prev';
     if (input.key.toLowerCase() === 'k' && !input.alt && !input.shift) return 'palette';
     if (input.key.toLowerCase() === 'l' && !input.alt && !input.shift) return 'changes';
     // Cmd+W inside a Browser preview: the renderer closes the active tab
