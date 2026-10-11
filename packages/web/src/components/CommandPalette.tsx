@@ -12,7 +12,7 @@ type Result =
   | { kind: 'worktree'; id: string; label: string; detail: string; worktree: Worktree; wsId?: string }
   | { kind: 'repo'; id: string; label: string; detail: string; repoId: string }
   | { kind: 'workspace'; id: string; label: string; detail: string; wsId: string }
-  | { kind: 'group'; id: string; label: string; detail: string; done: boolean };
+  | { kind: 'group'; id: string; label: string; detail: string; done: boolean; parked: boolean };
 
 const GROUP_LABEL: Record<Result['kind'], string> = {
   worktree: 'Worktrees',
@@ -39,6 +39,7 @@ export function CommandPalette({
   onClose,
   focusGroups = [],
   onPickGroup,
+  filter = null,
 }: {
   repos: RepoConfig[];
   worktrees: Worktree[];
@@ -90,12 +91,15 @@ export function CommandPalette({
     const lru = readWorktreeLru();
     const out: Result[] = [];
 
+    const rank = (x: { done: boolean; parked?: boolean }) => (x.done ? 2 : x.parked ? 1 : 0);
     const groupResults = focusGroups
       // Done groups are kept forever; with no query they'd crowd the recent
       // worktrees out of the capped list, so they only show when searched for.
       .filter(({ group, done }) => (q ? matches(q, group.name) : !done))
-      .sort((a, b) => Number(a.done) - Number(b.done))
-      .map(({ group, detail, done }): Result => ({ kind: 'group', id: group.id, label: group.name, detail, done }));
+      .sort((a, b) => rank(a) - rank(b))
+      .map(({ group, detail, done, parked = false }): Result => ({ kind: 'group', id: group.id, label: group.name, detail, done, parked }));
+    // "N more" in the sidebar: just the groups, until the user starts searching.
+    if (filter === 'groups' && !q) return groupResults;
     out.push(...groupResults);
     const groupNamesByMember = new Map<string, string[]>();
     for (const { group } of focusGroups) {
@@ -158,7 +162,7 @@ export function CommandPalette({
       out.push({ kind: 'workspace', id: ws.id, label: ws.name, detail: 'switch workspace', wsId: ws.id });
     }
     return out.slice(0, 15);
-  }, [query, worktrees, remote, repos, workspaces, activeWorkspaceId, repoName, focusGroups]);
+  }, [query, worktrees, remote, repos, workspaces, activeWorkspaceId, repoName, focusGroups, filter]);
 
   useEffect(() => setSel(0), [query]);
   useEffect(() => inputRef.current?.focus(), []);
@@ -211,7 +215,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search worktrees, groups, repos, workspaces…"
+            placeholder={filter === 'groups' ? 'Parked and working groups — type to search everything' : 'Search worktrees, groups, repos, workspaces…'}
             aria-label="Global search"
             className="h-11 w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
           />
@@ -244,6 +248,9 @@ export function CommandPalette({
                   {r.detail && <span className="min-w-0 truncate text-xs text-zinc-600">{r.detail}</span>}
                   {r.kind === 'group' && r.done && (
                     <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">done</span>
+                  )}
+                  {r.kind === 'group' && !r.done && r.parked && (
+                    <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">parked</span>
                   )}
                   {r.kind === 'worktree' && (() => {
                     const w = r.worktree;
