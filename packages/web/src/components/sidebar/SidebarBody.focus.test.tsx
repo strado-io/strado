@@ -106,6 +106,31 @@ describe('SidebarBody: Working on and Settled only', () => {
     expect(focus.setMembership).toHaveBeenCalledWith('g1', 'local:/r1/wt', false);
   });
 
+  it('removing a member that no other group holds keeps it in Working on as a loose row', async () => {
+    const { rerender } = render(<SidebarBody {...props()} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'fx-412 actions' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from group' }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: ['local:/r1/wt'] }));
+    // The server's answer: the group no longer holds it.
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [{ ...group, members: ['local:/r2/wt'] }] });
+    rerender(<SidebarBody {...props()} />);
+    const working = screen.getByRole('region', { name: 'Working on' });
+    const g = within(working).getByRole('group', { name: 'FX-412' });
+    expect(within(g).queryByText('api')).toBeNull();
+    expect(within(working).getByText('api')).toBeInTheDocument();
+  });
+
+  it('removing a member that another open group holds adds no loose row', async () => {
+    const other: FocusGroup = { id: 'g2', name: 'FX-500', members: ['local:/r1/wt'], createdAt: 't' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, other] });
+    render(<SidebarBody {...props()} />);
+    fireEvent.click(within(screen.getByRole('group', { name: 'FX-412' })).getAllByRole('button', { name: 'fx-412 actions' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from group' }));
+    await waitFor(() => expect(focus.setMembership).toHaveBeenCalledWith('g1', 'local:/r1/wt', false));
+    await new Promise((r) => setTimeout(r, 0)); // let the removal settle
+    expect(localStorage.getItem('strado:pinned-worktrees-by-ws')).toBeNull();
+  });
+
   it('shows the empty state when nothing is being worked on', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     render(<SidebarBody {...props()} />);
