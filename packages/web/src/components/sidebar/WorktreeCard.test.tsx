@@ -24,7 +24,11 @@ describe('WorktreeCard', () => {
     expect(screen.getByText('5h')).toBeInTheDocument();
     expect(screen.getByTestId('trail')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'FD-1' }));
-    expect(onOpen).toHaveBeenCalled();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // Anywhere on the card opens it, not only the title.
+    fireEvent.click(screen.getByText('master'));
+    fireEvent.click(screen.getByText('Fleetx Dashboard'));
+    expect(onOpen).toHaveBeenCalledTimes(3);
   });
 
   it('omits the repo line and the subtitle when absent, and softens a muted card', () => {
