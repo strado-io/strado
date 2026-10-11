@@ -26,7 +26,7 @@ export function SettledSection({ worktreeRows, ...groupList }: GroupListProps & 
       {open && (
         <div className="min-h-0 overflow-y-auto">
           {groupList.groups.length > 0 && <GroupList {...groupList} />}
-          <div className="flex flex-col gap-0.5">{worktreeRows}</div>
+          <div className="flex flex-col gap-1.5">{worktreeRows}</div>
         </div>
       )}
     </section>
