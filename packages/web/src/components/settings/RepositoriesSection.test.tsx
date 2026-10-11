@@ -38,6 +38,23 @@ describe('RepositoriesSection', () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
+  it('keeps the list when a refresh fails, showing the error and not the empty state', async () => {
+    render(<RepositoriesSection />);
+    await screen.findByText('Strado');
+    reposList.mockRejectedValueOnce(new Error('server unreachable'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Strado' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server unreachable');
+    expect(screen.getByText('Fleetx Dashboard')).toBeInTheDocument();
+    expect(screen.queryByText('No repositories yet.')).toBeNull();
+  });
+
+  it('shows the error, not the empty state, when the first load fails', async () => {
+    reposList.mockRejectedValueOnce(new Error('server unreachable'));
+    render(<RepositoriesSection />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('server unreachable');
+    expect(screen.queryByText('No repositories yet.')).toBeNull();
+  });
+
   it('starts a new worktree in a repo', async () => {
     const onNewWorktree = vi.fn();
     render(<RepositoriesSection onNewWorktree={onNewWorktree} />);

@@ -29,7 +29,9 @@ export function RepositoriesSection({ onNewWorktree, onChanged, onModalChange }:
       setCounts(m);
     } catch (e) {
       setError((e as Error).message);
-      setRepos([]);
+      // Keep what was listed; an empty list only so a first-load failure still
+      // renders the section with its error.
+      setRepos((prev) => prev ?? []);
     }
   }, [workspace.id]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -63,7 +65,7 @@ export function RepositoriesSection({ onNewWorktree, onChanged, onModalChange }:
           Add repository
         </button>
       </header>
-      {repos.length === 0 && <p className="text-sm text-zinc-500">No repositories yet.</p>}
+      {repos.length === 0 && !error && <p className="text-sm text-zinc-500">No repositories yet.</p>}
       <ul className="space-y-2">
         {repos.map((repo) => {
           const n = counts.get(repo.id) ?? 0;
