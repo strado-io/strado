@@ -148,6 +148,8 @@ export function SettingsPage({
   onClose: () => void;
   onJiraConnected?: () => void;
   onOpenFeedback?: () => void;
+  onNewWorktree?: (repoId: string) => void;
+  onReposChanged?: () => void | Promise<void>;
 }) {
   const [search, setSearch] = useState('');
   const backButton = useRef<HTMLButtonElement>(null);

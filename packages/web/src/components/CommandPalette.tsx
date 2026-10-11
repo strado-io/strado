@@ -50,8 +50,10 @@ export function CommandPalette({
   onSwitchWorkspace: (wsId: string) => void;
   onClose: () => void;
   // Listed first so they survive the result cap; Done ones rank last.
-  focusGroups?: { group: FocusGroup; detail: string; done: boolean }[];
+  focusGroups?: { group: FocusGroup; detail: string; done: boolean; parked?: boolean }[];
   onPickGroup?: (groupId: string) => void;
+  // 'groups' narrows the palette to focus groups (the sidebar's Parked link).
+  filter?: 'groups' | null;
 }) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);

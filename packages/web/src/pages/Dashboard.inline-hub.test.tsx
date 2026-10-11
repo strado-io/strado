@@ -60,14 +60,17 @@ function renderDashboard() {
   );
 }
 
-// The repo name now appears twice: the sidebar row, and the task board's
-// per-repo chip. Every click here means the sidebar row, which comes first.
+// The sidebar no longer lists repos; the task board's per-repo chip still
+// shows the name, so waiting on it means the tree has loaded.
 const repoRow = () => screen.getAllByText('Repo One')[0]!;
-// Same for the ticket id: sidebar row first, task board row second.
+// The ticket id: the sidebar's Working on row first, task board row second.
 const worktreeRow = () => screen.getAllByText('FD-9')[0]!;
 
 describe('Dashboard inline hub', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
+  });
 
   it('shows the board and no hub initially', async () => {
     renderDashboard();
@@ -78,7 +81,6 @@ describe('Dashboard inline hub', () => {
   it('opens the inline hub when a worktree is selected in the tree', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow()); // expand repo
     fireEvent.click(worktreeRow());      // open worktree
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
   });
@@ -86,7 +88,6 @@ describe('Dashboard inline hub', () => {
   it('Back returns to the board', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     fireEvent.click(await screen.findByText('‹ Back'));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument());
@@ -95,7 +96,6 @@ describe('Dashboard inline hub', () => {
   it('tells the hub to detach native previews while the Add repo modal is open', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     const hub = await screen.findByTestId('inline-hub');
     expect(hub).toHaveAttribute('data-modal-open', 'false');
@@ -111,7 +111,6 @@ describe('Dashboard inline hub', () => {
   it('selecting Tasks clears the hub', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     await screen.findByTestId('inline-hub');
     fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
@@ -130,22 +129,33 @@ describe('Dashboard inline hub', () => {
     expect(document.querySelector('[data-filter-bar]')).not.toBeInTheDocument();
   });
 
-  it('jumping to a repo via the command palette clears the hub', async () => {
+  it('picking a repo in the command palette starts a new worktree in it', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     await screen.findByTestId('inline-hub');
-    fireEvent.keyDown(window, { key: 'k', metaKey: true }); // ⌘K opens the palette
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
     const repoEntries = await screen.findAllByText('Repo One');
     fireEvent.click(repoEntries.at(-1)!); // the palette's "Repos" result
-    await waitFor(() => expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument());
+    expect(noop).toHaveBeenCalledWith('r1');
+  });
+
+  it('opening a worktree from search puts it in Working on', async () => {
+    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    expect(screen.queryByText('FD-9', { selector: '.font-mono' })).toBeNull();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
+    fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
+    await screen.findByTestId('inline-hub');
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ default: ['local:/wt/FD-9'] });
+    expect(within(screen.getByRole('region', { name: 'Working on' })).getByText('FD-9')).toBeInTheDocument();
   });
 
   it('persists selection and restores it on remount', async () => {
     const { unmount } = renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     await screen.findByTestId('inline-hub');
     unmount();
@@ -164,6 +174,7 @@ describe('Dashboard inline hub', () => {
 describe('Dashboard sidebar hover card', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -171,7 +182,6 @@ describe('Dashboard sidebar hover card', () => {
   it('opens the hub on the exact session picked in the card', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
 
     const row = worktreeRow().closest('.group')!;
     fireEvent.pointerEnter(row);
@@ -187,7 +197,6 @@ describe('Dashboard sidebar hover card', () => {
   it('tells the hub to detach native previews while a card is showing', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
     fireEvent.click(worktreeRow());
     const hub = await screen.findByTestId('inline-hub');
     expect(hub).toHaveAttribute('data-modal-open', 'false');
@@ -209,7 +218,6 @@ describe('Dashboard sidebar hover card', () => {
   it('opens diff & commit from the card', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(repoRow());
 
     fireEvent.pointerEnter(worktreeRow().closest('.group')!);
     act(() => { vi.advanceTimersByTime(250); });

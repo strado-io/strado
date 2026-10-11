@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { publishTickets } from '../hooks/tickets';
 
@@ -83,7 +83,7 @@ describe('Dashboard ticket provider errors', () => {
     // the recovered poll's response replaces the stale error wholesale — this
     // is exactly what the Dashboard's own poll effect publishes once the
     // batch endpoint stops reporting the provider as failing.
-    publishTickets({ issues: {}, missing: [], providerErrors: {} });
+    act(() => publishTickets({ issues: {}, missing: [], providerErrors: {} }));
     await waitFor(() => expect(screen.queryByText(/Linear connection failed/)).not.toBeInTheDocument());
   });
 
