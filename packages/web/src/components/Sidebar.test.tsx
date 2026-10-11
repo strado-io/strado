@@ -190,8 +190,8 @@ describe('Sidebar tree', () => {
         activeWorktreePath={withSession.path} />,
     );
 
-    expect(screen.getByTestId(`session-mark-${withSession.path}`)).toHaveClass('left-1', 'w-px', 'bg-sky-500');
-    expect(screen.queryByTestId(`session-mark-${withoutSession.path}`)).toBeNull();
+    expect(screen.getByTestId(`session-stack-${withSession.path}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`session-stack-${withoutSession.path}`)).toBeNull();
     const selectedRow = screen.getByText('FD-1').closest('.group');
     expect(selectedRow).toHaveClass('bg-zinc-800/80');
     expect(selectedRow).not.toHaveClass('ring-1');
