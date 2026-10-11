@@ -244,17 +244,12 @@ describe('SidebarBody: the Focus switcher', () => {
     expect(within(popover()).getByLabelText('New focus name')).toBeInTheDocument();
   });
 
-  it('offers All worktrees only when the page exists, and Escape closes', () => {
-    const onAllWorktrees = vi.fn();
-    const { unmount } = render(<SidebarBody {...props()} />);
+  it('has no All worktrees row (the bottom nav has the page), and Escape closes', () => {
+    render(<SidebarBody {...props()} />);
     fireEvent.click(pill());
     expect(within(popover()).queryByRole('button', { name: 'All worktrees' })).toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Switch focus' })).toBeNull();
-    unmount();
-    render(<SidebarBody {...props({ onAllWorktrees })} />);
-    fireEvent.click(pill());
-    fireEvent.click(within(popover()).getByRole('button', { name: 'All worktrees' }));
-    expect(onAllWorktrees).toHaveBeenCalled();
   });
+
 });

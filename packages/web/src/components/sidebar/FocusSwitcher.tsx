@@ -2,7 +2,8 @@
 // pill names the active Focus ("No focus" when none). The popover is one
 // field over the list: type to filter, pick to switch, type a new name and
 // press Enter to create. Rows are ordered by last use and the first nine
-// carry ⌘1–⌘9 hints. Right-click a row to rename or delete it.
+// carry ⌘1–⌘9 hints. Right-click a row to rename or delete it. The Worktrees
+// page has its own icon in the bottom nav, so it is not a row here.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Focus } from '../../api';
@@ -19,7 +20,6 @@ export const FocusIcon = ({ size = 14 }: { size?: number }) => (
 );
 const CheckIcon = () => (<svg {...icon} width={12} height={12}><path d="M20 6 9 17l-5-5" /></svg>);
 const PlusIcon = () => (<svg {...icon} width={14} height={14}><path d="M5 12h14" /><path d="M12 5v14" /></svg>);
-const ListIcon = () => (<svg {...icon} width={14} height={14}><path d="M8 6h13" /><path d="M8 12h13" /><path d="M8 18h13" /><path d="M3 6h.01" /><path d="M3 12h.01" /><path d="M3 18h.01" /></svg>);
 
 export const byLastActive = (a: Focus, b: Focus) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0);
 
@@ -41,7 +41,7 @@ export function FocusPill({ focus, open, onClick, pillRef }: {
   );
 }
 
-export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCreate, onRename, onDelete, onAllWorktrees, onClose }: {
+export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCreate, onRename, onDelete, onClose }: {
   /** The pill's rect; the popover hangs under it. */
   anchor: { left: number; bottom: number; width: number };
   focuses: Focus[];
@@ -52,8 +52,6 @@ export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCr
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
-  /** Opens the Worktrees page. Absent: no such row. */
-  onAllWorktrees?: () => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
@@ -162,13 +160,6 @@ export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCr
           <span className="min-w-0 flex-1">New focus</span>
           <span className="shrink-0 font-mono text-[11px] text-zinc-600">⇧⌘N</span>
         </button>
-        {onAllWorktrees && (
-          <button type="button" onClick={() => { onAllWorktrees(); onClose(); }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100">
-            <span className="flex w-4 shrink-0 justify-center text-zinc-500"><ListIcon /></span>
-            <span className="min-w-0 flex-1">All worktrees</span>
-          </button>
-        )}
       </div>
       {rowMenu && (
         <MenuPopover pos={rowMenu} anchor="left" onClose={() => setRowMenu(null)} items={[
