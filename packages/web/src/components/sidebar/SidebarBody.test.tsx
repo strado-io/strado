@@ -93,6 +93,18 @@ describe('SidebarBody: the active Focus', () => {
     expect(onDeleteWorktree).not.toHaveBeenCalled();
   });
 
+  it('shows the agent spinner before the title even when the branch line carries a PR badge, and a flag while one waits', () => {
+    withFocus('local:/r1/wt', 'local:/r2/wt');
+    const working = { ...wt('/r1/wt', 'r1'), claudeStatus: 'working', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree;
+    const waiting = { ...wt('/r2/wt', 'r2'), claudeStatus: 'waiting', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree;
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1/wt', { state: 'open', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
+    render(<SidebarBody {...props({ worktrees: [working, waiting] })} />);
+    const cards = screen.getAllByRole('button', { name: 'fx-412' }).map((b) => b.closest('.group') as HTMLElement);
+    expect(within(cards[0]!).getByRole('status', { name: 'agent working' })).toBeInTheDocument();
+    expect(within(cards[0]!).getByTestId('pr-status-/r1/wt')).toBeInTheDocument();
+    expect(within(cards[1]!).getByRole('status', { name: 'agent waiting' })).toBeInTheDocument();
+  });
+
   it('keeps a merged worktree in the Focus, with its PR badge; nothing settles away', () => {
     withFocus('local:/r1/wt');
     vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1/wt', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);

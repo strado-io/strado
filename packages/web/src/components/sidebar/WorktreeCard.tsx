@@ -36,7 +36,7 @@ export function RepoAvatar({ id, name }: { id: string; name: string }) {
   );
 }
 
-export function WorktreeCard({ repo, title, subtitle, time, active, muted = false, onOpen, label, leading, trailing, titleClassName = '' }: {
+export function WorktreeCard({ repo, title, subtitle, time, active, muted = false, onOpen, label, titleLeading, leading, trailing, titleClassName = '' }: {
   repo?: { id: string; name: string } | null;
   title: string;
   subtitle: string;
@@ -48,7 +48,9 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
   onOpen: () => void;
   /** Accessible name of the whole card's button. */
   label: string;
-  /** Before the subtitle: the PR state icon or the working spinner. */
+  /** Before the title: the agent's state (working spinner, waiting flag). */
+  titleLeading?: React.ReactNode;
+  /** Before the subtitle: the PR state icon. */
   leading?: React.ReactNode;
   /** After the subtitle, right-aligned: changes, sessions, run dot, runner. */
   trailing?: React.ReactNode;
@@ -67,10 +69,13 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
           {time && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{time}</span>}
         </div>
       )}
-      <button type="button" aria-label={label} title={label}
-        className={`block w-full truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
-        {title}
-      </button>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {titleLeading && <span className="flex h-4 w-3.5 shrink-0 items-center justify-center">{titleLeading}</span>}
+        <button type="button" aria-label={label} title={label}
+          className={`block min-w-0 flex-1 truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
+          {title}
+        </button>
+      </div>
       <div className="mt-px flex min-h-4 items-center gap-1.5">
         {leading}
         {subtitle && (

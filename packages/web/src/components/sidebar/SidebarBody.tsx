@@ -16,7 +16,7 @@ import { WorktreeCard } from './WorktreeCard';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
-import { BrailleSpinner, HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
+import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentMark, diffBadge, isRunning, type MenuItem } from './rowBits';
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
 import { FocusIcon, FocusPill, FocusPopover, type FocusRowInfo } from './FocusSwitcher';
@@ -106,6 +106,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
         muted={!reachable}
         onOpen={open}
         label={`${label} on ${w.runnerName}${reachable ? '' : ' (offline — the worktree is safe there)'}`}
+        titleLeading={agentMark(w as unknown as Worktree)}
         trailing={(
           <>
             <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
@@ -228,11 +229,8 @@ export function SidebarBody({
           active={activeRow}
           onOpen={() => open(w)}
           label={worktreeLabel(w)}
-          leading={mr ? (
-            <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} />
-          ) : agentWorking(w) ? (
-            <BrailleSpinner small />
-          ) : null}
+          titleLeading={agentMark(w)}
+          leading={mr ? <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} /> : null}
           trailing={(
             <>
               {diffBadge(w, testIdSuffix)}
