@@ -267,7 +267,7 @@ describe('Sidebar tree', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
     const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
-    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('font-medium');
+    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('font-semibold');
     expect(within(card).getByText('feat/x')).toHaveClass('text-zinc-500');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();
@@ -361,7 +361,7 @@ describe('Sidebar tree', () => {
     wrap(<Sidebar {...base} />);
     const actions = screen.getByLabelText('FD-1 actions');
     expect(actions).toHaveClass('inline-flex', 'opacity-0', 'group-hover:opacity-100', 'h-5', 'w-5', 'p-[3px]');
-    expect(actions.parentElement).toHaveClass('absolute', 'right-1');
+    expect(actions.parentElement).toHaveClass('absolute', 'right-2', 'top-2');
   });
 
   it('toolbar buttons start a worktree, a group and a repo', () => {
