@@ -551,7 +551,7 @@ export function SidebarBody({
             <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing yet. Search to open a worktree, or ✎ to start one.</p>
           ) : (
             <>
-              {looseRows.length > 0 && <div className="mb-1 flex flex-col gap-0.5">{looseRows}</div>}
+              {looseRows.length > 0 && <div className="mb-1.5 flex flex-col gap-1.5">{looseRows}</div>}
               {workingGroups.length > 0 && <GroupList {...groupListProps} groups={workingGroups} onPark={park} />}
             </>
           )}
