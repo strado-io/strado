@@ -84,7 +84,6 @@ const base = {
   selected: { kind: 'tasks' as const },
   onSelect: vi.fn(),
   onOpenSettings: vi.fn(),
-  taskCount: 0,
   onCollapse: vi.fn(),
   onAddRepo: vi.fn(),
   onOpenWorktree: vi.fn(),
@@ -109,13 +108,15 @@ function seedLoose(extra: string[] = []) {
 }
 
 describe('Sidebar tree', () => {
-  // Tasks / Code reviews / Usage / Settings live in one icon row at the
-  // bottom, leaving the rail above for groups and worktrees.
-  it('puts the page switcher in an icon row at the bottom, below the Working on header', () => {
-    wrap(<Sidebar {...base} reviewCount={6} />);
+  // Code reviews / Usage / Settings live in one icon row at the bottom,
+  // leaving the rail above for groups and worktrees. No Tasks entry and no
+  // counts: the board is where you land anyway, and numbers there were noise.
+  it('puts the page switcher in an icon row at the bottom, below the Working on header, without Tasks or counts', () => {
+    wrap(<Sidebar {...base} />);
     const nav = screen.getByRole('navigation', { name: 'Pages' });
-    expect(within(nav).getByRole('button', { name: 'Code reviews' })).toHaveTextContent('6');
-    expect(activePane().queryByText('Code reviews')).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('button', { name: 'Tasks' })).toBeNull();
+    expect(within(nav).getByRole('button', { name: 'Code reviews' })).toHaveTextContent(/^$/);
+    expect(within(nav).queryByRole('status')).toBeNull();
     const header = activePane().getByText('Working on', { selector: 'span' });
     expect(header.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -131,18 +132,13 @@ describe('Sidebar tree', () => {
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
-  it('marks the current page and leaves Usage without a count', () => {
-    wrap(<Sidebar {...base} selected={{ kind: 'usage' }} />);
-    const usage = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Usage' });
-    expect(usage).toHaveAttribute('aria-current', 'page');
-    expect(usage).toHaveTextContent(/^$/);
-  });
-
-  it('shows a spinner instead of zero while code reviews are first loading', () => {
-    wrap(<Sidebar {...base} reviewCount={0} reviewLoading />);
-    const reviews = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Code reviews' });
-    expect(within(reviews).getByRole('status', { name: 'Loading code reviews' })).toBeInTheDocument();
-    expect(reviews).not.toHaveTextContent('0');
+  it('marks only the page you are on; the board view highlights nothing', () => {
+    const { unmount } = wrap(<Sidebar {...base} selected={{ kind: 'usage' }} />);
+    const nav = () => within(screen.getByRole('navigation', { name: 'Pages' }));
+    expect(nav().getByRole('button', { name: 'Usage' })).toHaveAttribute('aria-current', 'page');
+    unmount();
+    wrap(<Sidebar {...base} selected={{ kind: 'tasks' }} />);
+    expect(nav().queryByRole('button', { current: 'page' })).toBeNull();
   });
 
   describe('loose worktrees', () => {

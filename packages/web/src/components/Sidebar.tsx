@@ -28,10 +28,6 @@ export type Props = {
   selected: SidebarView;
   onSelect: (view: SidebarView) => void;
   onOpenSettings: () => void;
-  taskCount: number;
-  reviewCount?: number;
-  /** True until the first workspace-wide code-review fetch settles. */
-  reviewLoading?: boolean;
   onCollapse: () => void;
   onAddRepo: (anchor?: AddRepoAnchor) => void;
   onOpenWorktree: OpenWorktree;
@@ -150,14 +146,12 @@ function WorkspaceSwitcher({
 
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
-  taskCount, onCollapse, onAddRepo, onOpenWorktree,
+  onCollapse, onAddRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktree, onSearch, onShowParked, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
   onOpenMr,
   onOpenDiff,
   onSwitchError,
-  reviewCount = 0,
-  reviewLoading = false,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
   // Drag the right edge to resize; pointer capture keeps the drag alive over
@@ -282,8 +276,7 @@ export function Sidebar({
           onSelect={selectSpace}
         />
         <UpdateFooter {...update} />
-        <SidebarNav selected={selected} onSelect={onSelect} taskCount={taskCount}
-          reviewCount={reviewCount} reviewLoading={reviewLoading} onOpenSettings={onOpenSettings} />
+        <SidebarNav selected={selected} onSelect={onSelect} onOpenSettings={onOpenSettings} />
       </div>
     </aside>
   );
