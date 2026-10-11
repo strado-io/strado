@@ -40,6 +40,16 @@ describe('cardLines', () => {
     expect(cardLines(w)).toEqual({ title: 'FD-9', subtitle: 'FD-9-login' });
   });
 
+  it('fills a missing title from the ticket summary, then the PR title, before falling back to the ticket id', () => {
+    const w = wt({ branch: 'FD-9-login', meta: { ticketId: 'FD-9' } as Worktree['meta'] });
+    expect(cardLines(w, undefined, { ticketSummary: 'Fix login redirect', prTitle: 'FD-9: login' }).title).toBe('Fix login redirect');
+    expect(cardLines(w, undefined, { ticketSummary: null, prTitle: 'FD-9: login' }).title).toBe('FD-9: login');
+    expect(cardLines(w, undefined, { ticketSummary: '  ', prTitle: '' }).title).toBe('FD-9');
+    // A stored title still wins over both.
+    const titled = wt({ branch: 'x', meta: { ticketId: 'FD-9', title: 'my-name' } as Worktree['meta'] });
+    expect(cardLines(titled, undefined, { ticketSummary: 'Fix login redirect' }).title).toBe('my name');
+  });
+
   it('always shows the branch, even when it is also the title', () => {
     expect(cardLines(wt({ branch: 'master', path: '/code/fleetx' }))).toEqual({ title: 'master', subtitle: 'master' });
     expect(cardLines(wt({ branch: '', path: '/code/fleetx' }))).toEqual({ title: 'fleetx', subtitle: 'fleetx' });

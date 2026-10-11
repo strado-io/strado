@@ -27,12 +27,22 @@ export function worktreeTitle(w: Worktree, repoName?: string): string {
 }
 
 /**
- * The two lines of a worktree card: the most human name we have on top
- * (readable title, else ticket id, else branch), and the branch underneath,
- * always — it is the one thing every worktree has and the thing you type.
+ * The two lines of a worktree card: the most human name we have on top, and
+ * the branch underneath, always — it is the one thing every worktree has and
+ * the thing you type. The title falls through: the name stored on the
+ * worktree, else the ticket's summary, else the PR's title, else the ticket
+ * id, else the branch.
  */
-export function cardLines(w: Worktree, repoName?: string): { title: string; subtitle: string } {
+export function cardLines(
+  w: Worktree,
+  repoName?: string,
+  from: { ticketSummary?: string | null; prTitle?: string | null } = {},
+): { title: string; subtitle: string } {
   const branch = w.branch || w.path.split('/').pop() || w.path;
-  const title = worktreeTitle(w, repoName) || w.meta?.ticketId?.trim() || branch;
+  const title = worktreeTitle(w, repoName)
+    || from.ticketSummary?.trim()
+    || from.prTitle?.trim()
+    || w.meta?.ticketId?.trim()
+    || branch;
   return { title, subtitle: branch };
 }

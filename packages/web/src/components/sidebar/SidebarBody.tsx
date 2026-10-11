@@ -17,6 +17,7 @@ import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisual
 import { cardLines, worktreeLabel } from './labels';
 import { WorktreeCard } from './WorktreeCard';
 import { readWorktreeLru } from '../../lib/worktreeLru';
+import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
@@ -362,6 +363,8 @@ export function SidebarBody({
   const vscodeTabs = useVscodeTabs();
   // Last-opened times for the cards; the same map ⌘K ranks by.
   const lru = readWorktreeLru();
+  // Ticket summaries the Dashboard polls for every row: a card with no name of its own borrows its ticket's.
+  const tickets = useTickets();
   const browserTabs = useBrowserTabs();
   const runnerOnline = (runnerId: string) =>
     runnerStatuses.find((r) => r.runnerId === runnerId)?.online ?? false;
@@ -408,7 +411,9 @@ export function SidebarBody({
       ...(placement === 'loose' ? [{ text: 'Remove from Working on', onClick: () => loose.remove(pinId) }] : []),
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];
-    const { title, subtitle } = cardLines(w, repoName);
+    const ticketId = w.meta?.ticketId?.trim();
+    const issue = ticketId ? tickets.issues[ticketRef(w.meta?.ticketProvider, ticketId)] : undefined;
+    const { title, subtitle } = cardLines(w, repoName, { ticketSummary: issue?.summary, prTitle: mr?.title });
     const repo = repos.find((r) => r.id === w.repoId);
     // A settled card dates its PR; a live one dates the last time it was opened here.
     const time = placement === 'settled' && mr
