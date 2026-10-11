@@ -55,35 +55,9 @@ describe('SettingsPage', () => {
 
   it('shows an icon for every settings navigation item', () => {
     render(<SettingsPage onClose={() => {}} onOpenFeedback={() => {}} />);
-    for (const id of ['profile', 'organization', 'appearance', 'workspaces', 'repositories', 'runners', 'integrations', 'privacy', 'feedback']) {
+    for (const id of ['profile', 'organization', 'appearance', 'workspaces', 'runners', 'integrations', 'privacy', 'feedback']) {
       expect(screen.getByTestId(`settings-icon-${id}`)).toBeInTheDocument();
     }
-  });
-
-  it('lists the workspace repositories inside Settings', async () => {
-    render(
-      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
-        <SettingsPage section="repositories" onClose={() => {}} />
-      </WorkspaceContext.Provider>,
-    );
-    expect(await screen.findByRole('heading', { name: 'Repositories' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add repository' })).toBeInTheDocument();
-  });
-
-  it('Escape in the Add repository dialog closes only the dialog, not Settings', async () => {
-    const onClose = vi.fn();
-    render(
-      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
-        <SettingsPage section="repositories" onClose={onClose} />
-      </WorkspaceContext.Provider>,
-    );
-    fireEvent.click(await screen.findByRole('button', { name: 'Add repository' }));
-    expect(await screen.findByRole('menu', { name: 'Add repository' })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Add repository' })).toBeNull());
-    expect(onClose).not.toHaveBeenCalled();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('switches panes when a nav item is clicked', () => {

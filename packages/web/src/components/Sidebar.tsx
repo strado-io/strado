@@ -20,7 +20,7 @@ export type AddRepoAnchor = { left: number; right: number; bottom: number };
  * dead most of the time, since the signal it carried (a running server, an
  * agent at work) already lives directly on the worktree rows.
  */
-export type SidebarView = { kind: 'tasks' } | { kind: 'reviews' } | { kind: 'usage' };
+export type SidebarView = { kind: 'tasks' } | { kind: 'worktrees' } | { kind: 'reviews' } | { kind: 'usage' };
 
 export type Props = {
   repos: RepoConfig[];
@@ -39,6 +39,8 @@ export type Props = {
   onNewWorktree: () => void;
   /** Toolbar Search → ⌘K. */
   onSearch: () => void;
+  /** The Worktrees page, from the Focus popover. */
+  onAllWorktrees?: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   update: UpdateFooterProps;
@@ -145,7 +147,7 @@ function WorkspaceSwitcher({
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
   onCollapse, onAddRepo, onOpenWorktree,
-  activeWorktreePath, onNewWorktree, onSearch, onWorktreeSettings, onDeleteWorktree, update,
+  activeWorktreePath, onNewWorktree, onSearch, onAllWorktrees, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
   onOpenMr,
   onOpenDiff,
@@ -167,7 +169,7 @@ export function Sidebar({
   const bodyProps = {
     onAddRepo,
     onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
-    onSearch,
+    onSearch, onAllWorktrees,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
   };
