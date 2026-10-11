@@ -117,8 +117,9 @@ describe('Sidebar tree', () => {
     expect(within(nav).queryByRole('button', { name: 'Tasks' })).toBeNull();
     expect(within(nav).getByRole('button', { name: 'Code reviews' })).toHaveTextContent(/^$/);
     expect(within(nav).queryByRole('status')).toBeNull();
-    const header = activePane().getByText('Working on', { selector: 'span' });
-    expect(header.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const working = activePane().getByRole('region', { name: 'Working on' });
+    expect(activePane().queryByText('Working on')).toBeNull(); // no heading text, the section is the sidebar
+    expect(working.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('selects a page and opens settings from the icon row', () => {

@@ -537,16 +537,16 @@ export function SidebarBody({
         onNewGroup={() => setNewGroupWith([])} onNewWorktree={onNewWorktree} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <section aria-label="Working on">
-          <div className="mb-1 mt-3 flex items-center pl-2.5 pr-1">
-            <span className="text-xs text-zinc-500">Working on</span>
-            {parkedCount > 0 && (
-              // Parked groups have no rows; the count says they exist and ⌘K finds them.
+          {/* No heading: the section is the sidebar. Parked groups have no rows,
+              so a count says they exist and ⌘K finds them. */}
+          {parkedCount > 0 ? (
+            <div className="mb-1 mt-2 flex items-center justify-end pr-1">
               <button type="button" onClick={onShowParked} title="Parked groups — open one from search"
-                className="ml-auto rounded px-1 font-mono text-[11px] tabular-nums text-zinc-600 hover:text-zinc-300">
+                className="rounded px-1 font-mono text-[11px] tabular-nums text-zinc-600 hover:text-zinc-300">
                 {parkedCount} more
               </button>
-            )}
-          </div>
+            </div>
+          ) : <div className="mt-2" />}
           {looseRows.length === 0 && workingGroups.length === 0 ? (
             <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing yet. Search to open a worktree, or ✎ to start one.</p>
           ) : (
