@@ -274,7 +274,7 @@ export function SidebarBody({
         <section aria-label="Focus" className="mt-2">
           {!active ? (
             <div className="px-2.5 py-2 text-xs text-zinc-600">
-              <p>No focus. A focus is one task's worktrees, across repos; the sidebar shows only the active one.</p>
+              <p>No focus. A focus is one task's worktrees, across repos; the sidebar shows only the active one. Worktrees you open join the active focus, so make one first.</p>
               <button type="button" onClick={() => openSwitcher('create')}
                 className="mt-2 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100">
                 New focus
