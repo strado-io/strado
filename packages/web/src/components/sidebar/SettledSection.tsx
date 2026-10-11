@@ -2,32 +2,16 @@
 // merged or closed. They leave Working on so it stays about what is still in
 // flight, and are still here to open or delete. SidebarBody decides what is
 // settled and renders the rows.
-import { useState } from 'react';
-
-const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
+import { BottomSection } from './BottomSection';
 
 export function SettledSection({ worktreeRows }: {
   /** Settled worktree rows, already rendered. */
   worktreeRows: React.ReactNode[];
 }) {
-  const [open, setOpen] = useState(true);
-  const count = worktreeRows.length;
-  if (count === 0) return null;
+  if (worktreeRows.length === 0) return null;
   return (
-    <section aria-label="Settled" className="flex max-h-[40%] shrink-0 flex-col border-t border-zinc-900 px-2 pb-2 pt-2">
-      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={`Settled (${count})`}
-        className="group flex w-full items-center gap-2 rounded-md py-1 pl-2.5 pr-1 text-left text-xs text-zinc-500 hover:text-zinc-300">
-        <span>Settled</span>
-        <span className="font-mono text-[11px] tabular-nums text-zinc-600">{count}</span>
-        <span aria-hidden className="h-px flex-1 bg-zinc-800" />
-        <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden {...stroke}
-          className={`shrink-0 transition-transform ${open ? '-rotate-90' : 'rotate-90'}`}><path d="M6 4l4 4-4 4" /></svg>
-      </button>
-      {open && (
-        <div className="min-h-0 overflow-y-auto">
-          <div className="flex flex-col gap-1.5">{worktreeRows}</div>
-        </div>
-      )}
-    </section>
+    <BottomSection label="Settled" count={worktreeRows.length} defaultOpen>
+      <div className="flex flex-col gap-1.5">{worktreeRows}</div>
+    </BottomSection>
   );
 }

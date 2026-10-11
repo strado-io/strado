@@ -1,6 +1,6 @@
 // One space's sidebar pane: a toolbar (Search, Add repo, New worktree), then
-// Working on — the worktrees you have opened here, as cards — and Settled at
-// the bottom for finished work. Everything else is one ⌘K away.
+// Working on — the worktrees you have opened here, as cards — with Settled
+// (finished work) and All worktrees (everything, by repo) folded underneath.
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RemoteWorktree, RunnerStatus } from '../../api';
@@ -18,6 +18,7 @@ import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { SettledSection } from './SettledSection';
+import { AllWorktreesSection, type WorktreeGroup } from './AllWorktreesSection';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { SidebarToolbar } from './SidebarToolbar';
 import { useLooseWorktrees } from '../../hooks/looseWorktrees';
@@ -229,8 +230,8 @@ w: RemoteWorktree;
 repoName?: string;
 reachable: boolean;
 activeRow: boolean;
-/** Takes the row out of Working on; the worktree itself is untouched. */
-onRemove: () => void;
+/** Takes the row out of Working on; the worktree itself is untouched. Absent outside Working on. */
+onRemove?: () => void;
 onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 /** Right-click: the row's menu at the cursor. */
@@ -241,7 +242,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
   const testIdSuffix = `${w.runnerId}:${w.path}`;
   const label = w.branch ?? w.name;
   const menuItems: MenuItem[] = [
-    { text: 'Remove from Working on', onClick: onRemove },
+    ...(onRemove ? [{ text: 'Remove from Working on', onClick: onRemove }] : []),
     ...(!w.isRepoRoot && onDeleteRemoteWorktree
       ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
       : []),
@@ -254,7 +255,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       mr={null}
       runnerName={w.runnerName}
       onOpen={open}
-      onContextMenu={onContextMenu ? (e) => onContextMenu(e, menuItems) : undefined}
+      onContextMenu={onContextMenu && menuItems.length > 0 ? (e) => onContextMenu(e, menuItems) : undefined}
       className={`group relative flex items-stretch rounded-lg ${activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
     >
       <WorktreeCard
@@ -287,11 +288,13 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       />
       <HoverActions active={activeRow}>
         {/* A repo's main working tree is not removable as a worktree — the
-            delete route refuses it — so its menu only offers Remove. */}
-        <Menu
-          label={`${label} on ${w.runnerName} actions`}
-          items={menuItems}
-        />
+            delete route refuses it — so its menu only offers Remove, if that. */}
+        {menuItems.length > 0 && (
+          <Menu
+            label={`${label} on ${w.runnerName} actions`}
+            items={menuItems}
+          />
+        )}
       </HoverActions>
     </WorktreeRowItem>
   );
@@ -351,7 +354,7 @@ export function SidebarBody({
       </span>
     );
   };
-  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled') => {
+  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled' | 'all') => {
     const open: OpenWorktree = onOpenWorktree;
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
@@ -440,6 +443,27 @@ export function SidebarBody({
   const settledWorktreeRows = worktrees.filter(isSettled).map((w) =>
     localRow(w, repos.find((r) => r.id === w.repoId)?.name ?? '', 'settled'));
 
+  // Everything in the space: local worktrees by repo, in repo order, then
+  // each runner's worktrees under the runner's name.
+  const allGroups: WorktreeGroup[] = [
+    ...repos.map((r) => ({
+      key: `repo:${r.id}`, name: r.name,
+      rows: worktrees.filter((w) => w.repoId === r.id).map((w) => localRow(w, r.name, 'all')),
+    })),
+    {
+      key: 'repo:other', name: 'Other',
+      rows: worktrees.filter((w) => !repos.some((r) => r.id === w.repoId)).map((w) => localRow(w, '', 'all')),
+    },
+    ...[...new Map(remoteWorktrees.map((w) => [w.runnerId, w.runnerName])).entries()].map(([runnerId, runnerName]) => ({
+      key: `runner:${runnerId}`, name: runnerName,
+      rows: remoteWorktrees.filter((w) => w.runnerId === runnerId).map((w) => (
+        <RemoteRow key={`all:${remotePinId(w)}`} w={w} repoName={repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''}
+          reachable={runnerOnline(w.runnerId)} activeRow={w.path === activeWorktreePath}
+          onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} />
+      )),
+    })),
+  ];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <SidebarToolbar onSearch={onSearch} onAddRepo={onAddRepo} onNewWorktree={onNewWorktree} />
@@ -465,6 +489,7 @@ export function SidebarBody({
       </div>
 
       <SettledSection worktreeRows={settledWorktreeRows} />
+      <AllWorktreesSection groups={allGroups} />
 
       {contextMenu && (
         <MenuPopover pos={contextMenu} items={contextMenu.items} anchor="left" onClose={() => setContextMenu(null)} />

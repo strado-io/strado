@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RepoConfig, Worktree } from '../../types';
+import type { RemoteWorktree } from '../../api';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { publishTickets } from '../../hooks/tickets';
 import { SidebarBody, type SidebarBodyProps } from './SidebarBody';
@@ -143,5 +144,54 @@ describe('SidebarBody: Working on and Settled', () => {
     expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['New worktree…', 'Add repo…']);
     fireEvent.click(within(menu).getByRole('button', { name: 'New worktree…' }));
     expect(onNewWorktree).toHaveBeenCalled();
+  });
+
+  describe('All worktrees', () => {
+    const expand = () => fireEvent.click(screen.getByRole('button', { name: /^All worktrees \(/ }));
+
+    it('folds every worktree in the space under Working on, grouped by repo, closed until asked', () => {
+      loose('local:/r1/wt');
+      render(<SidebarBody {...props()} />);
+      const section = screen.getByRole('region', { name: 'All worktrees' });
+      expect(within(section).getByRole('button', { name: 'All worktrees (3)' })).toHaveAttribute('aria-expanded', 'false');
+      expect(within(section).queryByRole('button', { name: 'fx-412' })).toBeNull();
+      expand();
+      const api = within(section).getByRole('group', { name: 'api' });
+      const web = within(section).getByRole('group', { name: 'web' });
+      expect(within(api).getAllByRole('button', { name: 'fx-412' })).toHaveLength(1);
+      expect(within(web).getAllByRole('button', { name: 'fx-412' })).toHaveLength(2);
+      // Working on still lists only what was opened.
+      expect(within(screen.getByRole('region', { name: 'Working on' })).getAllByRole('button', { name: 'fx-412' })).toHaveLength(1);
+    });
+
+    it('opens a worktree from the list; its menu has no Remove, since it is not a Working on row', () => {
+      const onOpenWorktree = vi.fn();
+      render(<SidebarBody {...props({ onOpenWorktree, worktrees: [wt('/r2/other', 'r2')] })} />);
+      expand();
+      const section = screen.getByRole('region', { name: 'All worktrees' });
+      fireEvent.click(within(section).getByRole('button', { name: 'fx-412' }));
+      expect(onOpenWorktree).toHaveBeenCalledWith(expect.objectContaining({ path: '/r2/other' }));
+      fireEvent.click(within(section).getByRole('button', { name: 'fx-412 actions' }));
+      expect(screen.getAllByRole('menu').at(-1)!.textContent).not.toContain('Remove from Working on');
+    });
+
+    it('lists runner worktrees under their runner; an empty repo gets no heading', () => {
+      const remote = {
+        runnerId: 'rn1', runnerName: 'gpu-box', wsBase: 'wss://rn1', remoteWsId: 'default',
+        path: '/srv/wt/FX-77', name: 'FX-77', branch: 'fx-77', head: 'h', remoteRepoId: null,
+        isRepoRoot: false, cloneUrl: null, localRepoId: 'r1', remoteRepoName: null,
+      } as RemoteWorktree;
+      render(<SidebarBody {...props({ worktrees: [], remoteWorktrees: [remote], runnerStatuses: [{ runnerId: 'rn1', name: 'gpu-box', online: true, error: null }] as never })} />);
+      expand();
+      const section = screen.getByRole('region', { name: 'All worktrees' });
+      expect(within(section).getByRole('button', { name: 'All worktrees (1)' })).toBeInTheDocument();
+      expect(within(section).queryByRole('group', { name: 'api' })).toBeNull();
+      expect(within(within(section).getByRole('group', { name: 'gpu-box' })).getByRole('button', { name: 'fx-77 on gpu-box' })).toBeInTheDocument();
+    });
+
+    it('is absent when the space has no worktrees at all', () => {
+      render(<SidebarBody {...props({ worktrees: [] })} />);
+      expect(screen.queryByRole('region', { name: 'All worktrees' })).toBeNull();
+    });
   });
 });
