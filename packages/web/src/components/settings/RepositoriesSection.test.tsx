@@ -50,6 +50,6 @@ describe('RepositoriesSection', () => {
     render(<RepositoriesSection />);
     await screen.findByText('Strado');
     fireEvent.click(screen.getByRole('button', { name: 'Add repository' }));
-    expect(await screen.findByRole('heading', { name: 'Add repo' })).toBeInTheDocument();
+    expect(await screen.findByRole('menu', { name: 'Add repository' })).toBeInTheDocument();
   });
 });

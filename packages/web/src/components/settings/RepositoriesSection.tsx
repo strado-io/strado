@@ -7,9 +7,11 @@ import type { RepoConfig } from '../../types';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { AddRepoDialog } from '../AddRepoDialog';
 
-export function RepositoriesSection({ onNewWorktree, onChanged }: {
+export function RepositoriesSection({ onNewWorktree, onChanged, onModalChange }: {
   onNewWorktree?: (repoId: string) => void;
   onChanged?: () => void | Promise<void>;
+  // Tells the host page a dialog is open, so its own Escape handling can stand down.
+  onModalChange?: (open: boolean) => void;
 }) {
   const { workspace } = useWorkspace();
   const [repos, setRepos] = useState<RepoConfig[] | null>(null);
@@ -31,6 +33,10 @@ export function RepositoriesSection({ onNewWorktree, onChanged }: {
     }
   }, [workspace.id]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    onModalChange?.(adding);
+    return () => onModalChange?.(false);
+  }, [adding, onModalChange]);
 
   async function remove(repo: RepoConfig) {
     if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;

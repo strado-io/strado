@@ -163,6 +163,8 @@ export function SettingsPage({
   onReposChanged?: () => void | Promise<void>;
 }) {
   const [search, setSearch] = useState('');
+  // A dialog inside a section owns Escape while it is open.
+  const [modalOpen, setModalOpen] = useState(false);
   const backButton = useRef<HTMLButtonElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const initialIntegration = isIntegration(section) ? section : 'github';
@@ -198,11 +200,11 @@ export function SettingsPage({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !modalOpen) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, modalOpen]);
 
   return (
     <div className="fixed inset-0 z-50 flex bg-zinc-950 text-zinc-200" data-testid="settings-page">
@@ -279,7 +281,7 @@ export function SettingsPage({
             {active === 'organization' && <OrganizationSection />}
             {active === 'appearance' && <AppearanceSection />}
             {active === 'workspaces' && <WorkspaceManagementSection />}
-            {active === 'repositories' && <RepositoriesSection onNewWorktree={onNewWorktree} onChanged={onReposChanged} />}
+            {active === 'repositories' && <RepositoriesSection onNewWorktree={onNewWorktree} onChanged={onReposChanged} onModalChange={setModalOpen} />}
             {active === 'agents' && <AgentsSection />}
             {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel />)}
             {active === 'integrations' && (

@@ -70,6 +70,22 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('button', { name: 'Add repository' })).toBeInTheDocument();
   });
 
+  it('Escape in the Add repository dialog closes only the dialog, not Settings', async () => {
+    const onClose = vi.fn();
+    render(
+      <WorkspaceContext.Provider value={{ workspace, allWorkspaces: [workspace], refresh: vi.fn(), switchTo: vi.fn() }}>
+        <SettingsPage section="repositories" onClose={onClose} />
+      </WorkspaceContext.Provider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Add repository' }));
+    expect(await screen.findByRole('menu', { name: 'Add repository' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Add repository' })).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('switches panes when a nav item is clicked', () => {
     render(<SettingsPage onClose={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }));
