@@ -15,24 +15,6 @@ import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 
 export type AddRepoAnchor = { left: number; right: number; bottom: number };
 
-const PINNED_WORKTREES_STORE = 'strado:pinned-worktrees-by-ws';
-
-type PinnedWorktreesByWorkspace = Record<string, string[]>;
-
-function readPinnedWorktrees(): PinnedWorktreesByWorkspace {
-  try {
-    const stored = JSON.parse(localStorage.getItem(PINNED_WORKTREES_STORE) ?? '{}') as unknown;
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
-    return Object.fromEntries(
-      Object.entries(stored).flatMap(([wsId, values]) =>
-        Array.isArray(values) ? [[wsId, values.filter((value): value is string => typeof value === 'string')]] : [],
-      ),
-    );
-  } catch {
-    return {};
-  }
-}
-
 /**
  * One view left. 'active' used to list running dev servers on their own page —
  * dead most of the time, since the signal it carried (a running server, an
@@ -52,17 +34,17 @@ export type Props = {
   reviewLoading?: boolean;
   onCollapse: () => void;
   onAddRepo: (anchor?: AddRepoAnchor) => void;
-  onDeleteRepo: (repo: RepoConfig) => void;
-  expandedRepos: Set<string>;
-  onToggleRepo: (repoId: string) => void;
   onOpenWorktree: OpenWorktree;
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   /** Opens diff & commit for a worktree — the hover card's Changes action. */
   onOpenDiff?: (w: Worktree) => void;
   activeWorktreePath: string | null;
-  onNewWorktreeForRepo: (repo: RepoConfig) => void;
-  /** New worktree with the repo still to pick (the sidebar's blank-space menu). */
-  onNewWorktree?: () => void;
+  /** New worktree with the repo still to pick (toolbar button). */
+  onNewWorktree: () => void;
+  /** Toolbar Search → ⌘K. */
+  onSearch: () => void;
+  /** Working on header's "N more" → ⌘K filtered to groups. */
+  onShowParked: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   update: UpdateFooterProps;
@@ -168,8 +150,8 @@ function WorkspaceSwitcher({
 
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
-  taskCount, onCollapse, onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree,
-  activeWorktreePath, onNewWorktreeForRepo, onNewWorktree, onWorktreeSettings, onDeleteWorktree, update,
+  taskCount, onCollapse, onAddRepo, onOpenWorktree,
+  activeWorktreePath, onNewWorktree, onSearch, onShowParked, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
   onOpenMr,
   onOpenDiff,
@@ -178,22 +160,6 @@ export function Sidebar({
   reviewLoading = false,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
-  const [pinnedWorktrees, setPinnedWorktrees] = useState<PinnedWorktreesByWorkspace>(readPinnedWorktrees);
-  useEffect(() => {
-    try { localStorage.setItem(PINNED_WORKTREES_STORE, JSON.stringify(pinnedWorktrees)); }
-    catch { /* quota / disabled storage — pinning still works for this session */ }
-  }, [pinnedWorktrees]);
-
-  const togglePinnedWorktree = (wsId: string, pinId: string) => {
-    setPinnedWorktrees((current) => {
-      const existing = current[wsId] ?? [];
-      const nextForWorkspace = existing.includes(pinId)
-        ? existing.filter((id) => id !== pinId)
-        : [...existing, pinId];
-      return { ...current, [wsId]: nextForWorkspace };
-    });
-  };
-
   // Drag the right edge to resize; pointer capture keeps the drag alive over
   // the VS Code iframe, and the edge follows the cursor so it rarely strays
   // onto a native preview view. 288 = the old fixed w-72.
@@ -207,8 +173,9 @@ export function Sidebar({
   // Everything the body needs except the data: the active pane gets the live
   // props, a neighbour pane gets its snapshot.
   const bodyProps = {
-    onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo,
-    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktreeForRepo, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+    onAddRepo,
+    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+    onSearch, onShowParked,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
   };
@@ -222,8 +189,6 @@ export function Sidebar({
       worktrees={data?.worktrees ?? []}
       remoteWorktrees={[]}
       runnerStatuses={[]}
-      pinnedWorktreeIds={pinnedWorktrees[wsId] ?? []}
-      onTogglePinnedWorktree={(pinId) => togglePinnedWorktree(wsId, pinId)}
     />
   );
 
@@ -243,8 +208,6 @@ export function Sidebar({
         remoteLoading={remoteLoading}
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-        pinnedWorktreeIds={pinnedWorktrees[workspace.id] ?? []}
-        onTogglePinnedWorktree={(pinId) => togglePinnedWorktree(workspace.id, pinId)}
       />
     ),
   });
