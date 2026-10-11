@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ATTENTION_ORDER, attentionOf, groupRows, hostOf, sortRows } from './attention';
+import { ATTENTION_ORDER, attentionOf, hostOf } from './attention';
 import type { MergeRequest, Worktree } from '../types';
 
 const wt = (path: string, over: Partial<Worktree> = {}): Worktree => ({
@@ -54,52 +54,8 @@ describe('hostOf', () => {
   });
 });
 
-describe('groupRows', () => {
-  const ctx = {
-    attention: (w: Worktree): 'needs-you' | 'running' | 'idle' => (w.path === '/wait' ? 'needs-you' : w.path === '/run' ? 'running' : 'idle'),
-    repoName: (w: Worktree) => (w.repoId === 'r1' ? 'Alpha' : 'Beta'),
-  };
-
-  it('by state: attention order, empty states dropped, Needs you always present', () => {
-    const groups = groupRows([wt('/idle'), wt('/run'), wt('/wait')], 'state', ctx);
-    expect(groups.map((g) => g.key)).toEqual(['needs-you', 'running', 'idle']);
-    expect(groups[0]!.rows.map((r) => r.path)).toEqual(['/wait']);
-    const quiet = groupRows([wt('/idle')], 'state', ctx);
-    expect(quiet.map((g) => g.key)).toEqual(['needs-you', 'idle']);
-    expect(quiet[0]!.rows).toEqual([]);
-    expect(quiet[0]!.label).toBe('Needs you');
-  });
-
-  it('by repo: alphabetical by repo name', () => {
-    const groups = groupRows([wt('/b', { repoId: 'r2' }), wt('/a')], 'repo', ctx);
-    expect(groups.map((g) => g.label)).toEqual(['Alpha', 'Beta']);
-    expect(groups[1]!.rows[0]!.path).toBe('/b');
-  });
-
-  it('none: one unlabeled group', () => {
-    expect(groupRows([wt('/a'), wt('/b')], 'none', ctx)).toEqual([{ key: 'all', label: '', rows: [wt('/a'), wt('/b')] }]);
-  });
-
-  it('exports the canonical state order', () => {
+describe('ATTENTION_ORDER', () => {
+  it('is the canonical state order', () => {
     expect(ATTENTION_ORDER).toEqual(['needs-you', 'review', 'working', 'running', 'idle']);
-  });
-});
-
-describe('sortRows', () => {
-  it('activity: most recently opened first, then most worked, then given order', () => {
-    const rows = [wt('/old'), wt('/never', { activitySeconds: 50 }), wt('/new'), wt('/busy', { activitySeconds: 900 })];
-    const lru = { '/old': 100, '/new': 200 };
-    expect(sortRows(rows, 'activity', { lru }).map((r) => r.path)).toEqual(['/new', '/old', '/busy', '/never']);
-  });
-
-  it('ticket: natural order on the ticket id', () => {
-    const rows = [wt('/FD-10'), wt('/FD-9'), wt('/FD-100')];
-    expect(sortRows(rows, 'ticket', { lru: {} }).map((r) => r.path)).toEqual(['/FD-9', '/FD-10', '/FD-100']);
-  });
-
-  it('manual: honours meta.order like the board always did', () => {
-    const a = wt('/a'); a.meta!.order = 2;
-    const b = wt('/b'); b.meta!.order = 1;
-    expect(sortRows([a, b], 'manual', { lru: {} }).map((r) => r.path)).toEqual(['/b', '/a']);
   });
 });

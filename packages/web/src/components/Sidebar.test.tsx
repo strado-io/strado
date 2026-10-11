@@ -88,7 +88,7 @@ function wrap(ui: React.ReactNode, workspaces: Workspace[] = [ws, ws2]) {
 const base = {
   repos: [repo],
   worktrees: [wt('/r1/FD-1', 'FD-1', 'running'), wt('/r1/FD-2', 'FD-2')],
-  selected: { kind: 'tasks' as const },
+  selected: { kind: 'worktrees' as const },
   onSelect: vi.fn(),
   onOpenSettings: vi.fn(),
   onCollapse: vi.fn(),
@@ -117,7 +117,7 @@ function seedFocus(extra: string[] = []) {
 describe('Sidebar tree', () => {
   // Code reviews / Usage / Settings live in one icon row at the bottom,
   // leaving the rail above for groups and worktrees. No Tasks entry and no
-  // counts: the board is where you land anyway, and numbers there were noise.
+  // counts: the Worktrees page is where you land anyway, and numbers there were noise.
   it('puts the page switcher in an icon row at the bottom, below the Focus, without Tasks or counts', () => {
     wrap(<Sidebar {...base} />);
     const nav = screen.getByRole('navigation', { name: 'Pages' });
@@ -139,13 +139,15 @@ describe('Sidebar tree', () => {
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
-  it('marks only the page you are on; the board view highlights nothing', () => {
+  it('marks only the page you are on; Worktrees is the landing page', () => {
     const { unmount } = wrap(<Sidebar {...base} selected={{ kind: 'usage' }} />);
     const nav = () => within(screen.getByRole('navigation', { name: 'Pages' }));
     expect(nav().getByRole('button', { name: 'Usage' })).toHaveAttribute('aria-current', 'page');
+    expect(nav().getByRole('button', { name: 'Worktrees' })).not.toHaveAttribute('aria-current');
     unmount();
-    wrap(<Sidebar {...base} selected={{ kind: 'tasks' }} />);
-    expect(nav().queryByRole('button', { current: 'page' })).toBeNull();
+    wrap(<Sidebar {...base} selected={{ kind: 'worktrees' }} />);
+    expect(nav().getByRole('button', { name: 'Worktrees' })).toHaveAttribute('aria-current', 'page');
+    expect(nav().getAllByRole('button', { current: 'page' })).toHaveLength(1);
   });
 
   describe('focus members', () => {

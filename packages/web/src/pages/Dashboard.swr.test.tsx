@@ -66,7 +66,7 @@ describe('Dashboard SWR seed', () => {
     renderDashboard();
     // Synchronously present — the mocked fetches never resolve, so this row can
     // only have come from the localStorage seed painting before revalidation.
-    // The task board's repo chip shows it (the sidebar no longer lists repos).
+    // The Worktrees page heads a section with it (the sidebar lists only the Focus).
     expect(screen.getAllByText('Cached Repo').length).toBeGreaterThan(0);
     // Let the mount's settled requests land inside act, so they don't warn.
     await act(async () => {});
