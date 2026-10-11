@@ -1,3 +1,8 @@
+// One space's sidebar pane: a toolbar (Search, Add repo, New group, New
+// worktree), then Working on, which holds loose worktree rows followed by the
+// groups in the working state with their members, and Settled at the bottom
+// for finished work. Parked groups have no rows here; the header counts them
+// and ⌘K finds them.
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { FocusGroup, RemoteWorktree, RunnerStatus } from '../../api';
@@ -7,19 +12,20 @@ import { chipStatus, sessionChips } from '../../hooks/sessions';
 import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor } from '../Sidebar';
-import { PlusIcon } from '../hub/icons';
 import { SESSION_COLOR, SessionAvatarIcon, SessionAvatarStack } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { worktreeLabel, worktreeTitle } from './labels';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { useFocusGroups } from '../../hooks/useFocusGroups';
 import { useFocusPrefs } from '../../hooks/focusPrefs';
-import { GroupsView } from './GroupsView';
+import { GroupList, type MenuItem } from './GroupsView';
 import { SettledSection } from './SettledSection';
 import { relativeTime } from '../../lib/relativeTime';
 import { GroupPickerDialog } from './GroupPickerDialog';
 import { NewGroupDialog } from './NewGroupDialog';
-import { activeGroupOf, isGroupDone, resolveMembers } from './focusGroups';
+import { activeGroupOf, groupState, isGroupDone, resolveMembers } from './focusGroups';
+import { SidebarToolbar } from './SidebarToolbar';
+import { useLooseWorktrees } from '../../hooks/looseWorktrees';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
 export type SidebarBodyProps = {
@@ -29,26 +35,23 @@ export type SidebarBodyProps = {
   remoteWorktrees: RemoteWorktree[];
   runnerStatuses: RunnerStatus[];
   onAddRepo: (anchor?: AddRepoAnchor) => void;
-  onDeleteRepo: (repo: RepoConfig) => void;
-  expandedRepos: Set<string>;
-  onToggleRepo: (repoId: string) => void;
   onOpenWorktree: OpenWorktree;
   /** Opens the diff & commit modal for a worktree (hover-card quick action). */
   onOpenDiff?: (w: Worktree) => void;
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   activeWorktreePath: string | null;
-  onNewWorktreeForRepo: (repo: RepoConfig) => void;
-  /** New worktree with the repo still to pick. */
-  onNewWorktree?: () => void;
+  /** New worktree with the repo still to pick (toolbar and blank-space menu). */
+  onNewWorktree: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
   /** True until the first runner-worktree fetch for this space settles. */
   remoteLoading?: boolean;
-  /** Stable local/runner worktree ids pinned in this workspace, in pin order. */
-  pinnedWorktreeIds: string[];
-  onTogglePinnedWorktree: (pinId: string) => void;
+  /** Toolbar Search: opens ⌘K. */
+  onSearch: () => void;
+  /** The header's "N more": opens ⌘K showing only groups. */
+  onShowParked: () => void;
   /** Surfaces a failed focus-group change in the dashboard's error banner. */
   onError?: (message: string) => void;
 };
@@ -73,7 +76,6 @@ function BrailleSpinner({ small = false }: { small?: boolean }) {
   );
 }
 
-const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
 // branch glyph (hand-tuned SVG, ships pre-flipped upside down) — marks
 // each worktree row as a branch hanging off its repo.
@@ -87,38 +89,6 @@ export function BranchIcon({ className = '' }: { className?: string }) {
       <path clipRule="evenodd" d="M36 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm-22 0a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm0 32a4 4 0 1 0 0-8a4 4 0 0 0 0 8Z" />
       <path d="M14 12v24v-3c0-8 22-9 22-17v-4" />
     </svg>
-  );
-}
-
-function PinIcon({ filled = false }: { filled?: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden {...stroke} fill={filled ? 'currentColor' : 'none'}>
-      <path d="M5.25 2.25h5.5l-.9 3.35 1.9 2.15v1H4.25v-1l1.9-2.15-.9-3.35Z" />
-      <path d="M8 8.75v5" />
-    </svg>
-  );
-}
-
-function PinButton({ label, pinned, onToggle }: {
-  label: string;
-  pinned: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={`${pinned ? 'Unpin' : 'Pin'} ${label}`}
-      title={pinned ? 'Unpin worktree' : 'Pin worktree'}
-      onClick={(event) => {
-        event.stopPropagation();
-        onToggle();
-      }}
-      className={`pointer-events-none inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded p-[3px] opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400 ${
-        pinned ? 'text-sky-400 hover:bg-zinc-800 hover:text-sky-300' : 'text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200'
-      }`}
-    >
-      <PinIcon filled={pinned} />
-    </button>
   );
 }
 
@@ -176,7 +146,6 @@ export function RepoIcon() {
 }
 
 // small kebab (⋯) button + popover; closes on outside-click via a fixed backdrop
-type MenuItem = { text: string; danger?: boolean; onClick: () => void };
 
 /**
  * A menu's floating list. `anchor: 'right'` hangs it left of the point (under
@@ -260,16 +229,15 @@ function Menu({ label, items, alwaysVisible = false }: {
  * that adjacency is the point — but always badged with the machine, because
  * where it runs decides what it can see.
  */
-function RemoteRow({ w, repoName, reachable, activeRow, pinned, placement, groupItems = [], onTogglePinned, onOpenRemoteWorktree, onDeleteRemoteWorktree, onContextMenu }: {
+function RemoteRow({ w, repoName, reachable, activeRow, placement, groupItems = [], onOpenRemoteWorktree, onDeleteRemoteWorktree, onContextMenu }: {
 w: RemoteWorktree;
-/** Shown as a chip in the Focus section, where rows from many repos sit together. */
+/** Shown as a chip, since rows from many repos sit together. */
 repoName?: string;
 reachable: boolean;
 activeRow: boolean;
-pinned: boolean;
-placement: 'repo' | 'pinned' | 'focus';
+placement: 'loose' | 'focus';
+/** Group and Working on items, shown before Delete. */
 groupItems?: { text: string; onClick: () => void }[];
-onTogglePinned: () => void;
 onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 /** Right-click: the row's menu at the cursor. */
@@ -277,7 +245,8 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 }) {
   const chips = sessionChips([w as unknown as Worktree]);
   const hasSessions = chips.length > 0;
-  const testIdSuffix = placement === 'repo' ? `${w.runnerId}:${w.path}` : `${placement}-${w.runnerId}:${w.path}`;
+  // A worktree appears once, so a loose row keeps the plain id; a member is prefixed.
+  const testIdSuffix = placement === 'focus' ? `focus-${w.runnerId}:${w.path}` : `${w.runnerId}:${w.path}`;
   const menuItems: MenuItem[] = [
     ...groupItems,
     ...(!w.isRepoRoot && onDeleteRemoteWorktree
@@ -301,7 +270,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
           className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
         />
       )}
-      <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+      <span className={`${placement === 'focus' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
         <BranchIcon className={activeRow ? 'text-sky-400' : reachable ? 'text-zinc-600' : 'text-zinc-700'} />
       </span>
       <button
@@ -316,7 +285,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
         </span>
       </button>
       <span className="mr-1 flex shrink-0 items-center gap-1.5">
-        {placement === 'focus' && repoName && (
+        {repoName && (
           <span className="max-w-[6rem] truncate text-[10px] text-zinc-600">{repoName}</span>
         )}
         <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
@@ -335,16 +304,11 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
         </span>
       </span>
       <HoverActions active={activeRow}>
-        <PinButton
-          label={`${w.branch ?? w.name} on ${w.runnerName}${placement === 'pinned' ? ' from pinned' : ''}`}
-          pinned={pinned}
-          onToggle={onTogglePinned}
-        />
         {/* A repo's main working tree is not removable as a worktree — the
             delete route refuses it — so its menu holds only the group items. */}
         {(!w.isRepoRoot && onDeleteRemoteWorktree) || groupItems.length > 0 ? (
           <Menu
-            label={`${w.branch ?? w.name} on ${w.runnerName}${placement === 'pinned' ? ' pinned' : ''} actions`}
+            label={`${w.branch ?? w.name} on ${w.runnerName} actions`}
             items={menuItems}
           />
         ) : null}
@@ -355,14 +319,15 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 
 export function SidebarBody({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
-  onAddRepo, onDeleteRepo, expandedRepos, onToggleRepo, onOpenWorktree, activeWorktreePath,
-  onOpenMr, onOpenDiff, onNewWorktreeForRepo, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+  onAddRepo, onOpenWorktree, activeWorktreePath,
+  onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, pinnedWorktreeIds, onTogglePinnedWorktree, onError,
+  remoteLoading = false, onSearch, onShowParked, onError,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const focus = useFocusGroups(wsId);
   const focusPrefs = useFocusPrefs(wsId);
+  const loose = useLooseWorktrees(wsId);
   const report = (err: unknown) => onError?.((err as Error).message);
   const doneOf = (g: FocusGroup) =>
     isGroupDone(resolveMembers(g, worktrees, remoteWorktrees), (p) => mrByPath.get(p)?.state ?? null);
@@ -378,14 +343,13 @@ export function SidebarBody({
     e.stopPropagation(); // a row's menu, not the blank-space one below
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
-  // Fold every repo and every group, e.g. to get back to a short list.
+  // Fold every group, e.g. to get back to a short list.
   const collapseAll = () => {
-    for (const id of expandedRepos) onToggleRepo(id);
     for (const g of focus.groups) if (!focusPrefs.collapsedGroupIds.includes(g.id)) focusPrefs.toggleGroupCollapsed(g.id);
   };
   // Right-click on blank sidebar space: what you can make from here, and tidying up.
   const openBlankContextMenu = (e: React.MouseEvent) => openContextMenu(e, [
-    ...(onNewWorktree ? [{ text: 'New worktree…', onClick: onNewWorktree }] : []),
+    { text: 'New worktree…', onClick: onNewWorktree },
     { text: 'New group…', onClick: () => setNewGroupWith([]) },
     { text: 'Add repo…', onClick: () => onAddRepo({ left: e.clientX, right: e.clientX, bottom: e.clientY }) },
     { text: 'Collapse all', onClick: collapseAll },
@@ -400,7 +364,14 @@ export function SidebarBody({
   const browserTabs = useBrowserTabs();
   const runnerOnline = (runnerId: string) =>
     runnerStatuses.find((r) => r.runnerId === runnerId)?.online ?? false;
-  const pinnedIds = new Set(pinnedWorktreeIds);
+  // A worktree whose PR is merged or closed has settled: it leaves Working on
+  // for the Settled section at the bottom. A repo's own checkout (master/main)
+  // never settles, whatever PR its branch once had.
+  const repoRoots = new Set(repos.map((r) => r.path));
+  const isSettled = (w: Worktree) => {
+    const state = mrByPath.get(w.path)?.state;
+    return (state === 'merged' || state === 'closed') && !repoRoots.has(w.path);
+  };
 
   // Uncommitted work on a worktree row: +adds −dels, the same numbers the task
   // table shows. Silent when the tree is clean, so a quiet row stays quiet.
@@ -418,24 +389,24 @@ export function SidebarBody({
       </span>
     );
   };
-  const chevron = (open: boolean) => (
-    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden {...stroke} className={`transition-transform ${open ? 'rotate-90' : ''}`}><path d="M6 4l4 4-4 4" /></svg>
-  );
-
-  // A row opened from the Groups view makes its group the active one, so
+  // A member opened from its group makes that group the active one, so
   // ⌥⌘←/→ cycles the group the user is working in.
-  const localRow = (w: Worktree, repoName: string, placement: 'repo' | 'pinned' | 'focus' | 'settled', group?: FocusGroup) => {
+  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'focus' | 'settled', group?: FocusGroup) => {
     const open: OpenWorktree = (...args) => { if (group) focusPrefs.setActiveFocusGroupId(group.id); onOpenWorktree(...args); };
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
     const hasSessions = chips.length > 0;
     const mr = mrByPath.get(w.path);
-    const pinned = pinnedIds.has(localPinId(w));
-    // A settled worktree shows only in Settled, so it keeps the plain id like a repo row.
-    const testIdSuffix = placement === 'repo' || placement === 'settled' ? w.path : `${placement}-${w.path}`;
+    // Members nest under their group (ml-5); loose and settled rows sit flush (ml-2.5).
+    const indent = placement === 'focus' ? 'ml-5' : 'ml-2.5';
+    // A worktree appears once, so loose and settled rows keep the plain path id; a member is prefixed.
+    const testIdSuffix = placement === 'focus' ? `focus-${w.path}` : w.path;
+    const pinId = localPinId(w);
     const menuItems: MenuItem[] = [
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
-      ...groupMenuItems(localPinId(w)),
+      ...groupMenuItems(pinId),
+      ...(group ? [{ text: 'Remove from group', onClick: () => { focus.setMembership(group.id, pinId, false).catch(report); } }] : []),
+      ...(placement === 'loose' ? [{ text: 'Remove from Working on', onClick: () => loose.remove(pinId) }] : []),
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];
     return (
@@ -459,7 +430,7 @@ export function SidebarBody({
             className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
           />
         )}
-        <span className={`${placement === 'repo' || placement === 'focus' ? 'ml-5' : 'ml-2.5'} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
+        <span className={`${indent} flex h-3.5 w-3.5 shrink-0 items-center justify-center`}>
           {mr ? (
             <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} />
           ) : agentWorking(w) ? (
@@ -479,7 +450,7 @@ export function SidebarBody({
           </span>
         </button>
         <span className="mr-1 flex shrink-0 items-center gap-1.5">
-          {(placement === 'focus' || placement === 'settled') && repoName && (
+          {repoName && (
             <span className="max-w-[6rem] truncate text-[10px] text-zinc-600">{repoName}</span>
           )}
           {placement === 'settled' && mr && (
@@ -499,12 +470,7 @@ export function SidebarBody({
           )}
         </span>
         <HoverActions active={activeRow}>
-          <PinButton
-            label={placement === 'pinned' ? `${worktreeLabel(w)} from pinned` : worktreeLabel(w)}
-            pinned={pinned}
-            onToggle={() => onTogglePinnedWorktree(localPinId(w))}
-          />
-          <Menu label={`${worktreeLabel(w)}${placement === 'pinned' ? ' pinned' : ''} actions`} items={menuItems} />
+          <Menu label={`${worktreeLabel(w)} actions`} items={menuItems} />
         </HoverActions>
       </WorktreeRowItem>
     );
@@ -512,32 +478,22 @@ export function SidebarBody({
 
   const localByPinId = new Map(worktrees.map((w) => [localPinId(w), w]));
   const remoteByPinId = new Map(remoteWorktrees.map((w) => [remotePinId(w), w]));
-  const pinnedRows = pinnedWorktreeIds.flatMap((pinId) => {
+  // Ids that resolve to nothing (deleted worktree, runner offline) render nothing;
+  // they are not pruned here so a runner coming back brings its row back.
+  const looseRows = loose.ids.flatMap((pinId) => {
     const local = localByPinId.get(pinId);
-    if (local) {
-      const repoName = repos.find((repo) => repo.id === local.repoId)?.name ?? '';
-      return [localRow(local, repoName, 'pinned')];
-    }
+    if (local) return isSettled(local) ? [] : [localRow(local, repos.find((r) => r.id === local.repoId)?.name ?? '', 'loose')];
     const remote = remoteByPinId.get(pinId);
     if (!remote) return [];
     return [(
-      <RemoteRow
-        key={`pinned:${pinId}`}
-        w={remote}
-        reachable={runnerOnline(remote.runnerId)}
-        activeRow={remote.path === activeWorktreePath}
-        pinned
-        placement="pinned"
-        groupItems={groupMenuItems(pinId)}
-        onContextMenu={openContextMenu}
-        onTogglePinned={() => onTogglePinnedWorktree(pinId)}
-        onOpenRemoteWorktree={onOpenRemoteWorktree}
-        onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-      />
+      <RemoteRow key={`loose:${pinId}`} w={remote} repoName={repos.find((r) => r.id === remote.localRepoId)?.name ?? remote.remoteRepoName ?? ''}
+        reachable={runnerOnline(remote.runnerId)} activeRow={remote.path === activeWorktreePath} placement="loose"
+        groupItems={[...groupMenuItems(pinId), { text: 'Remove from Working on', onClick: () => loose.remove(pinId) }]}
+        onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} />
     )];
   });
 
-  // Shared by the Groups section (open groups) and Settled (finished ones).
+  // Shared by Working on (open groups) and Settled (finished ones).
   const groupListProps = {
     activeGroupId: activeGroup?.id ?? null,
     isDone: doneOf,
@@ -561,198 +517,65 @@ export function SidebarBody({
           repoName={repoName || e.w.remoteRepoName || ''}
           reachable={runnerOnline(e.w.runnerId)}
           activeRow={e.w.path === activeWorktreePath}
-          pinned={pinnedIds.has(e.pinId)}
           placement="focus"
-          groupItems={groupMenuItems(e.pinId)}
+          groupItems={[...groupMenuItems(e.pinId), { text: 'Remove from group', onClick: () => { focus.setMembership(g.id, e.pinId, false).catch(report); } }]}
           onContextMenu={openContextMenu}
-          onTogglePinned={() => onTogglePinnedWorktree(e.pinId)}
           onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
           onDeleteRemoteWorktree={onDeleteRemoteWorktree}
         />
       );
     },
   };
-  // A worktree whose PR is merged or closed has settled: it leaves its repo in
-  // the tree for the Settled section at the bottom. A repo's own checkout
-  // (master/main) never settles, whatever PR its branch once had.
-  const repoRoots = new Set(repos.map((r) => r.path));
-  const isSettled = (w: Worktree) => {
-    const state = mrByPath.get(w.path)?.state;
-    return (state === 'merged' || state === 'closed') && !repoRoots.has(w.path);
+  const openGroups = focus.groups.filter((g) => !doneOf(g));
+  const workingGroups = openGroups.filter((g) => groupState(g) === 'working');
+  const parkedCount = openGroups.length - workingGroups.length;
+  const park = (id: string) => {
+    focus.setState(id, 'parked')
+      .then(() => { if (focusPrefs.activeFocusGroupId === id) focusPrefs.setActiveFocusGroupId(null); })
+      .catch(report);
   };
   const settledWorktreeRows = worktrees.filter(isSettled).map((w) =>
     localRow(w, repos.find((r) => r.id === w.repoId)?.name ?? '', 'settled'));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
-      {/* Pinned first: the few worktrees kept within reach. */}
-      {pinnedRows.length > 0 && (
-        <section aria-label="Pinned worktrees">
-          <div className="mb-1 mt-4 flex items-center pl-2.5 pr-1">
-            <span className="text-xs text-zinc-500">Pinned</span>
+      <SidebarToolbar onSearch={onSearch} onAddRepo={onAddRepo}
+        onNewGroup={() => setNewGroupWith([])} onNewWorktree={onNewWorktree} />
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
+        <section aria-label="Working on">
+          <div className="mb-1 mt-3 flex items-center pl-2.5 pr-1">
+            <span className="text-xs text-zinc-500">Working on</span>
+            {parkedCount > 0 && (
+              // Parked groups have no rows; the count says they exist and ⌘K finds them.
+              <button type="button" onClick={onShowParked} title="Parked groups — open one from search"
+                className="ml-auto rounded px-1 font-mono text-[11px] tabular-nums text-zinc-600 hover:text-zinc-300">
+                {parkedCount} more
+              </button>
+            )}
           </div>
-          <div className="flex flex-col gap-0.5">{pinnedRows}</div>
-        </section>
-      )}
-
-      {/* Then the groups: cross-repo bundles for the tasks at hand. */}
-      <GroupsView
-        {...groupListProps}
-        groups={focus.groups}
-        onNewGroup={() => setNewGroupWith([])}
-      />
-
-      <div className="mb-1 mt-4 flex items-center justify-between pl-2.5 pr-1">
-        <span className="text-xs text-zinc-500">Repos</span>
-        <button
-          onClick={(event) => {
-            const { left, right, bottom } = event.currentTarget.getBoundingClientRect();
-            onAddRepo({ left, right, bottom });
-          }}
-          aria-label="Add repo"
-          title="Add repo"
-          className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300"
-        >
-          <PlusIcon size={12} />
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-0.5">
-        {repos.map((repo) => {
-          const repoWts = worktrees.filter((w) => w.repoId === repo.id && !isSettled(w));
-          const repoRemote = remoteWorktrees.filter((w) => w.localRepoId === repo.id);
-          const open = expandedRepos.has(repo.id);
-          return (
-            <div key={repo.id}>
-              <div className="group flex items-center gap-1 rounded-md pr-1 hover:bg-zinc-900">
-                <button onClick={() => onToggleRepo(repo.id)}
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-300">
-                  {/* avatar by default; the expand chevron takes the slot on
-                      row hover. Agent-working shows on the specific worktree
-                      row and the session tab, not rolled up to the repo. */}
-                  <span className="relative h-5 w-5 shrink-0">
-                    <span className="absolute inset-0 flex items-center justify-center group-hover:opacity-0">
-                      <RepoIcon />
-                    </span>
-                    <span className="absolute inset-0 flex items-center justify-center text-zinc-400 opacity-0 group-hover:opacity-100">
-                      {chevron(open)}
-                    </span>
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{repo.name}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`New worktree in ${repo.name}`}
-                  title="New worktree"
-                  onClick={(e) => { e.stopPropagation(); onNewWorktreeForRepo(repo); }}
-                  className="inline-flex shrink-0 cursor-pointer rounded p-1 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200"
-                >
-                  <PlusIcon size={14} />
-                </button>
-                <Menu alwaysVisible label={`${repo.name} actions`} items={[
-                  { text: 'New worktree', onClick: () => onNewWorktreeForRepo(repo) },
-                  { text: 'Remove repo', danger: true, onClick: () => onDeleteRepo(repo) },
-                ]} />
-              </div>
-              {open && (() => {
-                return (
-                // rows span the full sidebar width (the hover background has no
-                // dead gap); the icon's indent nests them under the repo name
-                <div className="flex flex-col gap-0.5">
-                  {repoWts.length === 0 && repoRemote.length === 0 && (
-                    <div className="py-1.5 pl-9 pr-2 text-xs text-zinc-600">No worktrees</div>
-                  )}
-                  {repoWts.map((w) => localRow(w, repo.name, 'repo'))}
-                  {/* Runner worktrees for this repo, after the local ones. An
-                      offline runner's rows stay VISIBLE and grey — vanishing
-                      rows read as data loss, and the worktree is fine. */}
-                  {repoRemote.map((w) => (
-                    <RemoteRow
-                      key={`${w.runnerId}:${w.path}`}
-                      w={w}
-                      reachable={runnerOnline(w.runnerId)}
-                      activeRow={w.path === activeWorktreePath}
-                      pinned={pinnedIds.has(remotePinId(w))}
-                      placement="repo"
-                      groupItems={groupMenuItems(remotePinId(w))}
-                      onContextMenu={openContextMenu}
-                      onTogglePinned={() => onTogglePinnedWorktree(remotePinId(w))}
-                      onOpenRemoteWorktree={onOpenRemoteWorktree}
-                      onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-                    />
-                  ))}
-                </div>
-                );
-              })()}
+          {looseRows.length === 0 && workingGroups.length === 0 ? (
+            <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing yet. Search to open a worktree, or ✎ to start one.</p>
+          ) : (
+            <>
+              {looseRows.length > 0 && <div className="mb-1 flex flex-col gap-0.5">{looseRows}</div>}
+              {workingGroups.length > 0 && <GroupList {...groupListProps} groups={workingGroups} onPark={park} />}
+            </>
+          )}
+          {/* First runner fetch still in flight: say so, quietly. Runner rows
+              appearing a beat after the local ones otherwise looks like a bug. */}
+          {remoteLoading && (
+            <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
+              <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
+              <span className="animate-pulse">Checking runners…</span>
             </div>
-          );
-        })}
-        {/* Runner worktrees we could not tie to a local repo IN ANY SPACE —
-            the server already omits ones homed in another space. Rendered as
-            repo folders in the same list (named for the remote repo), never a
-            separate bottom bucket: rows that move around read as a glitch,
-            but hiding work that exists reads as data loss. */}
-        {(() => {
-          const orphans = remoteWorktrees.filter((w) => !w.localRepoId);
-          if (orphans.length === 0) return null;
-          const groups = new Map<string, { name: string; rows: RemoteWorktree[] }>();
-          for (const w of orphans) {
-            const key = `${w.runnerId}:${w.remoteRepoId ?? w.remoteRepoName ?? 'unknown'}`;
-            const g = groups.get(key) ?? { name: w.remoteRepoName ?? w.runnerName, rows: [] };
-            g.rows.push(w);
-            groups.set(key, g);
-          }
-          return [...groups.entries()].map(([key, g]) => (
-            <div key={key}>
-              <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-300">
-                <RepoIcon />
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{g.name}</span>
-                <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-600">{g.rows.length}</span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {g.rows.map((w) => (
-                  <RemoteRow
-                    key={`${w.runnerId}:${w.path}`}
-                    w={w}
-                    reachable={runnerOnline(w.runnerId)}
-                    activeRow={w.path === activeWorktreePath}
-                    pinned={pinnedIds.has(remotePinId(w))}
-                    placement="repo"
-                    groupItems={groupMenuItems(remotePinId(w))}
-                    onContextMenu={openContextMenu}
-                    onTogglePinned={() => onTogglePinnedWorktree(remotePinId(w))}
-                    onOpenRemoteWorktree={onOpenRemoteWorktree}
-                    onDeleteRemoteWorktree={onDeleteRemoteWorktree}
-                  />
-                ))}
-              </div>
-            </div>
-          ));
-        })()}
-        {/* First runner fetch still in flight: say so, quietly. Runner rows
-            appearing a beat after the local ones otherwise looks like a bug. */}
-        {remoteLoading && (
-          <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
-            <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
-            <span className="animate-pulse">Checking runners…</span>
-          </div>
-        )}
-        {runnerStatuses
-          .filter((r) => r.error)
-          .map((r) => (
-            <div key={r.runnerId} className="px-2 py-1.5 text-[11px] text-amber-600/80">
-              {r.name}: {r.error}
-            </div>
+          )}
+          {runnerStatuses.filter((r) => r.error).map((r) => (
+            <div key={r.runnerId} className="px-2 py-1.5 text-[11px] text-amber-600/80">{r.name}: {r.error}</div>
           ))}
+        </section>
       </div>
-    </div>
 
-    <SettledSection
-      {...groupListProps}
-      groups={focus.groups.filter(doneOf)}
-      worktreeRows={settledWorktreeRows}
-    />
+      <SettledSection {...groupListProps} groups={focus.groups.filter(doneOf)} worktreeRows={settledWorktreeRows} />
 
       {newGroupWith && (
         <NewGroupDialog
@@ -771,6 +594,8 @@ export function SidebarBody({
           onCreate={(name, members) => {
             setNewGroupWith(null);
             focus.create(name, members).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
+            // A worktree in a group is no longer loose.
+            members.forEach(loose.remove);
           }}
         />
       )}
@@ -784,7 +609,14 @@ export function SidebarBody({
           groups={focus.groups.filter((g) => !doneOf(g))}
           memberId={pickerFor}
           onClose={() => setPickerFor(null)}
-          onToggle={(id, add) => { focus.setMembership(id, pickerFor, add).catch(report); }}
+          onToggle={(id, add) => {
+            const member = pickerFor;
+            // A worktree in a group is no longer loose.
+            focus.setMembership(id, member, add).then(() => { if (add) loose.remove(member); }).catch(report);
+            // Adding to a parked group means you are working on it again.
+            const g = focus.groups.find((x) => x.id === id);
+            if (add && g && groupState(g) === 'parked') focus.setState(id, 'working').catch(report);
+          }}
           onCreate={(name) => {
             focus.create(name, [pickerFor]).then((g) => focusPrefs.setActiveFocusGroupId(g.id)).catch(report);
           }}
