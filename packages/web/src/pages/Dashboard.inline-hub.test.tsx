@@ -1,11 +1,17 @@
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
+// The workspace a test sees; one test switches it to drive a cross-workspace ⌘K open.
+const wsMock = vi.hoisted(() => ({
+  id: 'default',
+  all: [] as { id: string; name: string }[],
+  switchTo: (() => {}) as (id: string) => void,
+}));
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({
-    workspace: { id: 'default', name: 'Default', color: 'zinc', icon: 'DF', defaultEditor: 'vscode', defaultPortBase: 3000, logDir: null },
-    allWorkspaces: [],
-    switchTo: vi.fn(),
+    workspace: { id: wsMock.id, name: wsMock.id === 'default' ? 'Default' : 'Other', color: 'zinc', icon: 'DF', defaultEditor: 'vscode', defaultPortBase: 3000, logDir: null },
+    allWorkspaces: wsMock.all,
+    switchTo: (id: string) => wsMock.switchTo(id),
   }),
 }));
 // Dashboard now reads intercom state for the escalation badge/notification;
@@ -68,15 +74,16 @@ import { Dashboard } from './Dashboard';
 import { __resetFocusGroups } from '../hooks/useFocusGroups';
 
 const noop = vi.fn();
+const dashboard = () => (
+  <Dashboard
+    onNewWorktree={noop} onShowLogs={noop}
+    onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
+    onCloseOverlays={noop} onDeleteWorktree={noop}
+    update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
+  />
+);
 function renderDashboard() {
-  return render(
-    <Dashboard
-      onNewWorktree={noop} onShowLogs={noop}
-      onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
-      onCloseOverlays={noop} onDeleteWorktree={noop}
-      update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
-    />,
-  );
+  return render(dashboard());
 }
 
 // The sidebar no longer lists repos; the task board's per-repo chip still
@@ -90,6 +97,9 @@ describe('Dashboard inline hub', () => {
     __resetFocusGroups();
     groupsList.mockReset().mockRejectedValue(new Error('no groups'));
     groupsUpdate.mockReset();
+    wsMock.id = 'default';
+    wsMock.all = [];
+    wsMock.switchTo = () => {};
     paletteProps.last = null;
     localStorage.clear();
     localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
@@ -233,6 +243,35 @@ describe('Dashboard inline hub', () => {
     await screen.findByTestId('inline-hub');
     await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('default', 'gB', { state: 'working' }));
     expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ default: 'gA' });
+  });
+
+  it('a ⌘K open in another workspace waits for that workspace\'s groups before promoting', async () => {
+    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
+    wsMock.all = [{ id: 'default', name: 'Default' }, { id: 'other', name: 'Other' }];
+    let resolveOther: (gs: unknown[]) => void = () => {};
+    groupsList.mockImplementation((wsId: string) => wsId === 'other'
+      ? new Promise((r) => { resolveOther = r; })
+      : Promise.reject(new Error('no groups')));
+    const parked = { id: 'g9', name: 'FX-9 other', members: ['local:/wt/FD-9'], createdAt: 't', state: 'parked' };
+    groupsUpdate.mockImplementation(async () => ({ ...parked, state: 'working' }));
+    const switched = vi.fn();
+    wsMock.switchTo = switched;
+    const { rerender } = renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
+    fireEvent.click(await screen.findByText(/Other · switch & open/));
+    expect(switched).toHaveBeenCalledWith('other');
+    wsMock.id = 'other';
+    rerender(dashboard());
+    // Other's groups have not loaded: the open must not run yet, or it would
+    // see no groups and give the worktree a loose row instead.
+    await act(async () => {});
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
+    await act(async () => { resolveOther([parked]); });
+    await screen.findByTestId('inline-hub');
+    await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('other', 'g9', { state: 'working' }));
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
   });
 
   it('persists selection and restores it on remount', async () => {
