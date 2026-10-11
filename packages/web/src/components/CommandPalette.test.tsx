@@ -131,4 +131,33 @@ describe('CommandPalette focus groups', () => {
     expect(screen.queryByText('FX-300 old')).not.toBeInTheDocument();
     expect(screen.getByText('FD-1')).toBeInTheDocument();
   });
+
+  it('tags parked groups, orders working before parked before done, and still picks them', () => {
+    const onPickGroup = vi.fn();
+    render(<CommandPalette repos={repos} worktrees={[]} workspaces={workspaces} activeWorkspaceId="default"
+      onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()} onPickGroup={onPickGroup}
+      focusGroups={[
+        { group: { id: 'd', name: 'FX-1', members: [], createdAt: 't' }, detail: '', done: true },
+        { group: { id: 'p', name: 'FX-2', members: [], createdAt: 't', state: 'parked' }, detail: '', done: false, parked: true },
+        { group: { id: 'w', name: 'FX-3', members: [], createdAt: 't' }, detail: '', done: false },
+      ]} />);
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FX' } });
+    const labels = screen.getAllByRole('button').map((b) => b.textContent);
+    expect(labels.findIndex((t) => t?.startsWith('FX-3'))).toBeLessThan(labels.findIndex((t) => t?.startsWith('FX-2')));
+    expect(labels.findIndex((t) => t?.startsWith('FX-2'))).toBeLessThan(labels.findIndex((t) => t?.startsWith('FX-1')));
+    expect(screen.getByText('parked')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('FX-2'));
+    expect(onPickGroup).toHaveBeenCalledWith('p');
+  });
+
+  it('filter=groups lists only groups until you type', () => {
+    render(<CommandPalette repos={repos} worktrees={[wt('/wt/FD-1', 'FD-1', 'fix login')]} workspaces={workspaces} activeWorkspaceId="default"
+      onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()} filter="groups"
+      focusGroups={[{ group: { id: 'p', name: 'FX-2', members: [], createdAt: 't', state: 'parked' }, detail: '', done: false, parked: true }]} />);
+    expect(screen.getByText('FX-2')).toBeInTheDocument();
+    expect(screen.queryByText('FD-1')).toBeNull();
+    expect(screen.queryByText('React App')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD' } });
+    expect(screen.getByText('FD-1')).toBeInTheDocument();
+  });
 });
