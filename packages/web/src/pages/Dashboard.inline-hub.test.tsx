@@ -1,7 +1,7 @@
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
-// The workspace a test sees; one test switches it to drive a cross-workspace ⌘K open.
+// The workspace a test sees.
 const wsMock = vi.hoisted(() => ({
   id: 'default',
   all: [] as { id: string; name: string }[],
@@ -23,26 +23,8 @@ vi.mock('../contexts/IntercomContext', () => ({
     assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
   }),
 }));
-// Groups fail to load by default (no groups, and each mount retries, as
-// before); a test can resolve them to seed a parked group.
-const groupsList = vi.hoisted(() => vi.fn());
-const groupsUpdate = vi.hoisted(() => vi.fn());
-// Pass-through CommandPalette that records the props it was last given, so a
-// test can see the filter the Dashboard handed it.
-const paletteProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
-vi.mock('../components/CommandPalette', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('../components/CommandPalette')>();
-  return {
-    ...mod,
-    CommandPalette: (props: Parameters<typeof mod.CommandPalette>[0]) => {
-      paletteProps.last = props as unknown as Record<string, unknown>;
-      return <mod.CommandPalette {...props} />;
-    },
-  };
-});
 vi.mock('../api', () => ({
   api: {
-    groups: { list: groupsList, update: groupsUpdate },
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
     worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
@@ -71,7 +53,6 @@ vi.mock('./TerminalView', () => ({
 }));
 
 import { Dashboard } from './Dashboard';
-import { __resetFocusGroups } from '../hooks/useFocusGroups';
 
 const noop = vi.fn();
 const dashboard = () => (
@@ -94,13 +75,9 @@ const worktreeRow = () => screen.getAllByText('FD-9')[0]!;
 
 describe('Dashboard inline hub', () => {
   beforeEach(() => {
-    __resetFocusGroups();
-    groupsList.mockReset().mockRejectedValue(new Error('no groups'));
-    groupsUpdate.mockReset();
     wsMock.id = 'default';
     wsMock.all = [];
     wsMock.switchTo = () => {};
-    paletteProps.last = null;
     localStorage.clear();
     localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
   });
@@ -177,94 +154,6 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByRole('region', { name: 'Working on' })).getByText('FD-9')).toBeInTheDocument();
   });
 
-  it('⌘K after the parked-groups link reopens the full palette, not the group filter', async () => {
-    groupsList.mockResolvedValue([
-      { id: 'g1', name: 'FX-900', members: ['local:/wt/OTHER'], createdAt: 't', state: 'parked' },
-    ]);
-    renderDashboard();
-    fireEvent.click(await screen.findByRole('button', { name: '1 more' }));
-    await screen.findByLabelText('Global search');
-    expect(paletteProps.last?.filter).toBe('groups');
-    fireEvent.keyDown(window, { key: 'k', metaKey: true }); // ⌘K closes it
-    expect(screen.queryByLabelText('Global search')).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'k', metaKey: true }); // ⌘K opens it again
-    await screen.findByLabelText('Global search');
-    expect(paletteProps.last?.filter).toBeNull();
-  });
-
-  it('opening a parked group\'s member from ⌘K brings the group back to Working on', async () => {
-    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
-    let state = 'parked';
-    groupsList.mockImplementation(async () => [
-      { id: 'g1', name: 'FX-900', members: ['local:/wt/FD-9'], createdAt: 't', state },
-    ]);
-    groupsUpdate.mockImplementation(async (_ws: string, id: string, patch: { state: string }) => {
-      state = patch.state;
-      return { id, name: 'FX-900', members: ['local:/wt/FD-9'], createdAt: 't', state };
-    });
-    renderDashboard();
-    await screen.findByRole('button', { name: '1 more' });
-    expect(within(screen.getByRole('region', { name: 'Working on' })).queryByText('FX-900')).toBeNull();
-    fireEvent.keyDown(window, { key: 'k', metaKey: true });
-    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
-    fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
-    await screen.findByTestId('inline-hub');
-    await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('default', 'g1', { state: 'working' }));
-    const workingOn = screen.getByRole('region', { name: 'Working on' });
-    await waitFor(() => expect(within(workingOn).getByText('FX-900')).toBeInTheDocument());
-    expect(within(workingOn).getByText('FD-9')).toBeInTheDocument();
-    // In a group now, so it gets no loose row of its own.
-    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
-  });
-
-  it('promoting a parked group keeps the active group when a working group holds the worktree', async () => {
-    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
-    localStorage.setItem('strado:focus-group-active', JSON.stringify({ default: 'gA' }));
-    groupsList.mockResolvedValue([
-      { id: 'gA', name: 'FX-1 working', members: ['local:/wt/FD-9'], createdAt: 't', state: 'working' },
-      { id: 'gB', name: 'FX-2 parked', members: ['local:/wt/FD-9'], createdAt: 't', state: 'parked' },
-    ]);
-    groupsUpdate.mockImplementation(async (_ws: string, id: string) =>
-      ({ id, name: 'FX-2 parked', members: ['local:/wt/FD-9'], createdAt: 't', state: 'working' }));
-    renderDashboard();
-    await screen.findByRole('button', { name: '1 more' });
-    fireEvent.keyDown(window, { key: 'k', metaKey: true });
-    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
-    fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
-    await screen.findByTestId('inline-hub');
-    await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('default', 'gB', { state: 'working' }));
-    expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ default: 'gA' });
-  });
-
-  it('a ⌘K open in another workspace waits for that workspace\'s groups before promoting', async () => {
-    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
-    wsMock.all = [{ id: 'default', name: 'Default' }, { id: 'other', name: 'Other' }];
-    let resolveOther: (gs: unknown[]) => void = () => {};
-    groupsList.mockImplementation((wsId: string) => wsId === 'other'
-      ? new Promise((r) => { resolveOther = r; })
-      : Promise.reject(new Error('no groups')));
-    const parked = { id: 'g9', name: 'FX-9 other', members: ['local:/wt/FD-9'], createdAt: 't', state: 'parked' };
-    groupsUpdate.mockImplementation(async () => ({ ...parked, state: 'working' }));
-    const switched = vi.fn();
-    wsMock.switchTo = switched;
-    const { rerender } = renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.keyDown(window, { key: 'k', metaKey: true });
-    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
-    fireEvent.click(await screen.findByText(/Other · switch & open/));
-    expect(switched).toHaveBeenCalledWith('other');
-    wsMock.id = 'other';
-    rerender(dashboard());
-    // Other's groups have not loaded: the open must not run yet, or it would
-    // see no groups and give the worktree a loose row instead.
-    await act(async () => {});
-    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
-    await act(async () => { resolveOther([parked]); });
-    await screen.findByTestId('inline-hub');
-    await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('other', 'g9', { state: 'working' }));
-    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
-  });
-
   it('opening a worktree leaves the Usage page, so its icon is no longer marked current', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
@@ -296,8 +185,6 @@ describe('Dashboard inline hub', () => {
 
 describe('Dashboard sidebar hover card', () => {
   beforeEach(() => {
-    __resetFocusGroups();
-    groupsList.mockReset().mockRejectedValue(new Error('no groups'));
     localStorage.clear();
     localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
     vi.useFakeTimers({ shouldAdvanceTime: true });

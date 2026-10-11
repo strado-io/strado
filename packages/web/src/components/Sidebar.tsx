@@ -39,8 +39,6 @@ export type Props = {
   onNewWorktree: () => void;
   /** Toolbar Search → ⌘K. */
   onSearch: () => void;
-  /** Working on header's "N more" → ⌘K filtered to groups. */
-  onShowParked: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   update: UpdateFooterProps;
@@ -147,7 +145,7 @@ function WorkspaceSwitcher({
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
   onCollapse, onAddRepo, onOpenWorktree,
-  activeWorktreePath, onNewWorktree, onSearch, onShowParked, onWorktreeSettings, onDeleteWorktree, update,
+  activeWorktreePath, onNewWorktree, onSearch, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
   onOpenMr,
   onOpenDiff,
@@ -169,7 +167,7 @@ export function Sidebar({
   const bodyProps = {
     onAddRepo,
     onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
-    onSearch, onShowParked,
+    onSearch,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
   };

@@ -9,9 +9,6 @@ import { useMrSummaries } from '../hooks/mrSummaries';
 vi.mock('../hooks/mrSummaries', () => ({
   useMrSummaries: vi.fn(() => new Map()),
 }));
-vi.mock('../hooks/useFocusGroups', () => ({
-  useFocusGroups: vi.fn(() => ({ groups: [], loaded: true, create: vi.fn(), rename: vi.fn(), setMembership: vi.fn(), remove: vi.fn(), setState: vi.fn() })),
-}));
 
 // The sidebar prefetches its neighbouring spaces on mount; these tests are
 // about the rail, not the fetch, so the neighbour panes stay empty. The
@@ -89,7 +86,6 @@ const base = {
   onOpenWorktree: vi.fn(),
   onNewWorktree: vi.fn(),
   onSearch: vi.fn(),
-  onShowParked: vi.fn(),
   onWorktreeSettings: vi.fn(),
   onDeleteWorktree: vi.fn(),
   activeWorktreePath: null,
@@ -365,15 +361,14 @@ describe('Sidebar tree', () => {
     expect(actions.parentElement).toHaveClass('absolute', 'right-1');
   });
 
-  it('toolbar buttons start a worktree, a group and a repo', () => {
+  it('toolbar buttons start a worktree and add a repo', () => {
     const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
     wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
     fireEvent.click(activePane().getByRole('button', { name: 'New worktree' }));
     expect(onNewWorktree).toHaveBeenCalled();
     fireEvent.click(activePane().getByRole('button', { name: 'Add repo' }));
     expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: expect.any(Number) }));
-    fireEvent.click(activePane().getByRole('button', { name: 'New group' }));
-    expect(screen.getByRole('dialog', { name: 'New group' })).toBeInTheDocument();
+    expect(activePane().queryByRole('button', { name: 'New group' })).toBeNull();
   });
 
   it('has no bottom New worktree button', () => {
@@ -543,14 +538,14 @@ describe('Sidebar tree', () => {
 
       // A repo's main working tree isn't removable as a worktree — the delete
       // route refuses it — so offering the action would be a dead end. Its
-      // menu still exists for the focus-group entries.
+      // menu still exists to take it out of Working on.
       wrap(
         <Sidebar {...base}
           remoteWorktrees={[remote({ isRepoRoot: true, name: 'main', branch: 'main' })]}
           runnerStatuses={statuses(true)} onDeleteRemoteWorktree={onDelete} />,
       );
       fireEvent.click(screen.getByLabelText('main on runner-dev actions'));
-      expect(screen.getByText('Add to group…')).toBeInTheDocument();
+      expect(screen.getByText('Remove from Working on')).toBeInTheDocument();
       expect(screen.queryByText('Delete worktree')).toBeNull();
       fireEvent.keyDown(window, { key: 'Escape' });
     });
