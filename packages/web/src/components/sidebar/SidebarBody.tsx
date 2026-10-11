@@ -98,7 +98,7 @@ export function BranchIcon({ className = '' }: { className?: string }) {
 function HoverActions({ active, children }: { active: boolean; children: React.ReactNode }) {
   return (
     <span
-      className={`absolute right-2 top-2 z-10 flex items-center rounded opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
+      className={`absolute right-1 z-10 flex items-center rounded opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
         active ? 'bg-zinc-800' : 'bg-zinc-900'
       }`}
     >

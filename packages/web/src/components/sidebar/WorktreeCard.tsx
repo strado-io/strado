@@ -30,7 +30,7 @@ export function repoInitials(name: string): string {
 export function RepoAvatar({ id, name }: { id: string; name: string }) {
   const color = AVATAR_COLORS[hash(id) % AVATAR_COLORS.length]!;
   return (
-    <span aria-hidden className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[9px] font-bold leading-none ${color}`}>
+    <span aria-hidden className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-semibold leading-none ${color}`}>
       {repoInitials(name)}
     </span>
   );
@@ -58,22 +58,22 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
   return (
     // The whole card opens the worktree; the title button carries the
     // accessible name and keyboard focus, and its click bubbles up here.
-    <div onClick={onOpen} className="flex min-w-0 flex-1 cursor-pointer flex-col px-3 py-2.5">
+    <div onClick={onOpen} className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 py-2 pl-2 pr-1.5">
       {repo && (
-        <div data-card-repo className="mb-1.5 flex items-center gap-2 text-xs text-zinc-500">
+        <div data-card-repo className="flex items-center gap-1.5 text-[11px] text-zinc-500">
           <RepoAvatar id={repo.id} name={repo.name} />
           <span className="min-w-0 flex-1 truncate">{repo.name}</span>
           {time && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{time}</span>}
         </div>
       )}
       <button type="button" aria-label={label} title={label}
-        className={`block w-full truncate text-left text-sm font-semibold leading-5 ${titleColor} ${titleClassName}`}>
+        className={`block w-full truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
         {title}
       </button>
-      <div className="mt-0.5 flex min-h-4 items-center gap-1.5">
+      <div className="flex min-h-4 items-center gap-1.5">
         {leading}
         {subtitle && (
-          <span data-card-subtitle className={`min-w-0 flex-1 truncate text-xs ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>{subtitle}</span>
+          <span data-card-subtitle className={`min-w-0 flex-1 truncate font-mono text-[11px] ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>{subtitle}</span>
         )}
         {!subtitle && <span className="flex-1" />}
         {trailing && <span className="flex shrink-0 items-center gap-1.5">{trailing}</span>}
