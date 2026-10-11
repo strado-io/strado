@@ -150,7 +150,7 @@ describe('Sidebar tree', () => {
       const onOpenWorktree = vi.fn();
       wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} />);
       const working = activePane().getByRole('region', { name: 'Working on' });
-      fireEvent.click(within(working).getByText('FD-1'));
+      fireEvent.click(within(working).getByRole('button', { name: 'FD-1' }));
       expect(onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
       expect(activePane().queryByRole('button', { name: /^Pin / })).toBeNull();
     });
@@ -192,14 +192,14 @@ describe('Sidebar tree', () => {
 
     expect(screen.getByTestId(`session-stack-${withSession.path}`)).toBeInTheDocument();
     expect(screen.queryByTestId(`session-stack-${withoutSession.path}`)).toBeNull();
-    const selectedRow = screen.getByText('FD-1').closest('.group');
+    const selectedRow = screen.getByRole('button', { name: 'FD-1' }).closest('.group');
     expect(selectedRow).toHaveClass('bg-zinc-800/80');
     expect(selectedRow).not.toHaveClass('ring-1');
   });
 
   it('shows worktree children with a running dot when the repo is expanded', () => {
     wrap(<Sidebar {...base} />);
-    expect(screen.getByText('FD-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'FD-1' })).toBeInTheDocument();
     expect(screen.getByText('FD-2')).toBeInTheDocument();
     // running worktree row carries a dot (title attr marks it)
     expect(screen.getByTestId('run-dot-/r1/FD-1')).toBeInTheDocument();
@@ -256,7 +256,7 @@ describe('Sidebar tree', () => {
     expect(badge).toHaveAccessibleName('Open PR 42, open, checks passed');
     expect(badge.querySelector('[data-pr-icon="open"]')).not.toBeNull();
     expect(badge).toHaveStyle({ color: '#3fb950' });
-    const row = screen.getByText('FD-1').closest('.group')!;
+    const row = screen.getByRole('button', { name: 'FD-1' }).closest('.group')!;
     expect(row.querySelector('[data-worktree-icon="branch"]')).toBeNull();
     // The PR icon carries no tooltip of its own any more — one hover surface
     // per row, and it belongs to the row.
@@ -269,9 +269,9 @@ describe('Sidebar tree', () => {
 
   it('lays a worktree out as a card: repo line, ticket as title, branch underneath, no PR icon without a PR', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
-    const card = screen.getByText('FD-1').closest('.group') as HTMLElement;
+    const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
-    expect(within(card).getByText('FD-1')).toHaveClass('font-medium');
+    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('font-medium');
     expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();
@@ -347,7 +347,7 @@ describe('Sidebar tree', () => {
 
   it('opens a worktree on child click', () => {
     wrap(<Sidebar {...base} />);
-    fireEvent.click(screen.getByText('FD-1'));
+    fireEvent.click(screen.getByRole('button', { name: 'FD-1' }));
     expect(base.onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
   });
 
@@ -758,7 +758,7 @@ describe('worktree hover card', () => {
   function rowFor(label: string) {
     // The card repeats the worktree label, and it renders outside the rail —
     // scope to the rail so "the row" never resolves to the card's own header.
-    return within(screen.getByRole('complementary')).getByText(label).closest('.group')!;
+    return within(screen.getByRole('complementary')).getByRole('button', { name: label }).closest('.group')!;
   }
 
   function hoverRow(label = 'FD-1') {
@@ -788,7 +788,7 @@ describe('worktree hover card', () => {
 
   it('does not open while the cursor is only passing over the row', () => {
     wrap(<Sidebar {...base} worktrees={[busy()]} />);
-    const row = screen.getByText('FD-1').closest('.group')!;
+    const row = screen.getByRole('button', { name: 'FD-1' }).closest('.group')!;
     fireEvent.pointerEnter(row);
     act(() => { vi.advanceTimersByTime(120); });
     fireEvent.pointerLeave(row);
