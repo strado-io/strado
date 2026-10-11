@@ -30,7 +30,7 @@ import { useFocusShortcut } from '../hooks/focusShortcut';
 import { useFocusGroups } from '../hooks/useFocusGroups';
 import { useFocusPrefs } from '../hooks/focusPrefs';
 import { useMrSummaries } from '../hooks/mrSummaries';
-import { activeGroupOf, groupState, isGroupDone, nextMember, openEffects, resolveMembers } from '../components/sidebar/focusGroups';
+import { activeGroupOf, groupState, groupsContaining, isGroupDone, nextMember, openEffects, resolveMembers } from '../components/sidebar/focusGroups';
 import { addLooseWorktree } from '../hooks/looseWorktrees';
 import { worktreeLabel } from '../components/sidebar/labels';
 import type { SidebarEntry } from '../components/sidebar/pinIds';
@@ -604,7 +604,10 @@ export function Dashboard(props: {
     for (const id of promote) {
       focusGroups.setState(id, 'working').catch((e) => dispatch({ type: 'error', message: (e as Error).message }));
     }
-    if (promote[0]) focusPrefs.setActiveFocusGroupId(promote[0]);
+    // A working group already holding it keeps (or was just made) active by
+    // the row click; the parked one comes back without taking that over.
+    const inWorking = groupsContaining(focusGroups.groups, pinId).some((g) => groupState(g) === 'working');
+    if (promote[0] && !inWorking) focusPrefs.setActiveFocusGroupId(promote[0]);
   };
   // Picking a group in ⌘K makes it active and opens its most recently used member.
   const pickFocusGroup = (id: string) => {

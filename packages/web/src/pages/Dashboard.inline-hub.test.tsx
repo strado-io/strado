@@ -216,6 +216,25 @@ describe('Dashboard inline hub', () => {
     expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
   });
 
+  it('promoting a parked group keeps the active group when a working group holds the worktree', async () => {
+    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
+    localStorage.setItem('strado:focus-group-active', JSON.stringify({ default: 'gA' }));
+    groupsList.mockResolvedValue([
+      { id: 'gA', name: 'FX-1 working', members: ['local:/wt/FD-9'], createdAt: 't', state: 'working' },
+      { id: 'gB', name: 'FX-2 parked', members: ['local:/wt/FD-9'], createdAt: 't', state: 'parked' },
+    ]);
+    groupsUpdate.mockImplementation(async (_ws: string, id: string) =>
+      ({ id, name: 'FX-2 parked', members: ['local:/wt/FD-9'], createdAt: 't', state: 'working' }));
+    renderDashboard();
+    await screen.findByRole('button', { name: '1 more' });
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
+    fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
+    await screen.findByTestId('inline-hub');
+    await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('default', 'gB', { state: 'working' }));
+    expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ default: 'gA' });
+  });
+
   it('persists selection and restores it on remount', async () => {
     const { unmount } = renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
