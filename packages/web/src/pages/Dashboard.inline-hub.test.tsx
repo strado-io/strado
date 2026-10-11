@@ -265,6 +265,17 @@ describe('Dashboard inline hub', () => {
     expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
   });
 
+  it('opening a worktree leaves the Usage page, so its icon is no longer marked current', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    const usage = () => screen.getByRole('button', { name: 'Usage' });
+    fireEvent.click(usage());
+    expect(usage()).toHaveAttribute('aria-current', 'page');
+    fireEvent.click(worktreeRow());
+    await screen.findByTestId('inline-hub');
+    expect(usage()).not.toHaveAttribute('aria-current');
+  });
+
   it('persists selection and restores it on remount', async () => {
     const { unmount } = renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());

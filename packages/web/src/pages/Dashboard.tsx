@@ -298,6 +298,9 @@ export function Dashboard(props: {
     // hub first. Switching worktrees must never require closing one.
     setSelectedRemote(null);
     setSelectedPath(w.path);
+    // A worktree hub replaces whatever page was open, so the page icon row
+    // must stop marking Usage or Code reviews as current.
+    setActiveView(INITIAL_VIEW);
   }, []);
   // Palette pick of a worktree in ANOTHER workspace: switch first, and open
   // the hub only once the workspace context has actually landed — opening
@@ -556,6 +559,7 @@ export function Dashboard(props: {
     noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
     setSelectedPath(null); // one hub at a time
     setSelectedRemote(w);
+    setActiveView(INITIAL_VIEW);
     props.onOpenRemoteWorktree?.(w);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onOpenRemoteWorktree]);
