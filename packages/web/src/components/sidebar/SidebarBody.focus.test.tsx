@@ -121,7 +121,7 @@ describe('SidebarBody: Working on and Settled only', () => {
     expect(screen.getByRole('dialog', { name: 'New group' })).toBeInTheDocument();
   });
 
-  it('adding a worktree to a parked group brings the group back', () => {
+  it('adding a worktree to a parked group brings the group back', async () => {
     const parked: FocusGroup = { id: 'g2', name: 'FX-900', members: [], createdAt: 't', state: 'parked' };
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, parked] });
     render(<SidebarBody {...props()} />);
@@ -129,7 +129,60 @@ describe('SidebarBody: Working on and Settled only', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add to group…' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Add to group' })).getByRole('checkbox', { name: 'FX-900' }));
     expect(focus.setMembership).toHaveBeenCalledWith('g2', 'local:/r1/wt', true);
-    expect(focus.setState).toHaveBeenCalledWith('g2', 'working');
+    await waitFor(() => expect(focus.setState).toHaveBeenCalledWith('g2', 'working'));
+  });
+
+  it('does not promote a parked group when adding to it fails', async () => {
+    const parked: FocusGroup = { id: 'g2', name: 'FX-900', members: [], createdAt: 't', state: 'parked' };
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [group, parked] });
+    focus.setMembership.mockRejectedValueOnce(new Error('offline'));
+    const onError = vi.fn();
+    render(<SidebarBody {...props({ onError })} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'fx-412 actions' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to group…' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Add to group' })).getByRole('checkbox', { name: 'FX-900' }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('offline'));
+    expect(focus.setState).not.toHaveBeenCalled();
+  });
+
+  it('shows a loose id that an open group already holds only as a member', () => {
+    loose('local:/r1/wt');
+    render(<SidebarBody {...props()} />);
+    const working = screen.getByRole('region', { name: 'Working on' });
+    expect(within(working).getAllByText('fx-412')).toHaveLength(2);
+    const g = within(working).getByRole('group', { name: 'FX-412' });
+    expect(within(g).getAllByText('fx-412')).toHaveLength(2);
+  });
+
+  // Opens the picker on a loose worktree that no group holds, and creates a group from it by name.
+  const createFromLoosePicker = (over: Partial<SidebarBodyProps> = {}) => {
+    vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
+    loose('local:/r1/wt');
+    render(<SidebarBody {...props(over)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to group…' }));
+    const input = within(screen.getByRole('dialog', { name: 'Add to group' })).getByRole('textbox', { name: 'Find or create a group' });
+    fireEvent.change(input, { target: { value: 'Fresh' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+  };
+
+  it('creating a group from the picker takes the worktree out of the loose rows once it exists', async () => {
+    let resolveCreate!: (g: FocusGroup) => void;
+    focus.create.mockReturnValue(new Promise<FocusGroup>((r) => { resolveCreate = r; }));
+    createFromLoosePicker();
+    expect(focus.create).toHaveBeenCalledWith('Fresh', ['local:/r1/wt']);
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: ['local:/r1/wt'] });
+    resolveCreate({ ...group, id: 'g9', name: 'Fresh' });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: [] }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:focus-group-active')!)).toEqual({ w1: 'g9' }));
+  });
+
+  it('keeps the loose row when creating a group from the picker fails', async () => {
+    focus.create.mockRejectedValue(new Error('disk full'));
+    const onError = vi.fn();
+    createFromLoosePicker({ onError });
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('disk full'));
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({ w1: ['local:/r1/wt'] });
   });
 
   it('folds a group from its header', () => {
