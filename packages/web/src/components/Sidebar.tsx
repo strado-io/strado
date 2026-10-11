@@ -20,7 +20,7 @@ export type AddRepoAnchor = { left: number; right: number; bottom: number };
  * dead most of the time, since the signal it carried (a running server, an
  * agent at work) already lives directly on the worktree rows.
  */
-export type SidebarView = { kind: 'tasks' } | { kind: 'worktrees' } | { kind: 'reviews' } | { kind: 'usage' };
+export type SidebarView = { kind: 'worktrees' } | { kind: 'reviews' } | { kind: 'usage' };
 
 export type Props = {
   repos: RepoConfig[];

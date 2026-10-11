@@ -96,8 +96,8 @@ function renderDashboard() {
   return render(dashboard());
 }
 
-// The sidebar no longer lists repos; the task board's per-repo chip still
-// shows the name, so waiting on it means the tree has loaded.
+// The Worktrees page (the landing view) heads a section with the repo's
+// name, so waiting on it means the tree has loaded.
 const repoRow = () => screen.getAllByText('Repo One')[0]!;
 // The ticket id on the sidebar's Focus card (it lands once the Focus list has loaded).
 const sidebarRow = () => within(screen.getByRole('region', { name: 'Focus' })).findByText('FD-9');
@@ -117,7 +117,7 @@ describe('Dashboard inline hub', () => {
     seedFocus();
   });
 
-  it('shows the board and no hub initially', async () => {
+  it('shows the Worktrees page and no hub initially', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument();
@@ -130,7 +130,7 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
   });
 
-  it('Back returns to the board', async () => {
+  it('Back returns to the Worktrees page', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     fireEvent.click(await sidebarRow());
@@ -158,13 +158,11 @@ describe('Dashboard inline hub', () => {
   it('opens the workspace-level code reviews page from the sidebar', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    // Intercom is a workspace action in Tasks, even with no running servers.
+    // Intercom is a workspace action on the Worktrees page, even with no running servers.
     expect(screen.getByRole('button', { name: 'Open intercom' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
     expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();
-    // The page has its own toolbar — the shared bar would just be a blank strip.
-    expect(document.querySelector('[data-filter-bar]')).not.toBeInTheDocument();
   });
 
   it('picking a repo in the command palette starts a new worktree in it', async () => {
@@ -234,7 +232,7 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
   });
 
-  it('a stale persisted path (for this workspace) resolves to the board', async () => {
+  it('a stale persisted path (for this workspace) resolves to the Worktrees page', async () => {
     localStorage.setItem('strado:selected-by-ws', JSON.stringify({ default: '/wt/GONE' }));
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());

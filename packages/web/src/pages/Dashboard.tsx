@@ -11,26 +11,19 @@ import { OnboardingCard } from '../components/OnboardingCard';
 import { AddRepoDialog, type AddRepoAnchor } from '../components/AddRepoDialog';
 import { Sidebar, type SidebarView } from '../components/Sidebar';
 import type { UpdateFooterProps } from '../components/UpdateFooter';
-import { FilterBar } from '../components/FilterBar';
 import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
 import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
-import { OnboardingChecklist } from '../components/OnboardingChecklist';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import { FeedbackDialog } from '../components/FeedbackDialog';
 import { IntercomPanel } from '../components/IntercomPanel';
 import { CommandPalette } from '../components/CommandPalette';
-import { useColumnWidths } from '../hooks/useColumnWidths';
-import { useDensity } from '../hooks/useDensity';
-import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
 import { NEW_FOCUS_EVENT, useFocusShortcut } from '../hooks/focusShortcut';
 import { remotePinId } from '../components/sidebar/pinIds';
-import { TaskBoard } from '../components/TaskBoard';
-import { computeReorderPatches } from '../hooks/rowOrder';
 import { bumpWorktreeOpened } from '../lib/worktreeLru';
 import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
@@ -90,7 +83,8 @@ const STORE_SIDEBAR = 'strado:sidebar-collapsed';
 // Tasks remains the initial destination; code reviews is the second
 // workspace-level view. We intentionally do not restore the old retired view
 // values from `strado:view`.
-const INITIAL_VIEW: SidebarView = { kind: 'tasks' };
+// No hub open: the Worktrees page, every repo and worktree in the space.
+const INITIAL_VIEW: SidebarView = { kind: 'worktrees' };
 function readSidebarCollapsed(): boolean {
   return localStorage.getItem(STORE_SIDEBAR) === '1';
 }
@@ -329,10 +323,7 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId]);
   const [showPalette, setShowPalette] = useState(false);
-  const [density, setDensity] = useDensity();
-  const [boardPrefs, patchBoardPrefs] = useBoardPrefs(wsId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
-  const { gridTemplate, totalWidth, startResize } = useColumnWidths();
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
   const [reviewSearchFilter, setReviewSearchFilter] = useState({ wsId, value: '' });
@@ -370,9 +361,6 @@ export function Dashboard(props: {
     props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo || overlays.anyOpen
   );
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem('strado:onboarding-welcomed') === '1');
-  const [checklistDismissed, setChecklistDismissed] = useState(
-    () => localStorage.getItem('strado:onboarding-dismissed') === '1',
-  );
   const refreshTicketProviders = useCallback(() => {
     Promise.all([api.tickets.providers(), api.jira.status().catch(() => null)])
       .then(([providers, jira]) => {
@@ -415,7 +403,6 @@ export function Dashboard(props: {
 
   const prevClaude = useRef<ClaudeStatusMap>({});
   const intercom = useIntercom();
-  const escalationsByPath = useMemo(() => escalationsByWorktree(intercom), [intercom.escalations, intercom.peers]);
   // Questions waiting on the human, workspace-wide — the header count.
   const openCount = useMemo(() => openEscalations(intercom).length, [intercom.escalations]);
   // The intercom panel lives here, above every surface that opens it (the row
@@ -699,23 +686,9 @@ export function Dashboard(props: {
     return () => clearInterval(id);
   }, [state.loading, wsId]);
 
-  const repoById = useMemo(() => {
-    const map = new Map<string, RepoConfig>();
-    for (const r of state.repos) map.set(r.id, r);
-    return map;
-  }, [state.repos]);
-
   const selectedWorktree = selectedPath ? state.worktrees.find((w) => w.path === selectedPath) ?? null : null;
 
   // The rail spans machines: local worktrees plus every runner's, mapped to the
-  const handleStart = async (w: Worktree) => {
-    track('dev_server_started');
-    try {
-      await api.worktrees.start(wsId, w.path);
-    } catch (err) {
-      dispatch({ type: 'error', message: (err as Error).message });
-    }
-  };
   const handleStop = async (w: Worktree) => {
     try {
       await api.worktrees.stop(wsId, w.path);
@@ -731,10 +704,26 @@ export function Dashboard(props: {
       dispatch({ type: 'error', message: (err as Error).message });
     }
   };
-  // One element, rendered in both toolbars — the board's and the hub's — so the
-  // "what is serving right now" answer is the same wherever you are. Opening a
+  // One element, rendered in both toolbars — the Worktrees page's and the hub's
+  // — so the "what is serving right now" answer is the same wherever you are. Opening a
   // row lands on the preview tab in the desktop app; the web build has no
   // embedded browser, so it opens the hub's shell instead.
+  // Questions waiting on you, workspace-wide. Amber whenever the count is
+  // non-zero and a muted glyph otherwise, so the control never moves or vanishes.
+  const intercomButton = (
+    <button
+      aria-label={openCount > 0 ? `Open intercom, ${openCount} waiting on you` : 'Open intercom'}
+      title={openCount > 0 ? `${openCount} waiting on you` : 'Intercom'}
+      onClick={() => setIntercomPanel({ tab: 'escalations' })}
+      className={
+        openCount > 0
+          ? 'shrink-0 rounded-md border border-amber-800/60 bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-900/40'
+          : 'shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
+      }
+    >
+      {openCount > 0 ? `⚑ ${openCount}` : '⚑'}
+    </button>
+  );
   const runningServers = (
     <RunningServers
       worktrees={state.worktrees}
@@ -743,45 +732,6 @@ export function Dashboard(props: {
       onKillExternal={handleKillExternal}
     />
   );
-
-  const handleSetEnvProfile = async (w: Worktree, profile: string) => {
-    const wasRunning = w.process.status === 'running' || w.process.status === 'starting';
-    if (w.process.external) {
-      alert(
-        'An external (non-managed) process is running for this worktree. Kill it first, then switch the env.',
-      );
-      return;
-    }
-    if (!w.tracked) {
-      alert('Adopt this worktree first (via the More menu) before switching env profile.');
-      return;
-    }
-    if (wasRunning && !confirm(`Switch env to "${profile}"? This will restart the running process.`)) {
-      return;
-    }
-    dispatch({ type: 'patchMeta', path: w.path, patch: { activeEnvProfile: profile } });
-    try {
-      await api.worktrees.setEnvProfile(wsId, w.path, profile);
-    } catch (err) {
-      dispatch({ type: 'error', message: (err as Error).message });
-    }
-  };
-
-  const handleSetWorkflowStatus = (w: Worktree, status: WorkflowStatus | null) => {
-    dispatch({ type: 'patchMeta', path: w.path, patch: { workflowStatus: status } });
-    api.worktrees.patch(wsId, w.path, { workflowStatus: status }).catch((err) =>
-      dispatch({ type: 'error', message: (err as Error).message }),
-    );
-  };
-
-  const handleReorder = (contextRows: Worktree[], draggedPath: string, targetPath: string, place: 'before' | 'after') => {
-    for (const { path, order } of computeReorderPatches(contextRows, draggedPath, targetPath, place)) {
-      dispatch({ type: 'patchMeta', path, patch: { order } });
-      api.worktrees.patch(wsId, path, { order }).catch((err) =>
-        dispatch({ type: 'error', message: (err as Error).message }),
-      );
-    }
-  };
 
   // First run: the welcome gate is a standalone page — no sidebar, no
   // sessions dock — and blocks until every environment check passes.
@@ -832,53 +782,8 @@ export function Dashboard(props: {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* Code reviews carries the sidebar toggle and running-servers chip in
-            its own toolbar, so the shared row would only be an empty strip. */}
-        {!(state.repos.length === 0 && !state.loading) && !selectedWorktree && !selectedRemote
-          && activeView.kind !== 'reviews' && activeView.kind !== 'usage' && activeView.kind !== 'worktrees' && (
-        <FilterBar
-          leading={
-            sidebarCollapsed ? <OpenSidebarButton onClick={() => setSidebarCollapsed(false)} /> : undefined
-          }
-          trailing={
-            <div className="flex items-center gap-2">
-              {/* Questions waiting on you, workspace-wide. Amber whenever the
-                  count is non-zero — the same colour the board rows use — and a
-                  muted glyph otherwise, so the control never moves or vanishes. */}
-              <button
-                aria-label={openCount > 0 ? `Open intercom, ${openCount} waiting on you` : 'Open intercom'}
-                title={openCount > 0 ? `${openCount} waiting on you` : 'Intercom'}
-                onClick={() => setIntercomPanel({ tab: 'escalations' })}
-                className={
-                  openCount > 0
-                    ? 'shrink-0 rounded-md border border-amber-800/60 bg-amber-950/40 px-2.5 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40'
-                    : 'shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
-                }
-              >
-                {openCount > 0 ? `⚑ ${openCount}` : '⚑'}
-              </button>
-              {runningServers}
-            </div>
-          }
-        />
-        )}
-
         {state.error && (
           <div className="mx-4 mt-3 rounded bg-red-900/40 px-3 py-2 text-sm text-red-200">{state.error}</div>
-        )}
-
-        {activeView.kind === 'tasks' && !state.loading && state.repos.length > 0 && !checklistDismissed && (
-          <OnboardingChecklist
-            repos={state.repos}
-            worktrees={state.worktrees}
-            jiraOn={ticketsOn}
-            onNewWorktree={props.onNewWorktree}
-            onOpenJiraSettings={() => setSettingsSection('jira')}
-            onDismiss={() => {
-              localStorage.setItem('strado:onboarding-dismissed', '1');
-              setChecklistDismissed(true);
-            }}
-          />
         )}
 
         {selectedRemote ? (
@@ -946,38 +851,6 @@ export function Dashboard(props: {
             onExpandSidebar={() => setSidebarCollapsed(false)}
             runningServers={runningServers}
           />
-        ) : activeView.kind === 'worktrees' ? (
-          <WorktreesPage
-            key={wsId}
-            wsId={wsId}
-            repos={state.repos}
-            worktrees={state.worktrees}
-            remoteWorktrees={remote.worktrees}
-            runnerStatuses={remote.runners}
-            activeWorktreePath={null /* the page shows only while no hub is open */}
-            sidebarCollapsed={sidebarCollapsed}
-            onExpandSidebar={() => setSidebarCollapsed(false)}
-            runningServers={runningServers}
-            onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
-            onNewWorktree={(repoId) => props.onNewWorktree(repoId)}
-            onRemoveRepo={async (repo) => {
-              if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
-              try {
-                await api.repos.remove(wsId, repo.id);
-                const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-                commitTree(repos, worktrees);
-              } catch (err) {
-                dispatch({ type: 'error', message: (err as Error).message });
-              }
-            }}
-            onOpenWorktree={(w) => openInlineHub(w)}
-            onOpenRemoteWorktree={openRemoteWorktree}
-            onOpenMr={props.onOpenMr}
-            onWorktreeSettings={(w) => props.onMenu(w)}
-            onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
-            onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
-            onError={(message) => dispatch({ type: 'error', message })}
-          />
         ) : activeView.kind === 'usage' ? (
           <UsagePage
             key={wsId}
@@ -987,60 +860,66 @@ export function Dashboard(props: {
             runningServers={runningServers}
           />
         ) : (
-        <div className="flex-1 overflow-auto">
-          {state.loading ? (
-            <div className="px-6 py-8 text-sm text-zinc-500">Loading…</div>
-          ) : state.repos.length === 0 ? (
-            <OnboardingCard
-              wsId={wsId}
-              onAdded={async () => {
-                const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-                commitTree(repos, worktrees);
-              }}
-              onOpenRepos={() => {
-                setAddRepoAnchor(null);
-                setShowAddRepo(true);
-              }}
-            />
-          ) : (
-            <>
-              {(Object.entries(providerErrors) as [TicketProviderId, string][]).map(([provider]) => (
-                <button
-                  key={provider}
-                  onClick={() => setSettingsSection(provider)}
-                  className="mx-4 mt-3 block w-[calc(100%-2rem)] rounded bg-amber-900/30 px-3 py-2 text-left text-sm text-amber-200 hover:bg-amber-900/40"
-                >
-                  {providerLabel(provider)} connection failed — reconnect in Settings
-                </button>
-              ))}
-              <TaskBoard
+          <div className="flex min-h-0 flex-1 flex-col">
+            {state.loading ? (
+              <div className="px-6 py-8 text-sm text-zinc-500">Loading…</div>
+            ) : state.repos.length === 0 ? (
+              <OnboardingCard
                 wsId={wsId}
-                worktrees={state.worktrees}
-                repoById={repoById}
-                gridTemplate={gridTemplate}
-                totalWidth={totalWidth}
-                onStartResize={startResize}
-                density={density}
-                onReorder={handleReorder}
-                escalationsByPath={escalationsByPath}
-                prefs={boardPrefs}
-                onPrefs={patchBoardPrefs}
-                handlers={{
-                  onOpenShellTerminal: (w) => openInlineHub(w, 'shell'),
-                  onSetWorkflowStatus: handleSetWorkflowStatus,
-                  onOpenNote: props.onOpenNote,
-                  onOpenDiff: props.onOpenDiff,
-                  onStart: handleStart,
-                  onStop: handleStop,
-                  onKillExternal: handleKillExternal,
-                  onOpenSettings: props.onMenu,
-                  onOpenMr: props.onOpenMr,
-                  onOpenEscalations: (w) => setIntercomPanel({ tab: 'escalations', worktreePath: w.path }),
+                onAdded={async () => {
+                  const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
+                  commitTree(repos, worktrees);
+                }}
+                onOpenRepos={() => {
+                  setAddRepoAnchor(null);
+                  setShowAddRepo(true);
                 }}
               />
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                {(Object.entries(providerErrors) as [TicketProviderId, string][]).map(([provider]) => (
+                  <button
+                    key={provider}
+                    onClick={() => setSettingsSection(provider)}
+                    className="mx-4 mt-3 block w-[calc(100%-2rem)] rounded bg-amber-900/30 px-3 py-2 text-left text-sm text-amber-200 hover:bg-amber-900/40"
+                  >
+                    {providerLabel(provider)} connection failed — reconnect in Settings
+                  </button>
+                ))}
+              <WorktreesPage
+                key={wsId}
+                wsId={wsId}
+                repos={state.repos}
+                worktrees={state.worktrees}
+                remoteWorktrees={remote.worktrees}
+                runnerStatuses={remote.runners}
+                activeWorktreePath={null /* the page shows only while no hub is open */}
+                sidebarCollapsed={sidebarCollapsed}
+                onExpandSidebar={() => setSidebarCollapsed(false)}
+                runningServers={<>{intercomButton}{runningServers}</>}
+                onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
+                onNewWorktree={(repoId) => props.onNewWorktree(repoId)}
+                onRemoveRepo={async (repo) => {
+                  if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
+                  try {
+                    await api.repos.remove(wsId, repo.id);
+                    const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
+                    commitTree(repos, worktrees);
+                  } catch (err) {
+                    dispatch({ type: 'error', message: (err as Error).message });
+                  }
+                }}
+                onOpenWorktree={(w) => openInlineHub(w)}
+                onOpenRemoteWorktree={openRemoteWorktree}
+                onOpenMr={props.onOpenMr}
+                onWorktreeSettings={(w) => props.onMenu(w)}
+                onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
+                onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
+                onError={(message) => dispatch({ type: 'error', message })}
+              />
+              </>
+            )}
+          </div>
         )}
       </main>
       </div>

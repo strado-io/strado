@@ -1,20 +1,9 @@
 import type { Worktree } from '../types';
-import type { StatusFilter } from '../components/FilterBar';
-import { hasSession } from './sessions';
 
 export function isRunning(w: Worktree): boolean {
   const s = w.process.status;
   // 'stopping' still holds its port — it belongs in the running list until it is gone.
   return s === 'running' || s === 'starting' || s === 'stopping' || !!w.process.external;
-}
-
-export function matchesStatus(w: Worktree, s: StatusFilter): boolean {
-  if (s === 'all') return true;
-  if (s === 'running') return isRunning(w);
-  if (s === 'idle') return !isRunning(w);
-  if (s === 'untracked') return !w.tracked;
-  if (s === 'sessions') return hasSession(w);
-  return true;
 }
 
 export function matchesQuery(w: Worktree, q: string): boolean {
