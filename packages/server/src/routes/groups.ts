@@ -7,6 +7,8 @@ const PatchBody = z.object({
   name: z.string().optional(),
   addMembers: MemberIds.optional(),
   removeMembers: MemberIds.optional(),
+  // Parked groups leave the sidebar until opened again; nothing else may be stored.
+  state: z.enum(['working', 'parked']).optional(),
 });
 
 // Focus groups: named cross-repo bundles of worktrees. Member ids are the
