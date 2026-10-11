@@ -178,7 +178,7 @@ describe('Dashboard inline hub', () => {
     expect(noop).toHaveBeenCalledWith('r1');
   });
 
-  it('opening a worktree from search with no Focus makes one named after it, and shows it there', async () => {
+  it('opening a worktree from search with no Focus opens it and creates nothing', async () => {
     fakeFocuses.reset([]);
     localStorage.removeItem('strado:active-focus-by-ws');
     renderDashboard();
@@ -188,9 +188,10 @@ describe('Dashboard inline hub', () => {
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
     fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
     await screen.findByTestId('inline-hub');
-    await waitFor(() => expect(fakeFocuses.api.create).toHaveBeenCalledWith('default', { name: 'FD-9', members: ['local:/wt/FD-9'] }));
-    expect(await screen.findByRole('button', { name: 'Focus: FD-9' })).toBeInTheDocument();
-    expect(await sidebarRow()).toBeInTheDocument();
+    await waitFor(() => expect(fakeFocuses.api.list).toHaveBeenCalled());
+    expect(fakeFocuses.api.create).not.toHaveBeenCalled();
+    expect(fakeFocuses.api.update).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Focus: none' })).toBeInTheDocument();
   });
 
   it('opening a worktree that is not in the active Focus adds it there', async () => {

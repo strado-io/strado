@@ -28,7 +28,6 @@ import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
 import { useFocusShortcut } from '../hooks/focusShortcut';
-import { worktreeLabel } from '../components/sidebar/labels';
 import { TaskBoard } from '../components/TaskBoard';
 import { computeReorderPatches } from '../hooks/rowOrder';
 import { bumpWorktreeOpened } from '../lib/worktreeLru';
@@ -275,12 +274,12 @@ export function Dashboard(props: {
   // through openInlineHub / openRemoteWorktree, so this is the one place a
   // worktree being opened joins the active Focus. A ref, because those
   // callbacks are created before the Focus state they need exists.
-  const noteOpenedRef = useRef<(pinId: string, label: string) => void>(() => {});
+  const noteOpenedRef = useRef<(pinId: string) => void>(() => {});
   const openInlineHub = useCallback((w: Worktree, mode?: typeof selectedMode, sessionId?: string) => {
     track('hub_opened', { tab: mode ?? 'restored' });
     // Record the open so the ⌘K palette can rank recently-used worktrees on top.
     bumpWorktreeOpened(w.path);
-    noteOpenedRef.current(`local:${w.path}`, worktreeLabel(w));
+    noteOpenedRef.current(`local:${w.path}`);
     // Explicitly opening an agent lifts any persisted "closed" flag so the hub
     // shows the tab even after a prior close (reload restores mode='claude').
     if (mode === 'claude' || mode === 'codex' || mode === 'opencode' || mode === 'pi') rememberClosedAgent(mode, w.path, false);
@@ -545,7 +544,7 @@ export function Dashboard(props: {
   // a quiet loading hint instead of runner rows popping in a beat late.
   const [remoteLoading, setRemoteLoading] = useState(true);
   const openRemoteWorktree = useCallback((w: RemoteWorktree) => {
-    noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`, w.branch ?? w.name);
+    noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
     setSelectedPath(null); // one hub at a time
     setSelectedRemote(w);
     setActiveView(INITIAL_VIEW);
@@ -553,18 +552,17 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onOpenRemoteWorktree]);
 
-  // An opened worktree joins the active Focus; with no Focus yet, one is made
-  // and named after the worktree. The list is awaited first so a restore-time
-  // open can't race the load into a duplicate. Assigned every render so the
-  // open callbacks above always see the current Focus.
+  // An opened worktree joins the active Focus. With no Focus active it joins
+  // nothing: a Focus is made on purpose, never as a side effect of opening.
+  // The list is awaited first so a restore-time open sees the real active
+  // Focus. Assigned every render so the open callbacks above see the current one.
   const focusApi = useFocuses(wsId);
   useFocusShortcut({ focuses: focusApi.focuses, activeId: focusApi.activeId, activate: focusApi.activate });
-  noteOpenedRef.current = (pinId, label) => {
+  noteOpenedRef.current = (pinId) => {
     void (async () => {
       await ensureFocusesLoaded(wsId);
       const active = activeFocusOf(wsId);
-      if (!active) await focusApi.create(label, [pinId]);
-      else if (!active.members.includes(pinId)) await focusApi.setMembership(active.id, pinId, true);
+      if (active && !active.members.includes(pinId)) await focusApi.setMembership(active.id, pinId, true);
     })().catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }));
   };
   useEffect(() => {
