@@ -133,6 +133,21 @@ describe('SidebarBody: Working on and Settled only', () => {
     expect(localStorage.getItem('strado:pinned-worktrees-by-ws')).toBeNull();
   });
 
+  it('dates a card by when it was last opened here, and a settled card by its PR', () => {
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    localStorage.setItem('strado:worktree-lru', JSON.stringify({ '/r2/other': twoHoursAgo }));
+    loose('local:/r2/other');
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1/wt', { state: 'merged', mergedAt: new Date(Date.now() - 3 * 86400000).toISOString(), updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
+    render(<SidebarBody {...props()} />);
+    const working = screen.getByRole('region', { name: 'Working on' });
+    const looseCard = within(working).getAllByText('fx-412')[0]!.closest('.group') as HTMLElement;
+    expect(within(looseCard).getByText('2h')).toBeInTheDocument();
+    expect(within(looseCard).getByText('web')).toBeInTheDocument(); // repo line
+    expect(within(looseCard).getByText('other')).toBeInTheDocument(); // folder under a bare branch
+    const settled = screen.getByRole('region', { name: 'Settled' });
+    expect(within(settled).getByText('3d')).toBeInTheDocument();
+  });
+
   it('shows the empty state when nothing is being worked on', () => {
     vi.mocked(useFocusGroups).mockReturnValue({ ...focus, groups: [] });
     render(<SidebarBody {...props()} />);
