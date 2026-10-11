@@ -27,7 +27,8 @@ import { useBoardPrefs } from '../hooks/boardPrefs';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
-import { useFocusShortcut } from '../hooks/focusShortcut';
+import { NEW_FOCUS_EVENT, useFocusShortcut } from '../hooks/focusShortcut';
+import { remotePinId } from '../components/sidebar/pinIds';
 import { TaskBoard } from '../components/TaskBoard';
 import { computeReorderPatches } from '../hooks/rowOrder';
 import { bumpWorktreeOpened } from '../lib/worktreeLru';
@@ -237,7 +238,9 @@ export function Dashboard(props: {
     treeWsRef.current = wsId;
     dispatch({ type: 'switch', snap: cachedTree(wsId) });
   }
-  const [selectedPath, setSelectedPath] = useState<string | null>(() => readSelMap()[wsId] ?? null);
+  // Restored per workspace once its Focuses have loaded (see below): a hub
+  // only ever shows a worktree in the active Focus.
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   // A worktree on a runner, when that is what's open. Mutually exclusive with
   // selectedPath: one hub at a time.
   const [selectedRemote, setSelectedRemote] = useState<RemoteWorktree | null>(null);
@@ -253,29 +256,45 @@ export function Dashboard(props: {
   // deliberate restore/switch, so the persist effect writes under the right
   // workspace and a mid-switch stale selection can't land under the new one.
   const selWsRef = useRef(wsId);
+  // The workspace whose stored selection has been restored; until then the
+  // store is read-only, so a not-yet-restored null never wipes it.
+  const restoredForRef = useRef<string | null>(null);
   // Persist the open worktree under its workspace (remote hubs store nothing).
   useEffect(() => {
-    writeSelPath(selWsRef.current, selectedRemote ? null : selectedPath);
+    if (restoredForRef.current === selWsRef.current) writeSelPath(selWsRef.current, selectedRemote ? null : selectedPath);
   }, [selectedPath, selectedRemote]);
-  // Restore that workspace's open worktree when the workspace changes (swipe,
-  // ⌘K). A generic open (mode undefined) lets TerminalView reopen the
-  // worktree's last-active tab. Runs on mount too — a no-op there, since
-  // useState already seeded selectedPath from the same store. A ⌘K deep-link to
-  // another workspace overrides this via the pendingOpenRef effect below, which
-  // runs after it.
+  // A workspace change (swipe, ⌘K) closes the hub; the restore effect below
+  // brings that workspace's own worktree back once its Focuses are known. A
+  // ⌘K deep-link to another workspace overrides this via pendingOpenRef.
   useEffect(() => {
     selWsRef.current = wsId;
+    restoredForRef.current = null;
     setSelectedMode(undefined);
     setSelectedSessionId(undefined);
     setSelectedRemote(null);
-    setSelectedPath(readSelMap()[wsId] ?? null);
+    setSelectedPath(null);
   }, [wsId]);
   // Every open path (sidebar row, ⌘K, notification, review link) funnels
-  // through openInlineHub / openRemoteWorktree, so this is the one place a
-  // worktree being opened joins the active Focus. A ref, because those
-  // callbacks are created before the Focus state they need exists.
+  // through openInlineHub / openRemoteWorktree. A hub needs an active Focus:
+  // the worktree joins it on open. With none, the open waits in
+  // pendingFocusOpenRef while the sidebar asks for a Focus; once one is
+  // active the open goes through. Refs, because these callbacks are created
+  // before the Focus state they need exists.
   const noteOpenedRef = useRef<(pinId: string) => void>(() => {});
+  // 'open' when a Focus is active, 'wait' until the list has loaded, 'ask' when there is none.
+  const focusGateRef = useRef<() => 'open' | 'wait' | 'ask'>(() => 'wait');
+  type PendingFocusOpen = { kind: 'local'; w: Worktree; mode?: typeof selectedMode; sessionId?: string } | { kind: 'remote'; w: RemoteWorktree };
+  const pendingFocusOpenRef = useRef<PendingFocusOpen | null>(null);
+  // Pin ids whose join is still in flight: the gate effect must not close
+  // the hub in the beat between the open and the server's answer.
+  const joiningRef = useRef(new Set<string>());
   const openInlineHub = useCallback((w: Worktree, mode?: typeof selectedMode, sessionId?: string) => {
+    const gate = focusGateRef.current();
+    if (gate !== 'open') {
+      pendingFocusOpenRef.current = { kind: 'local', w, mode, sessionId };
+      if (gate === 'ask') window.dispatchEvent(new Event(NEW_FOCUS_EVENT));
+      return;
+    }
     track('hub_opened', { tab: mode ?? 'restored' });
     // Record the open so the ⌘K palette can rank recently-used worktrees on top.
     bumpWorktreeOpened(w.path);
@@ -544,6 +563,12 @@ export function Dashboard(props: {
   // a quiet loading hint instead of runner rows popping in a beat late.
   const [remoteLoading, setRemoteLoading] = useState(true);
   const openRemoteWorktree = useCallback((w: RemoteWorktree) => {
+    const gate = focusGateRef.current();
+    if (gate !== 'open') {
+      pendingFocusOpenRef.current = { kind: 'remote', w };
+      if (gate === 'ask') window.dispatchEvent(new Event(NEW_FOCUS_EVENT));
+      return;
+    }
     noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
     setSelectedPath(null); // one hub at a time
     setSelectedRemote(w);
@@ -552,19 +577,48 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onOpenRemoteWorktree]);
 
-  // An opened worktree joins the active Focus. With no Focus active it joins
-  // nothing: a Focus is made on purpose, never as a side effect of opening.
-  // The list is awaited first so a restore-time open sees the real active
-  // Focus. Assigned every render so the open callbacks above see the current one.
+  // An opened worktree joins the active Focus. Assigned every render so the
+  // open callbacks above see the current Focus.
   const focusApi = useFocuses(wsId);
   useFocusShortcut({ focuses: focusApi.focuses, activeId: focusApi.activeId, activate: focusApi.activate });
+  focusGateRef.current = () => (!focusApi.loaded ? 'wait' : focusApi.active ? 'open' : 'ask');
   noteOpenedRef.current = (pinId) => {
+    joiningRef.current.add(pinId);
     void (async () => {
       await ensureFocusesLoaded(wsId);
       const active = activeFocusOf(wsId);
       if (active && !active.members.includes(pinId)) await focusApi.setMembership(active.id, pinId, true);
-    })().catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }));
+    })()
+      .catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }))
+      .finally(() => { joiningRef.current.delete(pinId); });
   };
+  // Restore this workspace's stored worktree once its Focuses are known, and
+  // only if the active Focus holds it: the hub never shows a worktree the
+  // sidebar does not.
+  useEffect(() => {
+    if (!focusApi.loaded || restoredForRef.current === wsId) return;
+    restoredForRef.current = wsId;
+    const path = readSelMap()[wsId] ?? null;
+    if (path && focusApi.active?.members.includes(`local:${path}`)) setSelectedPath(path);
+  }, [wsId, focusApi.loaded, focusApi.active]);
+  // An open that waited for a Focus goes through once one is active.
+  useEffect(() => {
+    const pending = pendingFocusOpenRef.current;
+    if (!pending || !focusApi.loaded || !focusApi.active) return;
+    pendingFocusOpenRef.current = null;
+    if (pending.kind === 'local') openInlineHub(pending.w, pending.mode, pending.sessionId);
+    else openRemoteWorktree(pending.w);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusApi.loaded, focusApi.active]);
+  // Switching Focus, or dropping the open worktree from it, closes the hub.
+  useEffect(() => {
+    if (!focusApi.loaded) return;
+    const pin = selectedRemote ? remotePinId(selectedRemote) : selectedPath ? `local:${selectedPath}` : null;
+    if (!pin || joiningRef.current.has(pin)) return;
+    if (focusApi.active?.members.includes(pin)) return;
+    setSelectedPath(null);
+    setSelectedRemote(null);
+  }, [focusApi.loaded, focusApi.active, selectedPath, selectedRemote]);
   useEffect(() => {
     // A space switch clears the previous space's rows rather than letting them
     // linger: they'd render as orphan repo folders here until the fetch lands.
