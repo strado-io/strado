@@ -497,7 +497,10 @@ export function Dashboard(props: {
         setSidebarCollapsed((prev) => !prev);
       } else if (e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        // Opening or closing, ⌘K always means the full palette: a filter set
+        // by the parked-groups link must not survive into the next open.
         setShowPalette((p) => !p);
+        setPaletteFilter(null);
       } else if (e.key === ',') {
         e.preventDefault();
         setSettingsSection('profile');

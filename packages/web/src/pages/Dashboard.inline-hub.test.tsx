@@ -17,8 +17,25 @@ vi.mock('../contexts/IntercomContext', () => ({
     assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
   }),
 }));
+// Groups fail to load by default (no groups, and each mount retries, as
+// before); a test can resolve them to seed a parked group.
+const groupsList = vi.hoisted(() => vi.fn());
+// Pass-through CommandPalette that records the props it was last given, so a
+// test can see the filter the Dashboard handed it.
+const paletteProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
+vi.mock('../components/CommandPalette', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../components/CommandPalette')>();
+  return {
+    ...mod,
+    CommandPalette: (props: Parameters<typeof mod.CommandPalette>[0]) => {
+      paletteProps.last = props as unknown as Record<string, unknown>;
+      return <mod.CommandPalette {...props} />;
+    },
+  };
+});
 vi.mock('../api', () => ({
   api: {
+    groups: { list: groupsList },
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
     worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
@@ -47,6 +64,7 @@ vi.mock('./TerminalView', () => ({
 }));
 
 import { Dashboard } from './Dashboard';
+import { __resetFocusGroups } from '../hooks/useFocusGroups';
 
 const noop = vi.fn();
 function renderDashboard() {
@@ -68,6 +86,9 @@ const worktreeRow = () => screen.getAllByText('FD-9')[0]!;
 
 describe('Dashboard inline hub', () => {
   beforeEach(() => {
+    __resetFocusGroups();
+    groupsList.mockReset().mockRejectedValue(new Error('no groups'));
+    paletteProps.last = null;
     localStorage.clear();
     localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
   });
@@ -153,6 +174,21 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByRole('region', { name: 'Working on' })).getByText('FD-9')).toBeInTheDocument();
   });
 
+  it('⌘K after the parked-groups link reopens the full palette, not the group filter', async () => {
+    groupsList.mockResolvedValue([
+      { id: 'g1', name: 'FX-900', members: ['local:/wt/OTHER'], createdAt: 't', state: 'parked' },
+    ]);
+    renderDashboard();
+    fireEvent.click(await screen.findByRole('button', { name: '1 more' }));
+    await screen.findByLabelText('Global search');
+    expect(paletteProps.last?.filter).toBe('groups');
+    fireEvent.keyDown(window, { key: 'k', metaKey: true }); // ⌘K closes it
+    expect(screen.queryByLabelText('Global search')).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true }); // ⌘K opens it again
+    await screen.findByLabelText('Global search');
+    expect(paletteProps.last?.filter).toBeNull();
+  });
+
   it('persists selection and restores it on remount', async () => {
     const { unmount } = renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
@@ -173,6 +209,8 @@ describe('Dashboard inline hub', () => {
 
 describe('Dashboard sidebar hover card', () => {
   beforeEach(() => {
+    __resetFocusGroups();
+    groupsList.mockReset().mockRejectedValue(new Error('no groups'));
     localStorage.clear();
     localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
