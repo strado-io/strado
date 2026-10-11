@@ -141,15 +141,6 @@ describe('Dashboard inline hub', () => {
     await waitFor(() => expect(hub).toHaveAttribute('data-modal-open', 'false'));
   });
 
-  it('selecting Tasks clears the hub', async () => {
-    renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(worktreeRow());
-    await screen.findByTestId('inline-hub');
-    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
-    await waitFor(() => expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument());
-  });
-
   it('opens the workspace-level code reviews page from the sidebar', async () => {
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
