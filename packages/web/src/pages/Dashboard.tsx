@@ -30,7 +30,8 @@ import { useFocusShortcut } from '../hooks/focusShortcut';
 import { useFocusGroups } from '../hooks/useFocusGroups';
 import { useFocusPrefs } from '../hooks/focusPrefs';
 import { useMrSummaries } from '../hooks/mrSummaries';
-import { activeGroupOf, isGroupDone, nextMember, resolveMembers } from '../components/sidebar/focusGroups';
+import { activeGroupOf, groupState, isGroupDone, nextMember, openEffects, resolveMembers } from '../components/sidebar/focusGroups';
+import { addLooseWorktree } from '../hooks/looseWorktrees';
 import { worktreeLabel } from '../components/sidebar/labels';
 import type { SidebarEntry } from '../components/sidebar/pinIds';
 import { TaskBoard } from '../components/TaskBoard';
@@ -274,10 +275,16 @@ export function Dashboard(props: {
     setSelectedRemote(null);
     setSelectedPath(readSelMap()[wsId] ?? null);
   }, [wsId]);
+  // Every open path (sidebar row, ⌘K, notification, review link, ⌥⌘-arrow)
+  // funnels through openInlineHub / openRemoteWorktree, so this is the one
+  // place a worktree being opened reaches Working on. A ref, because those
+  // callbacks are created before the groups and MR state they need exist.
+  const noteOpenedRef = useRef<(pinId: string) => void>(() => {});
   const openInlineHub = useCallback((w: Worktree, mode?: typeof selectedMode, sessionId?: string) => {
     track('hub_opened', { tab: mode ?? 'restored' });
     // Record the open so the ⌘K palette can rank recently-used worktrees on top.
     bumpWorktreeOpened(w.path);
+    noteOpenedRef.current(`local:${w.path}`);
     // Explicitly opening an agent lifts any persisted "closed" flag so the hub
     // shows the tab even after a prior close (reload restores mode='claude').
     if (mode === 'claude' || mode === 'codex' || mode === 'opencode' || mode === 'pi') rememberClosedAgent(mode, w.path, false);
@@ -305,22 +312,11 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId]);
   const [showPalette, setShowPalette] = useState(false);
+  const [paletteFilter, setPaletteFilter] = useState<'groups' | null>(null);
+  const openPalette = (filter: 'groups' | null = null) => { setPaletteFilter(filter); setShowPalette(true); };
   const [density, setDensity] = useDensity();
   const [boardPrefs, patchBoardPrefs] = useBoardPrefs(wsId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
-  const [expandedRepos, setExpandedRepos] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('strado:expanded-repos') || '[]')); }
-    catch { return new Set(); }
-  });
-  useEffect(() => {
-    localStorage.setItem('strado:expanded-repos', JSON.stringify([...expandedRepos]));
-  }, [expandedRepos]);
-  const toggleRepo = (repoId: string) =>
-    setExpandedRepos((prev) => {
-      const next = new Set(prev);
-      next.has(repoId) ? next.delete(repoId) : next.add(repoId);
-      return next;
-    });
   const { gridTemplate, totalWidth, startResize } = useColumnWidths();
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
@@ -513,7 +509,7 @@ export function Dashboard(props: {
     // Shortcuts pressed inside an embed (Browser preview view, VS Code iframe)
     // never reach window listeners; the shell forwards them over IPC.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
-      if (combo === 'palette') setShowPalette((p) => !p);
+      if (combo === 'palette') { setShowPalette((p) => !p); setPaletteFilter(null); }
       else if (combo === 'settings') setSettingsSection('profile');
     });
     return () => {
@@ -549,6 +545,7 @@ export function Dashboard(props: {
   // a quiet loading hint instead of runner rows popping in a beat late.
   const [remoteLoading, setRemoteLoading] = useState(true);
   const openRemoteWorktree = useCallback((w: RemoteWorktree) => {
+    noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
     setSelectedPath(null); // one hub at a time
     setSelectedRemote(w);
     props.onOpenRemoteWorktree?.(w);
@@ -588,12 +585,29 @@ export function Dashboard(props: {
       group,
       detail: [label, repoNames.join(', ')].filter(Boolean).join(' · '),
       done: isGroupDone(members, (p) => mrByPath.get(p)?.state ?? null),
+      parked: groupState(group) === 'parked',
     };
   }), [focusGroups.groups, state.worktrees, state.repos, remote.worktrees, mrByPath]);
+  // Assigned every render so the open callbacks above always see current
+  // groups and MR state. Opening a worktree brings back any parked group
+  // holding it; one in no group (and not settled) gets a loose row.
+  noteOpenedRef.current = (pinId) => {
+    const path = pinId.startsWith('local:') ? pinId.slice('local:'.length) : null;
+    const mrState = path ? mrByPath.get(path)?.state : undefined;
+    const isRoot = !!path && state.repos.some((r) => r.path === path);
+    const settled = (mrState === 'merged' || mrState === 'closed') && !isRoot;
+    const { promote, addLoose } = openEffects(focusGroups.groups, pinId, settled);
+    if (addLoose) addLooseWorktree(wsId, pinId);
+    for (const id of promote) {
+      focusGroups.setState(id, 'working').catch((e) => dispatch({ type: 'error', message: (e as Error).message }));
+    }
+    if (promote[0]) focusPrefs.setActiveFocusGroupId(promote[0]);
+  };
   // Picking a group in ⌘K makes it active and opens its most recently used member.
   const pickFocusGroup = (id: string) => {
-    focusPrefs.setActiveFocusGroupId(id);
     const group = focusGroups.groups.find((g) => g.id === id);
+    if (group && groupState(group) === 'parked') focusGroups.setState(id, 'working').catch((e) => dispatch({ type: 'error', message: (e as Error).message }));
+    focusPrefs.setActiveFocusGroupId(id);
     if (!group) return;
     const members = resolveMembers(group, state.worktrees, remote.worktrees);
     const lru = readWorktreeLru();
@@ -803,23 +817,12 @@ export function Dashboard(props: {
             setAddRepoAnchor(anchor ?? null);
             setShowAddRepo(true);
           }}
-          onDeleteRepo={async (repo) => {
-            if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
-            try {
-              await api.repos.remove(wsId, repo.id);
-              const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-              commitTree(repos, worktrees);
-            } catch (err) {
-              dispatch({ type: 'error', message: (err as Error).message });
-            }
-          }}
-          expandedRepos={expandedRepos}
-          onToggleRepo={toggleRepo}
+          onSearch={() => openPalette()}
+          onShowParked={() => openPalette('groups')}
           onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
-          onNewWorktreeForRepo={(repo) => props.onNewWorktree(repo.id)}
           onNewWorktree={() => props.onNewWorktree()}
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
@@ -1017,6 +1020,7 @@ export function Dashboard(props: {
           activeWorkspaceId={wsId}
           focusGroups={paletteGroups}
           onPickGroup={pickFocusGroup}
+          filter={paletteFilter}
           onOpenWorktree={(w, fromWs) => {
             if (fromWs && fromWs !== wsId) {
               // hub (if open) must come down before the workspace flips —
@@ -1030,12 +1034,12 @@ export function Dashboard(props: {
               openInlineHub(w);
             }
           }}
-          onGoRepo={(repoId) => { setSelectedPath(null); setExpandedRepos((prev) => new Set(prev).add(repoId)); props.onCloseOverlays(); }}
+          onGoRepo={(repoId) => { props.onCloseOverlays(); props.onNewWorktree(repoId); }}
           onSwitchWorkspace={(id) => {
             props.onCloseOverlays();
             void switchTo(id);
           }}
-          onClose={() => setShowPalette(false)}
+          onClose={() => { setShowPalette(false); setPaletteFilter(null); }}
         />
       )}
 
@@ -1049,6 +1053,11 @@ export function Dashboard(props: {
             refreshTicketProviders();
           }}
           onOpenFeedback={() => setFeedbackOpen(true)}
+          onNewWorktree={(repoId) => { setSettingsSection(null); props.onNewWorktree(repoId); }}
+          onReposChanged={async () => {
+            const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
+            commitTree(repos, worktrees);
+          }}
         />
       )}
 
