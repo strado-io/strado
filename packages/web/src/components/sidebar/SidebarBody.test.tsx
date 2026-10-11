@@ -241,6 +241,17 @@ describe('SidebarBody: the Focus switcher', () => {
     expect(screen.queryByRole('dialog', { name: 'Switch focus' })).toBeNull();
   });
 
+  it('a repo checkout with an old merged PR never makes a Focus Done', () => {
+    focusMock.focuses = [focus('f1', 'Root', ['local:/r1'])];
+    focusMock.activeId = 'f1';
+    const root = { ...wt('/r1', 'r1'), branch: 'main' } as Worktree;
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
+    render(<SidebarBody {...props({ worktrees: [root] })} />);
+    fireEvent.click(pill());
+    expect(within(popover()).getByRole('button', { name: /Root/ })).not.toHaveTextContent('✔');
+    expect(within(popover()).queryByText('Done')).toBeNull();
+  });
+
   it('rows show the repos a Focus spans, a status glyph, and Done ones sink to a group at the bottom', () => {
     const worktrees = [
       { ...wt('/r1/wt', 'r1'), claudeStatus: 'waiting', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree,
@@ -258,6 +269,7 @@ describe('SidebarBody: the Focus switcher', () => {
     const perf = within(popover()).getByRole('button', { name: /Perf/ });
     expect(perf).toHaveTextContent('✔');
     expect(within(popover()).getByText('Done')).toBeInTheDocument();
+    expect(within(popover()).getByRole('button', { name: /Onboarding/ })).not.toHaveTextContent('✔');
     const names = within(popover()).getAllByRole('button').filter((b) => /⌘\d/.test(b.textContent ?? '')).map((b) => b.textContent?.slice(0, 4));
     expect(names).toEqual(['Onbo', 'Bill', 'Perf']);
   });

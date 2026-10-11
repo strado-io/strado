@@ -272,6 +272,7 @@ export function SidebarBody({
     )];
   });
 
+  const repoRoots = new Set(repos.map((r) => r.path));
   // What the switcher shows per Focus: the repos its members span, and whether
   // an agent in it is waiting or working, or every PR in it is merged/closed.
   const rowInfo = new Map<string, FocusRowInfo>(focuses.map((f) => {
@@ -280,7 +281,11 @@ export function SidebarBody({
     const repoIds = [...new Set([...locals.map((w) => w.repoId), ...remotes.map((w) => w.localRepoId)])];
     const reposIn = repoIds.flatMap((id) => { const r = repos.find((x) => x.id === id); return r ? [{ id: r.id, name: r.name }] : []; });
     const attention = locals.map((w) => attentionOf(w, mrByPath.get(w.path)));
-    const done = locals.length > 0 && remotes.length === 0 && locals.every((w) => { const st = mrByPath.get(w.path)?.state; return st === 'merged' || st === 'closed'; });
+    // A repo's own checkout (main/master) never finishes, whatever PR its
+    // branch once had; Done needs at least one real worktree, all merged or closed.
+    const real = locals.filter((w) => !repoRoots.has(w.path));
+    const done = real.length > 0 && real.length === locals.length && remotes.length === 0
+      && real.every((w) => { const st = mrByPath.get(w.path)?.state; return st === 'merged' || st === 'closed'; });
     const status = attention.includes('needs-you') ? 'needs-you' : attention.includes('working') ? 'working' : done ? 'done' : null;
     return [f.id, { repos: reposIn, status }];
   }));
