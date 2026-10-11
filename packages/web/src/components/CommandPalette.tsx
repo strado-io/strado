@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type FocusGroup } from '../api';
+import { api, type FocusGroup, type RemoteWorktree } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
 import { ShellIcon, ClaudeIcon, CodexIcon, VsCodeIcon, GlobeIcon, BookIcon } from './hub/icons';
 import { hasSession } from '../hooks/sessions';
@@ -9,7 +9,9 @@ import { readKbTabs } from '../hooks/kbTabs';
 import { readWorktreeLru, compareByActivityThenRecency, type RankableWorktree } from '../lib/worktreeLru';
 
 type Result =
-  | { kind: 'worktree'; id: string; label: string; detail: string; worktree: Worktree; wsId?: string }
+  | { kind: 'worktree'; id: string; label: string; detail: string; worktree: Worktree; wsId?: string; remote?: undefined }
+  // A runner worktree in this workspace (opened through the remote hub).
+  | { kind: 'worktree'; id: string; label: string; detail: string; remote: RemoteWorktree; worktree?: undefined; wsId?: undefined }
   | { kind: 'repo'; id: string; label: string; detail: string; repoId: string }
   | { kind: 'workspace'; id: string; label: string; detail: string; wsId: string }
   | { kind: 'group'; id: string; label: string; detail: string; done: boolean; parked: boolean };
@@ -20,6 +22,8 @@ const GROUP_LABEL: Record<Result['kind'], string> = {
   workspace: 'Workspaces',
   group: 'Focus groups',
 };
+
+const NO_REMOTE: RemoteWorktree[] = [];
 
 function matches(q: string, ...fields: (string | null | undefined)[]): boolean {
   return fields.some((f) => f?.toLowerCase().includes(q));
@@ -40,6 +44,8 @@ export function CommandPalette({
   focusGroups = [],
   onPickGroup,
   filter = null,
+  remoteWorktrees = NO_REMOTE,
+  onOpenRemoteWorktree,
 }: {
   repos: RepoConfig[];
   worktrees: Worktree[];
@@ -55,6 +61,10 @@ export function CommandPalette({
   onPickGroup?: (groupId: string) => void;
   // 'groups' narrows the palette to focus groups (the sidebar's Parked link).
   filter?: 'groups' | null;
+  // This workspace's runner worktrees. With no Repos tree, ⌘K is how one that
+  // is neither loose nor grouped gets opened.
+  remoteWorktrees?: RemoteWorktree[];
+  onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 }) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
@@ -129,6 +139,23 @@ export function CommandPalette({
         },
       });
     }
+    for (const w of remoteWorktrees) {
+      const id = `remote:${w.runnerId}:${w.path}`;
+      const repo = (w.localRepoId && repoName.get(w.localRepoId)) || w.remoteRepoName || '';
+      if (q && !matches(q, w.branch, w.name, repo, w.runnerName)) continue;
+      wts.push({
+        path: w.path,
+        active: false,
+        index: index++,
+        result: {
+          kind: 'worktree',
+          id,
+          label: w.branch ?? w.name,
+          detail: [repo, w.runnerName, ...(groupNamesByMember.get(id) ?? [])].filter(Boolean).join(' · '),
+          remote: w,
+        },
+      });
+    }
     for (const { ws, items } of remote) {
       for (const w of items) {
         const ticket = w.meta?.ticketId ?? '';
@@ -162,7 +189,7 @@ export function CommandPalette({
       out.push({ kind: 'workspace', id: ws.id, label: ws.name, detail: 'switch workspace', wsId: ws.id });
     }
     return out.slice(0, 15);
-  }, [query, worktrees, remote, repos, workspaces, activeWorkspaceId, repoName, focusGroups, filter]);
+  }, [query, worktrees, remote, remoteWorktrees, repos, workspaces, activeWorkspaceId, repoName, focusGroups, filter]);
 
   useEffect(() => setSel(0), [query]);
   useEffect(() => inputRef.current?.focus(), []);
@@ -175,7 +202,10 @@ export function CommandPalette({
   const pick = (r: Result) => {
     onClose();
     if (r.kind === 'group') onPickGroup?.(r.id);
-    else if (r.kind === 'worktree') onOpenWorktree(r.worktree, r.wsId);
+    else if (r.kind === 'worktree') {
+      if (r.remote) onOpenRemoteWorktree?.(r.remote);
+      else onOpenWorktree(r.worktree, r.wsId);
+    }
     else if (r.kind === 'repo') onGoRepo(r.repoId);
     else onSwitchWorkspace(r.wsId);
   };
@@ -252,7 +282,7 @@ export function CommandPalette({
                   {r.kind === 'group' && !r.done && r.parked && (
                     <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">parked</span>
                   )}
-                  {r.kind === 'worktree' && (() => {
+                  {r.kind === 'worktree' && r.worktree && (() => {
                     const w = r.worktree;
                     const running = w.process?.status === 'running';
                     const badges: React.ReactNode[] = [];
