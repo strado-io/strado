@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { api, type Focus } from '../api';
+import { api, type Focus, type FocusTicket } from '../api';
 import { clearLooseWorktrees, readLooseWorktrees } from './looseWorktrees';
 
 // Focuses for one workspace, shared by every consumer (the sidebar's panes,
@@ -135,8 +135,8 @@ export function useFocuses(wsId: string) {
     if (id) void mutate(() => api.focuses.update(wsId, id, { touch: true }), replace).catch(() => undefined);
   }, [wsId, mutate, replace]);
   /** Creates and activates. */
-  const create = useCallback(async (name: string, members?: string[]) => {
-    const f = await mutate(() => api.focuses.create(wsId, { name, members }), (created) => setFocuses(wsId, (fs) => [...fs, created]));
+  const create = useCallback(async (name: string, members?: string[], ticket?: FocusTicket) => {
+    const f = await mutate(() => api.focuses.create(wsId, { name, members, ticket }), (created) => setFocuses(wsId, (fs) => [...fs, created]));
     writeActive(wsId, f.id);
     return f;
   }, [wsId, mutate]);
@@ -146,10 +146,14 @@ export function useFocuses(wsId: string) {
   const setMembership = useCallback(async (id: string, memberId: string, member: boolean) => {
     await mutate(() => api.focuses.update(wsId, id, member ? { addMembers: [memberId] } : { removeMembers: [memberId] }), replace);
   }, [wsId, mutate, replace]);
+  const addMembers = useCallback(async (id: string, memberIds: string[]) => {
+    if (memberIds.length === 0) return;
+    await mutate(() => api.focuses.update(wsId, id, { addMembers: memberIds }), replace);
+  }, [wsId, mutate, replace]);
   const remove = useCallback(async (id: string) => {
     await mutate(() => api.focuses.remove(wsId, id), () => setFocuses(wsId, (fs) => fs.filter((x) => x.id !== id)));
     if (readActiveFocusId(wsId) === id) writeActive(wsId, null);
   }, [wsId, mutate]);
 
-  return { focuses: snap.focuses, loaded: snap.loaded, active, activeId, activate, create, rename, setMembership, remove };
+  return { focuses: snap.focuses, loaded: snap.loaded, active, activeId, activate, create, rename, setMembership, addMembers, remove };
 }

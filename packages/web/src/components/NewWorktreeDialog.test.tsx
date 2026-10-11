@@ -323,4 +323,9 @@ describe('NewWorktreeDialog', () => {
       expect(onDone).not.toHaveBeenCalled();
     });
   });
+
+  it('starts with the ticket it was given', () => {
+    render(<NewWorktreeDialog repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={vi.fn()} preselectTicket={{ provider: 'jira', key: 'FD-9' }} />);
+    expect(screen.getByRole('button', { name: 'Ticket: FD-9' })).toBeInTheDocument();
+  });
 });

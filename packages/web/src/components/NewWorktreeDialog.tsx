@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, TicketIssueDto, TicketProviderId } from '../api';
+import { api, TicketIssueDto, TicketProviderId, type FocusTicket } from '../api';
 import type { RepoConfig, Worktree } from '../types';
 import { useJobSteps } from '../hooks/jobSteps';
 import { JobSteps } from './JobSteps';
@@ -47,6 +47,7 @@ export function NewWorktreeDialog({
   worktrees,
   workspaceId,
   preselectRepoId,
+  preselectTicket,
   runners = [],
   onCancel,
   onSubmit,
@@ -57,6 +58,8 @@ export function NewWorktreeDialog({
   /** Used to load the selected repository's local and remote branches. */
   workspaceId?: string;
   preselectRepoId?: string;
+  /** A ticket to start with (the active Focus's), editable as usual. */
+  preselectTicket?: FocusTicket;
   /** Runners that can host this worktree. Empty (the default) hides the choice entirely. */
   runners?: { runnerId: string; name: string; online: boolean }[];
   onCancel: () => void;
@@ -76,7 +79,7 @@ export function NewWorktreeDialog({
   const mainBranchOf = (r?: RepoConfig): string | null | undefined =>
     worktrees.find((w) => !!r && w.path === r.path)?.branch;
   const [repoId, setRepoId] = useState(initialRepo?.id ?? '');
-  const [ticketId, setTicketId] = useState('');
+  const [ticketId, setTicketId] = useState(preselectTicket?.key ?? '');
   const [title, setTitle] = useState('');
   const [sourceBranch, setSourceBranch] = useState(mainBranchOf(initialRepo) ?? 'main');
   const [branchOptions, setBranchOptions] = useState<string[]>([mainBranchOf(initialRepo) ?? 'main']);
@@ -109,7 +112,7 @@ export function NewWorktreeDialog({
     if (progress.error) setCreating(false);
   }, [progress.error]);
   const { configured } = useTickets();
-  const [ticketProvider, setTicketProvider] = useState<TicketProviderId | undefined>(undefined);
+  const [ticketProvider, setTicketProvider] = useState<TicketProviderId | undefined>(preselectTicket?.provider);
   const [myIssues, setMyIssues] = useState<TicketIssueDto[]>([]);
   const [ticketPickerOpen, setTicketPickerOpen] = useState(false);
   const [ticketsLoaded, setTicketsLoaded] = useState(false);

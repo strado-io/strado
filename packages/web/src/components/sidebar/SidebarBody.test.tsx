@@ -7,20 +7,21 @@ import { publishTickets } from '../../hooks/tickets';
 import { SidebarBody, type SidebarBodyProps } from './SidebarBody';
 
 vi.mock('../../hooks/mrSummaries', () => ({ useMrSummaries: vi.fn(() => new Map()) }));
+vi.mock('../../api', () => ({ api: { tickets: { myIssues: vi.fn(async () => []) } } }));
 
 // The Focus list is a shared server-backed store; here it is a plain in-memory
 // one so each test can say which Focuses exist and which is active.
 const focusMock = vi.hoisted(() => ({
-  focuses: [] as { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string }[],
+  focuses: [] as { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string; ticket?: { provider: 'jira' | 'linear'; key: string } }[],
   activeId: null as string | null,
-  activate: vi.fn(), create: vi.fn(), rename: vi.fn(), setMembership: vi.fn(), remove: vi.fn(),
+  activate: vi.fn(), create: vi.fn(), rename: vi.fn(), setMembership: vi.fn(), addMembers: vi.fn(), remove: vi.fn(),
 }));
 vi.mock('../../hooks/useFocuses', () => ({
   useFocuses: () => ({
     focuses: focusMock.focuses, loaded: true, activeId: focusMock.activeId,
     active: focusMock.focuses.find((f) => f.id === focusMock.activeId) ?? null,
     activate: focusMock.activate, create: focusMock.create, rename: focusMock.rename,
-    setMembership: focusMock.setMembership, remove: focusMock.remove,
+    setMembership: focusMock.setMembership, addMembers: focusMock.addMembers, remove: focusMock.remove,
   }),
 }));
 const focus = (id: string, name: string, members: string[] = [], lastActiveAt = '2026-01-01'): Focus =>
@@ -50,7 +51,8 @@ beforeEach(() => {
   localStorage.clear();
   focusMock.focuses = [];
   focusMock.activeId = null;
-  for (const fn of [focusMock.activate, focusMock.create, focusMock.rename, focusMock.setMembership, focusMock.remove]) fn.mockReset();
+  for (const fn of [focusMock.activate, focusMock.create, focusMock.rename, focusMock.setMembership, focusMock.addMembers, focusMock.remove]) fn.mockReset();
+  focusMock.addMembers.mockResolvedValue(undefined);
   focusMock.setMembership.mockResolvedValue(undefined);
   focusMock.create.mockResolvedValue(focus('new', 'New'));
   focusMock.rename.mockResolvedValue(undefined);
@@ -131,16 +133,28 @@ describe('SidebarBody: the active Focus', () => {
     expect(focusMock.setMembership).toHaveBeenCalledWith('f1', 'remote:rn1:/srv/wt/FX-77', false);
   });
 
-  it('with no Focus, says so and offers to make one; the empty Focus says what to do', () => {
-    const { unmount } = render(<SidebarBody {...props()} />);
+  it('with no Focus, says so and New focus opens the composer', () => {
+    render(<SidebarBody {...props()} />);
     expect(pill()).toHaveAccessibleName('Focus: none');
     expect(screen.getByText(/^No focus\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New focus' }));
-    expect(within(popover()).getByLabelText('New focus name')).toHaveFocus();
-    unmount();
-    withFocus();
-    render(<SidebarBody {...props()} />);
-    expect(screen.getByText('Nothing in Billing yet. Search to open a worktree into it, or ✎ to start one.')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+  });
+
+  it('the empty Focus offers Add worktrees (a picker that adds the checked ones) and New worktree here (with its ticket)', () => {
+    focusMock.focuses = [{ ...focus('f1', 'Billing'), ticket: { provider: 'jira', key: 'FD-9' } }];
+    focusMock.activeId = 'f1';
+    const onNewWorktree = vi.fn();
+    render(<SidebarBody {...props({ onNewWorktree })} />);
+    expect(screen.getByText('Nothing in Billing yet.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New worktree here' }));
+    expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add worktrees' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add worktrees to Billing' });
+    fireEvent.click(within(within(dialog).getByRole('group', { name: 'api' })).getByRole('checkbox', { name: 'fx-412' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    expect(focusMock.addMembers).toHaveBeenCalledWith('f1', ['local:/r1/wt']);
+    expect(screen.queryByRole('dialog', { name: 'Add worktrees to Billing' })).toBeNull();
   });
 
   it('toolbar: Search opens the palette, New worktree calls out; no Add repo button', () => {
@@ -168,6 +182,16 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.click(within(menu).getByRole('button', { name: 'Add repo…' }));
     expect(onAddRepo).toHaveBeenCalledWith({ left: 20, right: 20, bottom: 300 });
   });
+
+  it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', () => {
+    render(<SidebarBody {...props()} />);
+    fireEvent(window, new CustomEvent('strado:new-focus', { detail: { seedPinId: 'local:/r2/other' } }));
+    const dialog = screen.getByRole('dialog', { name: 'New focus' });
+    expect(within(dialog).getByLabelText('Focus name')).toHaveValue('fx-412');
+    expect(within(dialog).getByRole('checkbox', { name: 'fx-412', checked: true })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & switch' }));
+    expect(focusMock.create).toHaveBeenCalledWith('fx-412', ['local:/r2/other'], undefined);
+  });
 });
 
 describe('SidebarBody: the Focus switcher', () => {
@@ -184,7 +208,8 @@ describe('SidebarBody: the Focus switcher', () => {
     render(<SidebarBody {...props()} />);
     fireEvent.click(pill());
     const rows = within(popover()).getAllByRole('button').filter((b) => /⌘\d/.test(b.textContent ?? ''));
-    expect(rows.map((b) => b.textContent)).toEqual(['Onboarding⌘1', 'Billing1⌘2', 'Perf2⌘3']);
+    expect(rows.map((b) => b.textContent?.startsWith('Onboarding') ? 'Onboarding' : b.textContent?.startsWith('Billing') ? 'Billing' : 'Perf')).toEqual(['Onboarding', 'Billing', 'Perf']);
+    expect(rows.map((b) => b.textContent?.slice(-1))).toEqual(['1', '2', '3']);
     expect(within(popover()).getByRole('button', { name: /Billing/ })).toHaveAttribute('aria-current', 'true');
     expect(within(popover()).getByLabelText('Filter or create')).toHaveFocus();
     fireEvent.click(within(popover()).getByRole('button', { name: /Perf/ }));
@@ -210,14 +235,33 @@ describe('SidebarBody: the Focus switcher', () => {
     expect(focusMock.create).toHaveBeenCalledWith('Checkout flow');
   });
 
-  it('New focus in the footer switches the field to naming mode', () => {
+  it('New focus in the footer opens the composer and closes the popover', () => {
     render(<SidebarBody {...props()} />);
     fireEvent.click(pill());
     fireEvent.click(within(popover()).getByRole('button', { name: /New focus/ }));
-    const input = within(popover()).getByLabelText('New focus name');
-    fireEvent.change(input, { target: { value: 'Infra' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(focusMock.create).toHaveBeenCalledWith('Infra');
+    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Switch focus' })).toBeNull();
+  });
+
+  it('rows show the repos a Focus spans, a status glyph, and Done ones sink to a group at the bottom', () => {
+    const worktrees = [
+      { ...wt('/r1/wt', 'r1'), claudeStatus: 'waiting', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree,
+      wt('/r2/wt', 'r2'), wt('/r2/other', 'r2'),
+    ];
+    vi.mocked(useMrSummaries).mockReturnValue(new Map([
+      ['/r2/wt', { state: 'merged', updatedAt: '2026-01-01' }],
+      ['/r2/other', { state: 'closed', updatedAt: '2026-01-01' }],
+    ]) as ReturnType<typeof useMrSummaries>);
+    render(<SidebarBody {...props({ worktrees })} />);
+    fireEvent.click(pill());
+    const billing = within(popover()).getByRole('button', { name: /Billing/ });
+    expect(billing).toHaveTextContent('⚑');
+    expect(within(billing).getByTitle('api')).toBeInTheDocument();
+    const perf = within(popover()).getByRole('button', { name: /Perf/ });
+    expect(perf).toHaveTextContent('✔');
+    expect(within(popover()).getByText('Done')).toBeInTheDocument();
+    const names = within(popover()).getAllByRole('button').filter((b) => /⌘\d/.test(b.textContent ?? '')).map((b) => b.textContent?.slice(0, 4));
+    expect(names).toEqual(['Onbo', 'Bill', 'Perf']);
   });
 
   it('renames inline and deletes from a row\'s right-click menu, confirming when the Focus has members', () => {
@@ -236,12 +280,6 @@ describe('SidebarBody: the Focus switcher', () => {
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('2 worktrees stay'));
     expect(focusMock.remove).toHaveBeenCalledWith('f3');
     confirmSpy.mockRestore();
-  });
-
-  it('the new-focus event (⇧⌘N) opens the switcher ready for a name', () => {
-    render(<SidebarBody {...props()} />);
-    fireEvent(window, new Event('strado:new-focus'));
-    expect(within(popover()).getByLabelText('New focus name')).toBeInTheDocument();
   });
 
   it('has no All worktrees row (the bottom nav has the page), and Escape closes', () => {

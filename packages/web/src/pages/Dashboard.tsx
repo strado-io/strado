@@ -1,6 +1,6 @@
 import { OpenSidebarButton } from '../components/SidebarToggle';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { api, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
+import { api, type FocusTicket, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
 import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } from '../hooks/claudeNotifications';
 import { useIntercom } from '../contexts/IntercomContext';
@@ -186,7 +186,8 @@ export function Dashboard(props: {
   /** A renderer modal owned by App is open. Native browser/DevTools views
    *  must be detached because CSS z-index cannot paint above them. */
   modalOpen?: boolean;
-  onNewWorktree: (repoId?: string) => void;
+  /** New worktree, optionally in a repo and/or for a ticket (an empty Focus passes its own). */
+  onNewWorktree: (repoId?: string, ticket?: FocusTicket) => void;
   onShowLogs: (w: Worktree) => void;
   onMenu: (w: Worktree) => void;
   onOpenNote: (w: Worktree) => void;
@@ -286,7 +287,7 @@ export function Dashboard(props: {
     const gate = focusGateRef.current();
     if (gate !== 'open') {
       pendingFocusOpenRef.current = { kind: 'local', w, mode, sessionId };
-      if (gate === 'ask') window.dispatchEvent(new Event(NEW_FOCUS_EVENT));
+      if (gate === 'ask') window.dispatchEvent(new CustomEvent(NEW_FOCUS_EVENT, { detail: { seedPinId: `local:${w.path}` } }));
       return;
     }
     track('hub_opened', { tab: mode ?? 'restored' });
@@ -553,7 +554,7 @@ export function Dashboard(props: {
     const gate = focusGateRef.current();
     if (gate !== 'open') {
       pendingFocusOpenRef.current = { kind: 'remote', w };
-      if (gate === 'ask') window.dispatchEvent(new Event(NEW_FOCUS_EVENT));
+      if (gate === 'ask') window.dispatchEvent(new CustomEvent(NEW_FOCUS_EVENT, { detail: { seedPinId: `remote:${w.runnerId}:${w.path}` } }));
       return;
     }
     noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
@@ -774,7 +775,7 @@ export function Dashboard(props: {
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
-          onNewWorktree={() => props.onNewWorktree()}
+          onNewWorktree={(ticket) => props.onNewWorktree(undefined, ticket)}
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}

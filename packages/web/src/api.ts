@@ -234,8 +234,9 @@ function agentQuery(opts: AgentReadOpts): string {
 export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 
 /** A named, cross-repo set of worktrees for one task. Members are sidebar pin ids. The sidebar shows the active one. */
-export type Focus = { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string };
-export type FocusPatch = { name?: string; addMembers?: string[]; removeMembers?: string[]; touch?: boolean };
+export type FocusTicket = { provider: TicketProviderId; key: string };
+export type Focus = { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string; ticket?: FocusTicket };
+export type FocusPatch = { name?: string; addMembers?: string[]; removeMembers?: string[]; touch?: boolean; ticket?: FocusTicket | null };
 
 export const api = {
   terminal: {
@@ -382,7 +383,7 @@ export const api = {
   focuses: {
     list: (wsId: string) =>
       request<{ focuses: Focus[] }>(`${wsBase(wsId)}/focuses`).then((b) => b.focuses),
-    create: (wsId: string, body: { name: string; members?: string[] }) =>
+    create: (wsId: string, body: { name: string; members?: string[]; ticket?: FocusTicket }) =>
       request<{ focus: Focus }>(`${wsBase(wsId)}/focuses`, { method: 'POST', body: JSON.stringify(body) }).then((b) => b.focus),
     update: (wsId: string, id: string, body: FocusPatch) =>
       request<{ focus: Focus }>(`${wsBase(wsId)}/focuses/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }).then((b) => b.focus),

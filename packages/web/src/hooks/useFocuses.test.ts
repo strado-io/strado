@@ -62,7 +62,7 @@ describe('useFocuses', () => {
     const { result } = renderHook(() => useFocuses('w1'));
     await waitFor(() => expect(result.current.loaded).toBe(true));
     await act(async () => { await result.current.create('N', ['local:/a']); });
-    expect(api.focuses.create).toHaveBeenCalledWith('w1', { name: 'N', members: ['local:/a'] });
+    expect(api.focuses.create).toHaveBeenCalledWith('w1', { name: 'N', members: ['local:/a'], ticket: undefined });
     expect(result.current.focuses.map((x) => x.id)).toEqual(['new']);
     expect(result.current.active?.id).toBe('new');
     await act(async () => { await result.current.remove('new'); });

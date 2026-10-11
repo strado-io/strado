@@ -1,13 +1,24 @@
 // The Focus pill at the top of the sidebar and the popover behind it. The
 // pill names the active Focus ("No focus" when none). The popover is one
 // field over the list: type to filter, pick to switch, type a new name and
-// press Enter to create. Rows are ordered by last use and the first nine
-// carry ⌘1–⌘9 hints. Right-click a row to rename or delete it. The Worktrees
-// page has its own icon in the bottom nav, so it is not a row here.
+// press Enter to create a blank one; New focus opens the composer. Rows are
+// ordered by last use and the first nine carry ⌘1–⌘9 hints; each shows its
+// repos, a status glyph and when it was last used, and Focuses whose PRs are
+// all merged sit in a Done group at the bottom. Right-click a row to rename
+// or delete it.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Focus } from '../../api';
-import { MenuPopover } from './rowBits';
+import { MenuPopover, BrailleSpinner } from './rowBits';
+import { RepoAvatar } from './WorktreeCard';
+import { shortRelativeTime } from '../../lib/relativeTime';
+
+/** What the switcher says about a Focus beyond its name: computed by SidebarBody from its members. */
+export type FocusRowInfo = {
+  repos: { id: string; name: string }[];
+  /** needs-you: an agent is waiting; working: one is busy; done: every PR merged or closed. */
+  status: 'needs-you' | 'working' | 'done' | null;
+};
 
 const icon = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
 // Lucide: focus.
@@ -41,21 +52,22 @@ export function FocusPill({ focus, open, onClick, pillRef }: {
   );
 }
 
-export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCreate, onRename, onDelete, onClose }: {
+export function FocusPopover({ anchor, focuses, activeId, rowInfo, onActivate, onCreate, onNewFocus, onRename, onDelete, onClose }: {
   /** The pill's rect; the popover hangs under it. */
   anchor: { left: number; bottom: number; width: number };
   focuses: Focus[];
   activeId: string | null;
-  /** 'create' starts with the field ready for a new name. */
-  mode: 'browse' | 'create';
+  rowInfo?: Map<string, FocusRowInfo>;
   onActivate: (id: string) => void;
+  /** A blank Focus from the field (Enter on a new name). */
   onCreate: (name: string) => void;
+  /** The composer: from a ticket or worktrees. */
+  onNewFocus: () => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [creating, setCreating] = useState(mode === 'create');
   const [sel, setSel] = useState(0);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; focus: Focus } | null>(null);
@@ -63,8 +75,11 @@ export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCr
   const input = useRef<HTMLInputElement>(null);
 
   const sorted = [...focuses].sort(byLastActive);
+  const isDone = (f: Focus) => rowInfo?.get(f.id)?.status === 'done';
   const q = query.trim().toLowerCase();
-  const visible = creating ? [] : q ? sorted.filter((f) => f.name.toLowerCase().includes(q)) : sorted;
+  const matching = q ? sorted.filter((f) => f.name.toLowerCase().includes(q)) : sorted;
+  // Live ones first, then the Done group; ⌘ numbers stay by last use.
+  const visible = [...matching.filter((f) => !isDone(f)), ...matching.filter(isDone)];
   const exact = sorted.some((f) => f.name.toLowerCase() === q);
   const canCreate = q.length > 0 && !exact;
   // What ↑/↓/Enter walk: the matching rows, then "Create" when the name is new.
@@ -105,13 +120,13 @@ export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCr
       style={{ left, top: anchor.bottom + 4, width }}>
       <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 focus-within:border-zinc-600">
         <span className="shrink-0 text-zinc-600"><FocusIcon size={13} /></span>
-        <input ref={input} value={query} aria-label={creating ? 'New focus name' : 'Filter or create'}
-          placeholder={creating ? 'Name the new focus…' : 'Filter or create…'}
+        <input ref={input} value={query} aria-label="Filter or create"
+          placeholder="Filter or create…"
           onChange={(e) => { setQuery(e.target.value); setSel(0); }} onKeyDown={onInputKey}
           className="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none" />
       </div>
       <div className="mt-1.5 flex max-h-72 flex-col gap-px overflow-y-auto">
-        {options.length === 0 && !creating && (
+        {options.length === 0 && (
           <p className="px-2 py-2 text-xs text-zinc-600">{focuses.length === 0 ? 'No focuses yet. Type a name to make one.' : 'No match.'}</p>
         )}
         {options.map((o, i) => {
@@ -128,6 +143,8 @@ export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCr
           const f = o.focus;
           const n = sorted.indexOf(f) + 1;
           const active = f.id === activeId;
+          const info = rowInfo?.get(f.id);
+          const firstDone = isDone(f) && (i === 0 || !isDone((options[i - 1] as { focus?: Focus }).focus ?? f));
           if (renaming?.id === f.id) {
             return (
               <form key={f.id} className="flex items-center gap-2 px-2 py-1"
@@ -142,22 +159,34 @@ export function FocusPopover({ anchor, focuses, activeId, mode, onActivate, onCr
             );
           }
           return (
-            <button key={f.id} type="button" aria-current={active ? 'true' : undefined} onClick={() => choose(o)} onMouseEnter={() => setSel(i)}
-              onContextMenu={(e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, focus: f }); }}
-              className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${hl ? 'bg-zinc-800 text-zinc-100' : active ? 'text-zinc-100' : 'text-zinc-300'}`}>
-              <span className={`flex w-4 shrink-0 justify-center ${active ? 'text-sky-400' : 'text-transparent'}`}><CheckIcon /></span>
-              <span className="min-w-0 flex-1 truncate">{f.name}</span>
-              {f.members.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{f.members.length}</span>}
-              {n <= 9 && <span className="shrink-0 font-mono text-[11px] text-zinc-600">⌘{n}</span>}
-            </button>
+            <div key={f.id} className="contents">
+              {firstDone && <div className="mt-1 px-2 pb-0.5 pt-1 text-[10px] font-medium uppercase tracking-wide text-zinc-600">Done</div>}
+              <button type="button" aria-current={active ? 'true' : undefined} onClick={() => choose(o)} onMouseEnter={() => setSel(i)}
+                onContextMenu={(e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, focus: f }); }}
+                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${hl ? 'bg-zinc-800 text-zinc-100' : active ? 'text-zinc-100' : isDone(f) ? 'text-zinc-500' : 'text-zinc-300'}`}>
+                <span className={`flex w-4 shrink-0 justify-center ${active ? 'text-sky-400' : 'text-transparent'}`}><CheckIcon /></span>
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                {info && info.repos.length > 0 && (
+                  <span className="flex shrink-0 -space-x-1" title={info.repos.map((r) => r.name).join(', ')}>
+                    {info.repos.slice(0, 3).map((r) => <RepoAvatar key={r.id} id={r.id} name={r.name} />)}
+                  </span>
+                )}
+                {info?.status === 'needs-you' && <span className="shrink-0 text-[11px] text-amber-400" title="An agent is waiting on you">⚑</span>}
+                {info?.status === 'working' && <span className="shrink-0" title="An agent is working"><BrailleSpinner small /></span>}
+                {info?.status === 'done' && <span className="shrink-0 text-[11px] text-emerald-500" title="Every PR merged">✔</span>}
+                {f.members.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{f.members.length}</span>}
+                <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
+                {n <= 9 && <span className="shrink-0 font-mono text-[11px] text-zinc-600">⌘{n}</span>}
+              </button>
+            </div>
           );
         })}
       </div>
       <div className="mt-1.5 flex flex-col gap-px border-t border-zinc-800 pt-1.5">
-        <button type="button" onClick={() => { setCreating(true); setQuery(''); setSel(0); input.current?.focus(); }}
+        <button type="button" onClick={() => { onNewFocus(); onClose(); }}
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100">
           <span className="flex w-4 shrink-0 justify-center text-zinc-500"><PlusIcon /></span>
-          <span className="min-w-0 flex-1">New focus</span>
+          <span className="min-w-0 flex-1">New focus<span className="ml-1.5 text-xs text-zinc-600">from a ticket or worktrees</span></span>
           <span className="shrink-0 font-mono text-[11px] text-zinc-600">⇧⌘N</span>
         </button>
       </div>

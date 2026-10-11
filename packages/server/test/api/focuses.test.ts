@@ -113,4 +113,14 @@ describe('focus routes', () => {
     const bad = await app.inject({ method: 'PATCH', url: `${url}/${id}`, payload: { state: 'parked' } });
     expect(bad.statusCode).toBe(400);
   });
+
+  it('accepts a ticket on create and on patch, and rejects a malformed one', async () => {
+    const created = await app.inject({ method: 'POST', url, payload: { name: 'FD-9', ticket: { provider: 'jira', key: 'FD-9' } } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().focus.ticket).toEqual({ provider: 'jira', key: 'FD-9' });
+    const id = created.json().focus.id as string;
+    const cleared = await app.inject({ method: 'PATCH', url: `${url}/${id}`, payload: { ticket: null } });
+    expect(cleared.json().focus.ticket).toBeUndefined();
+    expect((await app.inject({ method: 'PATCH', url: `${url}/${id}`, payload: { ticket: { provider: 'jira' } } })).statusCode).toBe(400);
+  });
 });
