@@ -181,6 +181,7 @@ export function Sidebar({
       worktrees={data?.worktrees ?? []}
       remoteWorktrees={[]}
       runnerStatuses={[]}
+      isActivePane={false}
     />
   );
 
