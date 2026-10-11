@@ -264,7 +264,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       runnerName={w.runnerName}
       onOpen={open}
       onContextMenu={menuItems.length > 0 && onContextMenu ? (e) => onContextMenu(e, menuItems) : undefined}
-      className={`group relative flex items-stretch rounded-lg ${activeRow ? 'bg-zinc-800/80' : 'bg-zinc-900/50 hover:bg-zinc-900'}`}
+      className={`group relative flex items-stretch rounded-lg ${activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
     >
       <WorktreeCard
         repo={repoName ? { id: w.localRepoId ?? repoName, name: repoName } : null}
@@ -426,7 +426,7 @@ export function SidebarBody({
         onSettings={onWorktreeSettings}
         onContextMenu={(e) => openContextMenu(e, menuItems)}
         className={`group relative flex items-stretch rounded-lg ${
-          activeRow ? 'bg-zinc-800/80' : 'bg-zinc-900/50 hover:bg-zinc-900'}`}
+          activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
       >
         <WorktreeCard
           repo={repo ? { id: repo.id, name: repo.name } : null}
