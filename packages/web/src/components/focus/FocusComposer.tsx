@@ -95,13 +95,13 @@ export function FocusComposer({ repos, worktrees, remoteWorktrees, seedPinId, on
         {tab === 'ticket' && (
           <div className="flex min-h-0 flex-col gap-2">
             <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tickets"
-              placeholder="Search your open tickets, or type a key…"
+              placeholder="Search tickets or type a key…"
               className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none" />
             <div role="listbox" aria-label="Tickets" className="flex max-h-48 min-h-0 flex-col overflow-y-auto">
-              {issues === null && <p className="px-2 py-2 text-xs text-zinc-600">Loading your open tickets…</p>}
-              {issues !== null && issuesFailed && <p className="px-2 py-2 text-xs text-amber-500/80">Could not load tickets; type a key instead.</p>}
+              {issues === null && <p className="px-2 py-2 text-xs text-zinc-600">Loading…</p>}
+              {issues !== null && issuesFailed && <p className="px-2 py-2 text-xs text-amber-500/80">Could not load tickets.</p>}
               {issues !== null && !issuesFailed && visibleIssues.length === 0 && !typedKey && (
-                <p className="px-2 py-2 text-xs text-zinc-600">{issues.length === 0 ? 'No open tickets found. Type a key to use one anyway.' : 'No match.'}</p>
+                <p className="px-2 py-2 text-xs text-zinc-600">{issues.length === 0 ? 'No open tickets.' : 'No match.'}</p>
               )}
               {visibleIssues.map((i) => {
                 const on = ticket?.key === i.key && ticket.provider === i.provider;
@@ -136,16 +136,15 @@ export function FocusComposer({ repos, worktrees, remoteWorktrees, seedPinId, on
         )}
 
         <label className="flex flex-col gap-1 text-xs text-zinc-500">
-          Name
           <input autoFocus={tab === 'blank'} value={name} aria-label="Focus name"
             onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-            placeholder={tab === 'ticket' ? 'Pick a ticket, or name it yourself' : 'What is this focus about?'}
+            placeholder="Name"
             className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none" />
         </label>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-600">{selected.size === 0 ? 'No worktrees selected' : `${selected.size} worktree${selected.size === 1 ? '' : 's'} selected`}</span>
+          {selected.size > 0 && <span className="text-xs text-zinc-600">{selected.size} worktree{selected.size === 1 ? '' : 's'} selected</span>}
           <span className="flex-1" />
           <button type="button" onClick={onClose} className="rounded-md px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200">Cancel</button>
           <button type="button" onClick={submit} disabled={!canCreate}
