@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MergeRequest, Worktree } from '../../types';
-import { chipStatus } from '../../hooks/sessions';
+import { chipStatus, sessionChips } from '../../hooks/sessions';
 import { SESSION_COLOR, SessionAvatarIcon } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { useRowHoverCardDismiss } from './WorktreeRowItem';
@@ -180,6 +180,18 @@ export function Menu({ label, items, alwaysVisible = false }: {
 
 // Uncommitted work on a worktree row: +adds −dels, the same numbers the task
 // table shows. Silent when the tree is clean, so a quiet row stays quiet.
+/** An agent in this worktree is waiting on the person. */
+export function agentWaiting(w: Worktree): boolean {
+  return sessionChips([w]).map(chipStatus).includes('waiting');
+}
+
+/** Before a card's title: the spinner while an agent works, an amber flag while one waits. Null when neither. */
+export function agentMark(w: Worktree): React.ReactNode {
+  if (agentWaiting(w)) return <span role="status" aria-label="agent waiting" title="Waiting on you" className="text-[11px] leading-none text-amber-400">⚑</span>;
+  if (agentWorking(w)) return <BrailleSpinner small />;
+  return null;
+}
+
 export function diffBadge(w: Worktree, testIdSuffix = w.path) {
   const d = w.diffStats;
   if (!d || (d.additions === 0 && d.deletions === 0)) return null;
