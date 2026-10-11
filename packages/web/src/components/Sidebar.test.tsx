@@ -85,6 +85,8 @@ const base = {
   onAddRepo: vi.fn(),
   onOpenWorktree: vi.fn(),
   onNewWorktree: vi.fn(),
+  onNewWorktreeForRepo: vi.fn(),
+  onDeleteRepo: vi.fn(),
   onSearch: vi.fn(),
   onWorktreeSettings: vi.fn(),
   onDeleteWorktree: vi.fn(),

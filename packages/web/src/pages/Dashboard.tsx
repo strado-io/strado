@@ -768,6 +768,17 @@ export function Dashboard(props: {
           onOpenDiff={props.onOpenDiff}
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
           onNewWorktree={() => props.onNewWorktree()}
+          onNewWorktreeForRepo={(repo) => props.onNewWorktree(repo.id)}
+          onDeleteRepo={async (repo) => {
+            if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
+            try {
+              await api.repos.remove(wsId, repo.id);
+              const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
+              commitTree(repos, worktrees);
+            } catch (err) {
+              dispatch({ type: 'error', message: (err as Error).message });
+            }
+          }}
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
