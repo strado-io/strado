@@ -99,11 +99,13 @@ describe('SidebarBody: Working on and Settled only', () => {
     expect(within(screen.getByRole('region', { name: 'Settled' })).getByRole('group', { name: 'FX-900' })).toBeInTheDocument();
   });
 
-  it('removes a member from its group via the row menu', () => {
+  it('removes a member from its group via the row menu', async () => {
     render(<SidebarBody {...props()} />);
     fireEvent.click(screen.getAllByRole('button', { name: 'fx-412 actions' })[0]!);
     fireEvent.click(screen.getByRole('button', { name: 'Remove from group' }));
     expect(focus.setMembership).toHaveBeenCalledWith('g1', 'local:/r1/wt', false);
+    // It was in no other group, so it lands in the loose rows (covered below).
+    await waitFor(() => expect(localStorage.getItem('strado:pinned-worktrees-by-ws')).not.toBeNull());
   });
 
   it('removing a member that no other group holds keeps it in Working on as a loose row', async () => {
