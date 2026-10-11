@@ -23,7 +23,7 @@ import { SettledSection } from './SettledSection';
 import { relativeTime } from '../../lib/relativeTime';
 import { GroupPickerDialog } from './GroupPickerDialog';
 import { NewGroupDialog } from './NewGroupDialog';
-import { activeGroupOf, groupState, isGroupDone, resolveMembers } from './focusGroups';
+import { activeGroupOf, groupState, groupsContaining, isGroupDone, resolveMembers } from './focusGroups';
 import { SidebarToolbar } from './SidebarToolbar';
 import { useLooseWorktrees } from '../../hooks/looseWorktrees';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
@@ -360,6 +360,14 @@ export function SidebarBody({
     { text: 'Add to group…', onClick: () => setPickerFor(memberId) },
     { text: 'New group…', onClick: () => setNewGroupWith([memberId]) },
   ];
+  // Leaving its only open group must not make a worktree vanish: unless it
+  // has settled, it stays in Working on as a loose row.
+  const removeFromGroup = (group: FocusGroup, pinId: string, settled = false) => {
+    const elsewhere = groupsContaining(focus.groups.filter((g) => g.id !== group.id && !doneOf(g)), pinId).length > 0;
+    focus.setMembership(group.id, pinId, false)
+      .then(() => { if (!elsewhere && !settled) loose.add(pinId); })
+      .catch(report);
+  };
   const vscodeTabs = useVscodeTabs();
   const browserTabs = useBrowserTabs();
   const runnerOnline = (runnerId: string) =>
@@ -405,7 +413,7 @@ export function SidebarBody({
     const menuItems: MenuItem[] = [
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
       ...groupMenuItems(pinId),
-      ...(group ? [{ text: 'Remove from group', onClick: () => { focus.setMembership(group.id, pinId, false).catch(report); } }] : []),
+      ...(group ? [{ text: 'Remove from group', onClick: () => removeFromGroup(group, pinId, isSettled(w)) }] : []),
       ...(placement === 'loose' ? [{ text: 'Remove from Working on', onClick: () => loose.remove(pinId) }] : []),
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];
@@ -520,7 +528,7 @@ export function SidebarBody({
           reachable={runnerOnline(e.w.runnerId)}
           activeRow={e.w.path === activeWorktreePath}
           placement="focus"
-          groupItems={[...groupMenuItems(e.pinId), { text: 'Remove from group', onClick: () => { focus.setMembership(g.id, e.pinId, false).catch(report); } }]}
+          groupItems={[...groupMenuItems(e.pinId), { text: 'Remove from group', onClick: () => removeFromGroup(g, e.pinId) }]}
           onContextMenu={openContextMenu}
           onOpenRemoteWorktree={(w) => { focusPrefs.setActiveFocusGroupId(g.id); onOpenRemoteWorktree?.(w); }}
           onDeleteRemoteWorktree={onDeleteRemoteWorktree}
