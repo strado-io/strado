@@ -1,4 +1,4 @@
-import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mutable so a test can switch workspaces mid-flight, the way a swipe does.
@@ -27,6 +27,11 @@ const repoLists: Record<string, unknown[]> = {
   'ws-a': [{ id: 'ra', name: 'Repo A' }],
   'ws-b': [{ id: 'rb', name: 'Repo B' }],
 };
+// One worktree per workspace; the sidebar shows each as a Working on row.
+const worktreeLists: Record<string, unknown[]> = {
+  'ws-a': [{ path: '/a/A-1', repoId: 'ra', branch: 'a-1', meta: { ticketId: 'A-1' }, process: { status: 'idle' }, tracked: true }],
+  'ws-b': [{ path: '/b/B-1', repoId: 'rb', branch: 'b-1', meta: { ticketId: 'B-1' }, process: { status: 'idle' }, tracked: true }],
+};
 vi.mock('../api', () => ({
   api: {
     repos: {
@@ -38,7 +43,7 @@ vi.mock('../api', () => ({
         return Promise.resolve(repoLists[wsId] ?? []);
       }),
     },
-    worktrees: { list: vi.fn().mockResolvedValue([]) },
+    worktrees: { list: vi.fn().mockImplementation((wsId: string) => Promise.resolve(worktreeLists[wsId] ?? [])) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: {
       providers: vi.fn().mockResolvedValue([]),
@@ -76,9 +81,12 @@ function renderDashboard() {
   );
 }
 
+const workingOn = () => screen.getByRole('region', { name: 'Working on' });
+
 describe('Dashboard poll vs workspace switch', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ 'ws-a': ['local:/a/A-1'], 'ws-b': ['local:/b/B-1'] }));
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
     reviewList.mockClear();
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
@@ -92,7 +100,7 @@ describe('Dashboard poll vs workspace switch', () => {
   it('drops a poll tick that resolves after the workspace has switched', async () => {
     const view = renderDashboard();
     await act(async () => {}); // first load for ws-a lands
-    expect(screen.getAllByText('Repo A').length).toBeGreaterThan(0);
+    expect(within(workingOn()).getByText('A-1')).toBeInTheDocument();
 
     // The 15s re-sync fires while still on ws-a, but its reply hangs…
     hangNext = true;
@@ -109,13 +117,14 @@ describe('Dashboard poll vs workspace switch', () => {
       />,
     );
     await act(async () => {}); // ws-b's own load lands
-    expect(screen.getAllByText('Repo B').length).toBeGreaterThan(0);
+    expect(within(workingOn()).getByText('B-1')).toBeInTheDocument();
 
     // Old workspace's poll finally answers — it must be dropped, not painted.
     expect(hungResolve).not.toBeNull();
     await act(async () => { hungResolve!(repoLists['ws-a']!); });
+    expect(screen.queryByText('A-1')).toBeNull();
     expect(screen.queryByText('Repo A')).toBeNull();
-    expect(screen.getAllByText('Repo B').length).toBeGreaterThan(0);
+    expect(within(workingOn()).getByText('B-1')).toBeInTheDocument();
   });
 
   it('never sends the previous workspace repository filter after switching', async () => {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 vi.mock('../hooks/useWorkspace', () => ({
@@ -53,7 +53,7 @@ function renderDashboard() {
 describe('Dashboard SWR seed', () => {
   beforeEach(() => localStorage.clear());
 
-  it('paints the cached tree from localStorage before any fetch resolves', () => {
+  it('paints the cached tree from localStorage before any fetch resolves', async () => {
     localStorage.setItem('strado:tree-by-ws', JSON.stringify({
       default: {
         repos: [{ id: 'r1', name: 'Cached Repo' }],
@@ -66,7 +66,9 @@ describe('Dashboard SWR seed', () => {
     renderDashboard();
     // Synchronously present — the mocked fetches never resolve, so this row can
     // only have come from the localStorage seed painting before revalidation.
-    // Twice over: the sidebar repo row and the task board's repo chip.
+    // The task board's repo chip shows it (the sidebar no longer lists repos).
     expect(screen.getAllByText('Cached Repo').length).toBeGreaterThan(0);
+    // Let the mount's settled requests land inside act, so they don't warn.
+    await act(async () => {});
   });
 });
