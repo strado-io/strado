@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CommandPalette } from './CommandPalette';
-import { api } from '../api';
+import { api, type RemoteWorktree } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
 
 const repos = [{ id: 'r1', name: 'React App', path: '/repos/react-app' }] as RepoConfig[];
@@ -159,5 +159,31 @@ describe('CommandPalette focus groups', () => {
     expect(screen.queryByText('React App')).toBeNull();
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD' } });
     expect(screen.getByText('FD-1')).toBeInTheDocument();
+  });
+});
+
+describe('CommandPalette runner worktrees', () => {
+  const runnerWt = {
+    runnerId: 'rn1', runnerName: 'gpu-box', wsBase: 'wss://rn1.relay', remoteWsId: 'default',
+    path: '/srv/wt/FX-77', name: 'FX-77', branch: 'fx-77-cache', head: 'h', remoteRepoId: null,
+    isRepoRoot: false, cloneUrl: null, localRepoId: 'r1', remoteRepoName: null,
+  } as RemoteWorktree;
+
+  it('lists a runner worktree with its runner name, finds it by query, and opens it', () => {
+    const onOpenRemoteWorktree = vi.fn();
+    const onOpenWorktree = vi.fn();
+    render(<CommandPalette repos={repos} worktrees={[wt('/wt/FD-1', 'FD-1', 'fix login')]} workspaces={workspaces} activeWorkspaceId="default"
+      onOpenWorktree={onOpenWorktree} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
+      remoteWorktrees={[runnerWt]} onOpenRemoteWorktree={onOpenRemoteWorktree}
+      focusGroups={[{ group: { id: 'g', name: 'Cache work', members: ['remote:rn1:/srv/wt/FX-77'], createdAt: 't' }, detail: '', done: false }]} />);
+    expect(screen.getByText('fx-77-cache')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'gpu' } });
+    expect(screen.getByText('fx-77-cache')).toBeInTheDocument();
+    expect(screen.getByText('React App · gpu-box · Cache work')).toBeInTheDocument();
+    expect(screen.queryByText('FD-1')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'fx-77' } });
+    fireEvent.click(screen.getByText('fx-77-cache'));
+    expect(onOpenRemoteWorktree).toHaveBeenCalledWith(runnerWt);
+    expect(onOpenWorktree).not.toHaveBeenCalled();
   });
 });

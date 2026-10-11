@@ -1024,6 +1024,8 @@ export function Dashboard(props: {
           focusGroups={paletteGroups}
           onPickGroup={pickFocusGroup}
           filter={paletteFilter}
+          remoteWorktrees={remote.worktrees}
+          onOpenRemoteWorktree={openRemoteWorktree}
           onOpenWorktree={(w, fromWs) => {
             if (fromWs && fromWs !== wsId) {
               // hub (if open) must come down before the workspace flips —
