@@ -1,5 +1,5 @@
 // The building blocks a sidebar worktree row is made of, shared by the
-// Working on cards and the Focus-off repo tree: status helpers, the small
+// Focus cards and the Worktrees page: status helpers, the small
 // icons, the hover-only action slot, the PR badge, and the ⋯ menu.
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';

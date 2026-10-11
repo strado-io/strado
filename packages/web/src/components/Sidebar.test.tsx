@@ -10,6 +10,16 @@ vi.mock('../hooks/mrSummaries', () => ({
   useMrSummaries: vi.fn(() => new Map()),
 }));
 
+// One active Focus, its members set per test by seedFocus; the server store
+// is not under test here.
+const focusMock = vi.hoisted(() => ({ members: [] as string[], setMembership: vi.fn() }));
+vi.mock('../hooks/useFocuses', () => ({
+  useFocuses: () => {
+    const f = { id: 'f1', name: 'Working on', members: focusMock.members, createdAt: 't', lastActiveAt: 't' };
+    return { focuses: [f], loaded: true, active: f, activeId: 'f1', activate: vi.fn(), create: vi.fn(), rename: vi.fn(), setMembership: focusMock.setMembership, remove: vi.fn() };
+  },
+}));
+
 // The sidebar prefetches its neighbouring spaces on mount; these tests are
 // about the rail, not the fetch, so the neighbour panes stay empty. The
 // requests never settle on purpose — a late resolve would land after the test
@@ -33,7 +43,7 @@ vi.mock('../api', async (importOriginal) => {
 const PANE_WIDTH = 300;
 beforeEach(() => {
   localStorage.clear();
-  seedLoose();
+  seedFocus();
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(PANE_WIDTH);
   vi.mocked(useMrSummaries).mockReturnValue(new Map());
 });
@@ -85,8 +95,6 @@ const base = {
   onAddRepo: vi.fn(),
   onOpenWorktree: vi.fn(),
   onNewWorktree: vi.fn(),
-  onNewWorktreeForRepo: vi.fn(),
-  onDeleteRepo: vi.fn(),
   onSearch: vi.fn(),
   onWorktreeSettings: vi.fn(),
   onDeleteWorktree: vi.fn(),
@@ -98,26 +106,26 @@ const base = {
   },
 };
 
-// Worktree rows live in Working on now; seed every path these tests use as a
-// loose row. Ids that match no worktree render nothing, so the list is safe to over-fill.
-const LOOSE = [...new Set(['/r1/FD-1', '/r1/FD-2', ...Array.from({ length: 10 }, (_, i) => `/r1/FD-${i}`)])].map((p) => `local:${p}`);
-function seedLoose(extra: string[] = []) {
-  localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ w1: [...LOOSE, ...extra] }));
+// Worktree rows are the active Focus's members; seed every path these tests
+// use. Ids that match no worktree render nothing, so the list is safe to over-fill.
+const MEMBERS = [...new Set(['/r1/FD-1', '/r1/FD-2', ...Array.from({ length: 10 }, (_, i) => `/r1/FD-${i}`)])].map((p) => `local:${p}`);
+function seedFocus(extra: string[] = []) {
+  focusMock.members = [...MEMBERS, ...extra];
+  focusMock.setMembership.mockReset().mockResolvedValue(undefined);
 }
 
 describe('Sidebar tree', () => {
   // Code reviews / Usage / Settings live in one icon row at the bottom,
   // leaving the rail above for groups and worktrees. No Tasks entry and no
   // counts: the board is where you land anyway, and numbers there were noise.
-  it('puts the page switcher in an icon row at the bottom, below the Working on header, without Tasks or counts', () => {
+  it('puts the page switcher in an icon row at the bottom, below the Focus, without Tasks or counts', () => {
     wrap(<Sidebar {...base} />);
     const nav = screen.getByRole('navigation', { name: 'Pages' });
     expect(within(nav).queryByRole('button', { name: 'Tasks' })).toBeNull();
     expect(within(nav).getByRole('button', { name: 'Code reviews' })).toHaveTextContent(/^$/);
     expect(within(nav).queryByRole('status')).toBeNull();
-    const working = activePane().getByRole('region', { name: 'Working on' });
-    expect(activePane().queryByText('Working on')).toBeNull(); // no heading text, the section is the sidebar
-    expect(working.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const body = activePane().getByRole('region', { name: 'Focus' });
+    expect(body.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('selects a page and opens settings from the icon row', () => {
@@ -140,22 +148,22 @@ describe('Sidebar tree', () => {
     expect(nav().queryByRole('button', { current: 'page' })).toBeNull();
   });
 
-  describe('loose worktrees', () => {
-    it('shows loose worktrees at the top of Working on and opens them', () => {
+  describe('focus members', () => {
+    it('shows the active Focus in the pill and its worktrees as cards, and opens them', () => {
       const onOpenWorktree = vi.fn();
       wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} />);
-      const working = activePane().getByRole('region', { name: 'Working on' });
-      fireEvent.click(within(working).getByRole('button', { name: 'FD-1' }));
+      expect(activePane().getByRole('button', { name: 'Focus: Working on' })).toBeInTheDocument();
+      const body = activePane().getByRole('region', { name: 'Focus' });
+      fireEvent.click(within(body).getByRole('button', { name: 'FD-1' }));
       expect(onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
       expect(activePane().queryByRole('button', { name: /^Pin / })).toBeNull();
     });
 
-    it('removes a loose worktree from Working on and persists it', () => {
+    it('removes a worktree from the Focus by name', () => {
       wrap(<Sidebar {...base} />);
       fireEvent.click(activePane().getByLabelText('FD-2 actions'));
       fireEvent.click(screen.getByRole('button', { name: 'Remove from Working on' }));
-      expect(activePane().queryByText('FD-2')).toBeNull();
-      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!).w1).not.toContain('local:/r1/FD-2');
+      expect(focusMock.setMembership).toHaveBeenCalledWith('f1', 'local:/r1/FD-2', false);
     });
   });
 
@@ -363,14 +371,17 @@ describe('Sidebar tree', () => {
     expect(actions.parentElement).toHaveClass('absolute', 'right-1');
   });
 
-  it('toolbar buttons start a worktree and add a repo', () => {
-    const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
-    wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
+  it('toolbar buttons search and start a worktree; Add repo lives in the blank-space menu', () => {
+    const onNewWorktree = vi.fn(); const onAddRepo = vi.fn(); const onSearch = vi.fn();
+    wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} onSearch={onSearch} />);
     fireEvent.click(activePane().getByRole('button', { name: 'New worktree' }));
     expect(onNewWorktree).toHaveBeenCalled();
-    fireEvent.click(activePane().getByRole('button', { name: 'Add repo' }));
-    expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: expect.any(Number) }));
-    expect(activePane().queryByRole('button', { name: 'New group' })).toBeNull();
+    fireEvent.click(activePane().getByRole('button', { name: 'Search' }));
+    expect(onSearch).toHaveBeenCalled();
+    expect(activePane().queryByRole('button', { name: 'Add repo' })).toBeNull();
+    fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
+    fireEvent.click(screen.getByRole('button', { name: 'Add repo…' }));
+    expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
   });
 
   it('has no bottom New worktree button', () => {
@@ -440,8 +451,8 @@ describe('Sidebar tree', () => {
       remoteRepoName: 'demo-repo',
       ...over,
     });
-    // Runner rows render only when loose (or in a group); every test here uses this path.
-    beforeEach(() => { seedLoose([`remote:runner-dev-wq3p:${remote().path}`]); });
+    // Runner rows render only as Focus members; every test here uses this path.
+    beforeEach(() => { seedFocus([`remote:runner-dev-wq3p:${remote().path}`]); });
 
     const statuses = (online: boolean): RunnerStatus[] => [
       { runnerId: 'runner-dev-wq3p', name: 'runner-dev', online, error: null },

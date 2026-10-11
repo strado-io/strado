@@ -1,6 +1,6 @@
 // Settings → Repositories: the workspace's repos, now that the sidebar has no
 // repo list. Add, remove, or start a worktree in one. Worktrees themselves are
-// reached through ⌘K and Working on.
+// reached through ⌘K and the Focus.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api';
 import type { RepoConfig } from '../../types';

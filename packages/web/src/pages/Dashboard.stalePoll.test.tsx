@@ -27,13 +27,17 @@ const repoLists: Record<string, unknown[]> = {
   'ws-a': [{ id: 'ra', name: 'Repo A' }],
   'ws-b': [{ id: 'rb', name: 'Repo B' }],
 };
-// One worktree per workspace; the sidebar shows each as a Working on row.
+// One worktree per workspace; each sits in that workspace's active Focus, so the sidebar shows it.
 const worktreeLists: Record<string, unknown[]> = {
   'ws-a': [{ path: '/a/A-1', repoId: 'ra', branch: 'a-1', meta: { ticketId: 'A-1' }, process: { status: 'idle' }, tracked: true }],
   'ws-b': [{ path: '/b/B-1', repoId: 'rb', branch: 'b-1', meta: { ticketId: 'B-1' }, process: { status: 'idle' }, tracked: true }],
 };
 vi.mock('../api', () => ({
   api: {
+    focuses: {
+      list: async (ws: string) => [{ id: `f-${ws}`, name: 'Working on', members: [ws === 'ws-a' ? 'local:/a/A-1' : 'local:/b/B-1'], createdAt: 't', lastActiveAt: 't' }],
+      create: vi.fn(), update: vi.fn(async () => ({})), remove: vi.fn(),
+    },
     repos: {
       list: vi.fn().mockImplementation((wsId: string) => {
         if (hangNext) {
@@ -68,6 +72,7 @@ vi.mock('../api', () => ({
 vi.mock('./TerminalView', () => ({ TerminalView: () => <div data-testid="inline-hub" /> }));
 
 import { Dashboard } from './Dashboard';
+import { __resetFocuses } from '../hooks/useFocuses';
 
 const noop = vi.fn();
 function renderDashboard() {
@@ -81,12 +86,13 @@ function renderDashboard() {
   );
 }
 
-const workingOn = () => screen.getByRole('region', { name: 'Working on' });
+const workingOn = () => screen.getByRole('region', { name: 'Focus' });
 
 describe('Dashboard poll vs workspace switch', () => {
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ 'ws-a': ['local:/a/A-1'], 'ws-b': ['local:/b/B-1'] }));
+    __resetFocuses();
+    localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ 'ws-a': 'f-ws-a', 'ws-b': 'f-ws-b' }));
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
     reviewList.mockClear();
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
