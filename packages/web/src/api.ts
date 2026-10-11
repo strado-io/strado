@@ -233,6 +233,10 @@ function agentQuery(opts: AgentReadOpts): string {
 
 export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 
+/** A named, cross-repo set of worktrees for one task. Members are sidebar pin ids. The sidebar shows the active one. */
+export type Focus = { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string };
+export type FocusPatch = { name?: string; addMembers?: string[]; removeMembers?: string[]; touch?: boolean };
+
 export const api = {
   terminal: {
     peek: (ws: string, path: string, mode: string, session = '1') =>
@@ -374,6 +378,16 @@ export const api = {
       }>('/api/github/app/status'),
     appDisconnect: (installationId: number) =>
       request<{ ok: boolean }>(`/api/github/app/disconnect/${installationId}`, { method: 'POST' }),
+  },
+  focuses: {
+    list: (wsId: string) =>
+      request<{ focuses: Focus[] }>(`${wsBase(wsId)}/focuses`).then((b) => b.focuses),
+    create: (wsId: string, body: { name: string; members?: string[] }) =>
+      request<{ focus: Focus }>(`${wsBase(wsId)}/focuses`, { method: 'POST', body: JSON.stringify(body) }).then((b) => b.focus),
+    update: (wsId: string, id: string, body: FocusPatch) =>
+      request<{ focus: Focus }>(`${wsBase(wsId)}/focuses/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }).then((b) => b.focus),
+    remove: (wsId: string, id: string) =>
+      request<void>(`${wsBase(wsId)}/focuses/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(() => undefined),
   },
   repos: {
     list: (wsId: string) =>

@@ -518,7 +518,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
   app.delete<{ Params: { encodedPath: string }; Querystring: { force?: string; deleteBranch?: string } }>(
     '/worktrees/:encodedPath',
     async (req, reply) => {
-      const { repos, state } = req.workspace!.stores;
+      const { repos, state, focuses } = req.workspace!.stores;
       const target = decodeURIComponent(req.params.encodedPath);
       const allRepos = await repos.list();
       const repo = findOwningRepo(allRepos, target, app.deps.homeStateDir);
@@ -617,6 +617,12 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         }
 
         await state.remove(target);
+        // A deleted worktree leaves every Focus it was in (the Focus
+        // itself stays, even if this empties it). Best-effort: Focuses are an
+        // add-on, and a corrupt focuses.json must never fail a delete whose
+        // worktree is already gone.
+        await focuses.removeMemberEverywhere(`local:${target}`).catch((err) =>
+          app.deps.debugLog.log('server', `focus prune skipped for ${target}: ${String(err)}`));
         // Unconditional: a path that no longer exists must not keep routing
         // terminals into a container that was just removed, and re-creating
         // the same worktree would otherwise inherit a stale slug.
