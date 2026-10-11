@@ -54,7 +54,8 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
   trailing?: React.ReactNode;
   titleClassName?: string;
 }) {
-  const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-50' : 'text-zinc-200';
+  // A resting card reads quietly; the one you are in is the bright one.
+  const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-50' : 'text-zinc-400 group-hover:text-zinc-200';
   return (
     // The whole card opens the worktree; the title button carries the
     // accessible name and keyboard focus, and its click bubbles up here.
