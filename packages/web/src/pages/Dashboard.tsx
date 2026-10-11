@@ -302,15 +302,20 @@ export function Dashboard(props: {
   // Palette pick of a worktree in ANOTHER workspace: switch first, and open
   // the hub only once the workspace context has actually landed — opening
   // immediately would spawn its sessions against the old workspace.
+  // It also waits for that workspace's focus groups: the open decides whether
+  // a parked group comes back or the worktree gets a loose row, and with no
+  // groups loaded yet it would always pick the loose row.
+  const focusGroups = useFocusGroups(wsId);
+  const focusPrefs = useFocusPrefs(wsId);
   const pendingOpenRef = useRef<{ wsId: string; worktree: Worktree } | null>(null);
   useEffect(() => {
     const pending = pendingOpenRef.current;
-    if (pending && pending.wsId === wsId) {
+    if (pending && pending.wsId === wsId && focusGroups.loaded) {
       pendingOpenRef.current = null;
       openInlineHub(pending.worktree);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsId]);
+  }, [wsId, focusGroups.loaded]);
   const [showPalette, setShowPalette] = useState(false);
   const [paletteFilter, setPaletteFilter] = useState<'groups' | null>(null);
   const openPalette = (filter: 'groups' | null = null) => { setPaletteFilter(filter); setShowPalette(true); };
@@ -556,8 +561,6 @@ export function Dashboard(props: {
   }, [props.onOpenRemoteWorktree]);
 
   // ⌥⌘←/→ walks the active focus group's worktrees (any repo, local or runner).
-  const focusGroups = useFocusGroups(wsId);
-  const focusPrefs = useFocusPrefs(wsId);
   const activeFocusMembers = useMemo(() => {
     const g = activeGroupOf(focusGroups.groups, focusPrefs.activeFocusGroupId);
     return g ? resolveMembers(g, state.worktrees, remote.worktrees) : [];
