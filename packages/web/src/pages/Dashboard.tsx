@@ -768,7 +768,6 @@ export function Dashboard(props: {
             setShowAddRepo(true);
           }}
           onSearch={() => setShowPalette(true)}
-          onAllWorktrees={() => selectView({ kind: 'worktrees' })}
           onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}

@@ -47,8 +47,6 @@ export type SidebarBodyProps = {
   remoteLoading?: boolean;
   /** Toolbar Search: opens ⌘K. */
   onSearch: () => void;
-  /** The Worktrees page, from the Focus popover. Absent until it exists. */
-  onAllWorktrees?: () => void;
   /** Surfaces a failed change in the dashboard's error banner. */
   onError?: (message: string) => void;
 };
@@ -140,7 +138,7 @@ export function SidebarBody({
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, onSearch, onAllWorktrees, onError,
+  remoteLoading = false, onSearch, onError,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const { focuses, active, activeId, activate, create, rename, remove, setMembership } = useFocuses(wsId);
@@ -307,7 +305,6 @@ export function SidebarBody({
           onCreate={(name) => void create(name).catch(report('Could not create focus'))}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
           onDelete={(id) => void remove(id).catch(report('Could not delete focus'))}
-          onAllWorktrees={onAllWorktrees}
           onClose={() => setSwitcher(null)} />
       )}
 
