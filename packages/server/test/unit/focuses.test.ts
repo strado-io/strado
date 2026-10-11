@@ -101,4 +101,14 @@ describe('focus store', () => {
     const touched = await store.update(f.id, { touch: true });
     expect(touched.lastActiveAt > f.createdAt).toBe(true);
   });
+
+  it('keeps a ticket, clears it with null, and drops a malformed one on read', async () => {
+    const store = createFocusStore(file);
+    const f = await store.create({ name: 'FD-9', ticket: { provider: 'jira', key: 'FD-9' } });
+    expect(f.ticket).toEqual({ provider: 'jira', key: 'FD-9' });
+    expect((await store.update(f.id, { name: 'x' })).ticket).toEqual({ provider: 'jira', key: 'FD-9' });
+    expect((await store.update(f.id, { ticket: null })).ticket).toBeUndefined();
+    await fs.writeFile(file, JSON.stringify({ focuses: [{ id: 'a', name: 'A', members: [], createdAt: 't', ticket: { key: 1 } }] }));
+    expect((await store.list())[0]!.ticket).toBeUndefined();
+  });
 });

@@ -3,7 +3,7 @@
 // Focus is one task's set of worktrees, and everything else is a ⌘K or a
 // Focus switch away.
 import { useEffect, useRef, useState } from 'react';
-import type { RemoteWorktree, RunnerStatus } from '../../api';
+import type { FocusTicket, RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { sessionChips } from '../../hooks/sessions';
@@ -19,7 +19,10 @@ import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
 import { BrailleSpinner, HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
-import { FocusPill, FocusPopover } from './FocusSwitcher';
+import { FocusPill, FocusPopover, type FocusRowInfo } from './FocusSwitcher';
+import { FocusComposer } from '../focus/FocusComposer';
+import { AddWorktreesDialog } from '../focus/AddWorktreesDialog';
+import { attentionOf } from '../../hooks/attention';
 export { BranchIcon, RepoIcon, type MenuItem } from './rowBits';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { SidebarToolbar } from './SidebarToolbar';
@@ -37,8 +40,8 @@ export type SidebarBodyProps = {
   onOpenDiff?: (w: Worktree) => void;
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   activeWorktreePath: string | null;
-  /** New worktree with the repo still to pick (toolbar and blank-space menu). */
-  onNewWorktree: () => void;
+  /** New worktree with the repo still to pick (toolbar and blank-space menu); the empty Focus passes its ticket. */
+  onNewWorktree: (ticket?: FocusTicket) => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
@@ -143,18 +146,21 @@ export function SidebarBody({
   remoteLoading = false, onSearch, onError, isActivePane = true,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
-  const { focuses, active, activeId, activate, create, rename, remove, setMembership } = useFocuses(wsId);
+  const { focuses, active, activeId, activate, create, rename, remove, setMembership, addMembers } = useFocuses(wsId);
   const report = (what: string) => (err: unknown) => onError?.(`${what}: ${(err as Error).message}`);
-  // The Focus popover: open in browse mode from the pill, in create mode from
-  // the empty state and the blank-space menu.
-  const [switcher, setSwitcher] = useState<null | 'browse' | 'create'>(null);
+  // The Focus popover (from the pill), the composer (New focus, from the
+  // popover, the empty state, the blank-space menu, ⇧⌘N and the hub gate,
+  // which seeds it with the worktree being opened) and Add worktrees.
+  const [switcher, setSwitcher] = useState(false);
+  const [composer, setComposer] = useState<{ seedPinId: string | null } | null>(null);
+  const [addingMembers, setAddingMembers] = useState(false);
   const pillRef = useRef<HTMLButtonElement>(null);
-  const openSwitcher = (mode: 'browse' | 'create') => setSwitcher(mode);
-  // ⇧⌘N, from the Dashboard's shortcut hook or the shell. Only the active
-  // pane answers: the carousel's neighbour panes would each open one too.
+  const openComposer = (seedPinId: string | null = null) => { setSwitcher(false); setComposer({ seedPinId }); };
+  // Only the active pane answers the event: the carousel's neighbour panes
+  // would each open one too.
   useEffect(() => {
     if (!isActivePane) return;
-    const onNew = () => setSwitcher('create');
+    const onNew = (e: Event) => openComposer((e as CustomEvent<{ seedPinId?: string }>).detail?.seedPinId ?? null);
     window.addEventListener(NEW_FOCUS_EVENT, onNew);
     return () => window.removeEventListener(NEW_FOCUS_EVENT, onNew);
   }, [isActivePane]);
@@ -167,9 +173,9 @@ export function SidebarBody({
   };
   // Right-click on blank sidebar space: what you can make from here.
   const openBlankContextMenu = (e: React.MouseEvent) => openContextMenu(e, [
-    { text: 'New worktree…', onClick: onNewWorktree },
+    { text: 'New worktree…', onClick: () => onNewWorktree() },
     { text: 'Add repo…', onClick: () => onAddRepo({ left: e.clientX, right: e.clientX, bottom: e.clientY }) },
-    { text: 'New focus…', onClick: () => openSwitcher('create') },
+    { text: 'New focus…', onClick: () => openComposer() },
   ]);
   const vscodeTabs = useVscodeTabs();
   // Last-opened times for the cards; the same map ⌘K ranks by.
@@ -265,6 +271,19 @@ export function SidebarBody({
     )];
   });
 
+  // What the switcher shows per Focus: the repos its members span, and whether
+  // an agent in it is waiting or working, or every PR in it is merged/closed.
+  const rowInfo = new Map<string, FocusRowInfo>(focuses.map((f) => {
+    const locals = f.members.flatMap((id) => { const w = localByPinId.get(id); return w ? [w] : []; });
+    const remotes = f.members.flatMap((id) => { const w = remoteByPinId.get(id); return w ? [w] : []; });
+    const repoIds = [...new Set([...locals.map((w) => w.repoId), ...remotes.map((w) => w.localRepoId)])];
+    const reposIn = repoIds.flatMap((id) => { const r = repos.find((x) => x.id === id); return r ? [{ id: r.id, name: r.name }] : []; });
+    const attention = locals.map((w) => attentionOf(w, mrByPath.get(w.path)));
+    const done = locals.length > 0 && remotes.length === 0 && locals.every((w) => { const st = mrByPath.get(w.path)?.state; return st === 'merged' || st === 'closed'; });
+    const status = attention.includes('needs-you') ? 'needs-you' : attention.includes('working') ? 'working' : done ? 'done' : null;
+    return [f.id, { repos: reposIn, status }];
+  }));
+
   const pillRect = () => {
     const r = pillRef.current?.getBoundingClientRect();
     return r ? { left: r.left, bottom: r.bottom, width: r.width } : { left: 8, bottom: 40, width: 272 };
@@ -272,20 +291,32 @@ export function SidebarBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarToolbar onSearch={onSearch} onNewWorktree={onNewWorktree}
-        leading={<FocusPill focus={active} open={switcher !== null} pillRef={pillRef} onClick={() => setSwitcher((s) => (s ? null : 'browse'))} />} />
+      <SidebarToolbar onSearch={onSearch} onNewWorktree={() => onNewWorktree()}
+        leading={<FocusPill focus={active} open={switcher} pillRef={pillRef} onClick={() => setSwitcher((s) => !s)} />} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <section aria-label="Focus" className="mt-2">
           {!active ? (
             <div className="px-2.5 py-2 text-xs text-zinc-600">
               <p>No focus. A focus is one task's worktrees, across repos. Make one to open worktrees; the sidebar shows only the active focus.</p>
-              <button type="button" onClick={() => openSwitcher('create')}
+              <button type="button" onClick={() => openComposer()}
                 className="mt-2 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100">
                 New focus
               </button>
             </div>
           ) : rows.length === 0 ? (
-            <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing in {active.name} yet. Search to open a worktree into it, or ✎ to start one.</p>
+            <div className="px-2.5 py-2 text-xs text-zinc-600">
+              <p>Nothing in {active.name} yet.</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => setAddingMembers(true)}
+                  className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100">
+                  Add worktrees
+                </button>
+                <button type="button" onClick={() => onNewWorktree(active.ticket)}
+                  className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100">
+                  New worktree here
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="mb-1.5 flex flex-col gap-1.5">{rows}</div>
           )}
@@ -304,12 +335,23 @@ export function SidebarBody({
       </div>
 
       {switcher && (
-        <FocusPopover anchor={pillRect()} focuses={focuses} activeId={activeId} mode={switcher}
+        <FocusPopover anchor={pillRect()} focuses={focuses} activeId={activeId} rowInfo={rowInfo}
           onActivate={activate}
           onCreate={(name) => void create(name).catch(report('Could not create focus'))}
+          onNewFocus={() => openComposer()}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
           onDelete={(id) => void remove(id).catch(report('Could not delete focus'))}
-          onClose={() => setSwitcher(null)} />
+          onClose={() => setSwitcher(false)} />
+      )}
+      {composer && (
+        <FocusComposer repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
+          onCreate={(name, members, ticket) => void create(name, members, ticket).catch(report('Could not create focus'))}
+          onClose={() => setComposer(null)} />
+      )}
+      {addingMembers && active && (
+        <AddWorktreesDialog focus={active} repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees}
+          onAdd={(ids) => void addMembers(active.id, ids).catch(report(`Could not add to ${active.name}`))}
+          onClose={() => setAddingMembers(false)} />
       )}
 
       {contextMenu && (

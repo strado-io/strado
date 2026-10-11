@@ -1,6 +1,6 @@
 import { DRAG, NO_DRAG, SidebarToggleButton, TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from './SidebarToggle';
 import { useEffect, useRef, useState } from 'react';
-import type { RemoteWorktree, RunnerStatus } from '../api';
+import type { FocusTicket, RemoteWorktree, RunnerStatus } from '../api';
 import type { MergeRequest, RepoConfig, Workspace, Worktree } from '../types';
 import { useResizableWidth } from '../hooks/resizableWidth';
 import { useSpaceNeighbors } from '../hooks/spaceNeighbors';
@@ -35,8 +35,8 @@ export type Props = {
   /** Opens diff & commit for a worktree — the hover card's Changes action. */
   onOpenDiff?: (w: Worktree) => void;
   activeWorktreePath: string | null;
-  /** New worktree with the repo still to pick (toolbar button). */
-  onNewWorktree: () => void;
+  /** New worktree with the repo still to pick (toolbar button); the empty Focus passes its ticket. */
+  onNewWorktree: (ticket?: FocusTicket) => void;
   /** Toolbar Search → ⌘K. */
   onSearch: () => void;
   onWorktreeSettings: (w: Worktree) => void;

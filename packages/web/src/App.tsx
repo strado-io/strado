@@ -9,7 +9,7 @@ import { LogPanel } from './components/LogPanel';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
 import { IntercomProvider } from './contexts/IntercomContext';
 import { useWorkspace } from './hooks/useWorkspace';
-import { api, type RemoteWorktree } from './api';
+import { api, type RemoteWorktree, type FocusTicket } from './api';
 import type { MergeRequest, RepoConfig, Worktree } from './types';
 import { MrReviewModal } from './components/MrReviewModal';
 import { NoteDialog } from './components/NoteDialog';
@@ -19,7 +19,7 @@ import { UpdateModal } from './components/UpdateModal';
 
 type Dialog =
   | { kind: 'none' }
-  | { kind: 'new'; repoId?: string }
+  | { kind: 'new'; repoId?: string; ticket?: FocusTicket }
   | { kind: 'delete'; worktree: Worktree }
   | { kind: 'menu'; worktree: Worktree }
   | { kind: 'logs'; worktree: Worktree }
@@ -78,7 +78,7 @@ function AppShell() {
           onInstall: upd.install,
           onDismiss: upd.dismiss,
         }}
-        onNewWorktree={(repoId?: string) => setDialog({ kind: 'new', repoId })}
+        onNewWorktree={(repoId?: string, ticket?: FocusTicket) => setDialog({ kind: 'new', repoId, ticket })}
         onShowLogs={(w) => setDialog({ kind: 'logs', worktree: w })}
         onMenu={(w) => setDialog({ kind: 'menu', worktree: w })}
         onOpenNote={(w) => setDialog({ kind: 'note', worktree: w })}
@@ -100,6 +100,7 @@ function AppShell() {
           worktrees={worktrees}
           workspaceId={wsId}
           preselectRepoId={dialog.repoId}
+          preselectTicket={dialog.ticket}
           onCancel={close}
           runners={runners}
           onSubmit={async (payload: CreatePayload) => {

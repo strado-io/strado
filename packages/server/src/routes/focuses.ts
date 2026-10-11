@@ -2,9 +2,12 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 const MemberIds = z.array(z.string().min(1).max(4096)).max(200);
-const CreateBody = z.object({ name: z.string(), members: MemberIds.optional() });
+const Ticket = z.object({ provider: z.string().min(1).max(40), key: z.string().min(1).max(200) });
+const CreateBody = z.object({ name: z.string(), members: MemberIds.optional(), ticket: Ticket.optional() });
 const PatchBody = z.object({
   name: z.string().optional(),
+  // The ticket a Focus is about; null clears it.
+  ticket: Ticket.nullable().optional(),
   addMembers: MemberIds.optional(),
   removeMembers: MemberIds.optional(),
   // The client activated it: stamp lastActiveAt. Nothing else may be stored.

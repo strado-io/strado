@@ -9,13 +9,14 @@ import path from 'node:path';
 import { backupBeforeWrite } from './backups.js';
 import { AppError } from './errors.js';
 
-export type Focus = { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string };
+export type FocusTicket = { provider: string; key: string };
+export type Focus = { id: string; name: string; members: string[]; createdAt: string; lastActiveAt: string; ticket?: FocusTicket };
 type FocusesFile = { focuses: Focus[] };
 
-export type FocusPatch = { name?: string; addMembers?: string[]; removeMembers?: string[]; touch?: boolean };
+export type FocusPatch = { name?: string; addMembers?: string[]; removeMembers?: string[]; touch?: boolean; ticket?: FocusTicket | null };
 export type FocusStore = {
   list(): Promise<Focus[]>;
-  create(input: { name: string; members?: string[] }): Promise<Focus>;
+  create(input: { name: string; members?: string[]; ticket?: FocusTicket }): Promise<Focus>;
   /** `touch` stamps lastActiveAt: the client activated it. */
   update(id: string, patch: FocusPatch): Promise<Focus>;
   remove(id: string): Promise<void>;
@@ -43,9 +44,13 @@ function readRow(g: unknown): Focus | null {
   const r = g as Record<string, unknown>;
   if (typeof r.id !== 'string' || typeof r.name !== 'string' || !Array.isArray(r.members)) return null;
   const createdAt = typeof r.createdAt === 'string' ? r.createdAt : new Date(0).toISOString();
+  const t = r.ticket as Record<string, unknown> | undefined;
+  const ticket = t && typeof t === 'object' && typeof t.provider === 'string' && typeof t.key === 'string'
+    ? { provider: t.provider, key: t.key } : undefined;
   return {
     id: r.id, name: r.name, members: r.members.filter((m): m is string => typeof m === 'string'), createdAt,
     lastActiveAt: typeof r.lastActiveAt === 'string' ? r.lastActiveAt : createdAt,
+    ...(ticket ? { ticket } : {}),
   };
 }
 
@@ -109,6 +114,7 @@ export function createFocusStore(filePath: string): FocusStore {
           members: dedupe(input.members ?? []),
           createdAt: now,
           lastActiveAt: now,
+          ...(input.ticket ? { ticket: input.ticket } : {}),
         };
         file.focuses.push(focus);
         return focus;
@@ -120,6 +126,8 @@ export function createFocusStore(filePath: string): FocusStore {
         const f = find(file, id);
         if (name !== undefined) f.name = name;
         if (patch.touch) f.lastActiveAt = new Date().toISOString();
+        if (patch.ticket === null) delete f.ticket;
+        else if (patch.ticket) f.ticket = patch.ticket;
         const drop = new Set(patch.removeMembers ?? []);
         f.members = dedupe([...f.members, ...(patch.addMembers ?? [])]).filter((m) => !drop.has(m));
         return f;

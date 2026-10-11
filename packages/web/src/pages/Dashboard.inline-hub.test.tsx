@@ -185,14 +185,15 @@ describe('Dashboard inline hub', () => {
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
     fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
-    // No hub; the Focus switcher is up, ready for a name.
-    const field = await screen.findByLabelText('New focus name');
+    // No hub; the composer is up, seeded with the worktree being opened.
+    const dialog = await screen.findByRole('dialog', { name: 'New focus' });
     expect(screen.queryByTestId('inline-hub')).toBeNull();
     expect(fakeFocuses.api.create).not.toHaveBeenCalled();
-    fireEvent.change(field, { target: { value: 'Billing' } });
-    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(within(dialog).getByLabelText('Focus name')).toHaveValue('FD-9');
+    fireEvent.change(within(dialog).getByLabelText('Focus name'), { target: { value: 'Billing' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & switch' }));
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
-    await waitFor(() => expect(fakeFocuses.api.update).toHaveBeenCalledWith('default', 'f1', { addMembers: ['local:/wt/FD-9'] }));
+    await waitFor(() => expect(fakeFocuses.api.create).toHaveBeenCalledWith('default', { name: 'Billing', members: ['local:/wt/FD-9'], ticket: { provider: 'jira', key: 'FD-9' } }));
     expect(await screen.findByRole('button', { name: 'Focus: Billing' })).toBeInTheDocument();
     expect(await sidebarRow()).toBeInTheDocument();
   });
