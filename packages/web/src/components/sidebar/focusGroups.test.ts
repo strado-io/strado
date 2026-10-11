@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RemoteWorktree } from '../../api';
 import type { FocusGroup } from '../../api';
 import type { Worktree } from '../../types';
-import { activeGroupOf, isGroupDone, nextMember, resolveMembers } from './focusGroups';
+import { activeGroupOf, groupState, groupsContaining, isGroupDone, nextMember, openEffects, resolveMembers } from './focusGroups';
 
 const wt = (path: string, repoId = 'r1') => ({ path, repoId } as Worktree);
 const rw = (path: string, runnerId = 'run1') => ({ path, runnerId, localRepoId: 'r2' } as RemoteWorktree);
@@ -62,5 +62,31 @@ describe('activeGroupOf', () => {
     expect(activeGroupOf(gs, 'g')?.id).toBe('g');
     expect(activeGroupOf(gs, 'deleted-elsewhere')).toBeNull();
     expect(activeGroupOf(gs, null)).toBeNull();
+  });
+});
+
+describe('groupState / openEffects', () => {
+  const g = (id: string, members: string[], state?: 'working' | 'parked'): FocusGroup =>
+    ({ id, name: id, members, createdAt: 't', ...(state ? { state } : {}) });
+
+  it('treats a missing state as working', () => {
+    expect(groupState(g('a', []))).toBe('working');
+    expect(groupState(g('a', [], 'parked'))).toBe('parked');
+  });
+
+  it('opening a member of a parked group promotes it and adds nothing loose', () => {
+    const groups = [g('p', ['local:/x'], 'parked'), g('w', ['local:/x'])];
+    expect(groupsContaining(groups, 'local:/x').map((x) => x.id)).toEqual(['p', 'w']);
+    expect(openEffects(groups, 'local:/x', false)).toEqual({ promote: ['p'], addLoose: false });
+  });
+
+  it('opening an ungrouped worktree adds a loose row, unless it has settled', () => {
+    const groups = [g('w', ['local:/y'])];
+    expect(openEffects(groups, 'local:/x', false)).toEqual({ promote: [], addLoose: true });
+    expect(openEffects(groups, 'local:/x', true)).toEqual({ promote: [], addLoose: false });
+  });
+
+  it('opening a member of a working group changes nothing', () => {
+    expect(openEffects([g('w', ['local:/x'])], 'local:/x', false)).toEqual({ promote: [], addLoose: false });
   });
 });
