@@ -14,7 +14,7 @@ import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
 import { closeVscodeTab } from '../../pages/vscodeTabClose';
 import type { RepoConfig, SessionMetrics, Worktree } from '../../types';
 import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
-import { BranchIcon, RepoIcon } from '../sidebar/SidebarBody';
+import { BranchIcon, RepoIcon } from '../sidebar/rowBits';
 import {
   KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, serverPids, sum,
   type AppMetric, type Group, type Kind, type SessionRow, type SortKey, type Usage,

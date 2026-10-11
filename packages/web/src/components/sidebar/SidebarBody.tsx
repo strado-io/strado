@@ -1,25 +1,26 @@
 // One space's sidebar pane: a toolbar (Search, Focus, Add repo, New worktree),
 // then either Working on — the worktrees you have opened here, as cards — with
-// Settled (finished work) underneath, or, with Focus off, the whole space:
-// every repo with all of its worktrees, runner worktrees under their runner.
-import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+// Settled (finished work) underneath, or, with Focus off, the repo tree:
+// every repo with all of its worktrees (see RepoTree).
+import { useState } from 'react';
 import type { RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
-import { chipStatus, sessionChips } from '../../hooks/sessions';
+import { sessionChips } from '../../hooks/sessions';
 import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor } from '../Sidebar';
-import { SESSION_COLOR, SessionAvatarIcon, SessionAvatarStack } from './sessionAvatars';
-import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
+import { SessionAvatarStack } from './sessionAvatars';
 import { cardLines, worktreeLabel } from './labels';
 import { WorktreeCard } from './WorktreeCard';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
-import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
+import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
+import { BrailleSpinner, HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
+import { RepoTree } from './RepoTree';
 import { SettledSection } from './SettledSection';
 import { useSidebarFocus } from '../../hooks/sidebarFocus';
+export { BranchIcon, RepoIcon, type MenuItem } from './rowBits';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { SidebarToolbar } from './SidebarToolbar';
 import { useLooseWorktrees } from '../../hooks/looseWorktrees';
@@ -39,6 +40,10 @@ export type SidebarBodyProps = {
   activeWorktreePath: string | null;
   /** New worktree with the repo still to pick (toolbar and blank-space menu). */
   onNewWorktree: () => void;
+  /** New worktree in a given repo (Focus off: the repo row's +). */
+  onNewWorktreeForRepo: (repo: RepoConfig) => void;
+  /** Remove a repo from the space (Focus off: the repo row's menu). */
+  onDeleteRepo: (repo: RepoConfig) => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
@@ -47,178 +52,9 @@ export type SidebarBodyProps = {
   remoteLoading?: boolean;
   /** Toolbar Search: opens ⌘K. */
   onSearch: () => void;
-  /** Surfaces a failed focus-group change in the dashboard's error banner. */
+  /** Surfaces a failed change in the dashboard's error banner. */
   onError?: (message: string) => void;
 };
-
-function isRunning(w: Worktree): boolean {
-  const s = w.process.status;
-  return s === 'running' || s === 'starting' || s === 'stopping' || !!w.process.external;
-}
-function agentWorking(w: Worktree): boolean {
-  return w.claudeStatus === 'working' || w.codexStatus === 'working'
-    || w.opencodeStatus === 'working' || w.piStatus === 'working';
-}
-
-// Terminal-style loader shown while an agent is working (frames via CSS).
-function BrailleSpinner({ small = false }: { small?: boolean }) {
-  return (
-    <span
-      role="status"
-      aria-label="agent working"
-      className={`braille-spinner shrink-0 font-mono leading-none text-amber-400 ${small ? 'text-[13px]' : 'text-sm'}`}
-    />
-  );
-}
-
-
-// branch glyph (hand-tuned SVG, ships pre-flipped upside down) — marks
-// each worktree row as a branch hanging off its repo.
-export function BranchIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg
-      width="14" height="14" viewBox="0 0 48 48" aria-hidden data-worktree-icon="branch"
-      className={`-scale-y-100 ${className}`}
-      fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4"
-    >
-      <path clipRule="evenodd" d="M36 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm-22 0a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm0 32a4 4 0 1 0 0-8a4 4 0 0 0 0 8Z" />
-      <path d="M14 12v24v-3c0-8 22-9 22-17v-4" />
-    </svg>
-  );
-}
-
-function HoverActions({ active, children }: { active: boolean; children: React.ReactNode }) {
-  return (
-    <span
-      className={`absolute right-1 z-10 flex items-center rounded opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
-        active ? 'bg-zinc-800' : 'bg-zinc-900'
-      }`}
-    >
-      {children}
-    </span>
-  );
-}
-
-// The row's leading glyph when a branch has an open/merged/closed PR. The
-// detail (title, checks, branches) belongs to the row's hover card — the icon
-// is the state at a glance and a click into the review.
-function MergeRequestBadge({ worktree, mr, onOpen, testIdSuffix = worktree.path }: {
-  worktree: Worktree;
-  mr: MergeRequest;
-  onOpen?: (w: Worktree, mr: MergeRequest) => void;
-  testIdSuffix?: string;
-}) {
-  const pipeline = mr.pipeline ? PIPELINE_DETAIL[mr.pipeline] : null;
-  const { kind } = prKind(mr);
-  return (
-    <button
-      type="button"
-      data-testid={`pr-status-${testIdSuffix}`}
-      aria-label={`Open ${kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpen?.(worktree, mr);
-      }}
-      className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm outline-none ring-offset-zinc-950 focus-visible:ring-1 focus-visible:ring-sky-400"
-      style={{ color: MR_STATE_COLOR[mr.state] }}
-    >
-      <PrStateIcon state={mr.state} />
-    </button>
-  );
-}
-
-export function RepoIcon() {
-  // book-with-bookmark repo glyph (hand-tuned SVG), always in the app's
-  // primary orange (sky-* is remapped to Strado orange) — one color for every repo
-  return (
-    <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center text-sky-400">
-      {/* GitHub's repo Octicon — drawn on a 16px grid, stays crisp at icon sizes */}
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="currentColor">
-        <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z" />
-      </svg>
-    </span>
-  );
-}
-
-// small kebab (⋯) button + popover; closes on outside-click via a fixed backdrop
-export type MenuItem = { text: string; danger?: boolean; onClick: () => void };
-
-/**
- * A menu's floating list. `anchor: 'right'` hangs it left of the point (under
- * a ⋯ button); 'left' opens it rightwards from the point (a right-click).
- */
-function MenuPopover({ pos, items, anchor, onClose }: {
-  pos: { x: number; y: number };
-  items: MenuItem[];
-  anchor: 'left' | 'right';
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  // portal: the space carousel's transformed track would otherwise become
-  // the containing block for these fixed elements, shoving the popover a
-  // pane-width off-screen on every space but the first
-  return createPortal(
-    <>
-      <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); onClose(); }}
-        onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
-      <div
-        role="menu"
-        className={`fixed z-50 min-w-44 ${anchor === 'right' ? '-translate-x-full' : ''} rounded-md border border-zinc-800 bg-zinc-950 p-1 shadow-2xl`}
-        style={{ left: pos.x, top: pos.y }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {items.map((it) => (
-          <button
-            key={it.text}
-            onClick={() => { onClose(); it.onClick(); }}
-            className={`block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-zinc-900 ${it.danger ? 'text-red-300' : 'text-zinc-200'}`}
-          >
-            {it.text}
-          </button>
-        ))}
-      </div>
-    </>,
-    document.body,
-  );
-}
-
-function Menu({ label, items, alwaysVisible = false }: {
-  label: string;
-  items: MenuItem[];
-  alwaysVisible?: boolean;
-}) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  // Inside a worktree row this dismisses the row's hover card (a no-op for
-  // repo and space menus): the menu, and whatever it opens, take over.
-  const dismissHoverCard = useRowHoverCardDismiss();
-  return (
-    <>
-      <button
-        type="button"
-        aria-label={label}
-        onClick={(e) => {
-          e.stopPropagation();
-          dismissHoverCard();
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          setPos({ x: r.right, y: r.bottom });
-        }}
-        className={`${alwaysVisible ? 'inline-flex' : 'pointer-events-none inline-flex opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100'} h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded p-[3px] text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400`}
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden fill="currentColor">
-          <circle cx="8" cy="3.5" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="8" cy="12.5" r="1.25" />
-        </svg>
-      </button>
-      {pos && (
-        <MenuPopover pos={pos} items={items} anchor="right"
-          onClose={() => { setPos(null); dismissHoverCard(); }} />
-      )}
-    </>
-  );
-}
 
 /**
  * A worktree on a runner. Rendered in the same list as local ones because
@@ -304,9 +140,9 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 export function SidebarBody({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
   onAddRepo, onOpenWorktree, activeWorktreePath,
-  onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+  onOpenMr, onOpenDiff, onNewWorktree, onNewWorktreeForRepo, onDeleteRepo, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree,
-  remoteLoading = false, onSearch, onError,
+  remoteLoading = false, onSearch,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const loose = useLooseWorktrees(wsId);
@@ -340,23 +176,7 @@ export function SidebarBody({
     return (state === 'merged' || state === 'closed') && !repoRoots.has(w.path);
   };
 
-  // Uncommitted work on a worktree row: +adds −dels, the same numbers the task
-  // table shows. Silent when the tree is clean, so a quiet row stays quiet.
-  const diffBadge = (w: Worktree, testIdSuffix = w.path) => {
-    const d = w.diffStats;
-    if (!d || (d.additions === 0 && d.deletions === 0)) return null;
-    return (
-      <span
-        data-testid={`diff-${testIdSuffix}`}
-        title={`${d.files} file${d.files === 1 ? '' : 's'} changed · +${d.additions} -${d.deletions}`}
-        className="shrink-0 font-mono text-[10px] tabular-nums"
-      >
-        <span className="text-emerald-500/80">+{d.additions}</span>
-        <span className="ml-1 text-red-400/80">-{d.deletions}</span>
-      </span>
-    );
-  };
-  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled' | 'tree') => {
+  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled') => {
     const open: OpenWorktree = onOpenWorktree;
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
@@ -445,27 +265,6 @@ export function SidebarBody({
   const settledWorktreeRows = worktrees.filter(isSettled).map((w) =>
     localRow(w, repos.find((r) => r.id === w.repoId)?.name ?? '', 'settled'));
 
-  // Focus off: everything in the space. Local worktrees by repo, in repo
-  // order, then each runner's worktrees under the runner's name.
-  const treeGroups: { key: string; name: string; rows: React.ReactNode[] }[] = [
-    ...repos.map((r) => ({
-      key: `repo:${r.id}`, name: r.name,
-      rows: worktrees.filter((w) => w.repoId === r.id).map((w) => localRow(w, r.name, 'tree')),
-    })),
-    {
-      key: 'repo:other', name: 'Other',
-      rows: worktrees.filter((w) => !repos.some((r) => r.id === w.repoId)).map((w) => localRow(w, '', 'tree')),
-    },
-    ...[...new Map(remoteWorktrees.map((w) => [w.runnerId, w.runnerName])).entries()].map(([runnerId, runnerName]) => ({
-      key: `runner:${runnerId}`, name: runnerName,
-      rows: remoteWorktrees.filter((w) => w.runnerId === runnerId).map((w) => (
-        <RemoteRow key={`tree:${remotePinId(w)}`} w={w} repoName={repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''}
-          reachable={runnerOnline(w.runnerId)} activeRow={w.path === activeWorktreePath}
-          onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} />
-      )),
-    })),
-  ];
-
   // First runner fetch still in flight: say so, quietly. Runner rows appearing
   // a beat after the local ones otherwise looks like a bug. Then any runner errors.
   const runnerNotes = (
@@ -496,18 +295,17 @@ export function SidebarBody({
             {runnerNotes}
           </section>
         ) : (
-          <section aria-label="All worktrees" className="mt-2 flex flex-col gap-2">
-            {treeGroups.filter((g) => g.rows.length > 0).map((g) => (
-              <div key={g.key} role="group" aria-label={g.name}>
-                <div className="truncate px-2.5 pb-1 pt-0.5 text-[11px] text-zinc-600">{g.name}</div>
-                <div className="flex flex-col gap-1.5">{g.rows}</div>
-              </div>
-            ))}
-            {treeGroups.every((g) => g.rows.length === 0) && (
-              <p className="px-2.5 py-2 text-xs text-zinc-600">No worktrees yet. Add a repo, or ✎ to start one.</p>
-            )}
+          <RepoTree
+            repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} runnerStatuses={runnerStatuses}
+            activeWorktreePath={activeWorktreePath} mrByPath={mrByPath} vscodeTabs={vscodeTabs} browserTabs={browserTabs}
+            onAddRepo={onAddRepo} onNewWorktreeForRepo={onNewWorktreeForRepo} onDeleteRepo={onDeleteRepo}
+            onOpenWorktree={onOpenWorktree} onOpenMr={onOpenMr} onOpenDiff={onOpenDiff}
+            onWorktreeSettings={onWorktreeSettings} onDeleteWorktree={onDeleteWorktree}
+            onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+            onContextMenu={openContextMenu}
+          >
             {runnerNotes}
-          </section>
+          </RepoTree>
         )}
       </div>
 
