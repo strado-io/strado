@@ -1,6 +1,7 @@
-// One space's sidebar pane: a toolbar (Search, Add repo, New worktree), then
-// Working on — the worktrees you have opened here, as cards — with Settled
-// (finished work) and All worktrees (everything, by repo) folded underneath.
+// One space's sidebar pane: a toolbar (Search, Focus, Add repo, New worktree),
+// then either Working on — the worktrees you have opened here, as cards — with
+// Settled (finished work) underneath, or, with Focus off, the whole space:
+// every repo with all of its worktrees, runner worktrees under their runner.
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RemoteWorktree, RunnerStatus } from '../../api';
@@ -18,7 +19,7 @@ import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, useRowHoverCardDismiss, type OpenWorktree } from './WorktreeRowItem';
 import { SettledSection } from './SettledSection';
-import { AllWorktreesSection, type WorktreeGroup } from './AllWorktreesSection';
+import { useSidebarFocus } from '../../hooks/sidebarFocus';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { SidebarToolbar } from './SidebarToolbar';
 import { useLooseWorktrees } from '../../hooks/looseWorktrees';
@@ -309,6 +310,7 @@ export function SidebarBody({
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const loose = useLooseWorktrees(wsId);
+  const [focus, toggleFocus] = useSidebarFocus();
   // Right-click on a worktree row: its ⋯ menu, at the cursor.
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openContextMenu = (e: React.MouseEvent, items: MenuItem[]) => {
@@ -354,7 +356,7 @@ export function SidebarBody({
       </span>
     );
   };
-  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled' | 'all') => {
+  const localRow = (w: Worktree, repoName: string, placement: 'loose' | 'settled' | 'tree') => {
     const open: OpenWorktree = onOpenWorktree;
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
@@ -443,53 +445,73 @@ export function SidebarBody({
   const settledWorktreeRows = worktrees.filter(isSettled).map((w) =>
     localRow(w, repos.find((r) => r.id === w.repoId)?.name ?? '', 'settled'));
 
-  // Everything in the space: local worktrees by repo, in repo order, then
-  // each runner's worktrees under the runner's name.
-  const allGroups: WorktreeGroup[] = [
+  // Focus off: everything in the space. Local worktrees by repo, in repo
+  // order, then each runner's worktrees under the runner's name.
+  const treeGroups: { key: string; name: string; rows: React.ReactNode[] }[] = [
     ...repos.map((r) => ({
       key: `repo:${r.id}`, name: r.name,
-      rows: worktrees.filter((w) => w.repoId === r.id).map((w) => localRow(w, r.name, 'all')),
+      rows: worktrees.filter((w) => w.repoId === r.id).map((w) => localRow(w, r.name, 'tree')),
     })),
     {
       key: 'repo:other', name: 'Other',
-      rows: worktrees.filter((w) => !repos.some((r) => r.id === w.repoId)).map((w) => localRow(w, '', 'all')),
+      rows: worktrees.filter((w) => !repos.some((r) => r.id === w.repoId)).map((w) => localRow(w, '', 'tree')),
     },
     ...[...new Map(remoteWorktrees.map((w) => [w.runnerId, w.runnerName])).entries()].map(([runnerId, runnerName]) => ({
       key: `runner:${runnerId}`, name: runnerName,
       rows: remoteWorktrees.filter((w) => w.runnerId === runnerId).map((w) => (
-        <RemoteRow key={`all:${remotePinId(w)}`} w={w} repoName={repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''}
+        <RemoteRow key={`tree:${remotePinId(w)}`} w={w} repoName={repos.find((r) => r.id === w.localRepoId)?.name ?? w.remoteRepoName ?? ''}
           reachable={runnerOnline(w.runnerId)} activeRow={w.path === activeWorktreePath}
           onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} />
       )),
     })),
   ];
 
+  // First runner fetch still in flight: say so, quietly. Runner rows appearing
+  // a beat after the local ones otherwise looks like a bug. Then any runner errors.
+  const runnerNotes = (
+    <>
+      {remoteLoading && (
+        <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
+          <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
+          <span className="animate-pulse">Checking runners…</span>
+        </div>
+      )}
+      {runnerStatuses.filter((r) => r.error).map((r) => (
+        <div key={r.runnerId} className="px-2 py-1.5 text-[11px] text-amber-600/80">{r.name}: {r.error}</div>
+      ))}
+    </>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarToolbar onSearch={onSearch} onAddRepo={onAddRepo} onNewWorktree={onNewWorktree} />
+      <SidebarToolbar onSearch={onSearch} focus={focus} onToggleFocus={toggleFocus} onAddRepo={onAddRepo} onNewWorktree={onNewWorktree} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
-        <section aria-label="Working on" className="mt-2">
-          {looseRows.length === 0 ? (
-            <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing yet. Search to open a worktree, or ✎ to start one.</p>
-          ) : (
-            <div className="mb-1.5 flex flex-col gap-1.5">{looseRows}</div>
-          )}
-          {/* First runner fetch still in flight: say so, quietly. Runner rows
-              appearing a beat after the local ones otherwise looks like a bug. */}
-          {remoteLoading && (
-            <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
-              <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
-              <span className="animate-pulse">Checking runners…</span>
-            </div>
-          )}
-          {runnerStatuses.filter((r) => r.error).map((r) => (
-            <div key={r.runnerId} className="px-2 py-1.5 text-[11px] text-amber-600/80">{r.name}: {r.error}</div>
-          ))}
-        </section>
+        {focus ? (
+          <section aria-label="Working on" className="mt-2">
+            {looseRows.length === 0 ? (
+              <p className="px-2.5 py-2 text-xs text-zinc-600">Nothing yet. Search to open a worktree, or ✎ to start one.</p>
+            ) : (
+              <div className="mb-1.5 flex flex-col gap-1.5">{looseRows}</div>
+            )}
+            {runnerNotes}
+          </section>
+        ) : (
+          <section aria-label="All worktrees" className="mt-2 flex flex-col gap-2">
+            {treeGroups.filter((g) => g.rows.length > 0).map((g) => (
+              <div key={g.key} role="group" aria-label={g.name}>
+                <div className="truncate px-2.5 pb-1 pt-0.5 text-[11px] text-zinc-600">{g.name}</div>
+                <div className="flex flex-col gap-1.5">{g.rows}</div>
+              </div>
+            ))}
+            {treeGroups.every((g) => g.rows.length === 0) && (
+              <p className="px-2.5 py-2 text-xs text-zinc-600">No worktrees yet. Add a repo, or ✎ to start one.</p>
+            )}
+            {runnerNotes}
+          </section>
+        )}
       </div>
 
-      <SettledSection worktreeRows={settledWorktreeRows} />
-      <AllWorktreesSection groups={allGroups} />
+      {focus && <SettledSection worktreeRows={settledWorktreeRows} />}
 
       {contextMenu && (
         <MenuPopover pos={contextMenu} items={contextMenu.items} anchor="left" onClose={() => setContextMenu(null)} />

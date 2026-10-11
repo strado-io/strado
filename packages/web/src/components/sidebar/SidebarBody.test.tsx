@@ -146,52 +146,67 @@ describe('SidebarBody: Working on and Settled', () => {
     expect(onNewWorktree).toHaveBeenCalled();
   });
 
-  describe('All worktrees', () => {
-    const expand = () => fireEvent.click(screen.getByRole('button', { name: /^All worktrees \(/ }));
+  describe('Focus switch', () => {
+    const focusOff = () => fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
 
-    it('folds every worktree in the space under Working on, grouped by repo, closed until asked', () => {
+    it('is on by default: only opened worktrees show, and the whole space is one click away', () => {
       loose('local:/r1/wt');
       render(<SidebarBody {...props()} />);
-      const section = screen.getByRole('region', { name: 'All worktrees' });
-      expect(within(section).getByRole('button', { name: 'All worktrees (3)' })).toHaveAttribute('aria-expanded', 'false');
-      expect(within(section).queryByRole('button', { name: 'fx-412' })).toBeNull();
-      expand();
-      const api = within(section).getByRole('group', { name: 'api' });
-      const web = within(section).getByRole('group', { name: 'web' });
-      expect(within(api).getAllByRole('button', { name: 'fx-412' })).toHaveLength(1);
-      expect(within(web).getAllByRole('button', { name: 'fx-412' })).toHaveLength(2);
-      // Working on still lists only what was opened.
-      expect(within(screen.getByRole('region', { name: 'Working on' })).getAllByRole('button', { name: 'fx-412' })).toHaveLength(1);
+      expect(screen.getByRole('button', { name: 'Focus' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getAllByRole('button', { name: 'fx-412' })).toHaveLength(1);
+      expect(screen.queryByRole('region', { name: 'All worktrees' })).toBeNull();
+      focusOff();
+      expect(screen.getByRole('button', { name: 'Focus' })).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.queryByRole('region', { name: 'Working on' })).toBeNull();
+      const all = screen.getByRole('region', { name: 'All worktrees' });
+      expect(within(within(all).getByRole('group', { name: 'api' })).getAllByRole('button', { name: 'fx-412' })).toHaveLength(1);
+      expect(within(within(all).getByRole('group', { name: 'web' })).getAllByRole('button', { name: 'fx-412' })).toHaveLength(2);
+      expect(localStorage.getItem('strado:sidebar-focus')).toBe('off');
     });
 
-    it('opens a worktree from the list; its menu has no Remove, since it is not a Working on row', () => {
+    it('remembers being off across mounts, and comes back on with another click', () => {
+      localStorage.setItem('strado:sidebar-focus', 'off');
+      render(<SidebarBody {...props()} />);
+      expect(screen.getByRole('region', { name: 'All worktrees' })).toBeInTheDocument();
+      focusOff();
+      expect(screen.getByRole('region', { name: 'Working on' })).toBeInTheDocument();
+      expect(localStorage.getItem('strado:sidebar-focus')).toBe('on');
+    });
+
+    it('with Focus off, a settled worktree sits in its repo like any other; there is no Settled section', () => {
+      localStorage.setItem('strado:sidebar-focus', 'off');
+      vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1/wt', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
+      render(<SidebarBody {...props()} />);
+      expect(screen.queryByRole('region', { name: 'Settled' })).toBeNull();
+      expect(within(screen.getByRole('group', { name: 'api' })).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
+    });
+
+    it('opens a worktree from the tree; its menu has no Remove, since it is not a Working on row', () => {
+      localStorage.setItem('strado:sidebar-focus', 'off');
       const onOpenWorktree = vi.fn();
       render(<SidebarBody {...props({ onOpenWorktree, worktrees: [wt('/r2/other', 'r2')] })} />);
-      expand();
-      const section = screen.getByRole('region', { name: 'All worktrees' });
-      fireEvent.click(within(section).getByRole('button', { name: 'fx-412' }));
+      fireEvent.click(screen.getByRole('button', { name: 'fx-412' }));
       expect(onOpenWorktree).toHaveBeenCalledWith(expect.objectContaining({ path: '/r2/other' }));
-      fireEvent.click(within(section).getByRole('button', { name: 'fx-412 actions' }));
-      expect(screen.getAllByRole('menu').at(-1)!.textContent).not.toContain('Remove from Working on');
+      fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
+      expect(screen.getByRole('menu').textContent).not.toContain('Remove from Working on');
     });
 
     it('lists runner worktrees under their runner; an empty repo gets no heading', () => {
+      localStorage.setItem('strado:sidebar-focus', 'off');
       const remote = {
         runnerId: 'rn1', runnerName: 'gpu-box', wsBase: 'wss://rn1', remoteWsId: 'default',
         path: '/srv/wt/FX-77', name: 'FX-77', branch: 'fx-77', head: 'h', remoteRepoId: null,
         isRepoRoot: false, cloneUrl: null, localRepoId: 'r1', remoteRepoName: null,
       } as RemoteWorktree;
       render(<SidebarBody {...props({ worktrees: [], remoteWorktrees: [remote], runnerStatuses: [{ runnerId: 'rn1', name: 'gpu-box', online: true, error: null }] as never })} />);
-      expand();
-      const section = screen.getByRole('region', { name: 'All worktrees' });
-      expect(within(section).getByRole('button', { name: 'All worktrees (1)' })).toBeInTheDocument();
-      expect(within(section).queryByRole('group', { name: 'api' })).toBeNull();
-      expect(within(within(section).getByRole('group', { name: 'gpu-box' })).getByRole('button', { name: 'fx-77 on gpu-box' })).toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: 'api' })).toBeNull();
+      expect(within(screen.getByRole('group', { name: 'gpu-box' })).getByRole('button', { name: 'fx-77 on gpu-box' })).toBeInTheDocument();
     });
 
-    it('is absent when the space has no worktrees at all', () => {
+    it('with Focus off and nothing in the space, says so', () => {
+      localStorage.setItem('strado:sidebar-focus', 'off');
       render(<SidebarBody {...props({ worktrees: [] })} />);
-      expect(screen.queryByRole('region', { name: 'All worktrees' })).toBeNull();
+      expect(screen.getByText('No worktrees yet. Add a repo, or ✎ to start one.')).toBeInTheDocument();
     });
   });
 });
