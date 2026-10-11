@@ -10,7 +10,7 @@ vi.mock('../hooks/mrSummaries', () => ({
   useMrSummaries: vi.fn(() => new Map()),
 }));
 vi.mock('../hooks/useFocusGroups', () => ({
-  useFocusGroups: vi.fn(() => ({ groups: [], loaded: true, create: vi.fn(), rename: vi.fn(), setMembership: vi.fn(), remove: vi.fn() })),
+  useFocusGroups: vi.fn(() => ({ groups: [], loaded: true, create: vi.fn(), rename: vi.fn(), setMembership: vi.fn(), remove: vi.fn(), setState: vi.fn() })),
 }));
 
 // The sidebar prefetches its neighbouring spaces on mount; these tests are
@@ -36,6 +36,7 @@ vi.mock('../api', async (importOriginal) => {
 const PANE_WIDTH = 300;
 beforeEach(() => {
   localStorage.clear();
+  seedLoose();
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(PANE_WIDTH);
   vi.mocked(useMrSummaries).mockReturnValue(new Map());
 });
@@ -86,12 +87,12 @@ const base = {
   taskCount: 0,
   onCollapse: vi.fn(),
   onAddRepo: vi.fn(),
-  onDeleteRepo: vi.fn(),
   onOpenWorktree: vi.fn(),
-  onNewWorktreeForRepo: vi.fn(),
+  onNewWorktree: vi.fn(),
+  onSearch: vi.fn(),
+  onShowParked: vi.fn(),
   onWorktreeSettings: vi.fn(),
   onDeleteWorktree: vi.fn(),
-  onToggleRepo: vi.fn(),
   activeWorktreePath: null,
   update: {
     phase: 'idle' as const, info: null, progress: 0, error: null,
@@ -100,22 +101,29 @@ const base = {
   },
 };
 
+// Worktree rows live in Working on now; seed every path these tests use as a
+// loose row. Ids that match no worktree render nothing, so the list is safe to over-fill.
+const LOOSE = [...new Set(['/r1/FD-1', '/r1/FD-2', ...Array.from({ length: 10 }, (_, i) => `/r1/FD-${i}`)])].map((p) => `local:${p}`);
+function seedLoose(extra: string[] = []) {
+  localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ w1: [...LOOSE, ...extra] }));
+}
+
 describe('Sidebar tree', () => {
   // Tasks / Code reviews / Usage / Settings live in one icon row at the
   // bottom, leaving the rail above for groups and worktrees.
-  it('puts the page switcher in an icon row at the bottom, below the repo list', () => {
-    wrap(<Sidebar {...base} reviewCount={6} expandedRepos={new Set()} />);
+  it('puts the page switcher in an icon row at the bottom, below the Working on header', () => {
+    wrap(<Sidebar {...base} reviewCount={6} />);
     const nav = screen.getByRole('navigation', { name: 'Pages' });
     expect(within(nav).getByRole('button', { name: 'Code reviews' })).toHaveTextContent('6');
     expect(activePane().queryByText('Code reviews')).not.toBeInTheDocument();
-    const repos = activePane().getByText('Repos', { selector: 'span' });
-    expect(repos.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const header = activePane().getByText('Working on', { selector: 'span' });
+    expect(header.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('selects a page and opens settings from the icon row', () => {
     const onSelect = vi.fn();
     const onOpenSettings = vi.fn();
-    wrap(<Sidebar {...base} onSelect={onSelect} onOpenSettings={onOpenSettings} expandedRepos={new Set()} />);
+    wrap(<Sidebar {...base} onSelect={onSelect} onOpenSettings={onOpenSettings} />);
     const nav = screen.getByRole('navigation', { name: 'Pages' });
     fireEvent.click(within(nav).getByRole('button', { name: 'Usage' }));
     expect(onSelect).toHaveBeenCalledWith({ kind: 'usage' });
@@ -124,83 +132,53 @@ describe('Sidebar tree', () => {
   });
 
   it('marks the current page and leaves Usage without a count', () => {
-    wrap(<Sidebar {...base} selected={{ kind: 'usage' }} expandedRepos={new Set()} />);
+    wrap(<Sidebar {...base} selected={{ kind: 'usage' }} />);
     const usage = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Usage' });
     expect(usage).toHaveAttribute('aria-current', 'page');
     expect(usage).toHaveTextContent(/^$/);
   });
 
   it('shows a spinner instead of zero while code reviews are first loading', () => {
-    wrap(<Sidebar {...base} reviewCount={0} reviewLoading expandedRepos={new Set()} />);
+    wrap(<Sidebar {...base} reviewCount={0} reviewLoading />);
     const reviews = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Code reviews' });
     expect(within(reviews).getByRole('status', { name: 'Loading code reviews' })).toBeInTheDocument();
     expect(reviews).not.toHaveTextContent('0');
   });
 
-  describe('pinned worktrees', () => {
-    it('shows a hover-only pin button and places the pinned shortcut above Repos', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
-
-      const pin = activePane().getByRole('button', { name: 'Pin FD-1' });
-      expect(pin).toHaveClass('opacity-0', 'pointer-events-none', 'group-hover:opacity-100', 'group-hover:pointer-events-auto');
-      fireEvent.click(pin);
-
-      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
-      expect(within(pinned).getByText('FD-1')).toBeInTheDocument();
-      const repos = activePane().getByText('Repos', { selector: 'span' });
-      expect(pinned.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    });
-
-    it('keeps a pinned worktree visible when its repo is collapsed and opens it from the shortcut', () => {
-      localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ w1: ['local:/r1/FD-1'] }));
+  describe('loose worktrees', () => {
+    it('shows loose worktrees at the top of Working on and opens them', () => {
       const onOpenWorktree = vi.fn();
-      wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} expandedRepos={new Set()} />);
-
-      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
-      fireEvent.click(within(pinned).getByText('FD-1'));
+      wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} />);
+      const working = activePane().getByRole('region', { name: 'Working on' });
+      fireEvent.click(within(working).getByText('FD-1'));
       expect(onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
-      expect(activePane().getAllByText('FD-1')).toHaveLength(1);
+      expect(activePane().queryByRole('button', { name: /^Pin / })).toBeNull();
     });
 
-    it('unpins from the pinned shortcut and persists pins across remounts', () => {
-      const first = wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
-      fireEvent.click(activePane().getByRole('button', { name: 'Pin FD-2' }));
-      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws') ?? '{}')).toEqual({
-        w1: ['local:/r1/FD-2'],
-      });
-
-      first.unmount();
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
-      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
-      expect(within(pinned).getByText('FD-2')).toBeInTheDocument();
-      fireEvent.click(within(pinned).getByRole('button', { name: 'Unpin FD-2 from pinned' }));
-      expect(activePane().queryByRole('region', { name: 'Pinned worktrees' })).toBeNull();
-      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws') ?? '{}')).toEqual({ w1: [] });
+    it('removes a loose worktree from Working on and persists it', () => {
+      wrap(<Sidebar {...base} />);
+      fireEvent.click(activePane().getByLabelText('FD-2 actions'));
+      fireEvent.click(screen.getByRole('button', { name: 'Remove from Working on' }));
+      expect(activePane().queryByText('FD-2')).toBeNull();
+      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!).w1).not.toContain('local:/r1/FD-2');
     });
   });
 
   it('shows the agent-working loader on the specific worktree row, not the repo row', () => {
     const working = { ...wt('/r1/FD-1', 'FD-1'), claudeStatus: 'working' as const };
-    wrap(<Sidebar {...base} worktrees={[working, wt('/r1/FD-2', 'FD-2')]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[working, wt('/r1/FD-2', 'FD-2')]} />);
     // only the working worktree row spins; the repo row no longer rolls it up
     expect(screen.getAllByRole('status', { name: 'agent working' })).toHaveLength(1);
   });
 
   it.each(['codexStatus', 'opencodeStatus'] as const)('shows Shell-hosted %s activity through the aggregate status', (field) => {
     const working = { ...wt('/r1/FD-1', 'FD-1'), [field]: 'working' as const };
-    wrap(<Sidebar {...base} worktrees={[working]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[working]} />);
     expect(screen.getByRole('status', { name: 'agent working' })).toBeInTheDocument();
   });
 
-  it('shows no loader for a collapsed repo even when a worktree inside is working', () => {
-    const working = { ...wt('/r1/FD-1', 'FD-1'), claudeStatus: 'working' as const };
-    wrap(<Sidebar {...base} worktrees={[working]} expandedRepos={new Set()} />);
-    // A collapsed repo hides its worktree rows, so there is no working hint here.
-    expect(screen.queryByRole('status', { name: 'agent working' })).toBeNull();
-  });
-
   it('shows no loader when agents are idle', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} />);
     expect(screen.queryByRole('status', { name: 'agent working' })).toBeNull();
   });
 
@@ -209,7 +187,7 @@ describe('Sidebar tree', () => {
     const withoutSession = wt('/r1/FD-2', 'FD-2');
     wrap(
       <Sidebar {...base} worktrees={[withSession, withoutSession]}
-        activeWorktreePath={withSession.path} expandedRepos={new Set(['r1'])} />,
+        activeWorktreePath={withSession.path} />,
     );
 
     expect(screen.getByTestId(`session-mark-${withSession.path}`)).toHaveClass('left-1', 'w-px', 'bg-sky-500');
@@ -220,7 +198,7 @@ describe('Sidebar tree', () => {
   });
 
   it('shows worktree children with a running dot when the repo is expanded', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} />);
     expect(screen.getByText('FD-1')).toBeInTheDocument();
     expect(screen.getByText('FD-2')).toBeInTheDocument();
     // running worktree row carries a dot (title attr marks it)
@@ -229,22 +207,14 @@ describe('Sidebar tree', () => {
   });
 
   it('has no Active nav item — a running dev server shows on its own worktree row', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} />);
     expect(screen.queryByRole('button', { name: /^Active/ })).toBeNull();
     expect(screen.getByTestId('run-dot-/r1/FD-1')).toBeInTheDocument();
   });
 
-  it('never rolls the running dot up to the repo row', () => {
-    // The repo row's dot said only "something in here runs" — the worktree row
-    // already says which one, and the count column carries the rest.
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
-    const [repoRow] = screen.getAllByRole('button', { name: /Repo One/ });
-    expect(repoRow!.querySelector('.bg-emerald-500')).toBeNull();
-  });
-
   it('shows +adds −dels on a worktree row with uncommitted changes', () => {
     const dirty = wt('/r1/FD-1', 'FD-1', 'idle', { additions: 42, deletions: 7, files: 3 });
-    wrap(<Sidebar {...base} worktrees={[dirty, wt('/r1/FD-2', 'FD-2')]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[dirty, wt('/r1/FD-2', 'FD-2')]} />);
     const badge = screen.getByTestId('diff-/r1/FD-1');
     expect(badge).toHaveTextContent('+42');
     expect(badge).toHaveTextContent('-7');
@@ -254,7 +224,7 @@ describe('Sidebar tree', () => {
 
   it('shows no diff badge when the worktree has stats but nothing changed', () => {
     const clean = wt('/r1/FD-1', 'FD-1', 'idle', { additions: 0, deletions: 0, files: 0 });
-    wrap(<Sidebar {...base} worktrees={[clean]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[clean]} />);
     expect(screen.queryByTestId('diff-/r1/FD-1')).toBeNull();
   });
 
@@ -277,7 +247,7 @@ describe('Sidebar tree', () => {
         provider: 'github',
       },
     ]]));
-    wrap(<Sidebar {...base} worktrees={[dirty]} expandedRepos={new Set(['r1'])}
+    wrap(<Sidebar {...base} worktrees={[dirty]}
       onOpenMr={onOpenMr} onOpenWorktree={onOpenWorktree} />);
     expect(screen.getByTestId(`diff-${dirty.path}`)).toHaveTextContent('+12-3');
     const badge = screen.getByTestId(`pr-status-${dirty.path}`);
@@ -298,11 +268,11 @@ describe('Sidebar tree', () => {
   });
 
   it('uses the same-size branch icon when a worktree has no PR', () => {
-    wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
     const icon = screen.getByText('FD-1').closest('.group')!.querySelector('[data-worktree-icon="branch"]');
     expect(icon).toHaveAttribute('width', '14');
     expect(icon).toHaveAttribute('height', '14');
-    expect(icon?.parentElement).toHaveClass('ml-5');
+    expect(icon?.parentElement).toHaveClass('ml-2.5');
   });
 
   it('shows at most three overlapping session avatars plus a count, and lists every session on hover', () => {
@@ -312,7 +282,7 @@ describe('Sidebar tree', () => {
       codexSessions: ['1'],
       shellSessions: ['1', '2', '3'],
     };
-    wrap(<Sidebar {...base} worktrees={[busy]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[busy]} />);
 
     const stack = screen.getByTestId(`session-stack-${busy.path}`);
     // Three faces plus "+3": the name keeps the width the other faces took.
@@ -343,7 +313,7 @@ describe('Sidebar tree', () => {
         provider: 'github',
       },
     ]]));
-    wrap(<Sidebar {...base} worktrees={[worktree]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[worktree]} />);
     const badge = screen.getByTestId(`pr-status-${worktree.path}`);
     expect(badge.querySelector('[data-pr-icon="merged"]')).not.toBeNull();
     expect(badge).toHaveAccessibleName('Open PR 42, merged, checks passed');
@@ -366,39 +336,21 @@ describe('Sidebar tree', () => {
         provider: 'github',
       },
     ]]));
-    wrap(<Sidebar {...base} worktrees={[worktree]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[worktree]} />);
     const badge = screen.getByTestId(`pr-status-${worktree.path}`);
     expect(badge.querySelector('[data-pr-icon="closed"]')).not.toBeNull();
     expect(badge).toHaveAccessibleName('Open PR 42, closed');
     expect(badge).toHaveStyle({ color: '#f85149' });
   });
 
-  it('hides children when collapsed and toggles on repo click', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set()} />);
-    expect(screen.queryByText('FD-1')).toBeNull();
-    const [toggleButton] = screen.getAllByRole('button', { name: /Repo One/ });
-    fireEvent.click(toggleButton!);
-    expect(base.onToggleRepo).toHaveBeenCalledWith('r1');
-  });
-
   it('opens a worktree on child click', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} />);
     fireEvent.click(screen.getByText('FD-1'));
     expect(base.onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
   });
 
-  it('repo ⋯ menu fires new-worktree and delete', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set()} />);
-    fireEvent.click(screen.getByLabelText('Repo One actions'));
-    fireEvent.click(screen.getByRole('button', { name: /^New worktree$/ }));
-    expect(base.onNewWorktreeForRepo).toHaveBeenCalledWith(repo);
-    fireEvent.click(screen.getByLabelText('Repo One actions'));
-    fireEvent.click(screen.getByRole('button', { name: /Remove repo/ }));
-    expect(base.onDeleteRepo).toHaveBeenCalledWith(repo);
-  });
-
   it('worktree ⋯ menu fires settings and delete', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} />);
     fireEvent.click(screen.getByLabelText('FD-1 actions'));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(base.onWorktreeSettings).toHaveBeenCalledWith(base.worktrees[0]);
@@ -408,38 +360,34 @@ describe('Sidebar tree', () => {
   });
 
   it('overlays worktree actions on hover without reserving row width', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} />);
     const actions = screen.getByLabelText('FD-1 actions');
     expect(actions).toHaveClass('inline-flex', 'opacity-0', 'group-hover:opacity-100', 'h-5', 'w-5', 'p-[3px]');
     expect(actions.parentElement).toHaveClass('absolute', 'right-1');
   });
 
-  it('repo-row + button fires new-worktree without opening the menu', () => {
-    const onNewWorktreeForRepo = vi.fn();
-    const onToggleRepo = vi.fn();
-    wrap(<Sidebar {...base} onNewWorktreeForRepo={onNewWorktreeForRepo} onToggleRepo={onToggleRepo} expandedRepos={new Set()} />);
-    const plus = screen.getByRole('button', { name: 'New worktree in Repo One' });
-    expect(plus).toHaveClass('inline-flex');
-    expect(plus).not.toHaveClass('hidden');
-    expect(screen.getByLabelText('Repo One actions')).not.toHaveClass('invisible');
-    const repoRow = screen.getByText('Repo One').closest('button')!;
-    expect(within(repoRow).queryByText('2')).toBeNull();
-    fireEvent.click(plus);
-    expect(onNewWorktreeForRepo).toHaveBeenCalledWith(repo);
-    expect(onToggleRepo).not.toHaveBeenCalled();
+  it('toolbar buttons start a worktree, a group and a repo', () => {
+    const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
+    wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
+    fireEvent.click(activePane().getByRole('button', { name: 'New worktree' }));
+    expect(onNewWorktree).toHaveBeenCalled();
+    fireEvent.click(activePane().getByRole('button', { name: 'Add repo' }));
+    expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: expect.any(Number) }));
+    fireEvent.click(activePane().getByRole('button', { name: 'New group' }));
+    expect(screen.getByRole('dialog', { name: 'New group' })).toBeInTheDocument();
   });
 
   it('has no bottom New worktree button', () => {
-    wrap(<Sidebar {...base} expandedRepos={new Set()} />);
-    expect(screen.queryByRole('button', { name: /^New worktree$/ })).toBeNull();
+    wrap(<Sidebar {...base} />);
+    expect(activePane().getAllByRole('button', { name: 'New worktree' })).toHaveLength(1);
   });
 
-  describe('large repos (> 7 worktrees)', () => {
+  describe('many worktrees (> 7)', () => {
     const many = Array.from({ length: 10 }, (_, i) => wt(`/r1/FD-${i}`, `FD-${i}`));
     const bigBase = { ...base, worktrees: many };
 
     it('shows every worktree without Show-more or Show-less controls', () => {
-      wrap(<Sidebar {...bigBase} expandedRepos={new Set(['r1'])} />);
+      wrap(<Sidebar {...bigBase} />);
       expect(screen.getByText('FD-0')).toBeInTheDocument();
       expect(screen.getByText('FD-6')).toBeInTheDocument();
       expect(screen.getByText('FD-7')).toBeInTheDocument();
@@ -455,22 +403,22 @@ describe('Sidebar tree', () => {
 
     it('restores the persisted width', () => {
       localStorage.setItem('strado.sidebarWidth', '340');
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       expect(screen.getByRole('complementary')).toHaveStyle({ width: '340px' });
     });
 
     it('clamps an out-of-range persisted width and defaults when unset', () => {
       localStorage.setItem('strado.sidebarWidth', '9999');
-      const { unmount } = wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      const { unmount } = wrap(<Sidebar {...base} />);
       expect(screen.getByRole('complementary')).toHaveStyle({ width: '480px' });
       unmount();
       localStorage.removeItem('strado.sidebarWidth');
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       expect(screen.getByRole('complementary')).toHaveStyle({ width: '288px' });
     });
 
     it('dragging the handle resizes live and persists on release', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       const handle = screen.getByRole('separator', { name: 'Resize sidebar' });
       fireEvent.pointerDown(handle, { clientX: 288, pointerId: 1 });
       fireEvent.pointerMove(handle, { clientX: 348, pointerId: 1 });
@@ -496,6 +444,9 @@ describe('Sidebar tree', () => {
       remoteRepoName: 'demo-repo',
       ...over,
     });
+    // Runner rows render only when loose (or in a group); every test here uses this path.
+    beforeEach(() => { seedLoose([`remote:runner-dev-wq3p:${remote().path}`]); });
+
     const statuses = (online: boolean): RunnerStatus[] => [
       { runnerId: 'runner-dev-wq3p', name: 'runner-dev', online, error: null },
     ];
@@ -505,7 +456,7 @@ describe('Sidebar tree', () => {
       const onOpenRemoteWorktree = vi.fn();
       const w = remote({ hasShellSession: true, shellSessions: ['1'] } as Partial<RemoteWorktree>);
       wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])} remoteWorktrees={[w]}
+        <Sidebar {...base} remoteWorktrees={[w]}
           runnerStatuses={statuses(true)} onOpenRemoteWorktree={onOpenRemoteWorktree} />,
       );
       const row = within(screen.getByRole('complementary')).getByText('FD-9').closest('.group')!;
@@ -523,7 +474,7 @@ describe('Sidebar tree', () => {
 
     it('lists a runner worktree under the repo it belongs to, badged with the machine', () => {
       wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])}
+        <Sidebar {...base}
           remoteWorktrees={[remote()]} runnerStatuses={statuses(true)} />,
       );
       expect(screen.getByText('FD-9')).toBeInTheDocument();
@@ -536,7 +487,7 @@ describe('Sidebar tree', () => {
       // A row that vanishes reads as data loss. The worktree is fine; the
       // machine is just unreachable.
       wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])}
+        <Sidebar {...base}
           remoteWorktrees={[remote()]} runnerStatuses={statuses(false)} />,
       );
       expect(screen.getByText('FD-9')).toBeInTheDocument();
@@ -544,23 +495,9 @@ describe('Sidebar tree', () => {
       expect(screen.queryByText('runner-dev · offline')).toBeNull();
     });
 
-    it('groups unmatched runner worktrees under a repo folder, never a bottom bucket', () => {
-      // The old flat "Only on runners" section at the sidebar's bottom made
-      // the same rows jump around between spaces — everything lives in the
-      // repos list now, under a folder named for the remote repo.
-      wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])}
-          remoteWorktrees={[remote({ localRepoId: null, name: 'orphan', branch: 'orphan' })]}
-          runnerStatuses={statuses(true)} />,
-      );
-      expect(screen.queryByText('Only on runners')).toBeNull();
-      expect(screen.getByText('demo-repo')).toBeInTheDocument();
-      expect(screen.getByText('orphan')).toBeInTheDocument();
-    });
-
     it('shows a loading hint while the runner list is still being fetched', () => {
       wrap(
-        <Sidebar {...base} expandedRepos={new Set()} remoteLoading
+        <Sidebar {...base} remoteLoading
           remoteWorktrees={[]} runnerStatuses={[]} />,
       );
       expect(activePane().getByText('Checking runners…')).toBeInTheDocument();
@@ -568,7 +505,7 @@ describe('Sidebar tree', () => {
 
     it('drops the loading hint once the runner list has arrived', () => {
       wrap(
-        <Sidebar {...base} expandedRepos={new Set()}
+        <Sidebar {...base}
           remoteWorktrees={[]} runnerStatuses={[]} />,
       );
       expect(screen.queryByText('Checking runners…')).toBeNull();
@@ -576,7 +513,7 @@ describe('Sidebar tree', () => {
 
     it('surfaces a reachable runner whose API failed, rather than implying it has none', () => {
       wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])} remoteWorktrees={[]}
+        <Sidebar {...base} remoteWorktrees={[]}
           runnerStatuses={[{ runnerId: 'x', name: 'runner-dev', online: true, error: 'timed out' }]} />,
       );
       expect(screen.getByText(/runner-dev: timed out/)).toBeInTheDocument();
@@ -585,32 +522,17 @@ describe('Sidebar tree', () => {
     it('opens the runner worktree on click', () => {
       const onOpen = vi.fn();
       wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])} remoteWorktrees={[remote()]}
+        <Sidebar {...base} remoteWorktrees={[remote()]}
           runnerStatuses={statuses(true)} onOpenRemoteWorktree={onOpen} />,
       );
       fireEvent.click(screen.getByText('FD-9'));
       expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ path: '/home/strado/demo-repo.worktrees/FD-9' }));
     });
 
-    it('pins a runner worktree into the same workspace-level pinned section', () => {
-      const w = remote();
-      wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])} remoteWorktrees={[w]}
-          runnerStatuses={statuses(true)} />,
-      );
-      fireEvent.click(activePane().getByRole('button', { name: 'Pin FD-9 on runner-dev' }));
-
-      const pinned = activePane().getByRole('region', { name: 'Pinned worktrees' });
-      expect(within(pinned).getByText('FD-9')).toBeInTheDocument();
-      expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws') ?? '{}')).toEqual({
-        w1: [`remote:${w.runnerId}:${w.path}`],
-      });
-    });
-
     it('offers delete on a runner worktree, and never on a repo root', () => {
       const onDelete = vi.fn();
       const { unmount } = wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])} remoteWorktrees={[remote()]}
+        <Sidebar {...base} remoteWorktrees={[remote()]}
           runnerStatuses={statuses(true)} onDeleteRemoteWorktree={onDelete} />,
       );
       const actions = screen.getByLabelText('FD-9 on runner-dev actions');
@@ -624,7 +546,7 @@ describe('Sidebar tree', () => {
       // route refuses it — so offering the action would be a dead end. Its
       // menu still exists for the focus-group entries.
       wrap(
-        <Sidebar {...base} expandedRepos={new Set(['r1'])}
+        <Sidebar {...base}
           remoteWorktrees={[remote({ isRepoRoot: true, name: 'main', branch: 'main' })]}
           runnerStatuses={statuses(true)} onDeleteRemoteWorktree={onDelete} />,
       );
@@ -632,7 +554,6 @@ describe('Sidebar tree', () => {
       expect(screen.getByText('Add to group…')).toBeInTheDocument();
       expect(screen.queryByText('Delete worktree')).toBeNull();
       fireEvent.keyDown(window, { key: 'Escape' });
-      expect(screen.getByRole('button', { name: 'Pin main on runner-dev' }).parentElement).toHaveClass('absolute', 'right-1');
     });
   });
 
@@ -640,14 +561,14 @@ describe('Sidebar tree', () => {
     beforeEach(() => { switchTo.mockClear(); });
 
     it('shows the active workspace in a header picker', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       expect(screen.getByTestId('space-name')).toHaveTextContent('W');
       expect(screen.getByRole('button', { name: 'Switch workspace, current: W' })).toHaveAttribute('aria-expanded', 'false');
       expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
     });
 
     it('switches workspaces from the header picker', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />, [ws, ws2, ws3]);
+      wrap(<Sidebar {...base} />, [ws, ws2, ws3]);
       fireEvent.click(screen.getByRole('button', { name: 'Switch workspace, current: W' }));
       expect(screen.getByRole('menu', { name: 'Workspaces' })).toBeInTheDocument();
       fireEvent.click(screen.getByRole('menuitem', { name: 'Third' }));
@@ -656,7 +577,7 @@ describe('Sidebar tree', () => {
     });
 
     it('renders a dot per space without a second settings menu', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       expect(screen.getByRole('button', { name: 'Switch to W' })).toHaveAttribute('aria-current', 'true');
       expect(screen.getByRole('button', { name: 'Switch to Second' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
@@ -666,13 +587,13 @@ describe('Sidebar tree', () => {
     it('switches workspace when a dot with no pane of its own is clicked', () => {
       // ws3 is two spaces away: there is no pane to slide, so it switches
       // straight over instead of animating.
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />, [ws, ws2, ws3]);
+      wrap(<Sidebar {...base} />, [ws, ws2, ws3]);
       fireEvent.click(screen.getByRole('button', { name: 'Switch to Third' }));
       expect(switchTo).toHaveBeenCalledWith('w3');
     });
 
     it('animates rather than jumping when the neighbouring dot is clicked', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       fireEvent.click(screen.getByRole('button', { name: 'Switch to Second' }));
       expect(switchTo).not.toHaveBeenCalled(); // the landing commits, not the click
       await waitFor(() => expect(switchTo).toHaveBeenCalledWith('w2'), { timeout: 2000 });
@@ -683,7 +604,7 @@ describe('Sidebar tree', () => {
     beforeEach(() => { switchTo.mockClear(); });
 
     it('renders one pane per space with the active space centred', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       const panes = screen.getAllByTestId('carousel-pane');
       expect(panes).toHaveLength(2); // active ws, then its next neighbour ws2
       expect(panes[0]).not.toHaveAttribute('aria-hidden');
@@ -691,33 +612,33 @@ describe('Sidebar tree', () => {
     });
 
     it('switches workspace when a swipe lands on a neighbour', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       swipe(PANE_WIDTH * 0.6);
       await waitFor(() => expect(switchTo).toHaveBeenCalledWith('w2'), { timeout: 2000 });
     });
 
     it('stays put when the swipe is only a twitch', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       swipe(10); // ~14px in total — sideways noise during a vertical scroll
       await new Promise((r) => setTimeout(r, 400));
       expect(switchTo).not.toHaveBeenCalled();
     });
 
     it('moves to the next space on Cmd+Shift+ArrowRight', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       fireEvent.keyDown(window, { key: 'ArrowRight', metaKey: true, shiftKey: true });
       await waitFor(() => expect(switchTo).toHaveBeenCalledWith('w2'), { timeout: 2000 });
     });
 
     it('ignores Cmd+Shift+ArrowLeft at the first space', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       fireEvent.keyDown(window, { key: 'ArrowLeft', metaKey: true, shiftKey: true });
       await new Promise((r) => setTimeout(r, 400));
       expect(switchTo).not.toHaveBeenCalled();
     });
 
     it('leaves plain Cmd+ArrowRight alone — that chord belongs to the tabs', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       fireEvent.keyDown(window, { key: 'ArrowRight', metaKey: true });
       await new Promise((r) => setTimeout(r, 400));
       expect(switchTo).not.toHaveBeenCalled();
@@ -727,7 +648,7 @@ describe('Sidebar tree', () => {
       // xterm takes its keys through a hidden <textarea> inside .xterm, so a
       // tagName guard would kill this chord in the surface the app is mostly
       // used through — which is the one place users will try it.
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       const term = document.createElement('div');
       term.className = 'xterm';
       const helper = document.createElement('textarea');
@@ -744,7 +665,7 @@ describe('Sidebar tree', () => {
     });
 
     it('leaves Cmd+Shift+Arrow alone in a plain text field', async () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+      wrap(<Sidebar {...base} />);
       const input = document.createElement('input');
       document.body.appendChild(input);
       try {
@@ -763,7 +684,7 @@ describe('Sidebar tree', () => {
         onHotkey: (cb: (combo: string) => void) => { handlers.push(cb); return () => {}; },
       };
       try {
-        wrap(<Sidebar {...base} expandedRepos={new Set()} />);
+        wrap(<Sidebar {...base} />);
         handlers.forEach((h) => h('space-next'));
         await waitFor(() => expect(switchTo).toHaveBeenCalledWith('w2'), { timeout: 2000 });
       } finally {
@@ -777,7 +698,7 @@ describe('Sidebar tree', () => {
       // and swiping back re-commits the same space. Only a reload recovers.
       switchTo.mockRejectedValueOnce(new Error('server is restarting'));
       const onSwitchError = vi.fn();
-      wrap(<Sidebar {...base} expandedRepos={new Set()} onSwitchError={onSwitchError} />);
+      wrap(<Sidebar {...base} onSwitchError={onSwitchError} />);
       swipe(PANE_WIDTH * 0.6);
       await waitFor(() => expect(switchTo).toHaveBeenCalledWith('w2'), { timeout: 2000 });
       await waitFor(() =>
@@ -788,7 +709,7 @@ describe('Sidebar tree', () => {
     });
 
     it('renders a single pane and no dots for a lone workspace', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set()} />, [ws]);
+      wrap(<Sidebar {...base} />, [ws]);
       expect(screen.getAllByTestId('carousel-pane')).toHaveLength(1);
       expect(screen.queryByRole('button', { name: 'Switch to W' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
@@ -802,10 +723,10 @@ describe('Sidebar tree', () => {
     // the carousel's overflow-hidden — invisible on any space but the first.
     // The popover and its backdrop must therefore portal to document.body.
     it('portals the kebab popover out of the transformed carousel track', () => {
-      wrap(<Sidebar {...base} expandedRepos={new Set(['r1'])} />);
-      fireEvent.click(activePane().getByRole('button', { name: 'Repo One actions' }));
+      wrap(<Sidebar {...base} />);
+      fireEvent.click(activePane().getByLabelText('FD-1 actions'));
       const track = screen.getByTestId('carousel-track');
-      expect(track.contains(screen.getByRole('button', { name: 'Remove repo' }))).toBe(false);
+      expect(track.contains(screen.getByRole('button', { name: 'Remove from Working on' }))).toBe(false);
       expect(track.contains(document.querySelector('.fixed.inset-0.z-40'))).toBe(false);
     });
   });
@@ -851,7 +772,7 @@ describe('worktree hover card', () => {
   it('opens one card for the row carrying both the PR and every session', () => {
     const worktree = busy();
     vi.mocked(useMrSummaries).mockReturnValue(new Map([[worktree.path, pr]]));
-    wrap(<Sidebar {...base} worktrees={[worktree]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[worktree]} />);
 
     expect(screen.queryByRole('dialog')).toBeNull();
     hoverRow();
@@ -864,7 +785,7 @@ describe('worktree hover card', () => {
   });
 
   it('does not open while the cursor is only passing over the row', () => {
-    wrap(<Sidebar {...base} worktrees={[busy()]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[busy()]} />);
     const row = screen.getByText('FD-1').closest('.group')!;
     fireEvent.pointerEnter(row);
     act(() => { vi.advanceTimersByTime(120); });
@@ -877,7 +798,7 @@ describe('worktree hover card', () => {
     const worktree = busy();
     const onOpenWorktree = vi.fn();
     wrap(<Sidebar {...base} worktrees={[worktree]} onOpenWorktree={onOpenWorktree}
-      expandedRepos={new Set(['r1'])} />);
+      />);
     hoverRow();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Claude 2/ }));
     expect(onOpenWorktree).toHaveBeenCalledWith(worktree, 'claude', '2');
@@ -887,7 +808,7 @@ describe('worktree hover card', () => {
     const worktree = busy();
     const onOpenMr = vi.fn();
     vi.mocked(useMrSummaries).mockReturnValue(new Map([[worktree.path, pr]]));
-    wrap(<Sidebar {...base} worktrees={[worktree]} onOpenMr={onOpenMr} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[worktree]} onOpenMr={onOpenMr} />);
     hoverRow();
     fireEvent.click(screen.getByTestId('hover-card-pr'));
     expect(onOpenMr).toHaveBeenCalledWith(worktree, expect.objectContaining({ number: 42 }));
@@ -900,7 +821,7 @@ describe('worktree hover card', () => {
     const onOpenWorktree = vi.fn();
     wrap(<Sidebar {...base} worktrees={[worktree]} onOpenDiff={onOpenDiff}
       onWorktreeSettings={onWorktreeSettings} onOpenWorktree={onOpenWorktree}
-      expandedRepos={new Set(['r1'])} />);
+      />);
     for (const action of ['Changes', 'New shell', 'Settings']) {
       hoverRow();
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: action }));
@@ -916,7 +837,7 @@ describe('worktree hover card', () => {
     const worktree = busy();
     const onWorktreeSettings = vi.fn();
     wrap(<Sidebar {...base} worktrees={[worktree]} onWorktreeSettings={onWorktreeSettings}
-      expandedRepos={new Set(['r1'])} />);
+      />);
     hoverRow();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
@@ -933,7 +854,7 @@ describe('worktree hover card', () => {
   });
 
   it('closes once the cursor leaves both the row and the card', () => {
-    wrap(<Sidebar {...base} worktrees={[busy()]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[busy()]} />);
     const row = hoverRow();
     fireEvent.pointerLeave(row);
     fireEvent.pointerEnter(screen.getByRole('dialog'));
@@ -946,7 +867,7 @@ describe('worktree hover card', () => {
   });
 
   it('keeps only one card open when the cursor moves between rows', () => {
-    wrap(<Sidebar {...base} worktrees={[busy(), wt('/r1/FD-2', 'FD-2')]} expandedRepos={new Set(['r1'])} />);
+    wrap(<Sidebar {...base} worktrees={[busy(), wt('/r1/FD-2', 'FD-2')]} />);
     hoverRow('FD-1');
     fireEvent.pointerLeave(rowFor('FD-1'));
     hoverRow('FD-2');
