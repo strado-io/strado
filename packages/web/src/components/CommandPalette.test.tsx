@@ -118,4 +118,20 @@ describe('CommandPalette runner worktrees', () => {
     expect(screen.getByTitle('In Billing')).toHaveTextContent('Billing');
     expect(screen.getAllByTitle('In Billing')).toHaveLength(1);
   });
+
+  it('lists the other Focuses as rows that switch to them, found by name', () => {
+    const onSwitchFocus = vi.fn();
+    const focuses = [
+      { id: 'f1', name: 'Billing', members: ['local:/a'], createdAt: 't', lastActiveAt: 't' },
+      { id: 'f2', name: 'Perf', members: [], createdAt: 't', lastActiveAt: 't' },
+    ];
+    render(<CommandPalette repos={repos} worktrees={[]} workspaces={workspaces} activeWorkspaceId="default"
+      onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
+      focuses={focuses} activeFocusId="f1" onSwitchFocus={onSwitchFocus} />);
+    expect(screen.queryByText('Billing')).toBeNull(); // the active one is not a row
+    expect(screen.getByText('switch focus · 0 worktrees')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'per' } });
+    fireEvent.click(screen.getByText('Perf'));
+    expect(onSwitchFocus).toHaveBeenCalledWith('f2');
+  });
 });

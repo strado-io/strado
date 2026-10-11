@@ -238,6 +238,12 @@ describe('SidebarBody: the Focus switcher', () => {
     confirmSpy.mockRestore();
   });
 
+  it('the new-focus event (⇧⌘N) opens the switcher ready for a name', () => {
+    render(<SidebarBody {...props()} />);
+    fireEvent(window, new Event('strado:new-focus'));
+    expect(within(popover()).getByLabelText('New focus name')).toBeInTheDocument();
+  });
+
   it('offers All worktrees only when the page exists, and Escape closes', () => {
     const onAllWorktrees = vi.fn();
     const { unmount } = render(<SidebarBody {...props()} />);

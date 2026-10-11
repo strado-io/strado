@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type RemoteWorktree } from '../api';
+import { api, type Focus, type RemoteWorktree } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
 import { ShellIcon, ClaudeIcon, CodexIcon, VsCodeIcon, GlobeIcon, BookIcon } from './hub/icons';
 import { hasSession } from '../hooks/sessions';
@@ -13,15 +13,18 @@ type Result =
   // A runner worktree in this workspace (opened through the remote hub).
   | { kind: 'worktree'; id: string; label: string; detail: string; remote: RemoteWorktree; worktree?: undefined; wsId?: undefined }
   | { kind: 'repo'; id: string; label: string; detail: string; repoId: string }
+  | { kind: 'focus'; id: string; label: string; detail: string; focusId: string }
   | { kind: 'workspace'; id: string; label: string; detail: string; wsId: string };
 
 const GROUP_LABEL: Record<Result['kind'], string> = {
   worktree: 'Worktrees',
   repo: 'Repos',
+  focus: 'Focuses',
   workspace: 'Workspaces',
 };
 
 const NO_REMOTE: RemoteWorktree[] = [];
+const NO_FOCUSES: Focus[] = [];
 
 function matches(q: string, ...fields: (string | null | undefined)[]): boolean {
   return fields.some((f) => f?.toLowerCase().includes(q));
@@ -43,6 +46,9 @@ export function CommandPalette({
   onOpenRemoteWorktree,
   focusName,
   focusMemberIds,
+  focuses = NO_FOCUSES,
+  activeFocusId = null,
+  onSwitchFocus,
 }: {
   repos: RepoConfig[];
   worktrees: Worktree[];
@@ -60,6 +66,10 @@ export function CommandPalette({
   /** The active Focus: its members get a small tag, so you can tell what opening will add. */
   focusName?: string;
   focusMemberIds?: Set<string>;
+  /** Every Focus in this workspace; the inactive ones are rows that switch to it. */
+  focuses?: Focus[];
+  activeFocusId?: string | null;
+  onSwitchFocus?: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
@@ -163,13 +173,18 @@ export function CommandPalette({
       if (q && !matches(q, r.name, r.path)) continue;
       out.push({ kind: 'repo', id: r.id, label: r.name, detail: r.path, repoId: r.id });
     }
+    for (const f of focuses) {
+      if (f.id === activeFocusId) continue;
+      if (q && !matches(q, f.name)) continue;
+      out.push({ kind: 'focus', id: f.id, label: f.name, detail: `switch focus · ${f.members.length} worktree${f.members.length === 1 ? '' : 's'}`, focusId: f.id });
+    }
     for (const ws of workspaces) {
       if (ws.id === activeWorkspaceId) continue;
       if (q && !matches(q, ws.name)) continue;
       out.push({ kind: 'workspace', id: ws.id, label: ws.name, detail: 'switch workspace', wsId: ws.id });
     }
     return out.slice(0, 15);
-  }, [query, worktrees, remote, remoteWorktrees, repos, workspaces, activeWorkspaceId, repoName]);
+  }, [query, worktrees, remote, remoteWorktrees, repos, focuses, activeFocusId, workspaces, activeWorkspaceId, repoName]);
 
   useEffect(() => setSel(0), [query]);
   useEffect(() => inputRef.current?.focus(), []);
@@ -186,6 +201,7 @@ export function CommandPalette({
       else onOpenWorktree(r.worktree, r.wsId);
     }
     else if (r.kind === 'repo') onGoRepo(r.repoId);
+    else if (r.kind === 'focus') onSwitchFocus?.(r.focusId);
     else onSwitchWorkspace(r.wsId);
   };
 
