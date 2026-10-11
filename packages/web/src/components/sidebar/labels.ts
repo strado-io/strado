@@ -27,14 +27,12 @@ export function worktreeTitle(w: Worktree, repoName?: string): string {
 }
 
 /**
- * The two lines of a worktree card. The title is the most human thing we have
- * (readable title, else ticket id, else branch, else folder); the subtitle is
- * the branch when the title is not already it, else the folder when that says
- * something new, else nothing. A card never repeats itself.
+ * The two lines of a worktree card: the most human name we have on top
+ * (readable title, else ticket id, else branch), and the branch underneath,
+ * always — it is the one thing every worktree has and the thing you type.
  */
 export function cardLines(w: Worktree, repoName?: string): { title: string; subtitle: string } {
-  const folder = w.path.split('/').pop() || w.path;
-  const title = worktreeTitle(w, repoName) || worktreeLabel(w);
-  if (w.branch && title !== w.branch) return { title, subtitle: w.branch };
-  return { title, subtitle: folder !== title ? folder : '' };
+  const branch = w.branch || w.path.split('/').pop() || w.path;
+  const title = worktreeTitle(w, repoName) || w.meta?.ticketId?.trim() || branch;
+  return { title, subtitle: branch };
 }

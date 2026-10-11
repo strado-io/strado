@@ -56,7 +56,7 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
 }) {
   const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-50' : 'text-zinc-200';
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-2 pl-2 pr-1">
+    <div className="flex min-w-0 flex-1 flex-col py-1.5 pl-2.5 pr-1">
       {repo && (
         <div data-card-repo className="flex items-center gap-1.5 text-[11px] text-zinc-500">
           <RepoAvatar id={repo.id} name={repo.name} />

@@ -64,7 +64,7 @@ describe('SidebarBody: Working on and Settled only', () => {
     const row = within(working).getAllByText('fx-412')[0]!; // /r2/other's branch label
     const g = within(working).getByRole('group', { name: 'FX-412' });
     expect(row.compareDocumentPosition(g) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(working).getAllByText('fx-412')).toHaveLength(3); // 1 loose + 2 members
+    expect(within(working).getAllByRole('button', { name: 'fx-412' })).toHaveLength(3); // 1 loose + 2 members
   });
 
   it('removes a loose row from its menu, leaving the worktree alone', () => {
@@ -143,7 +143,7 @@ describe('SidebarBody: Working on and Settled only', () => {
     const looseCard = within(working).getAllByText('fx-412')[0]!.closest('.group') as HTMLElement;
     expect(within(looseCard).getByText('2h')).toBeInTheDocument();
     expect(within(looseCard).getByText('web')).toBeInTheDocument(); // repo line
-    expect(within(looseCard).getByText('other')).toBeInTheDocument(); // folder under a bare branch
+    expect(within(looseCard).getAllByText('fx-412')).toHaveLength(2); // title and the branch line
     const settled = screen.getByRole('region', { name: 'Settled' });
     expect(within(settled).getByText('3d')).toBeInTheDocument();
   });
@@ -191,9 +191,9 @@ describe('SidebarBody: Working on and Settled only', () => {
     loose('local:/r1/wt');
     render(<SidebarBody {...props()} />);
     const working = screen.getByRole('region', { name: 'Working on' });
-    expect(within(working).getAllByText('fx-412')).toHaveLength(2);
+    expect(within(working).getAllByRole('button', { name: 'fx-412' })).toHaveLength(2);
     const g = within(working).getByRole('group', { name: 'FX-412' });
-    expect(within(g).getAllByText('fx-412')).toHaveLength(2);
+    expect(within(g).getAllByRole('button', { name: 'fx-412' })).toHaveLength(2);
   });
 
   // Opens the picker on a loose worktree that no group holds, and creates a group from it by name.
@@ -278,9 +278,9 @@ describe('SidebarBody: Working on and Settled only', () => {
     loose('local:/r1'); // master would show here if it settled like a worktree
     render(<SidebarBody {...props({ worktrees: [root, done] })} />);
     const settled = screen.getByRole('region', { name: 'Settled' });
-    expect(within(settled).getByText('fx-old')).toBeInTheDocument();
+    expect(within(settled).getByRole('button', { name: 'fx-old' })).toBeInTheDocument();
     expect(within(settled).queryByText('master')).not.toBeInTheDocument();
-    expect(screen.getAllByText('fx-old')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'fx-old' })).toHaveLength(1);
   });
 
   it('shows no Settled section when nothing has settled', () => {

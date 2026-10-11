@@ -246,7 +246,6 @@ onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 }) {
   const chips = sessionChips([w as unknown as Worktree]);
-  const hasSessions = chips.length > 0;
   // A worktree appears once, so a loose row keeps the plain id; a member is prefixed.
   const testIdSuffix = placement === 'focus' ? `focus-${w.runnerId}:${w.path}` : `${w.runnerId}:${w.path}`;
   const label = w.branch ?? w.name;
@@ -265,15 +264,8 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       runnerName={w.runnerName}
       onOpen={open}
       onContextMenu={menuItems.length > 0 && onContextMenu ? (e) => onContextMenu(e, menuItems) : undefined}
-      className={`group relative flex items-stretch rounded-lg ${placement === 'focus' ? 'ml-4' : ''} ${activeRow ? 'bg-zinc-800/80' : 'bg-zinc-900/50 hover:bg-zinc-900'}`}
+      className={`group relative flex items-stretch rounded-lg ${activeRow ? 'bg-zinc-800/80' : 'bg-zinc-900/50 hover:bg-zinc-900'}`}
     >
-      {hasSessions && (
-        <span
-          aria-hidden
-          data-testid={`session-mark-${testIdSuffix}`}
-          className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
-        />
-      )}
       <WorktreeCard
         repo={repoName ? { id: w.localRepoId ?? repoName, name: repoName } : null}
         title={label}
@@ -404,10 +396,8 @@ export function SidebarBody({
     const open: OpenWorktree = (...args) => { if (group) focusPrefs.setActiveFocusGroupId(group.id); onOpenWorktree(...args); };
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], vscodeTabs, browserTabs);
-    const hasSessions = chips.length > 0;
     const mr = mrByPath.get(w.path);
-    // Members nest under their group; loose and settled cards sit flush.
-    const indent = placement === 'focus' ? 'ml-4' : '';
+    // Members and loose cards share one column: the group header above says where a card belongs.
     // A worktree appears once, so loose and settled rows keep the plain path id; a member is prefixed.
     const testIdSuffix = placement === 'focus' ? `focus-${w.path}` : w.path;
     const pinId = localPinId(w);
@@ -435,16 +425,9 @@ export function SidebarBody({
         onOpenDiff={onOpenDiff}
         onSettings={onWorktreeSettings}
         onContextMenu={(e) => openContextMenu(e, menuItems)}
-        className={`group relative flex items-stretch rounded-lg ${indent} ${
+        className={`group relative flex items-stretch rounded-lg ${
           activeRow ? 'bg-zinc-800/80' : 'bg-zinc-900/50 hover:bg-zinc-900'}`}
       >
-        {hasSessions && (
-          <span
-            aria-hidden
-            data-testid={`session-mark-${testIdSuffix}`}
-            className="absolute bottom-1.5 left-1 top-1.5 w-px rounded-full bg-sky-500"
-          />
-        )}
         <WorktreeCard
           repo={repo ? { id: repo.id, name: repo.name } : null}
           title={title}

@@ -40,8 +40,8 @@ describe('cardLines', () => {
     expect(cardLines(w)).toEqual({ title: 'FD-9', subtitle: 'FD-9-login' });
   });
 
-  it('never repeats itself: a bare branch gets the folder underneath, and a branch named like its folder gets nothing', () => {
-    expect(cardLines(wt({ branch: 'master', path: '/code/fleetx' }))).toEqual({ title: 'master', subtitle: 'fleetx' });
-    expect(cardLines(wt({ branch: 'fleetx', path: '/code/fleetx' }))).toEqual({ title: 'fleetx', subtitle: '' });
+  it('always shows the branch, even when it is also the title', () => {
+    expect(cardLines(wt({ branch: 'master', path: '/code/fleetx' }))).toEqual({ title: 'master', subtitle: 'master' });
+    expect(cardLines(wt({ branch: '', path: '/code/fleetx' }))).toEqual({ title: 'fleetx', subtitle: 'fleetx' });
   });
 });
