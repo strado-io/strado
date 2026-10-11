@@ -1,6 +1,6 @@
 // Focus-group rules, pure so each is a unit test: which members still exist,
 // when a group is Done, and where ⌥⌘-arrow goes next.
-import type { FocusGroup, RemoteWorktree } from '../../api';
+import type { FocusGroup, FocusGroupState, RemoteWorktree } from '../../api';
 import type { MergeRequest, Worktree } from '../../types';
 import { localPinId, remotePinId, type SidebarEntry } from './pinIds';
 
@@ -41,4 +41,21 @@ export function nextMember(members: SidebarEntry[], currentId: string | null, di
 
 export function activeGroupOf(groups: FocusGroup[], id: string | null): FocusGroup | null {
   return (id && groups.find((g) => g.id === id)) || null;
+}
+
+/** A group with no stored state is working: files written before parking existed stay as they were. */
+export const groupState = (g: FocusGroup): FocusGroupState => g.state ?? 'working';
+
+export const groupsContaining = (groups: FocusGroup[], pinId: string): FocusGroup[] =>
+  groups.filter((g) => g.members.includes(pinId));
+
+/**
+ * What opening a worktree does to Working on. A parked group holding it comes
+ * back; a worktree no group holds gets a loose row, unless it has settled (its
+ * PR merged or closed), which keeps it in Settled.
+ */
+export function openEffects(groups: FocusGroup[], pinId: string, settled: boolean): { promote: string[]; addLoose: boolean } {
+  const holders = groupsContaining(groups, pinId);
+  if (holders.length === 0) return { promote: [], addLoose: !settled };
+  return { promote: holders.filter((g) => groupState(g) === 'parked').map((g) => g.id), addLoose: false };
 }
