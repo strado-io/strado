@@ -20,6 +20,7 @@ vi.mock('../contexts/IntercomContext', () => ({
 // Groups fail to load by default (no groups, and each mount retries, as
 // before); a test can resolve them to seed a parked group.
 const groupsList = vi.hoisted(() => vi.fn());
+const groupsUpdate = vi.hoisted(() => vi.fn());
 // Pass-through CommandPalette that records the props it was last given, so a
 // test can see the filter the Dashboard handed it.
 const paletteProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
@@ -35,7 +36,7 @@ vi.mock('../components/CommandPalette', async (importOriginal) => {
 });
 vi.mock('../api', () => ({
   api: {
-    groups: { list: groupsList },
+    groups: { list: groupsList, update: groupsUpdate },
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
     worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
@@ -88,6 +89,7 @@ describe('Dashboard inline hub', () => {
   beforeEach(() => {
     __resetFocusGroups();
     groupsList.mockReset().mockRejectedValue(new Error('no groups'));
+    groupsUpdate.mockReset();
     paletteProps.last = null;
     localStorage.clear();
     localStorage.setItem('strado:pinned-worktrees-by-ws', JSON.stringify({ default: ['local:/wt/FD-9'] }));
@@ -187,6 +189,31 @@ describe('Dashboard inline hub', () => {
     fireEvent.keyDown(window, { key: 'k', metaKey: true }); // ⌘K opens it again
     await screen.findByLabelText('Global search');
     expect(paletteProps.last?.filter).toBeNull();
+  });
+
+  it('opening a parked group\'s member from ⌘K brings the group back to Working on', async () => {
+    localStorage.setItem('strado:pinned-worktrees-by-ws', '{}');
+    let state = 'parked';
+    groupsList.mockImplementation(async () => [
+      { id: 'g1', name: 'FX-900', members: ['local:/wt/FD-9'], createdAt: 't', state },
+    ]);
+    groupsUpdate.mockImplementation(async (_ws: string, id: string, patch: { state: string }) => {
+      state = patch.state;
+      return { id, name: 'FX-900', members: ['local:/wt/FD-9'], createdAt: 't', state };
+    });
+    renderDashboard();
+    await screen.findByRole('button', { name: '1 more' });
+    expect(within(screen.getByRole('region', { name: 'Working on' })).queryByText('FX-900')).toBeNull();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
+    fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
+    await screen.findByTestId('inline-hub');
+    await waitFor(() => expect(groupsUpdate).toHaveBeenCalledWith('default', 'g1', { state: 'working' }));
+    const workingOn = screen.getByRole('region', { name: 'Working on' });
+    await waitFor(() => expect(within(workingOn).getByText('FX-900')).toBeInTheDocument());
+    expect(within(workingOn).getByText('FD-9')).toBeInTheDocument();
+    // In a group now, so it gets no loose row of its own.
+    expect(JSON.parse(localStorage.getItem('strado:pinned-worktrees-by-ws')!)).toEqual({});
   });
 
   it('persists selection and restores it on remount', async () => {
