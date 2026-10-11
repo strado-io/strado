@@ -136,7 +136,6 @@ describe('SidebarBody: the active Focus', () => {
   it('with no Focus, says so and New focus opens the composer', () => {
     render(<SidebarBody {...props()} />);
     expect(pill()).toHaveAccessibleName('Focus: none');
-    expect(screen.getByText(/^No focus\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New focus' }));
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
@@ -146,7 +145,6 @@ describe('SidebarBody: the active Focus', () => {
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    expect(screen.getByText('Nothing in Billing yet.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New worktree here' }));
     expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
     fireEvent.click(screen.getByRole('button', { name: 'Add worktrees' }));

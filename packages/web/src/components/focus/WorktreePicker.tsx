@@ -63,7 +63,7 @@ export function WorktreePicker({ repos, worktrees, remoteWorktrees, selected, on
         placeholder="Search worktrees…"
         className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none" />
       <div className="flex max-h-72 min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-        {total === 0 && <p className="px-1 py-2 text-xs text-zinc-600">No worktrees in this space yet.</p>}
+        {total === 0 && <p className="px-1 py-2 text-xs text-zinc-600">No worktrees.</p>}
         {total > 0 && groups.length === 0 && <p className="px-1 py-2 text-xs text-zinc-600">No match.</p>}
         {groups.map((g) => (
           <div key={g.key} role="group" aria-label={g.name}>
