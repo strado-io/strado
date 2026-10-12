@@ -129,9 +129,25 @@ describe('CommandPalette runner worktrees', () => {
       onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
       focuses={focuses} activeFocusId="f1" onSwitchFocus={onSwitchFocus} />);
     expect(screen.queryByText('Billing')).toBeNull(); // the active one is not a row
+    expect(screen.getByText('Focuses')).toBeInTheDocument();
     expect(screen.getByText('switch focus · 0 worktrees')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'per' } });
     fireEvent.click(screen.getByText('Perf'));
     expect(onSwitchFocus).toHaveBeenCalledWith('f2');
+  });
+
+  it('keeps Focus rows above the worktrees so the row cap never hides them', () => {
+    const many = Array.from({ length: 20 }, (_, i) => wt(`/wt/${i}`, `FD-${i}`, `task ${i}`));
+    const focuses = [
+      { id: 'f1', name: 'Old', members: [], createdAt: 't', lastActiveAt: '2026-01-01T00:00:00Z' },
+      { id: 'f2', name: 'Fresh', members: [], createdAt: 't', lastActiveAt: '2026-02-01T00:00:00Z' },
+    ];
+    render(<CommandPalette repos={repos} worktrees={many} workspaces={workspaces} activeWorkspaceId="default"
+      onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
+      focuses={focuses} activeFocusId={null} onSwitchFocus={vi.fn()} />);
+    const rows = screen.getAllByText(/switch focus/).map((el) => el.parentElement?.textContent ?? '');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('Fresh');
+    expect(rows[1]).toContain('Old');
   });
 });
