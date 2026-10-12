@@ -107,13 +107,16 @@ export function CommandPalette({
     const lru = readWorktreeLru();
     const out: Result[] = [];
 
-    // Focuses lead: they are few, and the 15-row cap would otherwise bury
-    // them under the worktrees. Most recently used first, the active one skipped.
+    // An empty query is the Focus switcher: every Focus, most recently used
+    // first, the current one marked. Typing searches everything, Focuses
+    // still leading so the 15-row cap never buries them under worktrees.
     for (const f of [...focuses].sort(byLastActive)) {
-      if (f.id === activeFocusId) continue;
       if (q && !matches(q, f.name)) continue;
-      out.push({ kind: 'focus', id: f.id, label: f.name, detail: `switch focus · ${f.members.length} worktree${f.members.length === 1 ? '' : 's'}`, focusId: f.id });
+      const n = `${f.members.length} worktree${f.members.length === 1 ? '' : 's'}`;
+      const current = f.id === activeFocusId;
+      out.push({ kind: 'focus', id: f.id, label: f.name, detail: current ? `current · ${n}` : n, focusId: f.id });
     }
+    if (!q && out.length > 0) return out;
 
     // Collect every matching worktree (local + remote) into one list, then rank
     // by activity + recency so the ones the user is working in float to the top.
@@ -205,7 +208,7 @@ export function CommandPalette({
       else onOpenWorktree(r.worktree, r.wsId);
     }
     else if (r.kind === 'repo') onGoRepo(r.repoId);
-    else if (r.kind === 'focus') onSwitchFocus?.(r.focusId);
+    else if (r.kind === 'focus') { if (r.focusId !== activeFocusId) onSwitchFocus?.(r.focusId); }
     else onSwitchWorkspace(r.wsId);
   };
 

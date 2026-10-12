@@ -119,7 +119,7 @@ describe('CommandPalette runner worktrees', () => {
     expect(screen.getAllByTitle('In Billing')).toHaveLength(1);
   });
 
-  it('lists the other Focuses as rows that switch to them, found by name', () => {
+  it('lists every Focus as a row, the current one marked, and switches on pick', () => {
     const onSwitchFocus = vi.fn();
     const focuses = [
       { id: 'f1', name: 'Billing', members: ['local:/a'], createdAt: 't', lastActiveAt: 't' },
@@ -128,15 +128,17 @@ describe('CommandPalette runner worktrees', () => {
     render(<CommandPalette repos={repos} worktrees={[]} workspaces={workspaces} activeWorkspaceId="default"
       onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
       focuses={focuses} activeFocusId="f1" onSwitchFocus={onSwitchFocus} />);
-    expect(screen.queryByText('Billing')).toBeNull(); // the active one is not a row
     expect(screen.getByText('Focuses')).toBeInTheDocument();
-    expect(screen.getByText('switch focus · 0 worktrees')).toBeInTheDocument();
+    expect(screen.getByText('current · 1 worktree')).toBeInTheDocument();
+    expect(screen.getByText('0 worktrees')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Billing'));
+    expect(onSwitchFocus).not.toHaveBeenCalled(); // already there
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'per' } });
     fireEvent.click(screen.getByText('Perf'));
     expect(onSwitchFocus).toHaveBeenCalledWith('f2');
   });
 
-  it('keeps Focus rows above the worktrees so the row cap never hides them', () => {
+  it('shows only the Focuses until the user types, then searches everything', () => {
     const many = Array.from({ length: 20 }, (_, i) => wt(`/wt/${i}`, `FD-${i}`, `task ${i}`));
     const focuses = [
       { id: 'f1', name: 'Old', members: [], createdAt: 't', lastActiveAt: '2026-01-01T00:00:00Z' },
@@ -145,9 +147,13 @@ describe('CommandPalette runner worktrees', () => {
     render(<CommandPalette repos={repos} worktrees={many} workspaces={workspaces} activeWorkspaceId="default"
       onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
       focuses={focuses} activeFocusId={null} onSwitchFocus={vi.fn()} />);
-    const rows = screen.getAllByText(/switch focus/).map((el) => el.parentElement?.textContent ?? '');
+    const rows = screen.getAllByText(/worktrees$/).map((el) => el.parentElement?.textContent ?? '');
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain('Fresh');
     expect(rows[1]).toContain('Old');
+    expect(screen.queryByText('Worktrees')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-1' } });
+    expect(screen.getByText('Worktrees')).toBeInTheDocument();
+    expect(screen.getByText('FD-1')).toBeInTheDocument();
   });
 });
