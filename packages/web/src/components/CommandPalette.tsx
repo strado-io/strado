@@ -7,6 +7,7 @@ import { readVscodeTabs } from '../hooks/vscodeTabs';
 import { readBrowserTabs } from '../hooks/browserTabs';
 import { readKbTabs } from '../hooks/kbTabs';
 import { readWorktreeLru, compareByActivityThenRecency, type RankableWorktree } from '../lib/worktreeLru';
+import { byLastActive } from './sidebar/FocusSwitcher';
 
 type Result =
   | { kind: 'worktree'; id: string; label: string; detail: string; worktree: Worktree; wsId?: string; remote?: undefined }
@@ -106,6 +107,14 @@ export function CommandPalette({
     const lru = readWorktreeLru();
     const out: Result[] = [];
 
+    // Focuses lead: they are few, and the 15-row cap would otherwise bury
+    // them under the worktrees. Most recently used first, the active one skipped.
+    for (const f of [...focuses].sort(byLastActive)) {
+      if (f.id === activeFocusId) continue;
+      if (q && !matches(q, f.name)) continue;
+      out.push({ kind: 'focus', id: f.id, label: f.name, detail: `switch focus · ${f.members.length} worktree${f.members.length === 1 ? '' : 's'}`, focusId: f.id });
+    }
+
     // Collect every matching worktree (local + remote) into one list, then rank
     // by activity + recency so the ones the user is working in float to the top.
     const isActive = (w: Worktree) => hasSession(w) || w.process?.status === 'running';
@@ -173,11 +182,6 @@ export function CommandPalette({
       if (q && !matches(q, r.name, r.path)) continue;
       out.push({ kind: 'repo', id: r.id, label: r.name, detail: r.path, repoId: r.id });
     }
-    for (const f of focuses) {
-      if (f.id === activeFocusId) continue;
-      if (q && !matches(q, f.name)) continue;
-      out.push({ kind: 'focus', id: f.id, label: f.name, detail: `switch focus · ${f.members.length} worktree${f.members.length === 1 ? '' : 's'}`, focusId: f.id });
-    }
     for (const ws of workspaces) {
       if (ws.id === activeWorkspaceId) continue;
       if (q && !matches(q, ws.name)) continue;
@@ -240,7 +244,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search worktrees, repos, workspaces…"
+            placeholder="Search focuses, worktrees, repos…"
             aria-label="Global search"
             className="h-11 w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
           />
