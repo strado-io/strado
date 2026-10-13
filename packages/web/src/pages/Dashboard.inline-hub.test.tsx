@@ -171,6 +171,8 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    // An empty palette is the Focus list; repos show once the user types.
+    fireEvent.change(await screen.findByLabelText('Global search'), { target: { value: 'repo' } });
     const repoEntries = await screen.findAllByText('Repo One');
     fireEvent.click(repoEntries.at(-1)!); // the palette's "Repos" result
     expect(noop).toHaveBeenCalledWith('r1');
