@@ -89,20 +89,19 @@ function readSidebarCollapsed(): boolean {
   return localStorage.getItem(STORE_SIDEBAR) === '1';
 }
 
-// Per-workspace memory of the open worktree, so swiping between workspaces
-// restores what each had open (the tab WITHIN a worktree is already remembered
-// per-worktree by TerminalView). A map keyed by workspace id — a bare string
-// here would be one global selection shared across every workspace, which is
-// why a swipe used to land on the dashboard. Remote hubs aren't persisted yet.
-const STORE_SELECTED = 'strado:selected-by-ws';
+// Per-Focus memory of the open worktree, so switching Focus (or space) brings
+// back what each Focus had open instead of the Worktrees page (the tab WITHIN
+// a worktree is already remembered per-worktree by TerminalView). Keyed by
+// Focus id, which is unique across spaces. Remote hubs aren't persisted yet.
+const STORE_SELECTED = 'strado:selected-by-focus';
 function readSelMap(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(STORE_SELECTED) || '{}') as Record<string, string>; }
   catch { return {}; }
 }
-function writeSelPath(wsId: string, path: string | null): void {
+function writeSelPath(focusId: string, path: string | null): void {
   try {
     const map = readSelMap();
-    if (path) map[wsId] = path; else delete map[wsId];
+    if (path) map[focusId] = path; else delete map[focusId];
     localStorage.setItem(STORE_SELECTED, JSON.stringify(map));
   } catch { /* quota / disabled storage — ignore */ }
 }
@@ -247,22 +246,14 @@ export function Dashboard(props: {
   // hub switches to the requested tab even when it's already showing this
   // worktree — its mode/sessionId are only read at mount.
   const [openSeq, setOpenSeq] = useState(0);
-  // The workspace the on-screen selection belongs to. Updated only on a
-  // deliberate restore/switch, so the persist effect writes under the right
-  // workspace and a mid-switch stale selection can't land under the new one.
-  const selWsRef = useRef(wsId);
-  // The workspace whose stored selection has been restored; until then the
-  // store is read-only, so a not-yet-restored null never wipes it.
+  // The Focus whose stored selection has been restored; until then the store
+  // is read-only for it, so a not-yet-restored null never wipes it, and the
+  // selection on screen is never written under a Focus it did not come from.
   const restoredForRef = useRef<string | null>(null);
-  // Persist the open worktree under its workspace (remote hubs store nothing).
-  useEffect(() => {
-    if (restoredForRef.current === selWsRef.current) writeSelPath(selWsRef.current, selectedRemote ? null : selectedPath);
-  }, [selectedPath, selectedRemote]);
-  // A workspace change (swipe, ⌘K) closes the hub; the restore effect below
-  // brings that workspace's own worktree back once its Focuses are known. A
+  // A workspace change (swipe, ⌘K) closes the hub; the Focus effect below
+  // brings its active Focus's worktree back once its Focuses are known. A
   // ⌘K deep-link to another workspace overrides this via pendingOpenRef.
   useEffect(() => {
-    selWsRef.current = wsId;
     restoredForRef.current = null;
     setSelectedMode(undefined);
     setSelectedSessionId(undefined);
@@ -580,15 +571,12 @@ export function Dashboard(props: {
       .catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }))
       .finally(() => { joiningRef.current.delete(pinId); });
   };
-  // Restore this workspace's stored worktree once its Focuses are known, and
-  // only if the active Focus holds it: the hub never shows a worktree the
-  // sidebar does not.
+  // Persist the open worktree under the active Focus (remote hubs store nothing).
   useEffect(() => {
-    if (!focusApi.loaded || restoredForRef.current === wsId) return;
-    restoredForRef.current = wsId;
-    const path = readSelMap()[wsId] ?? null;
-    if (path && focusApi.active?.members.includes(`local:${path}`)) setSelectedPath(path);
-  }, [wsId, focusApi.loaded, focusApi.active]);
+    const id = focusApi.activeId;
+    if (id && restoredForRef.current === id) writeSelPath(id, selectedRemote ? null : selectedPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPath, selectedRemote]);
   // An open that waited for a Focus goes through once one is active.
   useEffect(() => {
     const pending = pendingFocusOpenRef.current;
@@ -598,12 +586,29 @@ export function Dashboard(props: {
     else openRemoteWorktree(pending.w);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusApi.loaded, focusApi.active]);
-  // Switching Focus, or dropping the open worktree from it, closes the hub.
+  // A Focus becoming active (load, switch, creation) brings back the worktree
+  // it last had open, if it still holds it. Otherwise, and whenever the open
+  // worktree is dropped from the active Focus, the hub closes: it never shows
+  // a worktree the sidebar does not.
   useEffect(() => {
     if (!focusApi.loaded) return;
+    const active = focusApi.active;
     const pin = selectedRemote ? remotePinId(selectedRemote) : selectedPath ? `local:${selectedPath}` : null;
+    if (active && restoredForRef.current !== active.id) {
+      restoredForRef.current = active.id;
+      const path = readSelMap()[active.id] ?? null;
+      if (path && active.members.includes(`local:${path}`)) {
+        if (path !== selectedPath || selectedRemote) {
+          setSelectedMode(undefined);
+          setSelectedSessionId(undefined);
+          setSelectedRemote(null);
+          setSelectedPath(path);
+        }
+        return;
+      }
+    }
     if (!pin || joiningRef.current.has(pin)) return;
-    if (focusApi.active?.members.includes(pin)) return;
+    if (active?.members.includes(pin)) return;
     setSelectedPath(null);
     setSelectedRemote(null);
   }, [focusApi.loaded, focusApi.active, selectedPath, selectedRemote]);

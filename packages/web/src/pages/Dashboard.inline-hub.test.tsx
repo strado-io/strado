@@ -235,8 +235,8 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
   });
 
-  it('a stale persisted path (for this workspace) resolves to the Worktrees page', async () => {
-    localStorage.setItem('strado:selected-by-ws', JSON.stringify({ default: '/wt/GONE' }));
+  it('a stale persisted path (for this Focus) resolves to the Worktrees page', async () => {
+    localStorage.setItem('strado:selected-by-focus', JSON.stringify({ f1: '/wt/GONE' }));
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     expect(screen.queryByTestId('inline-hub')).not.toBeInTheDocument();
@@ -245,12 +245,12 @@ describe('Dashboard inline hub', () => {
   it('a persisted worktree outside the active Focus is not restored, and the stored selection is kept', async () => {
     fakeFocuses.reset([{ id: 'f1', name: 'Billing', members: [], createdAt: 't', lastActiveAt: 't' }]);
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ default: 'f1' }));
-    localStorage.setItem('strado:selected-by-ws', JSON.stringify({ default: '/wt/FD-9' }));
+    localStorage.setItem('strado:selected-by-focus', JSON.stringify({ f1: '/wt/FD-9' }));
     renderDashboard();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     await screen.findByRole('button', { name: 'Focus: Billing' });
     expect(screen.queryByTestId('inline-hub')).toBeNull();
-    expect(JSON.parse(localStorage.getItem('strado:selected-by-ws')!)).toEqual({ default: '/wt/FD-9' });
+    expect(JSON.parse(localStorage.getItem('strado:selected-by-focus')!)).toEqual({ f1: '/wt/FD-9' });
   });
 
   it('switching to a Focus that does not hold the open worktree closes the hub', async () => {
@@ -266,6 +266,26 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Switch focus' })).getByRole('button', { name: /Perf/ }));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
     expect(screen.getByRole('button', { name: 'Focus: Perf' })).toBeInTheDocument();
+  });
+
+  it('switching back to a Focus reopens the worktree it had open', async () => {
+    fakeFocuses.reset([
+      { id: 'f1', name: 'Working on', members: ['local:/wt/FD-9'], createdAt: 't', lastActiveAt: '2026-02-01' },
+      { id: 'f2', name: 'Perf', members: [], createdAt: 't', lastActiveAt: '2026-01-01' },
+    ]);
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(await sidebarRow());
+    await screen.findByTestId('inline-hub');
+    const switchTo = (from: string, to: RegExp) => {
+      fireEvent.click(screen.getByRole('button', { name: `Focus: ${from}` }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: 'Switch focus' })).getByRole('button', { name: to }));
+    };
+    switchTo('Working on', /Perf/);
+    await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
+    switchTo('Perf', /Working on/);
+    expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
+    expect(JSON.parse(localStorage.getItem('strado:selected-by-focus')!)).toEqual({ f1: '/wt/FD-9' });
   });
 });
 
