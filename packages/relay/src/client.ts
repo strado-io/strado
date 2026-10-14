@@ -109,11 +109,15 @@ export class TunnelClient {
     const connectDeadline = setTimeout(() => {
       if (!opened) ws.close(CLOSE_DRAIN, 'Connect timeout');
     }, CONNECT_TIMEOUT_MS);
+    let helloAckDeadline: ReturnType<typeof setTimeout> | null = null;
 
     ws.on('open', () => {
       opened = true;
       clearTimeout(connectDeadline);
       this.lastInboundAt = Date.now();
+      helloAckDeadline = setTimeout(() => {
+        ws.close(CLOSE_SILENCE, 'Hello ack timeout');
+      }, CONNECT_TIMEOUT_MS);
       ws.send(
         JSON.stringify({
           type: 'hello',
@@ -129,6 +133,10 @@ export class TunnelClient {
       const msg = parseMsg(raw);
       if (!msg) return;
       if (msg.type === 'hello-ack') {
+        if (helloAckDeadline) {
+          clearTimeout(helloAckDeadline);
+          helloAckDeadline = null;
+        }
         this.attempts = 0;
         this.log(`connected to relay as ${this.opts.runnerId}`);
         this.opts.onStatusChange?.('connected');
@@ -175,6 +183,10 @@ export class TunnelClient {
 
     const onGone = (code?: number, reasonBuf?: Buffer) => {
       clearTimeout(connectDeadline);
+      if (helloAckDeadline) {
+        clearTimeout(helloAckDeadline);
+        helloAckDeadline = null;
+      }
       if (this.ws !== ws) return;
       this.ws = null;
       this.stopWatchdog();

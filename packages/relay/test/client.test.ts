@@ -2,7 +2,7 @@ import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TunnelClient } from '../src/client.js';
-import { CLOSE_BAD_VERSION } from '../src/protocol.js';
+import { CLOSE_BAD_VERSION, CLOSE_SILENCE, CONNECT_TIMEOUT_MS } from '../src/protocol.js';
 
 function waitFor(cond: () => boolean, ms = 3000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -84,5 +84,42 @@ describe('TunnelClient close handling', () => {
     expect(logs.some((l) => l.includes('tunnel closed 4003 Unsupported protocol version'))).toBe(true);
     expect(logs.some((l) => l.includes('relay requires a newer runner — run strado-runner update'))).toBe(true);
     expect(setTimeoutSpy.mock.calls.some((call) => call[1] === 5 * 60_000)).toBe(true);
+  });
+
+  it('closes with CLOSE_SILENCE when hello-ack does not arrive within CONNECT_TIMEOUT_MS after open', async () => {
+    let serverSawCloseCode = 0;
+    let openedOnServer = false;
+    const port = await startFakeRelay((ws) => {
+      openedOnServer = true;
+      ws.on('close', (code) => {
+        serverSawCloseCode = code;
+      });
+    });
+
+    const realSetTimeout = globalThis.setTimeout;
+    const connectTimeouts: Array<() => void> = [];
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      if (ms === CONNECT_TIMEOUT_MS) {
+        connectTimeouts.push(() => fn(...args));
+      }
+      return realSetTimeout(fn, ms, ...args);
+    }) as typeof setTimeout);
+
+    const client = new TunnelClient({
+      relayUrl: `ws://127.0.0.1:${port}`,
+      runnerId: 'r1',
+      token: 'tok',
+      accessKey: 'key',
+      localPort: 7777,
+      log: () => {},
+    });
+    cleanups.push(() => client.stop());
+    client.start();
+
+    await waitFor(() => openedOnServer && connectTimeouts.length >= 2);
+    // The second CONNECT_TIMEOUT_MS timer is the hello-ack deadline registered on 'open'.
+    connectTimeouts[1]!();
+    await waitFor(() => serverSawCloseCode !== 0);
+    expect(serverSawCloseCode).toBe(CLOSE_SILENCE);
   });
 });
