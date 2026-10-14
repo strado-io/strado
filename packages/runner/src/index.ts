@@ -126,25 +126,38 @@ async function cmdStatus(): Promise<void> {
   }
 }
 
-function cmdInstallService(): void {
-  if (!hasSystemd()) {
+export function cmdInstallService(
+  deps = { hasSystemd, captureLoginPath, writeUnit, enableLinger, systemctl },
+): void {
+  if (!deps.hasSystemd()) {
     console.error('systemd not available — run the runner under your own supervisor:\n  strado-runner');
     process.exit(1);
   }
+  const currentPaths = runnerPaths();
+  const paired = Boolean(readIdentity(currentPaths.identity));
   // Always exec through `current`, never this bundle's own path: after an
   // upgrade the unit must point at the new version without being rewritten.
-  const shim = path.join(paths.binDir, 'strado-runner');
+  const shim = path.join(currentPaths.binDir, 'strado-runner');
   const execStart = fs.existsSync(shim)
     ? shim
-    : `${process.execPath} ${path.join(paths.bundleDir, 'runner.mjs')}`;
-  const file = writeUnit(renderUnit({ execStart, pathValue: captureLoginPath(), envFile: paths.envFile }));
+    : `${process.execPath} ${path.join(currentPaths.bundleDir, 'runner.mjs')}`;
+  const file = deps.writeUnit(renderUnit({ execStart, pathValue: deps.captureLoginPath(), envFile: currentPaths.envFile }));
   console.log(`wrote ${file}`);
 
-  const linger = enableLinger();
+  const linger = deps.enableLinger();
   console.log(linger.ok ? 'linger enabled (starts at boot, survives logout)' : `WARNING: enable-linger failed: ${linger.out}`);
-  systemctl(['daemon-reload']);
-  const enabled = systemctl(['enable', '--now', UNIT_NAME]);
-  console.log(enabled.ok ? 'service enabled and started' : `failed to start: ${enabled.out}`);
+  deps.systemctl(['daemon-reload']);
+  const enabled = deps.systemctl(paired ? ['enable', '--now', UNIT_NAME] : ['enable', UNIT_NAME]);
+  if (!enabled.ok) {
+    console.log(`failed to start: ${enabled.out}`);
+    if (enabled.out.includes('Failed to connect to bus')) {
+      console.log('hint: run `loginctl enable-linger $USER` and log in via ssh (not `su -`) so the user bus is active');
+    }
+  } else if (paired) {
+    console.log('service enabled and started');
+  } else {
+    console.log('installed; it will start once you run strado-runner pair --code …');
+  }
   console.log(`\nlogs: journalctl --user -u ${UNIT_NAME} -f`);
 }
 
