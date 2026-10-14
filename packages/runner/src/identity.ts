@@ -32,7 +32,8 @@ export async function pairRunner(opts: {
   name: string;
   runnerVersion?: string;
 }): Promise<RunnerIdentity> {
-  const res = await fetch(`${opts.apiUrl}/v1/runners/pair`, {
+  const apiUrl = opts.apiUrl.replace(/\/+$/, '');
+  const res = await fetch(`${apiUrl}/v1/runners/pair`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ code: opts.code, name: opts.name, runnerVersion: opts.runnerVersion }),
@@ -42,7 +43,7 @@ export async function pairRunner(opts: {
     throw new Error(`pairing failed (${res.status}): ${body || 'no response body'}`);
   }
   const { runnerId, runnerToken } = (await res.json()) as { runnerId: string; runnerToken: string };
-  return { runnerId, runnerToken, accessKey: randomBytes(16).toString('hex'), apiUrl: opts.apiUrl };
+  return { runnerId, runnerToken, accessKey: randomBytes(16).toString('hex'), apiUrl };
 }
 
 /** Default runner name: the box's hostname, which is what the human recognizes. */
