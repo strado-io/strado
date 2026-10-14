@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pairRunner, readIdentity, writeIdentity } from '../src/identity.js';
-import { formatCliError, resolveApiUrl } from '../src/index.js';
+import { cmdInstallService, formatCliError, resolveApiUrl } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
 import { isNewer } from '../src/selfUpdate.js';
 import { renderUnit } from '../src/systemd.js';
@@ -193,5 +193,45 @@ describe('CLI error formatting', () => {
 
   it('prints plain err.message when there is no cause', () => {
     expect(formatCliError(new Error('pairing failed (404): no such code'))).toBe('pairing failed (404): no such code');
+  });
+});
+
+describe('install-service', () => {
+  it('installs the unit when unpaired but says it will start after pair instead of reporting started', () => {
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...a) => logs.push(a.join(' ')));
+    try {
+      cmdInstallService({
+        hasSystemd: () => true,
+        captureLoginPath: () => '/usr/bin',
+        writeUnit: () => '/home/u/.config/systemd/user/strado-runner.service',
+        enableLinger: () => ({ ok: true, out: '' }),
+        systemctl: () => ({ ok: true, out: '' }),
+      });
+      expect(logs.join('\n')).toContain('installed; it will start once you run strado-runner pair --code');
+      expect(logs.join('\n')).not.toContain('service enabled and started');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('prints a hint about enable-linger and ssh (not su -) when systemctl fails to connect to bus', () => {
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...a) => logs.push(a.join(' ')));
+    try {
+      cmdInstallService({
+        hasSystemd: () => true,
+        captureLoginPath: () => '/usr/bin',
+        writeUnit: () => '/home/u/.config/systemd/user/strado-runner.service',
+        enableLinger: () => ({ ok: true, out: '' }),
+        systemctl: () => ({ ok: false, out: 'Failed to connect to bus: No medium found' }),
+      });
+      const output = logs.join('\n');
+      expect(output).toContain('loginctl enable-linger $USER');
+      expect(output).toContain('ssh');
+      expect(output).toContain('su -');
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
