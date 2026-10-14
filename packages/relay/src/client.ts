@@ -1,6 +1,7 @@
 import net from 'node:net';
 import { WebSocket } from 'ws';
 import {
+  CLOSE_BAD_VERSION,
   CLOSE_DRAIN,
   CLOSE_SILENCE,
   CONNECT_TIMEOUT_MS,
@@ -172,20 +173,30 @@ export class TunnelClient {
       }
     });
 
-    const onGone = (code?: number) => {
+    const onGone = (code?: number, reasonBuf?: Buffer) => {
       clearTimeout(connectDeadline);
       if (this.ws !== ws) return;
       this.ws = null;
       this.stopWatchdog();
       this.teardown('tunnel disconnected');
+      const reason = reasonBuf ? reasonBuf.toString('utf8') : '';
+      this.log(`tunnel closed ${code} ${reason}`);
       this.opts.onStatusChange?.('disconnected');
       if (this.stopped) return;
       // Backoff resets ONLY on the relay's drain code so a mass disconnect
       // doesn't thundering-herd it.
       if (code === CLOSE_DRAIN) this.attempts = 0;
-      this.scheduleReconnect();
+      if (code === 1008) {
+        this.log('credential rejected — re-pair or check revocation');
+        this.scheduleReconnect(60_000);
+      } else if (code === CLOSE_BAD_VERSION) {
+        this.log('relay requires a newer runner — run strado-runner update');
+        this.scheduleReconnect(5 * 60_000);
+      } else {
+        this.scheduleReconnect();
+      }
     };
-    ws.on('close', (code) => onGone(code));
+    ws.on('close', (code, reason) => onGone(code, reason));
     ws.on('error', (err) => {
       this.log(`socket error: ${(err as Error).message}`);
       // 'close' follows 'error' for opened sockets; for pre-open failures it
@@ -193,9 +204,9 @@ export class TunnelClient {
     });
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(overrideDelayMs?: number): void {
     const base = Math.min(RECONNECT_BASE_MS * 2 ** this.attempts, RECONNECT_MAX_MS);
-    const delay = base * (0.5 + Math.random() * 0.5);
+    const delay = overrideDelayMs ?? base * (0.5 + Math.random() * 0.5);
     this.attempts++;
     this.reconnectTimer = setTimeout(() => this.connect(), delay);
   }
