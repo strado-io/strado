@@ -21,10 +21,13 @@ export function cloudAuth(opts: CloudAuthOptions): RelayAuth {
   const cache = new Map<string, { ok: boolean; until: number }>();
 
   const post = async (path: string, body: object): Promise<{ status: number; json: Record<string, unknown> }> => {
+    // Bounded: a hung API call here hangs the runner's hello (and with it the
+    // socket, which has no ping timer until it registers).
     const res = await fetch(`${opts.apiUrl}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-internal-secret': opts.internalSecret },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
     });
     let json: Record<string, unknown> = {};
     try {
