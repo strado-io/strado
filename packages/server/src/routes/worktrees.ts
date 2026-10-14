@@ -581,9 +581,20 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           // thrown: the user asked to delete THIS worktree, and a container
           // inconsistency is no reason to refuse.
           const owner = await app.deps.sandbox.worktreeOf(sandboxSlug);
-          if (owner === null || owner === target) {
+          // null = no container by that name, or one without our label. The
+          // first is nothing to do; the second is a stranger (sandboxes.ts
+          // documents the label as the only proof of ownership), so it is left
+          // alone just like a container labelled for another worktree.
+          if (owner === target || (owner === null && (await app.deps.sandbox.status(sandboxSlug)) === 'absent')) {
             await app.deps.sandbox.stop(sandboxSlug);
-            await app.deps.sandbox.remove(sandboxSlug);
+            const removed = await app.deps.sandbox.remove(sandboxSlug);
+            if (!removed.ok) {
+              // Not fatal — the user asked for the worktree gone — but an
+              // orphan container keeps a bind mount on the path we are about
+              // to delete, so name it.
+              step.detail(`container ${app.deps.sandbox.containerName(sandboxSlug)} could not be removed: ${removed.error}`);
+              app.deps.debugLog.log('server', `sandbox rm failed for ${target}: ${removed.error}`);
+            }
             // The container is gone as of this line, but the rest of the
             // delete can still fail (a dirty worktree makes `git worktree
             // remove` throw). Give up the sandbox identity NOW: left behind,

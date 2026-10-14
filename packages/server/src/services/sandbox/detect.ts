@@ -29,21 +29,62 @@ function parseFlatYaml(text: string): Record<string, string> {
   return out;
 }
 
-const majorOf = (spec: string): string | null =>
-  spec.match(/(\d+)/)?.[1] ?? null;
+/** The oldest major the sandbox image can be built for: node:<major>-bookworm
+ * exists from 18 up. A repo pinned lower gets this, and the summary says so. */
+export const MIN_NODE_MAJOR = 18;
 
-export async function detectSandboxManifest(worktreePath: string): Promise<SandboxManifest> {
+/**
+ * The node major a version spec asks for, or null when it names no number
+ * (`lts/*`, `node`, `latest`). A range picks its lower bound (`>=20 <23` is
+ * 20); alternatives pick the newest (`^18 || ^20` is 20 — one image has to
+ * serve the whole range, and the newest satisfies the most of it).
+ */
+export const majorOf = (spec: string): string | null => {
+  const s = spec.trim();
+  if (!s || /^(lts|node|latest|\*|stable|current)/i.test(s)) return null;
+  const majors = s
+    .split('||')
+    .map((alt) => alt.match(/(\d+)/)?.[1])
+    .filter((m): m is string => m !== undefined)
+    .map(Number);
+  if (majors.length === 0) return null;
+  return String(Math.max(...majors));
+};
+
+export async function detectSandboxManifest(
+  worktreePath: string,
+  /** The worktree root, when `worktreePath` is a monorepo's project subdir:
+   * a root `.nvmrc` / engines applies to every package under it. */
+  rootPath?: string,
+): Promise<SandboxManifest> {
   let node: string | null = null;
   let nodeSource: string | null = null;
   let packageManager: SandboxManifest['packageManager'] = 'npm';
   let pmSource = 'default';
 
-  const pkgRaw = await readIf(path.join(worktreePath, 'package.json'));
-  const pkg = pkgRaw ? (() => { try { return JSON.parse(pkgRaw); } catch { return {}; } })() : {};
+  const readPkg = async (dir: string) => {
+    const raw = await readIf(path.join(dir, 'package.json'));
+    return raw ? (() => { try { return JSON.parse(raw); } catch { return {}; } })() : {};
+  };
+  const pkg = await readPkg(worktreePath);
 
-  const nvmrc = await readIf(path.join(worktreePath, '.nvmrc'));
-  if (nvmrc?.trim()) { node = majorOf(nvmrc.trim()); nodeSource = '.nvmrc'; }
-  else if (typeof pkg?.engines?.node === 'string') { node = majorOf(pkg.engines.node); nodeSource = 'engines'; }
+  // Nearest declaration wins: the project dir first, then the worktree root.
+  const dirs: { dir: string; label: string }[] = [{ dir: worktreePath, label: '' }];
+  if (rootPath && path.resolve(rootPath) !== path.resolve(worktreePath)) dirs.push({ dir: rootPath, label: ' (root)' });
+  for (const { dir, label } of dirs) {
+    const nvmrc = await readIf(path.join(dir, '.nvmrc'));
+    if (nvmrc?.trim()) {
+      node = majorOf(nvmrc);
+      nodeSource = node ? `.nvmrc${label}` : `.nvmrc${label} says ${nvmrc.trim()}, using default`;
+      break;
+    }
+    const engines = (dir === worktreePath ? pkg : await readPkg(dir))?.engines?.node;
+    if (typeof engines === 'string') {
+      node = majorOf(engines);
+      nodeSource = node ? `engines${label}` : `engines${label} say ${engines}, using default`;
+      break;
+    }
+  }
 
   if (typeof pkg?.packageManager === 'string') {
     const pm = pkg.packageManager.split('@')[0];
@@ -61,8 +102,14 @@ export async function detectSandboxManifest(worktreePath: string): Promise<Sandb
     }
   }
 
+  // Below the oldest image we can build: say what was asked and what it gets.
+  if (node && Number(node) < MIN_NODE_MAJOR) {
+    nodeSource = `${nodeSource} asked for ${node}; image supports ${MIN_NODE_MAJOR}+`;
+    node = String(MIN_NODE_MAJOR);
+  }
+
   const parts = [
-    node ? `node ${node} (${nodeSource})` : 'node default (nothing declared)',
+    node ? `node ${node} (${nodeSource})` : `node default (${nodeSource ?? 'nothing declared'})`,
     `${packageManager} (${pmSource})`,
   ];
   return { node, nodeSource, packageManager, pmSource, summary: parts.join(' · ') };

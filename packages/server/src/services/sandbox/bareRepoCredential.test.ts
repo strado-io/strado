@@ -70,3 +70,23 @@ describe('existing bare clone', () => {
     expect(argv.some((a) => a.startsWith('clone'))).toBe(false);
   });
 });
+
+describe('concurrent first creates', () => {
+  it('clone once: the second caller waits for the first', async () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'strado-bare-race-'));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    execMock.mockImplementation(async (_c: string, args: string[]) => {
+      if (args[0] === 'clone') await gate;
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    const opts = { reposDir: path.join(tempRoot, 'repos'), repoId: 'app', cloneUrl: 'https://github.com/o/app.git' };
+    const a = ensureBareRepo(opts);
+    const b = ensureBareRepo(opts);
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    expect(await a).toBe(await b);
+    const clones = execMock.mock.calls.filter(([, args]) => (args as string[])[0] === 'clone');
+    expect(clones).toHaveLength(1);
+  });
+});

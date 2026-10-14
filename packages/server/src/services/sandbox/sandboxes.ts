@@ -165,8 +165,17 @@ export function createSandboxService(
       const r = await exec(rt.bin, ['start', containerName(slug)], 2 * 60_000);
       if (r.code !== 0) throw new Error(`sandbox start failed: ${r.stderr.slice(-2000)}`);
     },
-    async stop(slug: string) { await exec(rt.bin, ['stop', '-t', '10', containerName(slug)], 30_000); },
-    async remove(slug: string) { await exec(rt.bin, ['rm', '-f', containerName(slug)]); },
+    /** Both report rather than throw: a delete must not be refused because a
+     * container misbehaved — but the caller gets to say so, and an orphan
+     * container holding a bind mount on a deleted path is worth a line. */
+    async stop(slug: string): Promise<{ ok: boolean; error: string | null }> {
+      const r = await exec(rt.bin, ['stop', '-t', '10', containerName(slug)], 30_000);
+      return { ok: r.code === 0, error: r.code === 0 ? null : r.stderr.trim().split('\n').pop() ?? `exit ${r.code}` };
+    },
+    async remove(slug: string): Promise<{ ok: boolean; error: string | null }> {
+      const r = await exec(rt.bin, ['rm', '-f', containerName(slug)], 60_000);
+      return { ok: r.code === 0, error: r.code === 0 ? null : r.stderr.trim().split('\n').pop() ?? `exit ${r.code}` };
+    },
 
     /** Which worktree a container belongs to, from the label `create` set.
      * null when there is no such container, or when it carries no label of

@@ -19,6 +19,9 @@ describe('Dockerfile', () => {
       '@earendil-works/pi-coding-agent',
     ]) expect(df).toContain(pkg);
     expect(df).toContain('ARG NODE_MAJOR');
+    // Fully qualified: a short name fails non-interactive podman builds on
+    // distros with several unqualified-search registries.
+    expect(df).toMatch(/^FROM docker\.io\/library\/node:/m);
   });
 
   it('runs as the uid-1000 node user, not a colliding new user, and trusts bind mounts', async () => {

@@ -4,7 +4,10 @@
 # air-gapped/in-VPC segment). Rebuilt per node major; project deps go in the
 # worktree, never in here.
 ARG NODE_MAJOR=22
-FROM node:${NODE_MAJOR}-bookworm
+# Fully qualified: podman on a box with several unqualified-search registries
+# (Fedora/RHEL defaults) cannot resolve a short name in a non-interactive
+# build and fails with "short-name resolution enforced but cannot prompt".
+FROM docker.io/library/node:${NODE_MAJOR}-bookworm
 
 # Basics agents lean on constantly. Kept deliberately short.
 RUN apt-get update && apt-get install -y --no-install-recommends \
