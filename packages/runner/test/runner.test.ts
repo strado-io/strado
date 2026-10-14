@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readIdentity, writeIdentity } from '../src/identity.js';
+import { formatCliError } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
 import { isNewer } from '../src/selfUpdate.js';
 import { renderUnit } from '../src/systemd.js';
@@ -166,5 +167,17 @@ describe('systemd unit', () => {
     // "no runner identity". Only a human can fix that, so exit 2 must be
     // excluded from the restart policy.
     expect(unit()).toContain('RestartPreventExitStatus=2');
+  });
+});
+
+describe('CLI error formatting', () => {
+  it('surfaces undici err.cause code and message alongside err.message', () => {
+    const cause = Object.assign(new Error('getaddrinfo ENOTFOUND api.strado.io'), { code: 'ENOTFOUND' });
+    const err = new TypeError('fetch failed', { cause });
+    expect(formatCliError(err)).toBe('fetch failed: ENOTFOUND getaddrinfo ENOTFOUND api.strado.io');
+  });
+
+  it('prints plain err.message when there is no cause', () => {
+    expect(formatCliError(new Error('pairing failed (404): no such code'))).toBe('pairing failed (404): no such code');
   });
 });

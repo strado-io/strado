@@ -197,24 +197,33 @@ function cmdUnpair(): void {
   console.log('IMPORTANT: also revoke it from your account, or the credential stays valid on any copy of this file.');
 }
 
-const cmd = process.argv[2];
-try {
-  if (cmd === 'pair') await cmdPair();
-  else if (cmd === 'status') await cmdStatus();
-  else if (cmd === 'install-service') cmdInstallService();
-  else if (cmd === 'env') cmdEnv();
-  else if (cmd === 'logs') cmdLogs();
-  else if (cmd === 'update') await cmdUpdate();
-  else if (cmd === 'unpair') cmdUnpair();
-  else if (cmd === 'version' || cmd === '--version') console.log(bundleVersion(paths));
-  else if (cmd && cmd !== 'run' && cmd !== '--port' && !cmd.startsWith('--')) {
-    console.error(`unknown command "${cmd}" — try: pair, status, install-service, env, logs, update, unpair`);
+export function formatCliError(err: unknown): string {
+  const e = err as Error & { cause?: { code?: string; message?: string } };
+  const message = e?.message ?? String(err);
+  const cause = e?.cause && typeof e.cause === 'object' ? e.cause : undefined;
+  return `${message}${cause ? `: ${cause.code ?? ''} ${cause.message ?? ''}`.trimEnd() : ''}`;
+}
+
+if (!process.env.VITEST) {
+  const cmd = process.argv[2];
+  try {
+    if (cmd === 'pair') await cmdPair();
+    else if (cmd === 'status') await cmdStatus();
+    else if (cmd === 'install-service') cmdInstallService();
+    else if (cmd === 'env') cmdEnv();
+    else if (cmd === 'logs') cmdLogs();
+    else if (cmd === 'update') await cmdUpdate();
+    else if (cmd === 'unpair') cmdUnpair();
+    else if (cmd === 'version' || cmd === '--version') console.log(bundleVersion(paths));
+    else if (cmd && cmd !== 'run' && cmd !== '--port' && !cmd.startsWith('--')) {
+      console.error(`unknown command "${cmd}" — try: pair, status, install-service, env, logs, update, unpair`);
+      process.exit(1);
+    } else {
+      applyBundleEnv(paths);
+      await runDaemon();
+    }
+  } catch (err) {
+    console.error(formatCliError(err));
     process.exit(1);
-  } else {
-    applyBundleEnv(paths);
-    await runDaemon();
   }
-} catch (err) {
-  console.error((err as Error).message);
-  process.exit(1);
 }
