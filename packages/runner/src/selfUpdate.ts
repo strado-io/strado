@@ -5,7 +5,7 @@
 // Discipline copied from the desktop updater's scars (a past brick bug):
 // verify the hash BEFORE the swap, never mutate a live directory in place,
 // keep the previous version for rollback, and single-flight the whole thing.
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -111,6 +111,16 @@ export async function applyUpdate(release: RunnerRelease, paths: RunnerPaths, lo
       await fsp.rm(staging, { recursive: true, force: true });
       throw new Error(`staged bundle is missing ${required}`);
     }
+  }
+
+  try {
+    execFileSync(path.join(staging, 'bin', 'node'), ['--version'], {
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    await fsp.rm(staging, { recursive: true, force: true });
+    throw new Error(`staged node binary failed to execute: ${(err as Error).message}`);
   }
 
   await fsp.rm(target, { recursive: true, force: true });

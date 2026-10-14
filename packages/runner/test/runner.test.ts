@@ -6,7 +6,7 @@ import { teeConsoleToLog } from '../src/daemon.js';
 import { pairRunner, readIdentity, writeIdentity } from '../src/identity.js';
 import { cmdInstallService, formatCliError, resolveApiUrl } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
-import { DOWNLOAD_TIMEOUT_MS, FEED_TIMEOUT_MS, download, fetchRunnerRelease, isNewer } from '../src/selfUpdate.js';
+import { DOWNLOAD_TIMEOUT_MS, FEED_TIMEOUT_MS, applyUpdate, download, fetchRunnerRelease, isNewer } from '../src/selfUpdate.js';
 import { renderUnit } from '../src/systemd.js';
 
 let dir: string;
@@ -188,6 +188,39 @@ describe('update version comparison', () => {
       expect(fetchSpy.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     } finally {
       timeoutSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('refuses an update when <staging>/bin/node --version fails and keeps current', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const crypto = await import('node:crypto');
+    const p = runnerPaths();
+    const prevTarget = path.join(p.versions, '0.1.0');
+    fs.mkdirSync(prevTarget, { recursive: true });
+    fs.symlinkSync(prevTarget, p.current);
+
+    const srcBundle = path.join(dir, 'pkg', 'strado-runner');
+    fs.mkdirSync(path.join(srcBundle, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(srcBundle, 'web'), { recursive: true });
+    fs.writeFileSync(path.join(srcBundle, 'runner.mjs'), '');
+    fs.writeFileSync(path.join(srcBundle, 'ptyd.cjs'), '');
+    const brokenNode = path.join(srcBundle, 'bin', 'node');
+    fs.writeFileSync(brokenNode, '#!/bin/sh\necho "GLIBC_2.99 not found" >&2\nexit 1\n', { mode: 0o755 });
+
+    const archive = path.join(dir, 'release.tar.gz');
+    execFileSync('tar', ['-czf', archive, '-C', path.join(dir, 'pkg'), 'strado-runner']);
+    const bytes = fs.readFileSync(archive);
+    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(bytes, { status: 200 }));
+    try {
+      await expect(
+        applyUpdate({ version: '0.1.1', url: 'https://cdn.strado.io/r.tar.gz', sha256 }, p, () => {}),
+      ).rejects.toThrow(/node/i);
+      expect(fs.readlinkSync(p.current)).toBe(prevTarget);
+      expect(fs.existsSync(prevTarget)).toBe(true);
+    } finally {
       fetchSpy.mockRestore();
     }
   });
