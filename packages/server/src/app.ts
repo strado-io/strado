@@ -29,7 +29,7 @@ import { createSandboxService, type SandboxService } from './services/sandbox/sa
 import { createSandboxSlugMap, hydrateSandboxSlugs, type SandboxSlugMap } from './services/sandbox/slugMap.js';
 import { sandboxSpecWrapper } from './services/sandbox/spec.js';
 import { startHookSocket } from './services/sandbox/hookSocket.js';
-import { createLastActivityTracker, startParkSweep } from './services/sandbox/park.js';
+import { createLastActivityTracker, portAccepts, startParkSweep } from './services/sandbox/park.js';
 import { resolveProfile } from './profile.js';
 import { createAgentSessionRegistry, type AgentSessionRegistry } from './services/agentSessionRegistry.js';
 import { createAgentRegistry, type AgentRegistry } from './services/agentRegistry.js';
@@ -475,6 +475,17 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
         sandbox: deps.sandbox,
         lastActivity: deps.sandboxLastActivity,
         hasLiveSession: (worktreePath) => deps.terminal.liveSessions().some((s) => s.path === worktreePath),
+        // The worktree's published port, from whichever workspace owns it.
+        isServing: async (worktreePath) => {
+          for (const ws of await deps.workspaces.list().catch(() => [])) {
+            const port = await deps.registry
+              .get(ws.id)
+              .then((stores) => stores.state.get(worktreePath))
+              .then((meta) => meta?.port ?? null, () => null);
+            if (port) return portAccepts(port);
+          }
+          return false;
+        },
       })
     : null;
 

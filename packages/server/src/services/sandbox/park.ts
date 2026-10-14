@@ -1,3 +1,4 @@
+import net from 'node:net';
 import type { SandboxService } from './sandboxes.js';
 
 // A sandbox idle this long gets its container STOPPED — never removed. The
@@ -16,6 +17,10 @@ export function startParkSweep(opts: {
    * how stale `lastActivity` looks — the exec'd process lives inside the
    * container, so stopping it would kill whatever the session is running. */
   hasLiveSession: (worktreePath: string) => boolean;
+  /** Something inside is still serving (the worktree's published port
+   * accepts connections): an agent backgrounded a dev server and closed its
+   * tab. Stopping the container would kill it with nothing on screen. */
+  isServing?: (worktreePath: string) => Promise<boolean>;
   now?: () => number;
   intervalMs?: number;
 }): () => void {
@@ -51,6 +56,8 @@ export function startParkSweep(opts: {
       }
 
       if (now() - last >= IDLE_STOP_MS) {
+        // Checked last and only for idle candidates: it is a network probe.
+        if (opts.isServing && (await opts.isServing(worktreePath).catch(() => false))) continue;
         try {
           await opts.sandbox.stop(slug);
         } catch {
@@ -97,3 +104,19 @@ export function createLastActivityTracker(opts: { now?: () => number } = {}) {
 }
 
 export type LastActivityTracker = ReturnType<typeof createLastActivityTracker>;
+
+/** True when something accepts a TCP connection on 127.0.0.1:`port` within
+ * `timeoutMs`. The sandbox publishes the worktree's port to loopback, so an
+ * accept here means a server inside the container is up. */
+export function portAccepts(port: number, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    const done = (ok: boolean) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
