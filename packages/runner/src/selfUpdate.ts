@@ -166,7 +166,10 @@ async function refreshUnit(_versionDir: string, log: (l: string) => void): Promi
   } catch {
     return; // not systemd-managed
   }
-  const pathValue = /^Environment=PATH=(.*)$/m.exec(existing)?.[1];
+  const pathMatch = /^Environment=(?:"PATH=((?:\\.|[^"\\])*)"|PATH=(.*))$/m.exec(existing);
+  const pathValue = pathMatch?.[1] !== undefined
+    ? pathMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+    : pathMatch?.[2];
   const execStart = /^ExecStart=(.*)$/m.exec(existing)?.[1];
   const envFile = /^EnvironmentFile=-(.*)$/m.exec(existing)?.[1];
   if (!pathValue || !execStart || !envFile) return;

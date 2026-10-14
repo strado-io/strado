@@ -31,12 +31,17 @@ export function captureLoginPath(): string {
   try {
     // -l so profile files run, -i so interactive-only rc files (.zshrc, where
     // nvm and asdf usually live) run too.
-    const out = execFileSync(shell, ['-lic', 'printf %s "$PATH"'], {
+    const out = execFileSync(shell, ['-lic', 'printf "\\n%s\\n" "$PATH"'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10_000,
-    }).trim();
-    if (out.includes('/')) return dedupePath(out);
+    });
+    const lastLine = out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .at(-1);
+    if (lastLine && lastLine.includes('/')) return dedupePath(lastLine);
   } catch {
     /* fall through */
   }
@@ -55,6 +60,7 @@ function dedupePath(value: string): string {
 }
 
 export function renderUnit(opts: { execStart: string; pathValue: string; envFile: string }): string {
+  const escapedPath = opts.pathValue.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return `[Unit]
 Description=Strado runner
 Documentation=https://strado.io
@@ -67,7 +73,7 @@ Type=simple
 ExecStart=${opts.execStart}
 # Captured from the user's login shell at install time so agent CLIs (claude,
 # codex, opencode, pi) resolve; re-run 'strado-runner env' after installing a new one.
-Environment=PATH=${opts.pathValue}
+Environment="PATH=${escapedPath}"
 EnvironmentFile=-${opts.envFile}
 Restart=always
 RestartSec=3
