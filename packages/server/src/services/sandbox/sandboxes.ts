@@ -70,7 +70,17 @@ export function createSandboxService(rt: SandboxRuntime, opts: { stateDir: strin
       if (hooks && !mounts.some((m) => hooks === m || hooks.startsWith(m + path.sep))) {
         args.push('-v', `${hooks}:${hooks}:ro`);
       }
-      if (c.socketPath) args.push('-v', `${c.socketPath}:/run/strado/api.sock`);
+      if (c.socketPath) {
+        // The directory, never the file: a bind-mounted socket FILE pins its
+        // inode, and the host recreates the socket on every restart, so a
+        // running container would be left posting into a dead socket until it
+        // was restarted. The directory must hold only the socket (it is all
+        // visible inside) and the basename must match the in-container path.
+        if (path.basename(c.socketPath) !== 'api.sock') {
+          throw new Error(`sandbox socket must be named api.sock (got ${c.socketPath})`);
+        }
+        args.push('-v', `${path.dirname(c.socketPath)}:/run/strado`);
+      }
       if (c.port != null) args.push('-p', `127.0.0.1:${c.port}:${c.port}`);
       args.push('--env-file', envFile, '-w', c.worktreePath, c.image, 'sleep', 'infinity');
       // 5 min, not the 10s default: the first keep-id create of a fresh image
