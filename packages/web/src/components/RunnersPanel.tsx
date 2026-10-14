@@ -18,6 +18,15 @@ function relativeTime(iso: string | null): string {
   return `${Math.round(mins / 60 / 24)}d ago`;
 }
 
+export function durationUntil(iso: string): string {
+  const diffMs = new Date(iso).getTime() - Date.now();
+  if (diffMs <= 0) return 'expired';
+  const mins = Math.max(1, Math.round(diffMs / 60_000));
+  if (mins < 60) return `in ${mins} ${mins === 1 ? 'minute' : 'minutes'}`;
+  const hours = Math.round(mins / 60);
+  return `in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+}
+
 function openRunnerWindow(url: string): void {
   // The desktop shell opens a dedicated window; a plain browser gets a tab.
   if (window.strado?.openRunner) void window.strado.openRunner(url);
@@ -178,7 +187,7 @@ export function RunnersPanel() {
             </div>
           ))}
           <p className="text-[11px] text-zinc-500">
-            The pairing code expires {relativeTime(pairing.expiresAt).replace(' ago', '')} from now and works once.
+            The pairing code expires {durationUntil(pairing.expiresAt)} and works once.
           </p>
         </div>
       )}
