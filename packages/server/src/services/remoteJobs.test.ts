@@ -49,3 +49,20 @@ describe('followRemoteJob', () => {
     })]);
   });
 });
+
+describe('followRemoteJob progress', () => {
+  it('passes step and detail through separately', async () => {
+    const fetchImpl = vi.fn(async () => streamResponse(
+      `event: progress\ndata: ${JSON.stringify({ message: 'Building sandbox', data: { step: 'sandbox-build' } })}\n\n` +
+      `event: progress\ndata: ${JSON.stringify({ message: 'STEP 1/5', data: { step: 'sandbox-build', detail: 'STEP 1/5' } })}\n\n` +
+      `event: done\ndata: {}\n\n`,
+    )) as unknown as typeof fetch;
+    const events: unknown[] = [];
+    await followRemoteJob('https://runner.test/events/jobs/1', (event) => events.push(event), { fetchImpl });
+    expect(events).toEqual([
+      { type: 'progress', message: 'Building sandbox', step: 'sandbox-build', detail: undefined },
+      { type: 'progress', message: 'STEP 1/5', step: 'sandbox-build', detail: 'STEP 1/5' },
+      { type: 'done' },
+    ]);
+  });
+});

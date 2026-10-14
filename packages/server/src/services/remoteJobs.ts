@@ -7,7 +7,7 @@
 import { AppError, ErrorCode, type ErrorCodeName } from '../errors.js';
 
 export type RemoteJobEvent =
-  | { type: 'progress'; message: string; step?: string }
+  | { type: 'progress'; message: string; step?: string; detail?: string }
   | { type: 'done' }
   | { type: 'error'; message: string; code: ErrorCodeName; details?: unknown; step?: string };
 
@@ -91,13 +91,16 @@ export async function followRemoteJob(
       /* non-JSON frame — treat as empty */
     }
     if (event === 'progress') {
-      const inner = (payload.data ?? {}) as { step?: unknown };
+      const inner = (payload.data ?? {}) as { step?: unknown; detail?: unknown };
       onEvent({
         type: 'progress',
         message: typeof payload.message === 'string' ? payload.message : '',
         // A runner on our version sends a step id; an older one doesn't, and its
         // message becomes detail on the current step instead.
         step: typeof inner.step === 'string' ? inner.step : undefined,
+        // Sub-status under that step (build output, clone percentages). Kept
+        // apart from `step` so the follower can tell "advance" from "annotate".
+        detail: typeof inner.detail === 'string' ? inner.detail : undefined,
       });
     } else if (event === 'done') {
       terminal = true;

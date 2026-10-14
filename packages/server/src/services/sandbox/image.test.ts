@@ -75,3 +75,29 @@ describe('ensureBaseImage', () => {
     ).rejects.toThrow(/network unreachable/);
   });
 });
+
+describe('ensureBaseImage progress', () => {
+  it('reports build output line by line and a concurrent build of the same tag waits', async () => {
+    const lines: string[] = [];
+    let builds = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const exec = async (_f: string, args: string[], _t?: number, onOutput?: (c: string) => void) => {
+      if (args[0] === 'image') return { code: 1, stdout: '', stderr: '' };
+      builds++;
+      onOutput?.('STEP 1/5: FROM node\nSTEP 2/5: RUN apt');
+      onOutput?.('-get\n');
+      await gate;
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const a = ensureBaseImage({ bin: 'podman' }, { node: '24' }, exec, (l) => lines.push(l));
+    const b = ensureBaseImage({ bin: 'podman' }, { node: '24' }, exec, (l) => lines.push(l));
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    expect(await a).toBe('strado-sandbox:node24-v4');
+    expect(await b).toBe('strado-sandbox:node24-v4');
+    expect(builds).toBe(1);
+    // Chunks split mid-line are reassembled; the waiter is told it is waiting.
+    expect(lines).toEqual(['STEP 1/5: FROM node', 'STEP 2/5: RUN apt-get', 'waiting for a build already in progress']);
+  });
+});

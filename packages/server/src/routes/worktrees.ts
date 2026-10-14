@@ -448,7 +448,17 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         // ticket+title repeats across repos, container names are global.
         const sandboxSlug = sandboxSlugFor(slug, targetWorktree);
         try {
-          const image = await ensureBaseImage(sandboxRuntime, { node: manifest.node });
+          // Build output goes to the step, throttled: podman's own STEP lines
+          // always, anything else at most every 2s. A first build is minutes
+          // of pulling and `npm i -g`; silence for that long reads as a hang.
+          let lastDetailAt = 0;
+          const onBuildLine = (line: string) => {
+            const now = Date.now();
+            if (!/^(STEP|\[\d+\/\d+\]|#\d+ )/.test(line) && now - lastDetailAt < 2000) return;
+            lastDetailAt = now;
+            step.detail(line.slice(0, 200));
+          };
+          const image = await ensureBaseImage(sandboxRuntime, { node: manifest.node }, undefined, onBuildLine);
           // A previous attempt that died after `create` left the container
           // behind (we never tear down on failure, by design), so a retry would
           // collide on the name. Remove it — but only after proving it is this
