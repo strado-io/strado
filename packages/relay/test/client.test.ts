@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TunnelClient } from '../src/client.js';
+import { TunnelClient, resolveProxyUrl } from '../src/client.js';
 import { CLOSE_BAD_VERSION, CLOSE_SILENCE, CONNECT_TIMEOUT_MS } from '../src/protocol.js';
 
 function waitFor(cond: () => boolean, ms = 3000): Promise<void> {
@@ -121,5 +121,43 @@ describe('TunnelClient close handling', () => {
     connectTimeouts[1]!();
     await waitFor(() => serverSawCloseCode !== 0);
     expect(serverSawCloseCode).toBe(CLOSE_SILENCE);
+  });
+
+  it('routes the tunnel WebSocket through HttpsProxyAgent when HTTPS_PROXY/HTTP_PROXY (or lowercase) is set', async () => {
+    expect(resolveProxyUrl({ HTTPS_PROXY: 'http://p1:8080' })).toBe('http://p1:8080');
+    expect(resolveProxyUrl({ https_proxy: 'http://p2:8080' })).toBe('http://p2:8080');
+    expect(resolveProxyUrl({ HTTP_PROXY: 'http://p3:8080' })).toBe('http://p3:8080');
+    expect(resolveProxyUrl({ http_proxy: 'http://p4:8080' })).toBe('http://p4:8080');
+
+    let proxyConnectTarget = '';
+    const proxyServer = http.createServer();
+    proxyServer.on('connect', (req, clientSocket) => {
+      proxyConnectTarget = req.url ?? '';
+      clientSocket.destroy();
+    });
+    await new Promise<void>((r) => proxyServer.listen(0, '127.0.0.1', () => r()));
+    const proxyPort = (proxyServer.address() as { port: number }).port;
+    cleanups.push(() => new Promise<void>((r) => proxyServer.close(() => r())));
+
+    const prev = process.env.https_proxy;
+    process.env.https_proxy = `http://127.0.0.1:${proxyPort}`;
+    cleanups.push(() => {
+      if (prev === undefined) delete process.env.https_proxy;
+      else process.env.https_proxy = prev;
+    });
+
+    const client = new TunnelClient({
+      relayUrl: 'wss://relay.example:8443',
+      runnerId: 'r1',
+      token: 'tok',
+      accessKey: 'key',
+      localPort: 7777,
+      log: () => {},
+    });
+    cleanups.push(() => client.stop());
+    client.start();
+
+    await waitFor(() => proxyConnectTarget !== '');
+    expect(proxyConnectTarget).toBe('relay.example:8443');
   });
 });

@@ -1,4 +1,5 @@
 import net from 'node:net';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { WebSocket } from 'ws';
 import {
   CLOSE_BAD_VERSION,
@@ -49,6 +50,11 @@ export interface TunnelClientOptions {
 
 /** Buffered client→local frames while the local WS is still CONNECTING. */
 const MAX_PENDING_FRAMES = 256;
+
+// TODO: wire outbound proxy env into fetch calls in packages/runner (identity.ts, selfUpdate.ts, index.ts).
+export function resolveProxyUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || undefined;
+}
 
 /**
  * Cap on bytes held while a TCP channel is still connecting (gate check +
@@ -102,7 +108,8 @@ export class TunnelClient {
     url.searchParams.set('runner', this.opts.runnerId);
     url.searchParams.set('token', this.opts.token);
 
-    const ws = new WebSocket(url.toString());
+    const proxyUrl = resolveProxyUrl();
+    const ws = new WebSocket(url.toString(), proxyUrl ? { agent: new HttpsProxyAgent(proxyUrl) } : undefined);
     this.ws = ws;
     let opened = false;
 

@@ -17,6 +17,7 @@
   "dependencies": {
     "@fastify/websocket": "^8.3.1",
     "fastify": "^4.26.0",
+    "https-proxy-agent": "^7.0.6",
     "ws": "^8.16.0"
   },
   "devDependencies": {
