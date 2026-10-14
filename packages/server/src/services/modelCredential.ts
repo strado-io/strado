@@ -94,6 +94,55 @@ function classifyHost(host: string, gitlabHosts: Set<string>, githubHosts: Set<s
   return null;
 }
 
+export type CloneCredential = {
+  /** The HTTPS form of the remote, which is what a token can authenticate. */
+  url: string;
+  credential: { username: string; password: string };
+};
+
+/**
+ * The credential a RUNNER should clone this repo with, from the tokens the
+ * user connected on the desktop — the GitLab token for a GitLab host, the
+ * GitHub PAT for a GitHub owner. The SSH remote is rewritten to HTTPS, since
+ * a fresh runner box has no SSH key and a token only works over HTTPS.
+ *
+ * Null when nothing is connected for the host; the runner then tries the
+ * URL as-is (public repo, or its own keys) and explains the failure.
+ */
+export async function cloneCredentialForRepo(
+  repo: { cloneUrl: string | null | undefined },
+  deps: Pick<SandboxEnvDeps, 'readGithub' | 'readGitlab'> = defaultDeps,
+): Promise<CloneCredential | null> {
+  const parsed = repo.cloneUrl ? parseRemoteUrl(repo.cloneUrl) : null;
+  if (!parsed) return null;
+  const [ghCfg, glCfg] = await Promise.all([deps.readGithub(), deps.readGitlab()]);
+  const githubHosts = new Set(Object.keys(ghCfg).map((k) => k.split('/')[0] ?? k));
+  const gitlabHosts = new Set(Object.keys(glCfg));
+  const provider = classifyHost(parsed.host, gitlabHosts, githubHosts);
+  const url = `https://${parsed.host}/${parsed.projectPath}.git`;
+  if (provider === 'github') {
+    const token = githubTokenFor(ghCfg, parsed.host, parsed.projectPath.split('/')[0] ?? '');
+    return token ? { url, credential: { username: 'x-access-token', password: token } } : null;
+  }
+  if (provider === 'gitlab') {
+    const token = gitlabHostToken(glCfg, parsed.host);
+    return token ? { url, credential: { username: 'oauth2', password: token } } : null;
+  }
+  return null;
+}
+
+/** The same token, read back out of a sandbox env bundle on the runner side —
+ * so a bare-clone fetch at worktree-create time can authenticate without a
+ * second round trip to the desktop. */
+export function credentialFromSandboxEnv(
+  env: Record<string, string> | undefined,
+): { username: string; password: string } | null {
+  if (!env) return null;
+  if (env.GITHUB_TOKEN) return { username: env.GIT_HTTP_USER || 'x-access-token', password: env.GITHUB_TOKEN };
+  if (env.GITLAB_TOKEN) return { username: env.GIT_HTTP_USER || 'oauth2', password: env.GITLAB_TOKEN };
+  return null;
+}
+
 /**
  * The env a sandbox needs to act AS the user: the model key it bills against,
  * the git identity its commits are authored with, and a push token answered via

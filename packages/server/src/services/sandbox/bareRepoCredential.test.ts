@@ -47,3 +47,26 @@ describe('bare repository HTTPS credentials', () => {
     expect(helpers.every((helper) => !fs.existsSync(helper))).toBe(true);
   });
 });
+
+describe('existing bare clone', () => {
+  it('moves origin to the URL the credential can speak before fetching', async () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'strado-bare-seturl-'));
+    const target = path.join(tempRoot, 'repos', 'app.git');
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'HEAD'), 'ref: refs/heads/main\n');
+    execMock.mockImplementation(async (_c: string, args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') return { code: 0, stdout: 'git@gitlab.com:acme/app.git\n', stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    await ensureBareRepo({
+      reposDir: path.join(tempRoot, 'repos'),
+      repoId: 'app',
+      cloneUrl: 'https://gitlab.com/acme/app.git',
+      credential: { username: 'oauth2', password: 'gl-tok' },
+    });
+    const argv = execMock.mock.calls.map(([, args]) => (args as string[]).join(' '));
+    expect(argv).toContain('remote set-url origin https://gitlab.com/acme/app.git');
+    expect(argv.indexOf('remote set-url origin https://gitlab.com/acme/app.git')).toBeLessThan(argv.indexOf('fetch origin'));
+    expect(argv.some((a) => a.startsWith('clone'))).toBe(false);
+  });
+});

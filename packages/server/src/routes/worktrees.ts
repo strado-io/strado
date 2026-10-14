@@ -18,6 +18,9 @@ import { sandboxSlugFor } from '../services/sandbox/sandboxes.js';
 import { canonicalWorktreesDir, findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { githubProjectFromCloneUrl, runnerGitCredential } from '../services/runnerGitCredential.js';
+import { credentialFromSandboxEnv } from '../services/modelCredential.js';
+import { parseRemoteUrl } from '../services/gitProviders.js';
+import { explainCloneFailure } from '../services/cloneAuthHint.js';
 
 export type WorktreeRow = {
   path: string;
@@ -340,15 +343,28 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         const githubCredential = github
           ? await runnerGitCredential('github.com', github.projectPath, 'read')
           : null;
+        // Without the App, the token the desktop bundled for the container
+        // (GITHUB_TOKEN / GITLAB_TOKEN) authenticates the fetch too — and
+        // means the origin has to be HTTPS, which a token can speak.
+        const envCredential = credentialFromSandboxEnv(body.sandboxEnv);
+        const parsedRemote = repo.cloneUrl ? parseRemoteUrl(repo.cloneUrl) : null;
+        const credential = githubCredential
+          ? { username: githubCredential.username, password: githubCredential.token }
+          : envCredential ?? undefined;
+        const bareCloneUrl = githubCredential && github
+          ? github.httpsUrl
+          : envCredential && parsedRemote
+            ? `https://${parsedRemote.host}/${parsedRemote.projectPath}.git`
+            // A repo registered from a local path has no remote; the clone
+            // itself is a perfectly good origin to bare-clone from.
+            : repo.cloneUrl ?? repo.path;
         const bareRepo = await ensureBareRepo({
           reposDir: sandboxReposDir(app.deps.homeStateDir),
           repoId: repo.id,
-          // A repo registered from a local path has no remote; the clone itself
-          // is a perfectly good origin to bare-clone from.
-          cloneUrl: githubCredential && github ? github.httpsUrl : repo.cloneUrl ?? repo.path,
-          credential: githubCredential
-            ? { username: githubCredential.username, password: githubCredential.token }
-            : undefined,
+          cloneUrl: bareCloneUrl,
+          credential,
+        }).catch((err) => {
+          throw explainCloneFailure(err, bareCloneUrl) ?? err;
         });
         await addSandboxWorktree({
           bareRepo,

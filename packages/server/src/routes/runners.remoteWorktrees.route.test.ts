@@ -229,8 +229,10 @@ describe('POST /api/w/:ws/remote-worktrees', () => {
  * forwards the runner's own step ids — including the sandbox steps, which are
  * the slow part of a first create and used to show as "Finalizing".
  */
+let lastCloneBody: Record<string, unknown> = {};
 function stubCreateApis(o: { sandbox: boolean; events: string }) {
   const posted: string[] = [];
+  lastCloneBody = {};
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -246,6 +248,7 @@ function stubCreateApis(o: { sandbox: boolean; events: string }) {
       }
       if (u.startsWith(`${RUNNER_HTTP_BASE}/api/w/rws/repos/clone`)) {
         posted.push('clone');
+        lastCloneBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
         return json({ repo: { id: 'strado' }, alreadyRegistered: true, path: '/home/r/repos/strado' });
       }
       if (u.startsWith(`${RUNNER_HTTP_BASE}/api/w/rws/worktrees`) && init?.method === 'POST') {
@@ -261,9 +264,9 @@ function stubCreateApis(o: { sandbox: boolean; events: string }) {
   return posted;
 }
 
-async function runCreate() {
+async function runCreate(cloneUrl = 'https://github.com/strado-io/strado.git') {
   const stores = await app.deps.registry.get('default');
-  await stores.repos.add(repoConfig('strado', 'https://github.com/strado-io/strado.git'));
+  await stores.repos.add(repoConfig('strado', cloneUrl));
   const frames: { message: string; step?: string; steps?: { id: string }[]; detail?: string }[] = [];
   const res = await app.inject({
     method: 'POST',
@@ -342,5 +345,24 @@ describe('GET /api/w/:ws/remote-worktrees sandbox state', () => {
     expect(await stateOf()).toBe('off');
     stubRunnerApis({ repos, worktrees: rows(undefined) });
     expect(await stateOf()).toBe('off');
+  });
+});
+
+describe('POST /api/w/:ws/remote-worktrees clone credentials', () => {
+  const doneOnly = `event: done\ndata: {}\n\n`;
+  it("sends the HTTPS remote plus this machine's GitLab token for a GitLab SSH remote", async () => {
+    await fs.writeFile(path.join(home, 'gitlab.json'), JSON.stringify({ 'gitlab.example.test': { token: 'gl-tok' } }));
+    stubCreateApis({ sandbox: false, events: doneOnly });
+    const { job } = await runCreate('git@gitlab.example.test:acme/app.git');
+    expect(job.status).toBe('done');
+    expect(lastCloneBody.url).toBe('https://gitlab.example.test/acme/app.git');
+    expect(lastCloneBody.credential).toEqual({ username: 'oauth2', password: 'gl-tok' });
+  });
+  it('sends the remote as-is and no credential when nothing is connected for the host', async () => {
+    stubCreateApis({ sandbox: false, events: doneOnly });
+    const { job } = await runCreate('https://github.com/strado-io/strado.git');
+    expect(job.status).toBe('done');
+    expect(lastCloneBody.url).toBe('https://github.com/strado-io/strado.git');
+    expect(lastCloneBody.credential).toBeUndefined();
   });
 });

@@ -5,6 +5,7 @@ import { backfillCloneUrls } from '../services/repoBackfill.js';
 import { detectRepo, uniqueRepoId } from '../services/repoDetect.js';
 import { AppError } from '../errors.js';
 import { githubProjectFromCloneUrl, runnerGitCredential } from '../services/runnerGitCredential.js';
+import { explainCloneFailure } from '../services/cloneAuthHint.js';
 import { ensureBareRepo, sandboxReposDir } from '../services/sandbox/bareRepo.js';
 import { matchRepo } from '../services/repoIdentity.js';
 
@@ -23,6 +24,10 @@ const CloneBody = z.object({
   // hidden bare backing repository without first materialising a redundant
   // main checkout solely so detectRepo can rediscover the same values.
   config: PortableRepoConfig.optional(),
+  // The desktop's own token for this host, so a fresh runner (no SSH key, no
+  // tokens) can clone a private repo. Used only when the cloud has no GitHub
+  // App installation for it; never written to disk here.
+  credential: z.object({ username: z.string().min(1).max(200), password: z.string().min(1).max(4096) }).optional(),
 });
 const CreateBody = z.object({
   name: z.string().trim().min(1).max(120),
@@ -58,10 +63,14 @@ export async function registerReposRoutes(app: FastifyInstance) {
   app.post('/repos/clone', async (req, reply) => {
     const body = CloneBody.parse(req.body);
     const github = githubProjectFromCloneUrl(body.url);
-    const credential = github
+    // GitHub App first (short-lived, repo-scoped), the desktop's token second.
+    const appCredential = github
       ? await runnerGitCredential('github.com', github.projectPath, 'read')
       : null;
-    const cloneUrl = credential && github ? github.httpsUrl : body.url;
+    const credential = appCredential
+      ? { username: appCredential.username, password: appCredential.token }
+      : body.credential ?? null;
+    const cloneUrl = appCredential && github ? github.httpsUrl : body.url;
 
     // Runner provisioning for sandboxed worktrees needs Git's object store,
     // not a second visible checkout of main. Keep the general clone endpoint's
@@ -80,7 +89,9 @@ export async function registerReposRoutes(app: FastifyInstance) {
         reposDir: sandboxReposDir(app.deps.homeStateDir),
         repoId,
         cloneUrl,
-        credential: credential ? { username: credential.username, password: credential.token } : undefined,
+        credential: credential ?? undefined,
+      }).catch((err) => {
+        throw explainCloneFailure(err, cloneUrl) ?? err;
       });
       if (existing) {
         return reply.code(200).send({
@@ -113,7 +124,9 @@ export async function registerReposRoutes(app: FastifyInstance) {
       url: cloneUrl,
       dest: body.dest,
       parent: body.parent,
-      credential: credential ? { username: credential.username, password: credential.token } : undefined,
+      credential: credential ?? undefined,
+    }).catch((err) => {
+      throw explainCloneFailure(err, cloneUrl) ?? err;
     });
     const detected = await detectRepo(cloned.path);
     const known = await req.workspace!.stores.repos.list();

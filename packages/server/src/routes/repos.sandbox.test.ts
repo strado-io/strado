@@ -84,3 +84,34 @@ describe('POST /repos/clone on a sandbox-capable runner', () => {
     expect(repos.json().repos).toHaveLength(1);
   });
 });
+
+describe('POST /repos/clone credentials', () => {
+  const config = { id: 'site', name: 'Site', projectSubdir: null, startCommand: 'npm run dev', defaultPort: 5173, editor: 'code' };
+
+  it("clones with the desktop's token when the cloud has no GitHub App credential", async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/repos/clone',
+      payload: { url: 'https://gitlab.example.test/acme/site.git', config, credential: { username: 'oauth2', password: 'gl-tok' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.ensureBareRepo).toHaveBeenCalledWith(expect.objectContaining({
+      cloneUrl: 'https://gitlab.example.test/acme/site.git',
+      credential: { username: 'oauth2', password: 'gl-tok' },
+    }));
+  });
+
+  it('explains an SSH auth failure instead of echoing git', async () => {
+    mocks.ensureBareRepo.mockRejectedValueOnce(
+      Object.assign(new Error('git exited 128'), { details: { stderr: 'git@gitlab.example.test: Permission denied (publickey).' } }),
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/repos/clone',
+      payload: { url: 'git@gitlab.example.test:acme/site.git', config },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/cannot authenticate to gitlab.example.test/);
+    expect(res.json().error.message).toMatch(/connect GitLab under Settings/);
+  });
+});

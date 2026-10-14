@@ -44,6 +44,13 @@ export async function ensureBareRepo(opts: {
   const target = bareRepoPath(reposDir, opts.repoId);
   const cloned = await fsp.access(path.join(target, 'HEAD')).then(() => true, () => false);
   if (cloned) {
+    // The origin follows the URL we can authenticate NOW. A bare clone made
+    // before any token was connected has an SSH origin that no token can use,
+    // and inside the container (no ~/.ssh) it could never fetch or push.
+    const current = await git(['remote', 'get-url', 'origin'], target);
+    if (current.code === 0 && current.stdout.trim() !== opts.cloneUrl) {
+      await git(['remote', 'set-url', 'origin', opts.cloneUrl], target);
+    }
     // Reuse is the common case, and a bare clone is otherwise frozen at the
     // moment the FIRST sandboxed worktree for this repo was created — every
     // later one would silently branch from a stale origin/main. Loud on
