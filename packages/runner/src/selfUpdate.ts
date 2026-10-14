@@ -35,14 +35,19 @@ export async function fetchRunnerRelease(apiUrl: string): Promise<RunnerRelease 
   return runner;
 }
 
-/** Semver-ish compare; falls back to inequality so odd tags still update once. */
+/** Semver-ish compare; strips a leading 'v' and refuses unparseable tags. */
 export function isNewer(candidate: string, current: string): boolean {
-  if (candidate === current) return false;
-  if (current === 'dev') return false; // never auto-update a dev checkout
+  const normCandidate = candidate.replace(/^v/i, '');
+  const normCurrent = current.replace(/^v/i, '');
+  if (normCandidate === normCurrent) return false;
+  if (normCurrent === 'dev') return false; // never auto-update a dev checkout
   const parse = (v: string) => v.split('.').map((n) => Number.parseInt(n, 10));
-  const a = parse(candidate);
-  const b = parse(current);
-  if (a.some(Number.isNaN) || b.some(Number.isNaN)) return true;
+  const a = parse(normCandidate);
+  const b = parse(normCurrent);
+  if (a.some(Number.isNaN) || b.some(Number.isNaN)) {
+    console.warn(`[update] ignoring unparseable version comparison: "${candidate}" vs "${current}"`);
+    return false;
+  }
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const x = a[i] ?? 0;
     const y = b[i] ?? 0;
