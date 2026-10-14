@@ -155,6 +155,20 @@ describe('update version comparison', () => {
     expect(isNewer('0.1.26', '0.1.25-dev')).toBe(true);
   });
 
+  it('strips leading v and returns false (logging) when either side parses to NaN', () => {
+    expect(isNewer('v0.1.30', '0.1.30')).toBe(false);
+    expect(isNewer('0.1.30', 'v0.1.30')).toBe(false);
+    expect(isNewer('v0.1.31', '0.1.30')).toBe(true);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(isNewer('nightly-abc', '0.1.30')).toBe(false);
+      expect(isNewer('0.1.30', 'custom-build')).toBe(false);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('passes AbortSignal.timeout to release feed (30s) and tarball download (10m)', async () => {
     expect(FEED_TIMEOUT_MS).toBe(30_000);
     expect(DOWNLOAD_TIMEOUT_MS).toBe(10 * 60 * 1000);
