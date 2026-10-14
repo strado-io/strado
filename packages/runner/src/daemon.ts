@@ -12,6 +12,7 @@ import { TunnelClient } from '@strado/relay';
 import { readIdentity } from './identity.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from './paths.js';
 import { startSelfUpdate } from './selfUpdate.js';
+import { applyProxyFromEnv } from './proxy.js';
 
 /** Tee console output to ~/.strado/logs/server.log when not running under systemd. */
 export function teeConsoleToLog(logDir: string): () => Promise<void> {
@@ -41,6 +42,8 @@ export function teeConsoleToLog(logDir: string): () => Promise<void> {
 export async function runDaemon(): Promise<void> {
   const paths = runnerPaths();
   loadEnvFile(paths.envFile);
+  const proxy = applyProxyFromEnv();
+  if (proxy) console.log(`[runner] using proxy ${proxy.replace(/\/\/[^@/]+@/, '//***@')}`);
   applyBundleEnv(paths);
   const stopLogTee = teeConsoleToLog(paths.logDir);
   const version = bundleVersion(paths);
