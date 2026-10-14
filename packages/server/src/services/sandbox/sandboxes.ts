@@ -20,10 +20,74 @@ export function sandboxSlugFor(worktreeSlug: string, worktreePath: string): stri
   return `${worktreeSlug}-${createHash('sha256').update(worktreePath).digest('hex').slice(0, 8)}`;
 }
 
-export function createSandboxService(rt: SandboxRuntime, opts: { stateDir: string; exec?: ExecFn }) {
+/** The image's unprivileged user: node:bookworm ships `node` as uid/gid 1000
+ * and the Dockerfile runs as it. Every mapping below targets this pair. */
+const IMAGE_UID = 1000;
+const IMAGE_GID = 1000;
+const IMAGE_HOME = '/home/node';
+
+/** One named volume for every sandbox's HOME. Agent CLIs keep their login,
+ * onboarding state and settings under ~ — with a fresh HOME per container
+ * each worktree re-ran onboarding and asked to log in again, and `rm` on
+ * delete threw the login away. Shared across worktrees on purpose: that is
+ * exactly how several agent sessions on one desktop already behave. */
+export const HOME_VOLUME = 'strado-sandbox-home';
+
+export function createSandboxService(
+  rt: SandboxRuntime,
+  opts: {
+    stateDir: string;
+    exec?: ExecFn;
+    /** The host user the runner runs as. A seam for the tests; defaults to this process. */
+    ids?: { uid: number; gid: number };
+  },
+) {
   const exec = opts.exec ?? realExec;
   const envDir = path.join(opts.stateDir, 'sandboxes');
   const containerName = (slug: string) => `strado-sbx-${slug}`;
+  const ids = opts.ids ?? { uid: process.getuid?.() ?? IMAGE_UID, gid: process.getgid?.() ?? IMAGE_GID };
+
+  /**
+   * How the container's `node` user lines up with the host user, so files
+   * written in the bind-mounted worktree come out owned by the runner user
+   * and the 0600 hook socket is readable inside. uid 1000 was assumed before;
+   * a second user or a dedicated service account got a read-only worktree.
+   *
+   * podman (rootless): map the host user onto uid 1000 inside. Plain keep-id
+   * when the host user IS 1000 (works on every podman); the `uid=` form
+   * otherwise (podman ≥ 4.3 — older ones refuse it loudly at create, which
+   * beats silently wrong ownership).
+   * docker: no user namespace; run as the host uid/gid directly.
+   */
+  const userArgs = (): string[] => {
+    if (rt.bin === 'podman') {
+      return ids.uid === IMAGE_UID && ids.gid === IMAGE_GID
+        ? ['--userns=keep-id']
+        : [`--userns=keep-id:uid=${IMAGE_UID},gid=${IMAGE_GID}`];
+    }
+    return ['--user', `${ids.uid}:${ids.gid}`];
+  };
+
+  /**
+   * The HOME volume exists and is writable by the user the container runs as.
+   * A fresh named volume is populated from the image's /home/node (owned by
+   * 1000) on first mount, which is right for podman's mapping; docker running
+   * as a host uid other than 1000 needs it chowned once.
+   */
+  async function ensureHomeVolume(image: string): Promise<void> {
+    const probe = await exec(rt.bin, ['volume', 'inspect', HOME_VOLUME]);
+    if (probe.code === 0) return;
+    const created = await exec(rt.bin, ['volume', 'create', HOME_VOLUME]);
+    if (created.code !== 0) throw new Error(`sandbox home volume create failed: ${created.stderr.slice(-2000)}`);
+    if (rt.bin === 'docker' && (ids.uid !== IMAGE_UID || ids.gid !== IMAGE_GID)) {
+      const chown = await exec(
+        rt.bin,
+        ['run', '--rm', '--user', '0:0', '-v', `${HOME_VOLUME}:${IMAGE_HOME}`, image, 'chown', '-R', `${ids.uid}:${ids.gid}`, IMAGE_HOME],
+        2 * 60_000,
+      );
+      if (chown.code !== 0) throw new Error(`sandbox home volume chown failed: ${chown.stderr.slice(-2000)}`);
+    }
+  }
 
   async function writeEnvFile(slug: string, env: Record<string, string>): Promise<string> {
     // Validate env keys and values to prevent injection attacks
@@ -56,8 +120,12 @@ export function createSandboxService(rt: SandboxRuntime, opts: { stateDir: strin
     async create(c: { worktreePath: string; slug: string; image: string; port: number | null; env: Record<string, string>; socketPath: string | null; hooksPath: string | null }) {
       const envFile = await writeEnvFile(c.slug, c.env);
       const mounts = await gitMountPaths(c.worktreePath);
+      await ensureHomeVolume(c.image);
       const args = ['create', '--name', containerName(c.slug), '--label', `io.strado.worktree=${c.worktreePath}`];
-      if (rt.bin === 'podman') args.push('--userns=keep-id'); // rootless: mounted worktree writable without chown
+      args.push(...userArgs());
+      // HOME explicitly: under a user mapping the runtime synthesises a passwd
+      // entry whose home may be the HOST path, which does not exist inside.
+      args.push('--env', `HOME=${IMAGE_HOME}`, '-v', `${HOME_VOLUME}:${IMAGE_HOME}`);
       for (const m of mounts) args.push('-v', `${m}:${m}`); // IDENTICAL paths — .git pointer files are absolute
       // The agent hook scripts. Claude's settings.local.json and codex's
       // `notify` flag both name the script by its HOST path, so this mount is

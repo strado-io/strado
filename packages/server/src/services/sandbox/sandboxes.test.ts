@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createSandboxService, sandboxSlugFor } from './sandboxes.js';
+import type { ExecFn } from './runtime.js';
 
 let stateDir: string;
 let calls: string[][];
@@ -104,13 +105,63 @@ describe('sandbox create', () => {
     expect(calls.find((a) => a[0] === 'create')!.join(' ')).not.toContain(':ro');
   });
 
-  it('podman gets --userns=keep-id; docker does not', async () => {
-    const { wt } = await fakeWorktree();
-    await createSandboxService({ bin: 'podman' }, { stateDir, exec }).create({ worktreePath: wt, slug: 'a', image: 'i', port: null, env: {}, socketPath: null, hooksPath: null });
-    expect(calls.find((a) => a[0] === 'create')!.join(' ')).toContain('--userns=keep-id');
+  const createArgs = () => calls.find((a) => a[0] === 'create')!.join(' ');
+  const mk = (bin: 'podman' | 'docker', ids: { uid: number; gid: number }) =>
+    createSandboxService({ bin }, { stateDir, exec, ids });
+  const one = async (svc: ReturnType<typeof createSandboxService>, wt: string, slug = 'a') => {
     calls = [];
-    await createSandboxService({ bin: 'docker' }, { stateDir, exec }).create({ worktreePath: wt, slug: 'b', image: 'i', port: null, env: {}, socketPath: null, hooksPath: null });
-    expect(calls.find((a) => a[0] === 'create')!.join(' ')).not.toContain('--userns=keep-id');
+    await svc.create({ worktreePath: wt, slug, image: 'img', port: null, env: {}, socketPath: null, hooksPath: null });
+  };
+
+  it('maps the host user onto the image user: plain keep-id for uid 1000, the uid= form otherwise, --user on docker', async () => {
+    const { wt } = await fakeWorktree();
+    await one(mk('podman', { uid: 1000, gid: 1000 }), wt);
+    expect(createArgs()).toContain('--userns=keep-id ');
+    expect(createArgs()).not.toContain('keep-id:uid');
+    // A second user or a service account: still uid 1000 inside, so the
+    // worktree stays writable and the 0600 hook socket readable.
+    await one(mk('podman', { uid: 1001, gid: 1001 }), wt);
+    expect(createArgs()).toContain('--userns=keep-id:uid=1000,gid=1000');
+    await one(mk('docker', { uid: 1001, gid: 1001 }), wt);
+    expect(createArgs()).toContain('--user 1001:1001');
+    expect(createArgs()).not.toContain('--userns');
+  });
+
+  it('gives every sandbox the shared HOME volume and an explicit HOME', async () => {
+    const { wt } = await fakeWorktree();
+    await one(mk('podman', { uid: 1000, gid: 1000 }), wt);
+    expect(createArgs()).toContain('-v strado-sandbox-home:/home/node');
+    expect(createArgs()).toContain('--env HOME=/home/node');
+  });
+
+  it('creates the HOME volume once, and chowns it for docker when the host uid is not 1000', async () => {
+    const { wt } = await fakeWorktree();
+    let volumeExists = false;
+    const execVol: ExecFn = async (_f, args) => {
+      if (args[0] === 'volume' && args[1] === 'inspect') return { code: volumeExists ? 0 : 1, stdout: '', stderr: '' };
+      if (args[0] === 'volume' && args[1] === 'create') { volumeExists = true; }
+      calls.push(args);
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const docker = createSandboxService({ bin: 'docker' }, { stateDir, exec: execVol, ids: { uid: 1001, gid: 1001 } });
+    calls = [];
+    await docker.create({ worktreePath: wt, slug: 'a', image: 'img', port: null, env: {}, socketPath: null, hooksPath: null });
+    const flat = calls.map((a) => a.join(' '));
+    expect(flat).toContain('volume create strado-sandbox-home');
+    expect(flat).toContain('run --rm --user 0:0 -v strado-sandbox-home:/home/node img chown -R 1001:1001 /home/node');
+    // Second container: the volume is there, nothing to create or chown.
+    calls = [];
+    await docker.create({ worktreePath: wt, slug: 'b', image: 'img', port: null, env: {}, socketPath: null, hooksPath: null });
+    expect(calls.map((a) => a[0])).not.toContain('volume');
+    expect(calls.map((a) => a[0])).not.toContain('run');
+    // podman never chowns: a fresh volume is populated from the image as 1000,
+    // which is the uid the host user is mapped onto.
+    volumeExists = false;
+    calls = [];
+    await createSandboxService({ bin: 'podman' }, { stateDir, exec: execVol, ids: { uid: 1001, gid: 1001 } })
+      .create({ worktreePath: wt, slug: 'c', image: 'img', port: null, env: {}, socketPath: null, hooksPath: null });
+    expect(calls.map((a) => a.join(' '))).toContain('volume create strado-sandbox-home');
+    expect(calls.map((a) => a[0])).not.toContain('run');
   });
 
   it('rejects env values containing newlines or carriage returns', async () => {
