@@ -474,8 +474,23 @@ describe('lifecycle', () => {
   it('surviving a tunnel-client restart: requests fail closed, then recover', async () => {
     client.stop();
     await waitFor(() => tunnels.list().length === 0);
+    // 503, never 401: the credential is fine, the runner is away. A 401 here
+    // makes the desktop throw away a good ticket and tell the user they are
+    // not authorized every time the runner restarts.
     const down = await req('/api/hello', { headers: { cookie } });
-    expect([401, 503]).toContain(down.status);
+    expect(down.status).toBe(503);
+    const downTicket = await req(`/api/hello?ticket=${ACCESS_KEY}`);
+    expect(downTicket.status).toBe(503);
+    // Same on the socket path: 1011 (back off), not 1008 (re-mint).
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/ws/terminal?session=1&ticket=${ACCESS_KEY}`, {
+      headers: { host: HOST_HEADER },
+    });
+    ws.on('error', () => {});
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) =>
+      ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })),
+    );
+    expect(closed.code).toBe(1011);
+    expect(closed.reason).toContain('not connected');
 
     client = await startClient();
     // Cookie stays valid across restarts because the access key is stable.

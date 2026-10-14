@@ -596,6 +596,14 @@ export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunne
       });
 
       void (async () => {
+        // Presence BEFORE credentials. A ticket is verified against the
+        // tunnel's access key, so with no tunnel the check can only fail — and
+        // answering 1008 for that tells the client its credential is bad when
+        // the runner is merely away (every self-update restart).
+        if (!tunnels.get(runnerId)) {
+          clientWs.close(1011, 'Runner not connected');
+          return;
+        }
         const ok = await authorizeRequest(req, runnerId, ticket);
         if (gone || clientWs.readyState !== 1) return;
         if (!ok) {
@@ -683,12 +691,16 @@ export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunne
 
       const rawQuery = url.search.slice(1);
       const ticket = readParam(rawQuery, TICKET_PARAM);
+      // Presence BEFORE credentials: a ticket can only be verified against a
+      // live tunnel's access key, so an offline runner must answer 503 (back
+      // off), never 401 (re-mint) — the desktop drops its cached ticket and
+      // reports "rejected our access" on a 401.
+      if (!tunnel) return reply.code(503).send({ error: 'Runner not connected' });
       if (!(await authorizeRequest(req, runnerId, ticket))) {
         // 401 = fixable (get a cookie or a fresh ticket); 403 is reserved for
         // definitive denials so clients know when to stop retrying.
         return reply.code(401).send({ error: 'Unauthorized — open /__strado_connect?key=…' });
       }
-      if (!tunnel) return reply.code(503).send({ error: 'Runner not connected' });
 
       const headers: Record<string, string> = {};
       for (const [key, value] of Object.entries(req.headers)) {
