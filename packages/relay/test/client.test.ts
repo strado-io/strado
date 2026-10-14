@@ -161,3 +161,19 @@ describe('TunnelClient close handling', () => {
     expect(proxyConnectTarget).toBe('relay.example:8443');
   });
 });
+
+describe('waitForDrain', () => {
+  it('waits until the socket is under the low-water mark, and gives up when it closes', async () => {
+    const { waitForDrain } = await import('../src/client.js');
+    const ws = { bufferedAmount: 10_000, readyState: 1 };
+    let drained = false;
+    const p = waitForDrain(ws, 1_000, 5).then(() => { drained = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(drained).toBe(false);
+    ws.bufferedAmount = 500;
+    await p;
+    expect(drained).toBe(true);
+    const closing = { bufferedAmount: 10_000, readyState: 2 };
+    await waitForDrain(closing, 1_000, 5); // resolves: nothing will drain a closing socket
+  });
+});
