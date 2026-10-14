@@ -27,7 +27,7 @@ import { closeAll as closeVsCodeWeb } from './services/vscodeWeb.js';
 import { detectRuntime, sandboxEnabled, type SandboxRuntime } from './services/sandbox/runtime.js';
 import { createSandboxService, type SandboxService } from './services/sandbox/sandboxes.js';
 import { createSandboxSlugMap, hydrateSandboxSlugs, type SandboxSlugMap } from './services/sandbox/slugMap.js';
-import { sandboxSpecWrapper } from './services/sandbox/spec.js';
+import { sandboxProcessWrapper, sandboxSpecWrapper } from './services/sandbox/spec.js';
 import { startHookSocket } from './services/sandbox/hookSocket.js';
 import { createLastActivityTracker, portAccepts, startParkSweep } from './services/sandbox/park.js';
 import { resolveProfile } from './profile.js';
@@ -392,7 +392,14 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     jobs: createJobQueue(bus),
     git: createGitWorktreeService(),
     link: createNodeModulesLinkService(),
-    proc: createProcessManager(bus, debugLog),
+    proc: createProcessManager(
+      bus,
+      debugLog,
+      // Dev servers of sandboxed worktrees run inside their container.
+      sandbox && sandboxRuntime
+        ? sandboxProcessWrapper({ rt: sandboxRuntime, isSandboxed: (cwd) => sandboxSlugs.slugOf(cwd) })
+        : undefined,
+    ),
     devProxy: createDevProxy(debugLog),
     terminal,
     status: createGitStatusService(),
