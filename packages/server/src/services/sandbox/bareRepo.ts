@@ -33,12 +33,7 @@ export function bareRepoPath(reposDir: string, repoId: string): string {
 // and the second died with "already exists and is not an empty directory".
 const inFlight = new Map<string, Promise<string>>();
 
-export async function ensureBareRepo(opts: {
-  reposDir: string;
-  repoId: string;
-  cloneUrl: string;
-  credential?: HttpGitCredential;
-}): Promise<string> {
+export async function ensureBareRepo(opts: EnsureBareRepoOptions): Promise<string> {
   const key = path.join(opts.reposDir, opts.repoId);
   const pending = inFlight.get(key);
   if (pending) return pending;
@@ -51,12 +46,19 @@ export async function ensureBareRepo(opts: {
   }
 }
 
-async function ensureBareRepoNow(opts: {
+export type EnsureBareRepoOptions = {
   reposDir: string;
   repoId: string;
   cloneUrl: string;
   credential?: HttpGitCredential;
-}): Promise<string> {
+  /** 'best-effort': an existing clone is used even if its fetch fails (the
+   * credential source is unreachable); `onStale` hears why. A missing clone
+   * still has to clone, and still fails loudly. */
+  fetch?: 'required' | 'best-effort';
+  onStale?: (reason: string) => void;
+};
+
+async function ensureBareRepoNow(opts: EnsureBareRepoOptions): Promise<string> {
   await fsp.mkdir(opts.reposDir, { recursive: true });
   // Resolve once, up front: on macOS (and anywhere state dirs live behind a
   // symlink) `git worktree add` canonicalizes the path it writes into the
@@ -77,8 +79,14 @@ async function ensureBareRepoNow(opts: {
     // Reuse is the common case, and a bare clone is otherwise frozen at the
     // moment the FIRST sandboxed worktree for this repo was created — every
     // later one would silently branch from a stale origin/main. Loud on
-    // failure: branching from a stale tip without saying so is the bug.
-    await git(['fetch', 'origin'], target, opts.credential);
+    // failure: branching from a stale tip without saying so is the bug —
+    // unless the caller already knows it is offline and said so.
+    try {
+      await git(['fetch', 'origin'], target, opts.credential);
+    } catch (err) {
+      if (opts.fetch !== 'best-effort') throw err;
+      opts.onStale?.((err as Error).message);
+    }
     return target;
   }
   await git(['clone', '--bare', opts.cloneUrl, target], undefined, opts.credential);
