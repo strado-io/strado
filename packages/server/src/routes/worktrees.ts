@@ -340,9 +340,21 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
         // too, and mounting a whole clone (with every other worktree in it)
         // would defeat the isolation. Existing normal clones are untouched.
         const github = repo.cloneUrl ? githubProjectFromCloneUrl(repo.cloneUrl) : null;
-        const githubCredential = github
-          ? await runnerGitCredential('github.com', github.projectPath, 'read')
-          : null;
+        // The cloud being down is not a reason to refuse a worktree when the
+        // repo is already here: fall back to the existing bare clone (and to
+        // whatever credential the desktop bundled), and say the tip may be
+        // stale. A FIRST clone still needs the credential and still fails.
+        let cloudOffline = false;
+        let githubCredential: Awaited<ReturnType<typeof runnerGitCredential>> = null;
+        if (github) {
+          try {
+            githubCredential = await runnerGitCredential('github.com', github.projectPath, 'read');
+          } catch (err) {
+            if (!(err instanceof AppError) || err.code !== 'CLOUD_UNREACHABLE') throw err;
+            cloudOffline = true;
+            step.detail(`cloud unreachable for a GitHub credential (${err.message}) — using the clone already on this machine`);
+          }
+        }
         // Without the App, the token the desktop bundled for the container
         // (GITHUB_TOKEN / GITLAB_TOKEN) authenticates the fetch too — and
         // means the origin has to be HTTPS, which a token can speak.
@@ -363,6 +375,8 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           repoId: repo.id,
           cloneUrl: bareCloneUrl,
           credential,
+          fetch: cloudOffline ? 'best-effort' : 'required',
+          onStale: (reason) => step.detail(`could not refresh origin (${reason.split('\n')[0]}); branching from the last fetched tip`),
         }).catch((err) => {
           throw explainCloneFailure(err, bareCloneUrl) ?? err;
         });

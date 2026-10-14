@@ -64,9 +64,19 @@ export async function registerReposRoutes(app: FastifyInstance) {
     const body = CloneBody.parse(req.body);
     const github = githubProjectFromCloneUrl(body.url);
     // GitHub App first (short-lived, repo-scoped), the desktop's token second.
-    const appCredential = github
-      ? await runnerGitCredential('github.com', github.projectPath, 'read')
-      : null;
+    // A cloud outage falls through to the second (or to none): an existing
+    // clone is registered either way, and a first clone of a private repo
+    // fails with the auth hint rather than a cloud error.
+    let appCredential: Awaited<ReturnType<typeof runnerGitCredential>> = null;
+    let cloudOffline = false;
+    if (github) {
+      try {
+        appCredential = await runnerGitCredential('github.com', github.projectPath, 'read');
+      } catch (err) {
+        if (!(err instanceof AppError) || err.code !== 'CLOUD_UNREACHABLE') throw err;
+        cloudOffline = true;
+      }
+    }
     const credential = appCredential
       ? { username: appCredential.username, password: appCredential.token }
       : body.credential ?? null;
@@ -90,6 +100,7 @@ export async function registerReposRoutes(app: FastifyInstance) {
         repoId,
         cloneUrl,
         credential: credential ?? undefined,
+        fetch: cloudOffline ? 'best-effort' : 'required',
       }).catch((err) => {
         throw explainCloneFailure(err, cloneUrl) ?? err;
       });

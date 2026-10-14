@@ -90,3 +90,27 @@ describe('concurrent first creates', () => {
     expect(clones).toHaveLength(1);
   });
 });
+
+describe('fetch policy on an existing clone', () => {
+  const existing = () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'strado-bare-fetch-'));
+    const target = path.join(tempRoot, 'repos', 'app.git');
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'HEAD'), 'ref: refs/heads/main\n');
+    execMock.mockImplementation(async (_c: string, args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') return { code: 0, stdout: 'https://github.com/o/app.git\n', stderr: '' };
+      if (args[0] === 'fetch') throw new Error('fatal: could not read Username for https://github.com');
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    return { reposDir: path.join(tempRoot, 'repos'), repoId: 'app', cloneUrl: 'https://github.com/o/app.git' };
+  };
+  it('required (default): a failed fetch fails the call', async () => {
+    await expect(ensureBareRepo(existing())).rejects.toThrow(/could not read Username/);
+  });
+  it('best-effort: the clone is used and the caller hears why the tip may be stale', async () => {
+    const stale: string[] = [];
+    const target = await ensureBareRepo({ ...existing(), fetch: 'best-effort', onStale: (r) => stale.push(r) });
+    expect(target).toContain('app.git');
+    expect(stale[0]).toMatch(/could not read Username/);
+  });
+});
