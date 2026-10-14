@@ -16,6 +16,8 @@ import type { RunnerPaths } from './paths.js';
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
 /** Back off after repeated failures instead of hot-looping the feed. */
 const MAX_BACKOFF_MS = 4 * 60 * 60 * 1000;
+export const FEED_TIMEOUT_MS = 30 * 1000;
+export const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface RunnerRelease {
   version: string;
@@ -25,7 +27,7 @@ export interface RunnerRelease {
 }
 
 export async function fetchRunnerRelease(apiUrl: string): Promise<RunnerRelease | null> {
-  const res = await fetch(`${apiUrl}/v1/release`);
+  const res = await fetch(`${apiUrl}/v1/release`, { signal: AbortSignal.timeout(FEED_TIMEOUT_MS) });
   if (res.status === 204 || !res.ok) return null;
   const feed = (await res.json()) as { runner?: RunnerRelease };
   const runner = feed.runner;
@@ -49,8 +51,8 @@ export function isNewer(candidate: string, current: string): boolean {
   return false;
 }
 
-async function download(url: string, dest: string): Promise<string> {
-  const res = await fetch(url);
+export async function download(url: string, dest: string): Promise<string> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
   const hash = crypto.createHash('sha256');
   const file = fs.createWriteStream(dest);

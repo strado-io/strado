@@ -6,7 +6,7 @@ import { teeConsoleToLog } from '../src/daemon.js';
 import { pairRunner, readIdentity, writeIdentity } from '../src/identity.js';
 import { cmdInstallService, formatCliError, resolveApiUrl } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
-import { isNewer } from '../src/selfUpdate.js';
+import { DOWNLOAD_TIMEOUT_MS, FEED_TIMEOUT_MS, download, fetchRunnerRelease, isNewer } from '../src/selfUpdate.js';
 import { renderUnit } from '../src/systemd.js';
 
 let dir: string;
@@ -153,6 +153,29 @@ describe('update version comparison', () => {
     // left the auto-update track until it is rebuilt or reinstalled.
     expect(isNewer('0.1.25', '0.1.25-dev')).toBe(false);
     expect(isNewer('0.1.26', '0.1.25-dev')).toBe(true);
+  });
+
+  it('passes AbortSignal.timeout to release feed (30s) and tarball download (10m)', async () => {
+    expect(FEED_TIMEOUT_MS).toBe(30_000);
+    expect(DOWNLOAD_TIMEOUT_MS).toBe(10 * 60 * 1000);
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response('tarball-bytes', { status: 200 }));
+    try {
+      await fetchRunnerRelease('https://api.strado.io');
+      expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+      expect(fetchSpy.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+
+      const dest = path.join(dir, 'bundle.tar.gz');
+      await download('https://cdn.strado.io/bundle.tar.gz', dest);
+      expect(timeoutSpy).toHaveBeenCalledWith(10 * 60 * 1000);
+      expect(fetchSpy.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      timeoutSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
   });
 });
 
