@@ -70,6 +70,27 @@ interface TcpChannel {
   closed: boolean;
 }
 
+/** Pause producers when this much is queued on the control socket, resume
+ * once it is back under the low mark. Measured in the socket's own
+ * bufferedAmount, so it covers every multiplexed stream at once. */
+export const WS_HIGH_WATER = 4 * 1024 * 1024;
+export const WS_LOW_WATER = 1 * 1024 * 1024;
+
+/** Resolves once `ws` has drained below `lowWater`, or is no longer open. */
+export function waitForDrain(
+  ws: { bufferedAmount: number; readyState: number },
+  lowWater = WS_LOW_WATER,
+  pollMs = 20,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (ws.readyState !== WebSocket.OPEN || ws.bufferedAmount <= lowWater) resolve();
+      else setTimeout(check, pollMs);
+    };
+    check();
+  });
+}
+
 export class TunnelClient {
   private ws: WebSocket | null = null;
   private stopped = false;
@@ -282,6 +303,9 @@ export class TunnelClient {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
 
+  /** Bytes queued on the control socket above which producers are paused. */
+  static readonly WS_HIGH_WATER = WS_HIGH_WATER;
+
   private async handleHttp(req: HttpRequestMsg): Promise<void> {
     const controller = new AbortController();
     this.httpAborts.set(req.id, controller);
@@ -308,6 +332,10 @@ export class TunnelClient {
           if (done) break;
           if (value?.length) {
             this.send({ type: 'http:data', id: req.id, data: Buffer.from(value).toString('base64') });
+            // Read no faster than the control socket drains: a large response
+            // otherwise sits entirely in the WebSocket's send queue (base64
+            // adds a third) instead of staying in the local server's.
+            if (this.ws && this.ws.bufferedAmount > WS_HIGH_WATER) await waitForDrain(this.ws);
           }
         }
       }
@@ -367,6 +395,14 @@ export class TunnelClient {
     });
     socket.on('data', (chunk: Buffer) => {
       this.send({ type: 'tcp:data', id, data: chunk.toString('base64') });
+      // Backpressure: pause the dev server's socket while the control socket
+      // is behind. One asset download must not buffer whole in memory here.
+      if (this.ws && this.ws.bufferedAmount > WS_HIGH_WATER && !socket.isPaused()) {
+        socket.pause();
+        void waitForDrain(this.ws).then(() => {
+          if (!socket.destroyed) socket.resume();
+        });
+      }
     });
     // 'end' is the peer's FIN; 'close' always follows, so only 'close' reports.
     socket.on('close', () => {
