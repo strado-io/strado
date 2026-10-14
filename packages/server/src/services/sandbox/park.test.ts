@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createLastActivityTracker, IDLE_STOP_MS, startParkSweep } from './park.js';
+import { createLastActivityTracker, IDLE_STOP_MS, portAccepts, startParkSweep } from './park.js';
+import net from 'node:net';
 
 type Running = { slug: string; worktreePath: string };
 
@@ -214,5 +215,42 @@ describe('startParkSweep + delete/recreate at the same worktree path', () => {
 
     expect(sandbox.stop).not.toHaveBeenCalled();
     stopSweep();
+  });
+});
+
+describe('startParkSweep with a server still up inside', () => {
+  it('never stops a container whose published port accepts connections, even past the idle limit', async () => {
+    const running: Running[] = [{ slug: 'feat-x-abcd1234', worktreePath: '/wt/feat-x' }];
+    const sandbox = fakeSandbox(running);
+    let now = 0;
+    let serving = true;
+    const stop = startParkSweep({
+      sandbox: sandbox as any,
+      lastActivity: () => 0,
+      hasLiveSession: () => false,
+      isServing: async () => serving,
+      now: () => now,
+      intervalMs: 5 * 60 * 1000,
+    });
+    now = IDLE_STOP_MS + 1;
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(sandbox.stop).not.toHaveBeenCalled();
+    // The server goes away; the next sweep parks it.
+    serving = false;
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(sandbox.stop).toHaveBeenCalledWith('feat-x-abcd1234');
+    stop();
+  });
+});
+
+describe('portAccepts', () => {
+  it('true for a listening port, false for a closed one', async () => {
+    vi.useRealTimers();
+    const srv = net.createServer();
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const port = (srv.address() as { port: number }).port;
+    expect(await portAccepts(port)).toBe(true);
+    await new Promise<void>((r) => srv.close(() => r()));
+    expect(await portAccepts(port)).toBe(false);
   });
 });
