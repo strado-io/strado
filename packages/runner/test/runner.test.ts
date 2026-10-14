@@ -7,7 +7,7 @@ import { pairRunner, readIdentity, writeIdentity } from '../src/identity.js';
 import { cmdInstallService, formatCliError, resolveApiUrl } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
 import { DOWNLOAD_TIMEOUT_MS, FEED_TIMEOUT_MS, applyUpdate, download, fetchRunnerRelease, isNewer } from '../src/selfUpdate.js';
-import { renderUnit } from '../src/systemd.js';
+import { captureLoginPath, renderUnit } from '../src/systemd.js';
 
 let dir: string;
 const savedEnv = { ...process.env };
@@ -231,7 +231,25 @@ describe('systemd unit', () => {
     renderUnit({ execStart: '/home/u/.strado/runner/bin/strado-runner', pathValue: '/opt/node/bin:/usr/bin', envFile: '/home/u/.strado/runner.env' });
 
   it('carries the captured PATH so agent CLIs resolve', () => {
-    expect(unit()).toContain('Environment=PATH=/opt/node/bin:/usr/bin');
+    expect(unit()).toContain('Environment="PATH=/opt/node/bin:/usr/bin"');
+  });
+
+  it('escapes double quotes and backslashes in Environment="PATH=..." and takes only the last non-empty line from captureLoginPath', () => {
+    const rendered = renderUnit({
+      execStart: '/home/u/.strado/runner/bin/strado-runner',
+      pathValue: '/opt/"my\\bin":/usr/bin',
+      envFile: '/home/u/.strado/runner.env',
+    });
+    expect(rendered).toContain('Environment="PATH=/opt/\\"my\\\\bin\\":/usr/bin"');
+
+    const fakeShell = path.join(dir, 'chatty-shell.sh');
+    fs.writeFileSync(
+      fakeShell,
+      '#!/bin/sh\necho "Welcome to Ubuntu"\necho "motd line 2"\nprintf "/custom/bin:/usr/bin\\n\\n"\n',
+      { mode: 0o755 },
+    );
+    process.env.SHELL = fakeShell;
+    expect(captureLoginPath()).toBe('/custom/bin:/usr/bin');
   });
 
   it('execs through the current symlink, not a versioned path', () => {
