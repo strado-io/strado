@@ -106,10 +106,14 @@ export class TunnelClient {
     const url = new URL('/tunnel', this.opts.relayUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : url.protocol === 'http:' ? 'ws:' : url.protocol;
     url.searchParams.set('runner', this.opts.runnerId);
-    url.searchParams.set('token', this.opts.token);
-
+    // The long-lived runner token rides a header, never the URL: a query
+    // string lands in the relay's front-proxy access log and in any
+    // TLS-terminating corporate proxy on the way.
     const proxyUrl = resolveProxyUrl();
-    const ws = new WebSocket(url.toString(), proxyUrl ? { agent: new HttpsProxyAgent(proxyUrl) } : undefined);
+    const ws = new WebSocket(url.toString(), {
+      headers: { authorization: `Bearer ${this.opts.token}` },
+      ...(proxyUrl ? { agent: new HttpsProxyAgent(proxyUrl) } : {}),
+    });
     this.ws = ws;
     let opened = false;
 
@@ -208,6 +212,12 @@ export class TunnelClient {
       if (code === 1008) {
         this.log('credential rejected — re-pair or check revocation');
         this.scheduleReconnect(60_000);
+      } else if (reason === 'Replaced by new tunnel') {
+        // Another process registered as this runner: a cloned VM, a copied
+        // runner.json, or two daemons on one box. Redialing in a second only
+        // evicts the other side and cuts every session on each cycle.
+        this.log('another runner is connected with this identity (copied runner.json? two daemons?) — backing off');
+        this.scheduleReconnect(30_000);
       } else if (code === CLOSE_BAD_VERSION) {
         this.log('relay requires a newer runner — run strado-runner update');
         this.scheduleReconnect(5 * 60_000);

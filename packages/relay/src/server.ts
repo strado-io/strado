@@ -541,7 +541,11 @@ export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunne
         const socket = connection.socket as WebSocket;
         (req.raw.socket as Socket).setNoDelay(true);
         const runnerId = String(req.query.runner ?? '');
-        const token = String(req.query.token ?? '');
+        // Header first; the query form is what runners before 0.1.30 send,
+        // and they keep working until they self-update.
+        const bearer = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization ?? ''))?.[1];
+        const token = bearer ?? String(req.query.token ?? '');
+        if (!bearer && token) log(`tunnel ${runnerId}: token in query string (old runner) — update it`);
         if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(runnerId)) {
           socket.close(1008, 'Invalid runner id');
           return;

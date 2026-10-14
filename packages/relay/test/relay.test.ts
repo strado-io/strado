@@ -583,3 +583,39 @@ describe('tunnel credential lifecycle', () => {
     expect(tunnels2.list()).not.toContain('r3');
   });
 });
+
+describe('runner token transport', () => {
+  const hello = JSON.stringify({ type: 'hello', v: 1, accessKey: ACCESS_KEY, runnerVersion: 'test' });
+  const register = (url: string, headers: Record<string, string>) =>
+    new Promise<{ acked: boolean; close: { code: number; reason: string } | null }>((resolve) => {
+      const ws = new WebSocket(url, { headers });
+      let acked = false;
+      ws.on('open', () => ws.send(hello));
+      ws.on('message', (d) => {
+        if (JSON.parse(d.toString()).type === 'hello-ack') {
+          acked = true;
+          ws.close(1000, 'done');
+        }
+      });
+      ws.on('error', () => {});
+      ws.on('close', (code, reason) => resolve({ acked, close: acked ? null : { code, reason: reason.toString() } }));
+    });
+
+  it('accepts the token as a bearer header, which is what the client sends', async () => {
+    const r = await register(`ws://127.0.0.1:${relayPort}/tunnel?runner=rh`, { authorization: `Bearer ${RUNNER_TOKEN}` });
+    expect(r.acked).toBe(true);
+    await waitFor(() => !tunnels.list().includes('rh'));
+  });
+
+  it('still accepts the query form from runners that predate the header', async () => {
+    const r = await register(`ws://127.0.0.1:${relayPort}/tunnel?runner=rq&token=${RUNNER_TOKEN}`, {});
+    expect(r.acked).toBe(true);
+    await waitFor(() => !tunnels.list().includes('rq'));
+  });
+
+  it('rejects a wrong bearer token', async () => {
+    const r = await register(`ws://127.0.0.1:${relayPort}/tunnel?runner=rx`, { authorization: 'Bearer nope' });
+    expect(r.acked).toBe(false);
+    expect(r.close?.code).toBe(1008);
+  });
+});
