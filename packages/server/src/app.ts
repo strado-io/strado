@@ -297,7 +297,12 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   let sandboxSocketPath: string | null = null;
   let closeSandboxSocket: (() => Promise<void>) | null = null;
   if (sandbox) {
-    const socketPath = path.join(homeStateDir, 'strado-api.sock');
+    // Its own directory, holding nothing else: containers bind-mount the
+    // DIRECTORY (sandboxes.ts), not the socket file. A file mount pins the
+    // inode, and every restart here unlinks and recreates the socket — so a
+    // running sandbox kept talking to a dead socket until it was restarted.
+    // The basename is fixed by the in-container path (/run/strado/api.sock).
+    const socketPath = path.join(homeStateDir, 'sandbox', 'sock', 'api.sock');
     try {
       // The port the app is about to listen on: index.ts resolved the profile
       // and normalised it onto the env before importing this module.

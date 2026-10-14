@@ -71,8 +71,16 @@ describe('sandbox create', () => {
   it('mounts the hooks socket when given', async () => {
     const { wt } = await fakeWorktree();
     const svc = createSandboxService({ bin: 'podman' }, { stateDir, exec });
-    await svc.create({ worktreePath: wt, slug: 's', image: 'i', port: null, env: {}, socketPath: '/tmp/strado-api.sock', hooksPath: null });
-    expect(calls.find((a) => a[0] === 'create')!.join(' ')).toContain('-v /tmp/strado-api.sock:/run/strado/api.sock');
+    await svc.create({ worktreePath: wt, slug: 's', image: 'i', port: null, env: {}, socketPath: '/home/u/.strado/sandbox/sock/api.sock', hooksPath: null });
+    // The DIRECTORY is mounted: the host unlinks and recreates the socket on
+    // every restart, and a file mount would pin the dead inode.
+    const create = calls.find((a) => a[0] === 'create')!.join(' ');
+    expect(create).toContain('-v /home/u/.strado/sandbox/sock:/run/strado');
+    expect(create).not.toContain('api.sock:');
+    // The in-container path is fixed, so the host basename has to match it.
+    await expect(
+      svc.create({ worktreePath: wt, slug: 's2', image: 'i', port: null, env: {}, socketPath: '/tmp/strado-api.sock', hooksPath: null }),
+    ).rejects.toThrow(/must be named api.sock/);
   });
 
   it('mounts the hooks dir read-only at its host path when given', async () => {
