@@ -570,6 +570,34 @@ describe('Sidebar tree', () => {
       expect(screen.queryByText('Delete worktree')).toBeNull();
       fireEvent.keyDown(window, { key: 'Escape' });
     });
+
+    it('flags a worktree that fell back to the host on a sandboxing runner, and offers a rebuild', () => {
+      const onRebuild = vi.fn();
+      const { unmount } = wrap(
+        <Sidebar {...base} remoteWorktrees={[remote({ sandbox: 'fallback' })]}
+          runnerStatuses={statuses(true)} onRebuildSandbox={onRebuild} />,
+      );
+      // The badge is the whole point: a silent fallback is agents running
+      // unisolated with nothing on screen saying so.
+      expect(screen.getByText('no sandbox')).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('FD-9 on runner-dev actions'));
+      fireEvent.click(screen.getByText('Rebuild sandbox'));
+      expect(onRebuild).toHaveBeenCalledWith(expect.objectContaining({ path: '/home/strado/demo-repo.worktrees/FD-9' }));
+      unmount();
+
+      // Sandboxed, or a runner that never sandboxes: nothing to flag, nothing to rebuild.
+      for (const sandbox of ['on', 'off'] as const) {
+        const { unmount: done } = wrap(
+          <Sidebar {...base} remoteWorktrees={[remote({ sandbox })]}
+            runnerStatuses={statuses(true)} onRebuildSandbox={onRebuild} />,
+        );
+        expect(screen.queryByText('no sandbox')).toBeNull();
+        fireEvent.click(screen.getByLabelText('FD-9 on runner-dev actions'));
+        expect(screen.queryByText('Rebuild sandbox')).toBeNull();
+        fireEvent.keyDown(window, { key: 'Escape' });
+        done();
+      }
+    });
   });
 
   describe('Sidebar space rail', () => {

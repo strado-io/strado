@@ -47,6 +47,7 @@ export type SidebarBodyProps = {
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
+  onRebuildSandbox?: (w: RemoteWorktree) => void;
   /** True until the first runner-worktree fetch for this space settles. */
   remoteLoading?: boolean;
   /** Toolbar Search: opens ⌘K. */
@@ -62,7 +63,7 @@ export type SidebarBodyProps = {
  * that adjacency is the point — but always badged with the machine, because
  * where it runs decides what it can see.
  */
-function RemoteRow({ w, repoName, reachable, activeRow, onRemove, removeLabel = 'Remove from focus', onOpenRemoteWorktree, onDeleteRemoteWorktree, onContextMenu }: {
+function RemoteRow({ w, repoName, reachable, activeRow, onRemove, removeLabel = 'Remove from focus', onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox, onContextMenu }: {
 w: RemoteWorktree;
 /** The repo it belongs to, for the card's first line. */
 repoName?: string;
@@ -73,6 +74,8 @@ onRemove?: () => void;
 removeLabel?: string;
 onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
+/** Retry a failed sandbox build; offered only when the row runs unsandboxed on a sandboxing runner. */
+onRebuildSandbox?: (w: RemoteWorktree) => void;
 /** Right-click: the row's menu at the cursor. */
 onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 }) {
@@ -80,8 +83,12 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
   // A worktree appears once, so a loose row keeps the plain id; a member is prefixed.
   const testIdSuffix = `${w.runnerId}:${w.path}`;
   const label = w.branch ?? w.name;
+  // The one state worth flagging: this runner isolates worktrees, this one
+  // isn't — its agents run straight on the box. Silent fallback was the bug.
+  const unsandboxed = w.sandbox === 'fallback';
   const menuItems: MenuItem[] = [
     ...(onRemove ? [{ text: removeLabel, onClick: onRemove }] : []),
+    ...(unsandboxed && onRebuildSandbox ? [{ text: 'Rebuild sandbox', onClick: () => onRebuildSandbox(w) }] : []),
     ...(!w.isRepoRoot && onDeleteRemoteWorktree
       ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
       : []),
@@ -110,6 +117,15 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
         trailing={(
           <>
             <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
+            {unsandboxed && (
+              <span
+                data-testid={`no-sandbox-${testIdSuffix}`}
+                title="Sandbox build failed — agents in this worktree run directly on the runner. Rebuild sandbox from the row menu."
+                className="shrink-0 rounded bg-amber-500/15 px-1 text-[9px] font-medium uppercase tracking-wide text-amber-300"
+              >
+                no sandbox
+              </span>
+            )}
             <span
               data-testid={`runner-icon-${testIdSuffix}`}
               role="img"
@@ -144,7 +160,7 @@ export function SidebarBody({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
-  onOpenRemoteWorktree, onDeleteRemoteWorktree,
+  onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   remoteLoading = false, onSearch, onError, isActivePane = true,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
@@ -266,7 +282,7 @@ export function SidebarBody({
       <RemoteRow key={pinId} w={remote} repoName={repos.find((r) => r.id === remote.localRepoId)?.name ?? remote.remoteRepoName ?? ''}
         reachable={runnerOnline(remote.runnerId)} activeRow={remote.path === activeWorktreePath}
         onRemove={() => removeFromFocus(pinId)} removeLabel={`Remove from ${active?.name ?? 'focus'}`}
-        onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} />
+        onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} onRebuildSandbox={onRebuildSandbox} />
     )];
   });
 

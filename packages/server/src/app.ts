@@ -269,7 +269,10 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   //
   // Ahead of the terminal manager, which needs the runtime to route sessions
   // into containers.
-  const sandboxRuntime = await detectRuntime();
+  const sandboxRuntime = await detectRuntime(undefined, (line) => debugLog.log("server", line));
+  if (sandboxRuntime && process.env.STRADO_RUNNER === "1" && process.env.STRADO_SANDBOX === "0") {
+    debugLog.log("server", `sandboxing disabled by STRADO_SANDBOX=0 (${sandboxRuntime.bin} is available)`);
+  }
   const sandbox =
     sandboxRuntime && sandboxEnabled(sandboxRuntime)
       ? createSandboxService(sandboxRuntime, { stateDir: homeStateDir })

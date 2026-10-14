@@ -70,7 +70,9 @@ function repoConfig(id: string, cloneUrl: string | null) {
  */
 function stubRunnerApis(o: {
   repos: { id: string; path: string; cloneUrl: string | null }[];
-  worktrees: { path: string; repoId: string | null; branch: string | null; head: string }[];
+  worktrees: { path: string; repoId: string | null; branch: string | null; head: string; meta?: { sandbox?: { slug: string } | null } }[];
+  /** What /api/capabilities says; `undefined` = an old runner without the route. */
+  sandbox?: boolean;
 }) {
   vi.stubGlobal(
     'fetch',
@@ -95,6 +97,10 @@ function stubRunnerApis(o: {
       }
       if (u.startsWith(`${RUNNER_HTTP_BASE}/api/workspaces`)) {
         return json({ activeWorkspaceId: 'rws', workspaces: [{ id: 'rws' }] });
+      }
+      if (u.startsWith(`${RUNNER_HTTP_BASE}/api/capabilities`)) {
+        if (o.sandbox === undefined) return new Response('route not found', { status: 404 });
+        return json({ sandbox: o.sandbox ? { runtime: 'podman' } : false });
       }
       if (u.startsWith(`${RUNNER_HTTP_BASE}/api/w/rws/repos`)) {
         return json({ repos: o.repos });
@@ -310,5 +316,31 @@ describe('POST /api/w/:ws/remote-worktrees step plan', () => {
     const plan = frames.find((f) => f.steps)!.steps!.map((s) => s.id);
     expect(plan).toEqual(['runner', 'clone', 'worktree', 'link', 'finalize']);
     expect(frames.at(-1)?.step).toBe('finalize');
+  });
+});
+
+describe('GET /api/w/:ws/remote-worktrees sandbox state', () => {
+  const repos = [{ id: 'r', path: '/home/r/repos/r', cloneUrl: 'https://github.com/o/r.git' }];
+  const rows = (meta: { sandbox?: { slug: string } | null } | undefined) => [
+    { path: '/home/r/.strado/worktrees/r/FD-1', repoId: 'r', branch: 'FD-1', head: 'abc', ...(meta !== undefined ? { meta } : {}) },
+  ];
+  const stateOf = async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/w/default/remote-worktrees' });
+    expect(res.statusCode).toBe(200);
+    return (res.json() as { worktrees: { sandbox?: string }[] }).worktrees[0]?.sandbox;
+  };
+  it("'on' when the worktree has a container", async () => {
+    stubRunnerApis({ repos, worktrees: rows({ sandbox: { slug: 'FD-1-abcd1234' } }), sandbox: true });
+    expect(await stateOf()).toBe('on');
+  });
+  it("'fallback' when the runner sandboxes but this worktree has no container — the row to flag", async () => {
+    stubRunnerApis({ repos, worktrees: rows({ sandbox: null }), sandbox: true });
+    expect(await stateOf()).toBe('fallback');
+  });
+  it("'off' on a runner that does not sandbox, including an old runner without /api/capabilities", async () => {
+    stubRunnerApis({ repos, worktrees: rows(undefined), sandbox: false });
+    expect(await stateOf()).toBe('off');
+    stubRunnerApis({ repos, worktrees: rows(undefined) });
+    expect(await stateOf()).toBe('off');
   });
 });

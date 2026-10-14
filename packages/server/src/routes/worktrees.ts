@@ -12,15 +12,12 @@ import { isLive, type ProcStatus } from '../services/processManager.js';
 import { resolveProfile } from '../profile.js';
 import { addGitExclude } from '../services/gitExclude.js';
 import { stepReporter } from '../services/jobSteps.js';
-import { detectSandboxManifest } from '../services/sandbox/detect.js';
-import { ensureBaseImage } from '../services/sandbox/image.js';
 import { addSandboxWorktree, bareRepoPath, ensureBareRepo, sandboxReposDir } from '../services/sandbox/bareRepo.js';
+import { provisionSandbox } from '../services/sandbox/provision.js';
 import { sandboxSlugFor } from '../services/sandbox/sandboxes.js';
-import { hooksDir } from '../services/claudeHooks.js';
 import { canonicalWorktreesDir, findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { githubProjectFromCloneUrl, runnerGitCredential } from '../services/runnerGitCredential.js';
-import { issueSandboxGitBrokerToken } from '../services/sandboxGitBroker.js';
 
 export type WorktreeRow = {
   path: string;
@@ -431,95 +428,86 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
       app.deps.debugLog.log('server', `worktree created: ${targetWorktree}${linkWarnings.length ? ` (warnings: ${linkWarnings.join('; ')})` : ''}`);
 
       if (sandbox && sandboxRuntime) {
-        step('sandbox-detect');
-        // The PROJECT dir, not the worktree root: in a monorepo the root has no
-        // .nvmrc or engines and the app subdir does, so reading the root builds
-        // an image the project cannot run on.
-        const manifest = await detectSandboxManifest(targetProjectDir);
-
-        step('sandbox-build');
-        // Attached to the build step, which takes minutes — on the detect step
-        // this would be on screen for the milliseconds detection takes. What we
-        // detected has to be visible: "wrong node version" is the failure mode,
-        // and guessing silently makes it unanswerable.
-        step.detail(`sandbox: ${manifest.summary}`);
-        app.deps.debugLog.log('server', `sandbox detect ${targetWorktree}: ${manifest.summary}`);
-        // Container and env-file identity, which is NOT the worktree slug:
-        // ticket+title repeats across repos, container names are global.
-        const sandboxSlug = sandboxSlugFor(slug, targetWorktree);
-        try {
-          // Build output goes to the step, throttled: podman's own STEP lines
-          // always, anything else at most every 2s. A first build is minutes
-          // of pulling and `npm i -g`; silence for that long reads as a hang.
-          let lastDetailAt = 0;
-          const onBuildLine = (line: string) => {
-            const now = Date.now();
-            if (!/^(STEP|\[\d+\/\d+\]|#\d+ )/.test(line) && now - lastDetailAt < 2000) return;
-            lastDetailAt = now;
-            step.detail(line.slice(0, 200));
-          };
-          const image = await ensureBaseImage(sandboxRuntime, { node: manifest.node }, undefined, onBuildLine);
-          // A previous attempt that died after `create` left the container
-          // behind (we never tear down on failure, by design), so a retry would
-          // collide on the name. Remove it — but only after proving it is this
-          // worktree's: `rm -f` on someone else's running container destroys
-          // work, and a name is not proof. The label is.
-          if ((await sandbox.status(sandboxSlug)) !== 'absent') {
-            const owner = await sandbox.worktreeOf(sandboxSlug);
-            if (owner !== targetWorktree) {
-              throw new AppError(
-                'SANDBOX_CONFLICT',
-                `container ${sandbox.containerName(sandboxSlug)} belongs to ${owner ?? 'an unlabelled worktree'}, not ${targetWorktree} — refusing to remove it`,
-              );
-            }
-            await sandbox.remove(sandboxSlug);
-          }
-          let sandboxEnv = { ...(body.sandboxEnv ?? {}) };
-          const github = repo.cloneUrl ? githubProjectFromCloneUrl(repo.cloneUrl) : null;
-          if (github && app.deps.sandboxSocketPath && !sandboxEnv.GITHUB_TOKEN) {
-            const brokerToken = await issueSandboxGitBrokerToken(targetWorktree, github.projectPath);
-            if (brokerToken) {
-              sandboxEnv = {
-                ...sandboxEnv,
-                GIT_ASKPASS: '/usr/local/bin/strado-askpass',
-                GIT_HTTP_USER: 'x-access-token',
-                STRADO_GIT_BROKER_TOKEN: brokerToken,
-              };
-            }
-          }
-          await sandbox.create({
-            worktreePath: targetWorktree,
-            slug: sandboxSlug,
-            image,
-            port,
-            env: sandboxEnv,
-            socketPath: app.deps.sandboxSocketPath,
-            // The claude/codex hook scripts, mounted at the same absolute
-            // path inside: installClaudeHooks writes the HOST path into the
-            // worktree's settings, and the container runs that exact command.
-            hooksPath: hooksDir(),
-          });
-          await sandbox.start(sandboxSlug);
-          // Only now: the flag means "a container exists", and terminals are
-          // routed into it on the strength of it.
-          await state.patch(targetWorktree, { sandbox: { slug: sandboxSlug } });
-          // The synchronous face of that flag, for terminal spawning. Written
-          // beside the state patch and from the same value — never recomputed.
-          app.deps.sandboxSlugs.set(targetWorktree, sandboxSlug);
-          app.deps.bus.emit('worktrees', {
-            type: 'worktree.updated',
-            data: { path: targetWorktree },
-          });
-        } catch (err) {
-          // Deliberately no teardown: the half-built container and its env file
-          // are the only evidence of WHY this failed. The worktree itself is
-          // fine — it just runs unsandboxed until this is retried.
-          app.deps.debugLog.log('server', `sandbox build failed for ${targetWorktree}: ${String(err)}`);
-          throw err;
-        }
+        await provisionSandbox(provisionDeps(sandbox, sandboxRuntime, state), {
+          worktreePath: targetWorktree,
+          projectDir: targetProjectDir,
+          slug,
+          port,
+          cloneUrl: repo.cloneUrl ?? null,
+          sandboxEnv: body.sandboxEnv ?? {},
+          step,
+        });
       }
 
       return { path: targetWorktree, warnings: linkWarnings, port };
+    });
+
+    return reply.code(202).send({ jobId: job.id });
+  });
+
+  function provisionDeps(
+    sandbox: NonNullable<typeof app.deps.sandbox>,
+    sandboxRuntime: NonNullable<typeof app.deps.sandboxRuntime>,
+    state: { patch(worktreePath: string, patch: { sandbox: { slug: string } | null }): Promise<unknown> },
+  ) {
+    return {
+      sandbox,
+      sandboxRuntime,
+      sandboxSocketPath: app.deps.sandboxSocketPath,
+      sandboxSlugs: app.deps.sandboxSlugs,
+      state,
+      bus: app.deps.bus,
+      log: (line: string) => app.deps.debugLog.log('server', line),
+    };
+  }
+
+  const RebuildBody = z.object({ sandboxEnv: CreateBody.shape.sandboxEnv });
+
+  /**
+   * Build (or rebuild) the sandbox for an existing worktree.
+   *
+   * The way back from a failed first build — docker.io unreachable, a wrong
+   * node major, a container removed by hand. Until this route the worktree
+   * silently ran on the host and the only retry was delete-and-recreate.
+   * Only bare-clone worktrees qualify: the container mounts the bare git
+   * dir, and a worktree hanging off the plain clone has no such thing.
+   */
+  app.post<{ Params: { encodedPath: string } }>('/worktrees/:encodedPath/sandbox', async (req, reply) => {
+    const { repos, state } = req.workspace!.stores;
+    const target = decodeURIComponent(req.params.encodedPath);
+    const sandbox = app.deps.sandbox;
+    const sandboxRuntime = app.deps.sandboxRuntime;
+    if (!sandbox || !sandboxRuntime) {
+      throw new AppError('VALIDATION', 'this machine does not sandbox worktrees (no working container runtime, or STRADO_SANDBOX=0)');
+    }
+    const body = RebuildBody.parse(req.body ?? {});
+    const repo = findOwningRepo(await repos.list(), target, app.deps.homeStateDir);
+    if (!repo) throw new AppError('NOT_FOUND', `no repo owns ${target}`);
+    const owner = await gitOwnerOfWorktree(repo.path, repo.id, target);
+    if (!owner) throw new AppError('NOT_FOUND', `${target} is not a git worktree of ${repo.id}`);
+    if (!owner.bare) {
+      throw new AppError(
+        'VALIDATION',
+        `${target} was created from the plain clone, not the sandbox bare clone — delete it and create it again to sandbox it`,
+      );
+    }
+    const meta = await state.get(target);
+
+    const job = app.deps.jobs.start('worktree.sandbox', async (ctx) => {
+      const step = stepReporter(ctx, [
+        { id: 'sandbox-detect', label: 'Detecting sandbox deps' },
+        { id: 'sandbox-build', label: 'Building sandbox' },
+      ]);
+      const sandboxSlug = await provisionSandbox(provisionDeps(sandbox, sandboxRuntime, state), {
+        worktreePath: target,
+        projectDir: repo.projectSubdir ? path.join(target, repo.projectSubdir) : target,
+        slug: path.basename(target),
+        port: meta?.port ?? null,
+        cloneUrl: repo.cloneUrl ?? null,
+        sandboxEnv: body.sandboxEnv ?? {},
+        step,
+      });
+      return { path: target, sandbox: { slug: sandboxSlug } };
     });
 
     return reply.code(202).send({ jobId: job.id });

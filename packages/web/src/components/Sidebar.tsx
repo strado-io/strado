@@ -49,6 +49,7 @@ export type Props = {
   remoteLoading?: boolean;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
+  onRebuildSandbox?: (w: RemoteWorktree) => void;
   /** A workspace switch the server refused — shown on the dashboard's banner. */
   onSwitchError?: (message: string) => void;
 };
@@ -146,7 +147,7 @@ export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
   onCollapse, onAddRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktree, onSearch, onWorktreeSettings, onDeleteWorktree, update,
-  remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree,
+  remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   onOpenMr,
   onOpenDiff,
   onSwitchError,
@@ -201,6 +202,7 @@ export function Sidebar({
         remoteLoading={remoteLoading}
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
+        onRebuildSandbox={onRebuildSandbox}
       />
     ),
   });

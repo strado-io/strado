@@ -63,17 +63,32 @@ export const realExec: ExecFn = (file, args, timeoutMs = 10_000, onOutput) =>
   });
 
 /** Podman first: rootless by default, which matches how the runner runs
- * (unprivileged, systemd --user). Never installs anything. */
-export async function detectRuntime(exec: ExecFn = realExec): Promise<SandboxRuntime | null> {
+ * (unprivileged, systemd --user). Never installs anything.
+ *
+ * `--version` only proves a binary is on PATH. `info` proves the runtime can
+ * actually run containers for THIS user: docker without group membership and
+ * rootless podman without subuid/subgid both pass the first and fail the
+ * second, and treating them as present made every worktree create fail at
+ * the image build and fall back to the host. */
+export async function detectRuntime(
+  exec: ExecFn = realExec,
+  log: (line: string) => void = () => {},
+): Promise<SandboxRuntime | null> {
   for (const bin of ['podman', 'docker'] as const) {
     try {
       const r = await exec(bin, ['--version']);
-      if (r.code === 0) return { bin };
+      if (r.code !== 0) continue;
+      const info = await exec(bin, ['info'], 20_000);
+      if (info.code === 0) return { bin };
+      log(`${bin} is installed but cannot run containers for this user (skipping): ${info.stderr.trim().split('\n').pop() ?? `exit ${info.code}`}`);
     } catch { /* treat as absent */ }
   }
   return null;
 }
 
-export function sandboxEnabled(runtime: SandboxRuntime | null): boolean {
-  return runtime !== null && process.env.STRADO_RUNNER === '1';
+/** Sandboxing is a runner feature, and the operator can switch it off with
+ * STRADO_SANDBOX=0 in runner.env — a box with a working runtime that should
+ * still run agents on the host. */
+export function sandboxEnabled(runtime: SandboxRuntime | null, env: NodeJS.ProcessEnv = process.env): boolean {
+  return runtime !== null && env.STRADO_RUNNER === '1' && env.STRADO_SANDBOX !== '0';
 }

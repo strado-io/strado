@@ -4,6 +4,7 @@ import { track } from './telemetry';
 import { Dashboard, remoteAsWorktree } from './pages/Dashboard';
 import { NewWorktreeDialog, CreatePayload } from './components/NewWorktreeDialog';
 import { DeleteWorktreeDialog } from './components/DeleteWorktreeDialog';
+import { RebuildSandboxDialog } from './components/RebuildSandboxDialog';
 import { WorktreeSettingsDialog } from './components/WorktreeSettingsDialog';
 import { LogPanel } from './components/LogPanel';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
@@ -26,6 +27,7 @@ type Dialog =
   | { kind: 'note'; worktree: Worktree }
   | { kind: 'diff'; worktree: Worktree }
   | { kind: 'deleteRemote'; remote: RemoteWorktree }
+  | { kind: 'rebuildSandbox'; remote: RemoteWorktree }
   | { kind: 'mr'; worktree: Worktree; mr: MergeRequest };
 
 function AppShell() {
@@ -93,6 +95,7 @@ function AppShell() {
         onCloseOverlays={close}
         onDeleteWorktree={(w) => setDialog({ kind: 'delete', worktree: w })}
         onDeleteRemoteWorktree={(w) => setDialog({ kind: 'deleteRemote', remote: w })}
+        onRebuildSandbox={(w) => setDialog({ kind: 'rebuildSandbox', remote: w })}
       />
       {dialog.kind === 'new' && (
         <NewWorktreeDialog
@@ -149,6 +152,24 @@ function AppShell() {
               remoteWsId: dialog.remote.remoteWsId,
               path: dialog.remote.path,
               ...opts,
+            })
+          }
+          onDone={() => {
+            setRemoteRefreshKey((key) => key + 1);
+            close();
+          }}
+        />
+      )}
+      {dialog.kind === 'rebuildSandbox' && (
+        <RebuildSandboxDialog
+          remote={dialog.remote}
+          onCancel={close}
+          onConfirm={() =>
+            api.runners.rebuildSandbox(wsId, {
+              runnerId: dialog.remote.runnerId,
+              remoteWsId: dialog.remote.remoteWsId,
+              path: dialog.remote.path,
+              ...(dialog.remote.localRepoId ? { repoId: dialog.remote.localRepoId } : {}),
             })
           }
           onDone={() => {
