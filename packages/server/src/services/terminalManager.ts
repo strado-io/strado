@@ -14,7 +14,10 @@ export type BuildSpec = (cwd: string) => SpawnSpec;
 // as the LAST step before spawning. The sandbox uses it to re-point a session
 // at the worktree's container (services/sandbox/spec.ts); undefined means the
 // spec spawns exactly as it always has.
-export type SpecWrapper = (cwd: string, spec: SpawnSpec) => SpawnSpec;
+// `extraEnvKeys` names env vars the caller sets on the spawn that must reach
+// the wrapped process too (a dev server's PORT and worktree env); sessions
+// pass nothing and keep the fixed forwarded set.
+export type SpecWrapper = (cwd: string, spec: SpawnSpec, extraEnvKeys?: string[]) => SpawnSpec;
 // Identity the agent registry mints for a given session key — layered over
 // sessionEnv() at spawn time so sessionEnv itself stays a pure function of
 // (key, cwd) with no knowledge of the registry.

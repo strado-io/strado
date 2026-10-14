@@ -6,7 +6,7 @@
 // other side of the pty, not around it.
 
 import type { BuildSpec, SpawnSpec, SpecWrapper } from '../terminalManager.js';
-import type { SandboxRuntime } from './runtime.js';
+import { realExec, type ExecFn, type SandboxRuntime } from './runtime.js';
 
 /** Where the host hook socket is bind-mounted inside every sandbox — the
  * container side of `sandbox.create({ socketPath })`. Task 8 owns the host
@@ -73,10 +73,31 @@ function containerArgv(spec: SpawnSpec): string[] {
   return SHELLS.has(base) ? ['bash', ...spec.args] : [spec.file, ...spec.args];
 }
 
-function wrap(rt: SandboxRuntime, slug: string, cwd: string, inner: SpawnSpec): SpawnSpec {
+/** Where a dev server started by the process manager records its pid inside
+ * the container, so Stop can reach it: killing the host-side `exec` client
+ * does not end the process it started in there. */
+export const SANDBOX_DEV_PID_FILE = '/tmp/strado-dev-server.pid';
+
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function wrap(
+  rt: SandboxRuntime,
+  slug: string,
+  cwd: string,
+  inner: SpawnSpec,
+  opts: { extraEnvKeys?: string[]; pidFile?: string; tty?: boolean } = {},
+): SpawnSpec {
   const ctr = `strado-sbx-${slug}`;
-  const envFlags = `${FORWARDED.map((k) => `--env ${k}`).join(' ')} --env STRADO_INNER_SHELL=/bin/bash`;
-  const innerCmd = containerArgv(inner).map(shq).join(' ');
+  // Names only: `--env KEY` copies the value from the exec client's own
+  // environment, which is the spawn env — values never hit argv.
+  const extra = (opts.extraEnvKeys ?? []).filter((k) => ENV_KEY.test(k) && !FORWARDED.includes(k));
+  const envFlags = `${[...FORWARDED, ...extra].map((k) => `--env ${k}`).join(' ')} --env STRADO_INNER_SHELL=/bin/bash`;
+  const argv = containerArgv(inner).map(shq).join(' ');
+  // A pid file for the process manager: the inner sh records itself, then
+  // execs into the command so the pid stays the command's.
+  const innerCmd = opts.pidFile
+    ? `sh -c ${shq(`echo $$ > ${opts.pidFile}; exec ${argv}`)}`
+    : argv;
   // The socket path is a property of being sandboxed, so the wrapper — not
   // sessionEnv — defines it: an unsandboxed session cannot inherit a var that
   // is only ever exported inside this script, and the host pty env stays
@@ -97,7 +118,9 @@ function wrap(rt: SandboxRuntime, slug: string, cwd: string, inner: SpawnSpec): 
   // live session — it kills the agents running in the ones that have them.
   const script =
     `${socketEnv} ${rt.bin} start ${ctr} >/dev/null; ` +
-    `exec ${rt.bin} exec -it ${envFlags} -w ${shq(cwd)} ${ctr} ${innerCmd}`;
+    // -t only for a pty session: the process manager spawns with pipes, and
+    // `exec -t` without a terminal is refused by both runtimes.
+    `exec ${rt.bin} exec ${opts.tty === false ? '-i' : '-it'} ${envFlags} -w ${shq(cwd)} ${ctr} ${innerCmd}`;
   return { file: '/bin/sh', args: ['-c', script] };
 }
 
@@ -105,12 +128,15 @@ export function sandboxBuildSpec(opts: {
   rt: SandboxRuntime;
   isSandboxed: (cwd: string) => string | null;
   inner: BuildSpec;
+  extraEnvKeys?: string[];
+  pidFile?: string;
+  tty?: boolean;
 }): BuildSpec {
   return (cwd: string): SpawnSpec => {
     const slug = opts.isSandboxed(cwd);
     const inner = opts.inner(cwd);
     if (!slug) return inner;
-    return wrap(opts.rt, slug, cwd, inner);
+    return wrap(opts.rt, slug, cwd, inner, { extraEnvKeys: opts.extraEnvKeys, pidFile: opts.pidFile, tty: opts.tty });
   };
 }
 
@@ -121,5 +147,33 @@ export function sandboxSpecWrapper(opts: {
   rt: SandboxRuntime;
   isSandboxed: (cwd: string) => string | null;
 }): SpecWrapper {
-  return (cwd, spec) => sandboxBuildSpec({ ...opts, inner: () => spec })(cwd);
+  return (cwd, spec, extraEnvKeys) => sandboxBuildSpec({ ...opts, inner: () => spec, extraEnvKeys })(cwd);
+}
+
+/**
+ * The process manager's view: Start runs the dev server INSIDE the worktree's
+ * container (where node_modules live and the published port is bound), with
+ * the spawn env forwarded by name, and Stop reaches the process in there.
+ * Before this, Start ran on the host — no dependencies, and EADDRINUSE on a
+ * port the container had already published.
+ */
+export function sandboxProcessWrapper(opts: {
+  rt: SandboxRuntime;
+  isSandboxed: (cwd: string) => string | null;
+  exec?: ExecFn;
+}): { wrap: SpecWrapper; stopInside: (cwd: string) => Promise<void> } {
+  const exec = opts.exec ?? realExec;
+  return {
+    wrap: (cwd, spec, extraEnvKeys) =>
+      sandboxBuildSpec({ rt: opts.rt, isSandboxed: opts.isSandboxed, inner: () => spec, extraEnvKeys, pidFile: SANDBOX_DEV_PID_FILE, tty: false })(cwd),
+    async stopInside(cwd) {
+      const slug = opts.isSandboxed(cwd);
+      if (!slug) return;
+      // TERM to the recorded pid; the shell exec'd into the command, so that
+      // IS the dev server (npm forwards the signal to its child). Best effort:
+      // a container that is already stopped has nothing to kill.
+      const script = `pid=$(cat ${SANDBOX_DEV_PID_FILE} 2>/dev/null) && kill -TERM "$pid" 2>/dev/null; rm -f ${SANDBOX_DEV_PID_FILE}; true`;
+      await exec(opts.rt.bin, ['exec', `strado-sbx-${slug}`, 'sh', '-c', script], 10_000);
+    },
+  };
 }

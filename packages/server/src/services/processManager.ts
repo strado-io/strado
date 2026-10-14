@@ -79,7 +79,15 @@ export type ProcessManager = {
   runningOnPort(port: number): string[];
 };
 
-export function createProcessManager(bus: EventBus, debugLog?: DebugLog): ProcessManager {
+/** How a sandboxed worktree's dev server is run and stopped: the command is
+ * wrapped to exec into the container, and Stop first reaches the process in
+ * there (killing the host-side exec client alone would leave it running). */
+export type ProcessSandbox = {
+  wrap: (cwd: string, spec: { file: string; args: string[] }, extraEnvKeys?: string[]) => { file: string; args: string[] };
+  stopInside: (cwd: string) => Promise<void>;
+};
+
+export function createProcessManager(bus: EventBus, debugLog?: DebugLog, sandbox?: ProcessSandbox): ProcessManager {
   const entries = new Map<string, Entry>();
 
   function ensure(key: string): Entry {
@@ -175,6 +183,12 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
     clearReadyTimer(entry);
     entry.info.status = 'stopping';
     emitProcess(entry, key);
+    // The process in the container first: it does not die with the exec
+    // client we are about to signal.
+    if (sandbox && entry.lastOpts) {
+      await sandbox.stopInside(entry.lastOpts.cwd).catch((err: Error) =>
+        debugLog?.log(logTag(key), `stop inside sandbox failed: ${err.message}`));
+    }
     try {
       process.kill(-entry.child.pid, 'SIGTERM');
     } catch {
@@ -240,9 +254,16 @@ export function createProcessManager(bus: EventBus, debugLog?: DebugLog): Proces
       for (const notice of opts.notices ?? []) push(entry, 'stderr', `[strado] ${notice}`, opts.key, false);
 
       debugLog?.log(logTag(opts.key), `start${isRetry ? ' (retry)' : ''}: ${opts.command} ${opts.args.join(' ')} — port ${opts.port}`);
-      const child = spawn(opts.command, opts.args, {
+      const env = { ...opts.env, PORT: String(opts.port) };
+      // Inside the worktree's container when it has one: that is where its
+      // dependencies are and where the published port is bound. The wrapper
+      // forwards exactly the keys set here, by name.
+      const spec = sandbox
+        ? sandbox.wrap(opts.cwd, { file: opts.command, args: opts.args }, Object.keys(env))
+        : { file: opts.command, args: opts.args };
+      const child = spawn(spec.file, spec.args, {
         cwd: opts.cwd,
-        env: { ...process.env, ...opts.env, PORT: String(opts.port) },
+        env: { ...process.env, ...env },
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SANDBOX_SOCKET_PATH, sandboxBuildSpec, sandboxSpecWrapper } from './spec.js';
+import { SANDBOX_DEV_PID_FILE, SANDBOX_SOCKET_PATH, sandboxBuildSpec, sandboxProcessWrapper, sandboxSpecWrapper } from './spec.js';
 
 const inner = () => ({ file: '/bin/zsh', args: ['-l', '-c', 'claude'] });
 
@@ -130,5 +130,42 @@ describe('sandboxSpecWrapper', () => {
   it('returns an override untouched outside a sandbox', () => {
     const override = { file: '/bin/zsh', args: ['-il'] };
     expect(wrap('/elsewhere', override)).toEqual(override);
+  });
+});
+
+describe('sandboxProcessWrapper', () => {
+  const calls: string[][] = [];
+  const exec = async (_f: string, args: string[]) => { calls.push(args); return { code: 0, stdout: '', stderr: '' }; };
+  const pw = sandboxProcessWrapper({ rt: { bin: 'podman' }, isSandboxed: (cwd) => (cwd === '/w' ? 'feat-x' : null), exec });
+
+  it('execs the start command into the container, forwarding the spawn env by name, with a pid file', () => {
+    const spec = pw.wrap('/w', { file: '/bin/zsh', args: ['-ilc', 'npm run dev'] }, ['PORT', 'API_URL', 'bad key']);
+    expect(spec.file).toBe('/bin/sh');
+    const script = spec.args[spec.args.length - 1]!;
+    // -i, never -t: the process manager has no terminal, and `exec -t`
+    // without one is refused.
+    expect(script).toContain('podman exec -i ');
+    expect(script).not.toContain('exec -it');
+    expect(script).toContain('--env PORT --env API_URL');
+    expect(script).not.toContain('bad key');
+    expect(script).toContain(`sh -c 'echo $$ > ${SANDBOX_DEV_PID_FILE}; exec '\\''bash'\\'' '\\''-ilc'\\'' '\\''npm run dev'\\'''`);
+    expect(script).toContain('-w \'/w\' strado-sbx-feat-x');
+  });
+
+  it('leaves an unsandboxed worktree alone and has nothing to stop there', async () => {
+    const inner = { file: '/bin/zsh', args: ['-ilc', 'npm run dev'] };
+    expect(pw.wrap('/elsewhere', inner, ['PORT'])).toEqual(inner);
+    calls.length = 0;
+    await pw.stopInside('/elsewhere');
+    expect(calls).toEqual([]);
+  });
+
+  it('stops the recorded pid inside the container', async () => {
+    calls.length = 0;
+    await pw.stopInside('/w');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.slice(0, 4)).toEqual(['exec', 'strado-sbx-feat-x', 'sh', '-c']);
+    expect(calls[0]![4]).toContain(`cat ${SANDBOX_DEV_PID_FILE}`);
+    expect(calls[0]![4]).toContain('kill -TERM');
   });
 });
