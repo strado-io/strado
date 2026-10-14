@@ -600,3 +600,47 @@ describe('sandboxed worktrees in the sidebar and on delete', () => {
     expect(await stores.state.get(entry!.path)).toBeNull();
   });
 });
+
+describe('POST /worktrees/:encodedPath/sandbox (rebuild)', () => {
+  it('refuses on a machine that does not sandbox', async () => {
+    const res = await app.inject({ method: 'POST', url: `/api/w/default/worktrees/${encodeURIComponent(path.join(worktreesDir, 'x'))}/sandbox`, payload: {} });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/does not sandbox/);
+  });
+
+  it('rebuilds the container of a bare-clone worktree whose first build failed, with the two sandbox steps', async () => {
+    const failing = sandboxStub({ create: async () => { throw new Error('docker.io unreachable'); } });
+    app.deps.sandbox = failing.service as never;
+    app.deps.sandboxRuntime = { bin: 'podman' };
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/w/default/worktrees',
+      payload: { repoId: 'react-app', ticketId: 'FD-7', title: 'rebuild me', sourceBranch: 'main', sourceWorktree: repo },
+    });
+    expect(created.statusCode).toBe(202);
+    const first = await app.deps.jobs.wait<{ path: string }>(created.json().jobId);
+    expect(first.status).toBe('error');
+    const entry = await metaFor('FD-7');
+    expect(entry!.meta.sandbox).toBeNull();
+
+    // Now the build works. Same path, same slug, same credentials bundle.
+    const working = sandboxStub();
+    app.deps.sandbox = working.service as never;
+    const events = recordJobSteps(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/w/default/worktrees/${encodeURIComponent(entry!.path)}/sandbox`,
+      payload: { sandboxEnv: { ANTHROPIC_API_KEY: 'sk-test' } },
+    });
+    expect(res.statusCode).toBe(202);
+    const job = await app.deps.jobs.wait<{ sandbox: { slug: string } }>(res.json().jobId);
+    expect(job.status).toBe('done');
+    expect(stepIds(events)).toEqual(['sandbox-detect', 'sandbox-build']);
+    const sbxSlug = sandboxSlugFor('FD-7_rebuild_me', entry!.path);
+    expect(job.result!.sandbox).toEqual({ slug: sbxSlug });
+    expect(working.calls.create[0]).toMatchObject({ worktreePath: entry!.path, slug: sbxSlug, env: { ANTHROPIC_API_KEY: 'sk-test' } });
+    expect(working.calls.start).toEqual([sbxSlug]);
+    expect((await metaFor('FD-7'))!.meta.sandbox).toEqual({ slug: sbxSlug });
+    expect(app.deps.sandboxSlugs.slugOf(entry!.path)).toBe(sbxSlug);
+  });
+});

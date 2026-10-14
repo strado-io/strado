@@ -877,6 +877,12 @@ export const api = {
         `${wsBase(wsId)}/remote-worktrees/delete`,
         { method: 'POST', body: JSON.stringify(payload) },
       ),
+    /** Rebuild the sandbox of a runner worktree whose build failed. Returns a job id. */
+    rebuildSandbox: (wsId: string, payload: { runnerId: string; remoteWsId: string; path: string; repoId?: string }) =>
+      request<{ jobId: string }>(
+        `${wsBase(wsId)}/remote-worktrees/rebuild-sandbox`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      ),
     /** Kill a session that lives on a runner. */
     killRemoteSession: (wsId: string, payload: {
       runnerId: string; remoteWsId: string; path: string;
@@ -1050,6 +1056,12 @@ export type RemoteWorktree = {
   localRepoId: string | null;
   /** The repo's name on the runner — the folder label when localRepoId is null. */
   remoteRepoName?: string | null;
+  /**
+   * 'on': runs in its container. 'fallback': the runner sandboxes but this
+   * worktree has no container (a failed build) — agents run on the host, and
+   * the row must say so. 'off': the runner does not sandbox at all.
+   */
+  sandbox?: 'on' | 'fallback' | 'off';
   // Session state, forwarded by the remote-worktrees proxy so the rail can show
   // what's alive on a runner without opening the worktree.
   hasClaudeSession?: boolean; claudeStatus?: 'idle' | 'working' | 'waiting';

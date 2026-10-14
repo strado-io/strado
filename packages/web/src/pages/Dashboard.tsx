@@ -201,6 +201,7 @@ export function Dashboard(props: {
   /** A runner's worktree was clicked — open its hub. */
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
+  onRebuildSandbox?: (w: RemoteWorktree) => void;
   update: UpdateFooterProps;
 }) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
@@ -765,6 +766,7 @@ export function Dashboard(props: {
           runnerStatuses={remote.runners}
           remoteLoading={remoteLoading}
           onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
+          onRebuildSandbox={(w) => props.onRebuildSandbox?.(w)}
           onOpenRemoteWorktree={openRemoteWorktree}
           selected={activeView}
           onSelect={selectView}

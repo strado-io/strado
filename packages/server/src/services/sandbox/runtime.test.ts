@@ -56,3 +56,29 @@ describe('realExec', () => {
     expect(r.code).toBe(127);
   });
 });
+
+describe('detectRuntime probes that the runtime actually works', () => {
+  const version = { code: 0, stdout: 'podman version 5', stderr: '' };
+  it('skips a runtime whose `info` fails (docker without group membership, podman without subuid)', async () => {
+    const logs: string[] = [];
+    const rt = await detectRuntime(async (file, args) => {
+      if (args[0] === '--version') return version;
+      if (file === 'podman') return { code: 125, stdout: '', stderr: 'Error: cannot setup namespace: no subuid ranges' };
+      return { code: 0, stdout: 'ok', stderr: '' };
+    }, (l) => logs.push(l));
+    expect(rt).toEqual({ bin: 'docker' });
+    expect(logs[0]).toMatch(/podman is installed but cannot run containers.*no subuid ranges/);
+  });
+  it('null when every runtime fails info', async () => {
+    const rt = await detectRuntime(async (_f, args) =>
+      args[0] === '--version' ? version : { code: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker daemon socket' });
+    expect(rt).toBeNull();
+  });
+});
+
+describe('sandboxEnabled opt-out', () => {
+  it('STRADO_SANDBOX=0 disables sandboxing on a runner with a runtime', () => {
+    expect(sandboxEnabled({ bin: 'podman' }, { STRADO_RUNNER: '1', STRADO_SANDBOX: '0' })).toBe(false);
+    expect(sandboxEnabled({ bin: 'podman' }, { STRADO_RUNNER: '1' })).toBe(true);
+  });
+});
