@@ -12,7 +12,7 @@ import { createRunnerFetch, runnerErrorMessage, type RunnerFetch } from '../serv
 import { createForwardManager } from '../services/forwardManager.js';
 import { backfillCloneUrls } from '../services/repoBackfill.js';
 import { resolveSshAlias } from '../services/gitProviders.js';
-import { sandboxEnvForRepo } from '../services/modelCredential.js';
+import { cloneCredentialForRepo, sandboxEnvForRepo } from '../services/modelCredential.js';
 import { stepReporter } from '../services/jobSteps.js';
 import { followRemoteJob, type RemoteJobEvent } from '../services/remoteJobs.js';
 import { matchRepo, portableCloneUrl, repoIdentity } from '../services/repoIdentity.js';
@@ -504,6 +504,11 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
       // through THIS machine's ssh config, and a runner would just fail to resolve
       // the host.
       const cloneUrl = await portableCloneUrl(localRepo.cloneUrl!, resolveSshAlias);
+      // A fresh runner has no SSH key and no tokens. If this machine has a
+      // token for the host (GitHub PAT, GitLab token), hand the runner the
+      // HTTPS form of the remote plus that token; the cloud GitHub App still
+      // wins on the runner when the org has it installed.
+      const cloneCred = await cloneCredentialForRepo({ cloneUrl });
 
       step('clone');
       // Idempotent on the far side: an existing clone is registered, not re-cloned.
@@ -513,7 +518,8 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
         {
           method: 'POST',
           body: {
-            url: cloneUrl,
+            url: cloneCred?.url ?? cloneUrl,
+            ...(cloneCred ? { credential: cloneCred.credential } : {}),
             // Paths are machine-local. Everything else is portable and avoids
             // a redundant checkout+detect cycle on sandbox-capable runners.
             config: {

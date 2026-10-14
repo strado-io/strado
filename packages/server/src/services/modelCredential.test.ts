@@ -8,6 +8,8 @@ import {
   modelCredentialPath,
   credentialSummary,
   sandboxEnvForRepo,
+  cloneCredentialForRepo,
+  credentialFromSandboxEnv,
 } from './modelCredential.js';
 
 let tmp: string;
@@ -160,5 +162,40 @@ describe('sandboxEnvForRepo', () => {
       },
     );
     expect(env.GITHUB_TOKEN).toBe('owner-tok');
+  });
+});
+
+describe('cloneCredentialForRepo', () => {
+  const cfg = {
+    readGithub: async () => ({ 'github.com/acme': { token: 'gh-tok' } }),
+    readGitlab: async () => ({ 'gitlab.stg-fleetx.io': { token: 'gl-tok' } }),
+  };
+  it('rewrites a GitLab SSH remote to HTTPS with the host token', async () => {
+    const out = await cloneCredentialForRepo({ cloneUrl: 'git@gitlab.stg-fleetx.io:fleetxdev/fleetx-react-app.git' }, cfg);
+    expect(out).toEqual({
+      url: 'https://gitlab.stg-fleetx.io/fleetxdev/fleetx-react-app.git',
+      credential: { username: 'oauth2', password: 'gl-tok' },
+    });
+  });
+  it('uses the GitHub PAT for the owner', async () => {
+    const out = await cloneCredentialForRepo({ cloneUrl: 'git@github.com:acme/app.git' }, cfg);
+    expect(out).toEqual({
+      url: 'https://github.com/acme/app.git',
+      credential: { username: 'x-access-token', password: 'gh-tok' },
+    });
+  });
+  it('null when nothing is connected for the host, or there is no remote', async () => {
+    expect(await cloneCredentialForRepo({ cloneUrl: 'git@github.com:other/app.git' }, cfg)).toBeNull();
+    expect(await cloneCredentialForRepo({ cloneUrl: 'https://bitbucket.org/x/y.git' }, cfg)).toBeNull();
+    expect(await cloneCredentialForRepo({ cloneUrl: null }, cfg)).toBeNull();
+  });
+});
+
+describe('credentialFromSandboxEnv', () => {
+  it('reads back the token the desktop bundled, with its username', () => {
+    expect(credentialFromSandboxEnv({ GITLAB_TOKEN: 'gl', GIT_HTTP_USER: 'oauth2' })).toEqual({ username: 'oauth2', password: 'gl' });
+    expect(credentialFromSandboxEnv({ GITHUB_TOKEN: 'gh' })).toEqual({ username: 'x-access-token', password: 'gh' });
+    expect(credentialFromSandboxEnv({ ANTHROPIC_API_KEY: 'k' })).toBeNull();
+    expect(credentialFromSandboxEnv(undefined)).toBeNull();
   });
 });
