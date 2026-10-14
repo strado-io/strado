@@ -3,6 +3,9 @@
 //
 // Splitting them buys nothing: ptyd owns the PTYs out of process, so a restart
 // here (upgrade, crash, reboot) leaves agents running and reattaches them.
+import fs from 'node:fs';
+import path from 'node:path';
+import util from 'node:util';
 import { buildApp, buildDeps } from '@strado/server/app';
 import { isForwardablePort } from '@strado/server/forwardable-ports';
 import { TunnelClient } from '@strado/relay';
@@ -10,10 +13,36 @@ import { readIdentity } from './identity.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from './paths.js';
 import { startSelfUpdate } from './selfUpdate.js';
 
+/** Tee console output to ~/.strado/logs/server.log when not running under systemd. */
+export function teeConsoleToLog(logDir: string): () => Promise<void> {
+  if (process.env.INVOCATION_ID) return async () => {};
+  fs.mkdirSync(logDir, { recursive: true });
+  const stream = fs.createWriteStream(path.join(logDir, 'server.log'), { flags: 'a' });
+  stream.on('error', () => {});
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  const wrap =
+    (fn: (...args: unknown[]) => void) =>
+    (...args: unknown[]) => {
+      fn.apply(console, args);
+      stream.write(`${util.format(...args)}\n`);
+    };
+  console.log = wrap(orig.log);
+  console.warn = wrap(orig.warn);
+  console.error = wrap(orig.error);
+  return () =>
+    new Promise((resolve) => {
+      console.log = orig.log;
+      console.warn = orig.warn;
+      console.error = orig.error;
+      stream.end(() => resolve());
+    });
+}
+
 export async function runDaemon(): Promise<void> {
   const paths = runnerPaths();
   loadEnvFile(paths.envFile);
   applyBundleEnv(paths);
+  const stopLogTee = teeConsoleToLog(paths.logDir);
   const version = bundleVersion(paths);
 
   const identity = readIdentity(paths.identity);
@@ -82,7 +111,10 @@ export async function runDaemon(): Promise<void> {
     console.log('[runner] shutting down (agent sessions stay alive in ptyd)');
     stopUpdater();
     tunnel.stop();
-    void app.close().finally(() => process.exit(0));
+    void app
+      .close()
+      .then(() => stopLogTee())
+      .finally(() => process.exit(0));
   };
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, shutdown);
 

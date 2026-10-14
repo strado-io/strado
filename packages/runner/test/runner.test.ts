@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { teeConsoleToLog } from '../src/daemon.js';
 import { pairRunner, readIdentity, writeIdentity } from '../src/identity.js';
 import { cmdInstallService, formatCliError, resolveApiUrl } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
@@ -233,5 +234,30 @@ describe('install-service', () => {
     } finally {
       logSpy.mockRestore();
     }
+  });
+});
+
+describe('daemon log tee', () => {
+  it('tees console output to logs/server.log when INVOCATION_ID is unset', async () => {
+    delete process.env.INVOCATION_ID;
+    const p = runnerPaths();
+    const stop = teeConsoleToLog(p.logDir);
+    try {
+      console.log('[runner] hello world');
+      console.error('[runner] oops', 42);
+    } finally {
+      await stop();
+    }
+    const content = fs.readFileSync(path.join(p.logDir, 'server.log'), 'utf8');
+    expect(content).toContain('[runner] hello world');
+    expect(content).toContain('[runner] oops 42');
+  });
+
+  it('skips file logging when running under systemd (INVOCATION_ID set)', async () => {
+    process.env.INVOCATION_ID = 'systemd-123';
+    const p = runnerPaths();
+    const stop = teeConsoleToLog(p.logDir);
+    await stop();
+    expect(fs.existsSync(path.join(p.logDir, 'server.log'))).toBe(false);
   });
 });
