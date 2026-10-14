@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readIdentity, writeIdentity } from '../src/identity.js';
-import { formatCliError } from '../src/index.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pairRunner, readIdentity, writeIdentity } from '../src/identity.js';
+import { formatCliError, resolveApiUrl } from '../src/index.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from '../src/paths.js';
 import { isNewer } from '../src/selfUpdate.js';
 import { renderUnit } from '../src/systemd.js';
@@ -37,6 +37,20 @@ describe('identity', () => {
     fs.writeFileSync(file, JSON.stringify({ runnerId: 'box' }));
     expect(readIdentity(file)).toBeNull();
     expect(readIdentity(path.join(dir, 'nope.json'))).toBeNull();
+  });
+
+  it('strips trailing slashes from apiUrl when pairing and resolving', async () => {
+    expect(resolveApiUrl('https://x.example///')).toBe('https://x.example');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ runnerId: 'box-1', runnerToken: 't'.repeat(64) }), { status: 200 }),
+    );
+    try {
+      const id = await pairRunner({ apiUrl: 'https://x.example/', code: 'PAIR-1234-5678', name: 'box' });
+      expect(fetchSpy).toHaveBeenCalledWith('https://x.example/v1/runners/pair', expect.anything());
+      expect(id.apiUrl).toBe('https://x.example');
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

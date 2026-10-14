@@ -41,9 +41,17 @@ process.stdout.on('error', (err: NodeJS.ErrnoException) => {
   throw err;
 });
 
+export function resolveApiUrl(
+  cliApi = arg('api'),
+  envApi = process.env.STRADO_API_URL,
+  identityApi = readIdentity(paths.identity)?.apiUrl,
+): string {
+  return (cliApi ?? envApi ?? identityApi ?? 'https://api.strado.io').replace(/\/+$/, '');
+}
+
 const paths = runnerPaths();
 loadEnvFile(paths.envFile);
-const apiUrl = arg('api') ?? process.env.STRADO_API_URL ?? readIdentity(paths.identity)?.apiUrl ?? 'https://api.strado.io';
+const apiUrl = resolveApiUrl();
 
 async function cmdPair(): Promise<void> {
   const code = arg('code');
