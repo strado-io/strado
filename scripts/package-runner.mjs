@@ -7,7 +7,7 @@
 // MUST run on a Linux x64 host: it vendors that host's native node-pty
 // prebuild and its `node` binary. Run from the repo root:
 //   node scripts/package-runner.mjs
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,6 +53,12 @@ run('npx', [
   'esbuild', 'packages/runner/dist/index.js',
   '--bundle', '--minify', '--platform=node', '--format=esm', '--target=node20',
   '--external:node-pty',
+  // Same trap package-mac.mjs hit in 0.1.53: jsonc-parser's CJS entry is a UMD
+  // wrapper that calls require() through a factory parameter, so esbuild
+  // cannot follow its './impl/*' requires and the daemon dies with
+  // MODULE_NOT_FOUND the first time agent config is touched. Runner 0.1.30
+  // shipped that way; point esbuild at the package's ESM build instead.
+  '--alias:jsonc-parser=jsonc-parser/lib/esm/main.js',
   `--banner:js=import{createRequire}from'node:module';const require=createRequire(import.meta.url);`,
   `--outfile=${path.join(stage, 'runner.mjs')}`,
 ]);
@@ -125,6 +131,69 @@ if (smoke !== version) {
   process.exit(1);
 }
 console.log(`  bundle reports version ${smoke}`);
+
+// `version` never initialises the server, so a bundle can pass it and still
+// crash the daemon on boot (0.1.30: jsonc-parser's UMD require). Boot the real
+// daemon against a dead relay with a throwaway identity and require
+// /api/health to answer. No network leaves the box: the relay URL is a closed
+// loopback port and auto-update is off.
+step('smoke-test the daemon boots');
+await smokeBootDaemon();
+
+async function smokeBootDaemon() {
+  const home = path.join(PACK, 'smoke-daemon-home');
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(
+    path.join(home, 'runner.json'),
+    JSON.stringify({
+      runnerId: 'smoke-test',
+      runnerToken: 'b'.repeat(64),
+      accessKey: 'a'.repeat(32),
+      apiUrl: 'http://127.0.0.1:9',
+      relayUrl: 'ws://127.0.0.1:9',
+    }),
+  );
+  const port = 7000 + Math.floor(Math.random() * 1000);
+  const env = {
+    ...process.env,
+    STRADO_HOME: home,
+    STRADO_RUNNER_AUTOUPDATE: '0',
+    STRADO_SANDBOX: '0',
+    PORT: String(port),
+    RELAY_URL: 'ws://127.0.0.1:9',
+  };
+  // /api/health must report the BUNDLE's version, not one inherited from the
+  // build shell.
+  delete env.STRADO_APP_VERSION;
+  const child = spawn(path.join(stage, 'bin', 'node'), [path.join(stage, 'runner.mjs'), 'run'], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  child.stdout.on('data', (d) => { output += d; });
+  child.stderr.on('data', (d) => { output += d; });
+  let exited = null;
+  child.on('exit', (code, signal) => { exited = { code, signal }; });
+  const deadline = Date.now() + 30_000;
+  let healthy = false;
+  while (Date.now() < deadline && !exited) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+      const body = await res.json();
+      if (res.ok && body.version === version) { healthy = true; break; }
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  child.kill('SIGTERM');
+  await new Promise((r) => { if (exited) r(); else child.on('exit', r); });
+  fs.rmSync(home, { recursive: true, force: true });
+  if (!healthy) {
+    console.error(`daemon smoke test failed: /api/health never reported ${version}\n--- daemon output ---\n${output.slice(-4000)}`);
+    process.exit(1);
+  }
+  console.log(`  daemon booted and /api/health reports ${version}`);
+}
 
 step('tar.gz');
 const artifact = path.join(OUT, `strado-runner-${version}-linux-x64.tar.gz`);
