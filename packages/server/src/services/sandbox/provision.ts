@@ -47,7 +47,7 @@ export async function provisionSandbox(deps: ProvisionDeps, o: ProvisionInput): 
   // The PROJECT dir, not the worktree root: in a monorepo the root has no
   // .nvmrc or engines and the app subdir does, so reading the root builds
   // an image the project cannot run on.
-  const manifest = await detectSandboxManifest(o.projectDir);
+  const manifest = await detectSandboxManifest(o.projectDir, o.worktreePath);
 
   o.step('sandbox-build');
   // Attached to the build step, which takes minutes — on the detect step

@@ -28,7 +28,30 @@ export function bareRepoPath(reposDir: string, repoId: string): string {
 /** One bare clone per repo, shared object store for every sandboxed worktree.
  * Lives under the runner's state dir; existing NORMAL clones are untouched
  * (spec: both shapes coexist, no migration, no flag day). */
+// One clone at a time per bare repo: two first creates for the same repo
+// both saw no HEAD and both ran `git clone --bare` into the same directory,
+// and the second died with "already exists and is not an empty directory".
+const inFlight = new Map<string, Promise<string>>();
+
 export async function ensureBareRepo(opts: {
+  reposDir: string;
+  repoId: string;
+  cloneUrl: string;
+  credential?: HttpGitCredential;
+}): Promise<string> {
+  const key = path.join(opts.reposDir, opts.repoId);
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const run = ensureBareRepoNow(opts);
+  inFlight.set(key, run);
+  try {
+    return await run;
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+async function ensureBareRepoNow(opts: {
   reposDir: string;
   repoId: string;
   cloneUrl: string;

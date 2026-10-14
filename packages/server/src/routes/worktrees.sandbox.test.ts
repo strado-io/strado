@@ -41,6 +41,8 @@ function sandboxStub(
     /** io.strado.worktree on the container `status` claims exists. */
     label?: string | null;
     envDir?: string;
+    /** `rm -f` fails (an orphan stays behind). */
+    removeFails?: boolean;
   } = {},
 ) {
   const calls = {
@@ -63,8 +65,8 @@ function sandboxStub(
         if (overrides.create) await overrides.create(c);
       },
       async start(slug: string) { calls.order.push(`start:${slug}`); calls.start.push(slug); },
-      async stop(slug: string) { calls.order.push(`stop:${slug}`); calls.stop.push(slug); },
-      async remove(slug: string) { calls.order.push(`remove:${slug}`); calls.remove.push(slug); },
+      async stop(slug: string) { calls.order.push(`stop:${slug}`); calls.stop.push(slug); return { ok: true, error: null }; },
+      async remove(slug: string) { calls.order.push(`remove:${slug}`); calls.remove.push(slug); return { ok: overrides.removeFails ? false : true, error: overrides.removeFails ? 'container is in use' : null }; },
       async status() { return overrides.status ?? ('absent' as const); },
       async worktreeOf() { return overrides.label ?? null; },
       async listRunning() { return []; },
@@ -642,5 +644,33 @@ describe('POST /worktrees/:encodedPath/sandbox (rebuild)', () => {
     expect(working.calls.start).toEqual([sbxSlug]);
     expect((await metaFor('FD-7'))!.meta.sandbox).toEqual({ slug: sbxSlug });
     expect(app.deps.sandboxSlugs.slugOf(entry!.path)).toBe(sbxSlug);
+  });
+});
+
+describe('DELETE with a sandbox whose container will not go away', () => {
+  it('still deletes the worktree and names the orphan container on the step', async () => {
+    const stub = sandboxStub({ removeFails: true, label: undefined });
+    app.deps.sandboxRuntime = { bin: 'podman' };
+    app.deps.sandbox = stub.service as never;
+    const created = await app.inject({
+      method: 'POST', url: '/api/w/default/worktrees',
+      payload: { repoId: 'react-app', ticketId: 'FD-8', title: 'orphan', sourceBranch: 'main', sourceWorktree: repo },
+    });
+    const first = await app.deps.jobs.wait(created.json().jobId);
+    expect(first.status).toBe('done');
+    const entry = await metaFor('FD-8');
+    // The container is labelled for this worktree, so delete tries to remove it.
+    const sbxSlug = sandboxSlugFor('FD-8_orphan', entry!.path);
+    stub.service.worktreeOf = async () => entry!.path;
+    stub.service.status = async () => 'running' as const;
+    const events = recordJobSteps(app);
+    const res = await app.inject({ method: 'DELETE', url: `/api/w/default/worktrees/${encodeURIComponent(entry!.path)}?force=1` });
+    expect(res.statusCode).toBe(202);
+    const job = await app.deps.jobs.wait(res.json().jobId);
+    expect(job.status).toBe('done');
+    expect(stub.calls.remove).toEqual([sbxSlug]);
+    const details = events.map((e) => (e.data as { detail?: string }).detail).filter(Boolean);
+    expect(details.some((d) => d!.includes(`strado-sbx-${sbxSlug} could not be removed: container is in use`))).toBe(true);
+    expect(await metaFor('FD-8')).toBeNull();
   });
 });
