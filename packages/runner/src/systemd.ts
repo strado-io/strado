@@ -59,6 +59,8 @@ export function renderUnit(opts: { execStart: string; pathValue: string; envFile
 Description=Strado runner
 Documentation=https://strado.io
 After=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=10
 
 [Service]
 Type=simple

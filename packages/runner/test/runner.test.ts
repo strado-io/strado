@@ -253,6 +253,13 @@ describe('systemd unit', () => {
     // excluded from the restart policy.
     expect(unit()).toContain('RestartPreventExitStatus=2');
   });
+
+  it('sets StartLimitIntervalSec=120 and StartLimitBurst=10 in [Unit]', () => {
+    const rendered = unit();
+    const unitSection = rendered.split('[Service]')[0];
+    expect(unitSection).toContain('StartLimitIntervalSec=120');
+    expect(unitSection).toContain('StartLimitBurst=10');
+  });
 });
 
 describe('CLI error formatting', () => {
