@@ -512,3 +512,74 @@ describe('lifecycle', () => {
     client = second;
   });
 });
+
+describe('tunnel credential lifecycle', () => {
+  // Its own relay with short timers: the production constants are 30s / 60s.
+  let app2: ReturnType<typeof buildRelayApp>['app'];
+  let tunnels2: TunnelManager;
+  let port2 = 0;
+  let allowed = true;
+  let verifies = 0;
+
+  beforeAll(async () => {
+    const built = buildRelayApp({
+      domain: DOMAIN,
+      auth: {
+        ...staticAuth(RUNNER_TOKEN),
+        verifyRunner: async (_id, token) => { verifies++; return allowed && token === RUNNER_TOKEN; },
+      },
+      cookieSecret: 'cookie-secret',
+      log: () => {},
+      pingIntervalMs: 40,
+      reverifyIntervalMs: 80,
+      authTimeoutMs: 150,
+    });
+    app2 = built.app;
+    tunnels2 = built.tunnels;
+    await app2.listen({ host: '127.0.0.1', port: 0 });
+    port2 = (app2.server.address() as { port: number }).port;
+  });
+  afterAll(async () => {
+    await app2.close();
+  });
+
+  it('a revoked runner is disconnected on the next re-verify, not when its socket happens to drop', async () => {
+    allowed = true;
+    let connected = false;
+    let lastClose: { code: number; reason: string } | null = null;
+    const c = new TunnelClient({
+      relayUrl: `ws://127.0.0.1:${port2}`,
+      runnerId: 'r2',
+      token: RUNNER_TOKEN,
+      accessKey: ACCESS_KEY,
+      localPort,
+      isPortAllowed: () => false,
+      log: (line) => {
+        const m = /closed (\d+) (.*)$/.exec(line);
+        if (m) lastClose = { code: Number(m[1]), reason: m[2]! };
+      },
+      onStatusChange: (s) => { connected = s === 'connected'; },
+    });
+    c.start();
+    await waitFor(() => connected);
+    const before = verifies;
+    // Live and verified once at hello; now the account revokes the box.
+    allowed = false;
+    await waitFor(() => tunnels2.list().length === 0, 3000);
+    expect(verifies).toBeGreaterThan(before);
+    // Give the client's close handler a beat, then stop it before it redials.
+    await new Promise((r) => setTimeout(r, 20));
+    c.stop();
+    expect(lastClose).toEqual({ code: 1008, reason: 'Revoked' });
+  });
+
+  it('a socket that never completes hello is closed at the auth deadline', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port2}/tunnel?runner=r3&token=${RUNNER_TOKEN}`);
+    ws.on('error', () => {});
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) =>
+      ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })),
+    );
+    expect(closed).toEqual({ code: 1011, reason: 'Auth timeout' });
+    expect(tunnels2.list()).not.toContain('r3');
+  });
+});

@@ -52,10 +52,17 @@ export function staticAuth(runnerToken: string): RelayAuth {
   };
 }
 
+/** How long a tunnel socket may sit between upgrade and a completed hello. */
+export const AUTH_TIMEOUT_MS = 30_000;
+
 export interface RelayOptions {
   /** Suffix under which runners are addressed: <runnerId>.<domain>. */
   domain: string;
   auth: RelayAuth;
+  /** Timing seams for tests; production keeps the protocol constants. */
+  pingIntervalMs?: number;
+  reverifyIntervalMs?: number;
+  authTimeoutMs?: number;
   /** HMAC key for the client access cookie. */
   cookieSecret: string;
   /** Presence heartbeat, called on register and periodically while alive. */
@@ -100,22 +107,37 @@ interface Tunnel {
   pingTimer: ReturnType<typeof setInterval> | null;
   missedPings: number;
   lastOnlineReportAt: number;
+  /** Re-checks the runner's credential with the auth backend; null in tests
+   * that register without one. */
+  reverify: (() => Promise<boolean>) | null;
+  lastVerifiedAt: number;
+  reverifying: boolean;
 }
 
 const COOKIE_NAME = 'strado_relay';
 
+/** How often a live tunnel's credential is re-checked. Bounds how long a
+ * revoked runner stays reachable; cloudAuth's allow cache makes it cheap. */
+export const REVERIFY_INTERVAL_MS = 60_000;
+
 export class TunnelManager {
   private readonly tunnels = new Map<string, Tunnel>();
   private draining = false;
+  private readonly pingIntervalMs: number;
+  private readonly reverifyIntervalMs: number;
   constructor(
     private readonly log: (line: string) => void,
     private readonly presence: {
       online?: (runnerId: string) => void;
       offline?: (runnerId: string) => void;
     } = {},
-  ) {}
+    timing: { pingIntervalMs?: number; reverifyIntervalMs?: number } = {},
+  ) {
+    this.pingIntervalMs = timing.pingIntervalMs ?? PING_INTERVAL_MS;
+    this.reverifyIntervalMs = timing.reverifyIntervalMs ?? REVERIFY_INTERVAL_MS;
+  }
 
-  register(runnerId: string, accessKey: string, ws: WebSocket): boolean {
+  register(runnerId: string, accessKey: string, ws: WebSocket, reverify: (() => Promise<boolean>) | null = null): boolean {
     if (this.draining) {
       ws.close(CLOSE_DRAIN, 'Relay draining');
       return false;
@@ -137,6 +159,9 @@ export class TunnelManager {
       pingTimer: null,
       missedPings: 0,
       lastOnlineReportAt: Date.now(),
+      reverify,
+      lastVerifiedAt: Date.now(),
+      reverifying: false,
     };
     this.tunnels.set(runnerId, tunnel);
     this.presence.online?.(runnerId);
@@ -147,7 +172,26 @@ export class TunnelManager {
         return;
       }
       this.send(tunnel, { type: 'ping' });
-    }, PING_INTERVAL_MS);
+      // The credential was checked once, at hello. Without this a revoked
+      // runner stayed registered — and reachable — until its socket happened
+      // to drop. An auth-backend error is not a denial: keep the tunnel and
+      // try again next time.
+      if (tunnel.reverify && !tunnel.reverifying && Date.now() - tunnel.lastVerifiedAt >= this.reverifyIntervalMs) {
+        tunnel.reverifying = true;
+        void tunnel
+          .reverify()
+          .then((ok) => {
+            tunnel.lastVerifiedAt = Date.now();
+            if (ok || ws.readyState !== 1) return;
+            this.log(`tunnel credential no longer valid for ${runnerId}; closing`);
+            ws.close(1008, 'Revoked');
+          })
+          .catch((err: Error) => this.log(`reverify error for ${runnerId}: ${err.message}`))
+          .finally(() => {
+            tunnel.reverifying = false;
+          });
+      }
+    }, this.pingIntervalMs);
     this.log(`tunnel registered: ${runnerId}`);
     return true;
   }
@@ -182,6 +226,12 @@ export class TunnelManager {
     if (!tunnel) return null;
     if (tunnel.pending.size >= MAX_PENDING_REQUESTS) {
       sink.onError('Runner overloaded (pending request queue full)');
+      return { id: '', abort: () => {} };
+    }
+    // A socket already closing drops the frame silently in send(); the
+    // request would then sit out the full head timeout for a 502. Say so now.
+    if (tunnel.ws.readyState !== 1) {
+      sink.onError('Runner disconnecting');
       return { id: '', abort: () => {} };
     }
     const id = randomUUID();
@@ -446,7 +496,11 @@ const HOP_HEADERS = new Set([
 
 export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunnels: TunnelManager } {
   const log = opts.log ?? ((line: string) => console.log(`[relay] ${redactSecrets(line)}`));
-  const tunnels = new TunnelManager(log, { online: opts.onRunnerOnline, offline: opts.onRunnerOffline });
+  const tunnels = new TunnelManager(
+    log,
+    { online: opts.onRunnerOnline, offline: opts.onRunnerOffline },
+    { pingIntervalMs: opts.pingIntervalMs, reverifyIntervalMs: opts.reverifyIntervalMs },
+  );
   // Fastify defaults bodyLimit to 1 MB, which made the relay — not the runner —
   // the binding constraint on every proxied POST. The worktree upload route
   // allows 15 MB and simply failed with 413 through the tunnel. A proxy must
@@ -494,6 +548,16 @@ export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunne
         }
         let registered = false;
         let authing = false;
+        // A socket that opens and never completes hello (a middlebox that
+        // accepts the upgrade and blackholes frames, an auth backend that
+        // hangs) used to sit here forever: no ping timer runs before
+        // register, so nothing ever recycled it.
+        const authDeadline = setTimeout(() => {
+          if (!registered && socket.readyState === 1) {
+            log(`tunnel auth timeout for ${runnerId}`);
+            socket.close(1011, 'Auth timeout');
+          }
+        }, opts.authTimeoutMs ?? AUTH_TIMEOUT_MS);
         socket.on('message', (raw) => {
           if (!registered) {
             // Protocol: the runner sends hello and waits for hello-ack before
@@ -529,8 +593,9 @@ export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunne
                 socket.close(1008, 'Unauthorized');
                 return;
               }
-              if (!tunnels.register(runnerId, accessKey, socket)) return;
+              if (!tunnels.register(runnerId, accessKey, socket, () => opts.auth.verifyRunner(runnerId, token))) return;
               registered = true;
+              clearTimeout(authDeadline);
               socket.send(JSON.stringify({ type: 'hello-ack', v: PROTO_VERSION }));
             })();
             return;
@@ -538,6 +603,7 @@ export function buildRelayApp(opts: RelayOptions): { app: FastifyInstance; tunne
           tunnels.handleRunnerMessage(runnerId, raw);
         });
         socket.on('close', () => {
+          clearTimeout(authDeadline);
           if (registered) tunnels.unregister(runnerId, socket);
         });
         socket.on('error', () => {
