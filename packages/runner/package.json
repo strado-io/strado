@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@strado/relay": "*",
-    "@strado/server": "*"
+    "@strado/server": "*",
+    "undici": "^6.28.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

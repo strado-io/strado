@@ -16,6 +16,7 @@ import { runDaemon } from './daemon.js';
 import { defaultRunnerName, pairRunner, readIdentity, writeIdentity } from './identity.js';
 import { applyBundleEnv, bundleVersion, loadEnvFile, runnerPaths } from './paths.js';
 import { applyUpdate, fetchRunnerRelease, isNewer } from './selfUpdate.js';
+import { applyProxyFromEnv } from './proxy.js';
 import {
   UNIT_NAME,
   captureLoginPath,
@@ -51,6 +52,8 @@ export function resolveApiUrl(
 
 const paths = runnerPaths();
 loadEnvFile(paths.envFile);
+// After the env file: a proxy configured in runner.env must reach pair/update too.
+applyProxyFromEnv();
 const apiUrl = resolveApiUrl();
 
 async function cmdPair(): Promise<void> {
