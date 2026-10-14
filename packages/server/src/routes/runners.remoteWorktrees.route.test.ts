@@ -217,3 +217,98 @@ describe('POST /api/w/:ws/remote-worktrees', () => {
     expect(res.json().error.message).not.toBe('invalid request body');
   });
 });
+
+/**
+ * The create job declares its plan from what the runner says it is, and
+ * forwards the runner's own step ids — including the sandbox steps, which are
+ * the slow part of a first create and used to show as "Finalizing".
+ */
+function stubCreateApis(o: { sandbox: boolean; events: string }) {
+  const posted: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = url.toString();
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (u.includes('/v1/runners/socket-ticket')) {
+        return json({ ticket: 'tkt-1', httpBase: RUNNER_HTTP_BASE, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() });
+      }
+      if (u.startsWith(`${RUNNER_HTTP_BASE}/api/workspaces`)) return json({ activeWorkspaceId: 'rws', workspaces: [{ id: 'rws' }] });
+      if (u.startsWith(`${RUNNER_HTTP_BASE}/api/capabilities`)) {
+        return o.sandbox ? json({ sandbox: { runtime: 'podman' } }) : new Response('nope', { status: 404 });
+      }
+      if (u.startsWith(`${RUNNER_HTTP_BASE}/api/w/rws/repos/clone`)) {
+        posted.push('clone');
+        return json({ repo: { id: 'strado' }, alreadyRegistered: true, path: '/home/r/repos/strado' });
+      }
+      if (u.startsWith(`${RUNNER_HTTP_BASE}/api/w/rws/worktrees`) && init?.method === 'POST') {
+        posted.push('worktree');
+        return json({ jobId: 'rj-1' });
+      }
+      if (u.startsWith(`${RUNNER_HTTP_BASE}/events/jobs/rj-1`)) {
+        return new Response(o.events, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }
+      throw new Error(`unexpected fetch to ${u}`);
+    }),
+  );
+  return posted;
+}
+
+async function runCreate() {
+  const stores = await app.deps.registry.get('default');
+  await stores.repos.add(repoConfig('strado', 'https://github.com/strado-io/strado.git'));
+  const frames: { message: string; step?: string; steps?: { id: string }[]; detail?: string }[] = [];
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/w/default/remote-worktrees',
+    payload: { runnerId: 'runner-1', repoId: 'strado', ticketId: '', title: 'runner test', sourceBranch: 'main' },
+  });
+  expect(res.statusCode).toBe(200);
+  const { jobId } = res.json() as { jobId: string };
+  const off = app.deps.bus.on(`job:${jobId}`, (evt: { type: string; data: unknown }) => {
+    if (evt.type !== 'progress') return;
+    const p = evt.data as { message: string; data?: { step?: string; steps?: { id: string }[]; detail?: string } };
+    frames.push({ message: p.message, ...(p.data ?? {}) });
+  });
+  const job = await app.deps.jobs.wait(jobId);
+  off();
+  return { job, frames };
+}
+
+describe('POST /api/w/:ws/remote-worktrees step plan', () => {
+  it('declares the sandbox steps for a sandbox-capable runner and forwards its build output', async () => {
+    stubCreateApis({
+      sandbox: true,
+      events:
+        `event: progress\ndata: ${JSON.stringify({ message: 'Creating git worktree', data: { step: 'worktree' } })}\n\n` +
+        `event: progress\ndata: ${JSON.stringify({ message: 'Finalizing', data: { step: 'finalize' } })}\n\n` +
+        `event: progress\ndata: ${JSON.stringify({ message: 'Building sandbox', data: { step: 'sandbox-build' } })}\n\n` +
+        `event: progress\ndata: ${JSON.stringify({ message: 'STEP 2/5: RUN apt-get', data: { step: 'sandbox-build', detail: 'STEP 2/5: RUN apt-get' } })}\n\n` +
+        `event: done\ndata: {}\n\n`,
+    });
+    const { job, frames } = await runCreate();
+    expect(job.status).toBe('done');
+    const plan = frames.find((f) => f.steps)!.steps!.map((s) => s.id);
+    expect(plan).toEqual(['runner', 'clone', 'worktree', 'link', 'finalize', 'sandbox-detect', 'sandbox-build']);
+    const steps = frames.filter((f) => f.step && !f.detail).map((f) => f.step);
+    expect(steps).toEqual(['runner', 'clone', 'worktree', 'finalize', 'sandbox-build']);
+    expect(frames.some((f) => f.step === 'sandbox-build' && f.detail === 'STEP 2/5: RUN apt-get')).toBe(true);
+    // The plan must END on the runner's last step, not jump back to Finalizing.
+    expect(frames.at(-1)?.step).toBe('sandbox-build');
+  });
+
+  it('keeps the five-step plan for a runner without a sandbox runtime (or an old runner)', async () => {
+    stubCreateApis({
+      sandbox: false,
+      events:
+        `event: progress\ndata: ${JSON.stringify({ message: 'Creating git worktree', data: { step: 'worktree' } })}\n\n` +
+        `event: done\ndata: {}\n\n`,
+    });
+    const { job, frames } = await runCreate();
+    expect(job.status).toBe('done');
+    const plan = frames.find((f) => f.steps)!.steps!.map((s) => s.id);
+    expect(plan).toEqual(['runner', 'clone', 'worktree', 'link', 'finalize']);
+    expect(frames.at(-1)?.step).toBe('finalize');
+  });
+});

@@ -28,6 +28,9 @@ export type RunnerRow = {
 
 const TIMEOUT_MS = 10_000;
 
+/** Step ids a runner's own worktree job may emit that map 1:1 onto our plan. */
+const REMOTE_STEP_IDS = new Set(['worktree', 'link', 'finalize', 'sandbox-detect', 'sandbox-build']);
+
 export function pickSessionFields(w: {
   hasClaudeSession?: boolean; claudeStatus?: 'idle' | 'working' | 'waiting';
   claudeStatusById?: Record<string, 'idle' | 'working' | 'waiting'>; claudeSessions?: string[];
@@ -431,19 +434,36 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
     // of any intermediary. Now every step is reported on the same stream the
     // local create uses, so the dialog needs one code path for both.
     const job = app.deps.jobs.start('remote-worktree.create', async (ctx) => {
+      // Ask the runner what it is BEFORE declaring the plan: a sandbox-capable
+      // runner appends two steps (detect, build) and the build is the longest
+      // thing in the whole job — minutes of image pulling on a first run. Those
+      // used to arrive as detail text under "Finalizing", which the user read
+      // as a hang. An older runner without /api/capabilities is unsandboxed.
+      const [spaces, caps] = await Promise.all([
+        runner.fetch<{ activeWorkspaceId: string | null; workspaces: { id: string }[] }>(
+          body.runnerId,
+          '/api/workspaces',
+        ),
+        runner
+          .fetch<{ sandbox?: { runtime: string } | false }>(body.runnerId, '/api/capabilities')
+          .catch(() => ({ sandbox: false as const })),
+      ]);
+      const sandboxed = !!caps.sandbox;
       const step = stepReporter(ctx, [
         { id: 'runner', label: `Checking ${body.runnerId}` },
         { id: 'clone', label: `Cloning ${repoLabel} on ${body.runnerId}` },
         { id: 'worktree', label: 'Creating git worktree' },
         { id: 'link', label: 'Linking node_modules' },
         { id: 'finalize', label: 'Finalizing' },
+        ...(sandboxed
+          ? [
+              { id: 'sandbox-detect', label: 'Detecting sandbox deps' },
+              { id: 'sandbox-build', label: 'Building sandbox (first time on a runner takes 10+ min)' },
+            ]
+          : []),
       ]);
 
       step('runner');
-      const spaces = await runner.fetch<{ activeWorkspaceId: string | null; workspaces: { id: string }[] }>(
-        body.runnerId,
-        '/api/workspaces',
-      );
       const remoteWsId = spaces.activeWorkspaceId ?? spaces.workspaces[0]?.id;
       if (!remoteWsId) throw new AppError('VALIDATION', `runner ${body.runnerId} has no workspace`);
 
@@ -510,20 +530,29 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
       );
 
       step('worktree');
+      let current = 'worktree';
       const { httpBase, ticket } = await runner.credential(body.runnerId);
       // Follow the runner's own job so its steps appear in the same list.
       await followRemoteJob(
         `${httpBase}/events/jobs/${encodeURIComponent(jobId)}?ticket=${ticket}`,
         (evt) => {
           if (evt.type !== 'progress') return;
-          // A runner on our version sends step ids; anything else becomes detail
+          // Detail annotates the current line (build output, clone progress);
+          // a known step id advances it, once; anything else becomes detail
           // under the current step rather than being dropped.
-          if (evt.step && ['worktree', 'link', 'finalize'].includes(evt.step)) step(evt.step);
-          else if (evt.message) step.detail(evt.message);
+          if (evt.detail) step.detail(evt.detail);
+          else if (evt.step && REMOTE_STEP_IDS.has(evt.step)) {
+            if (evt.step !== current) {
+              current = evt.step;
+              step(evt.step);
+            }
+          } else if (evt.message) step.detail(evt.message);
         },
       );
 
-      step('finalize');
+      // An old runner that sends no step ids never advanced us past 'worktree';
+      // close the plan out here. A sandboxed runner ended on its own last step.
+      if (!sandboxed) step('finalize');
       return { runnerId: body.runnerId, remoteWsId, clonedTo: cloned.path };
     });
 
