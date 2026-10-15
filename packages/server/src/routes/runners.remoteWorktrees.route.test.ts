@@ -9,6 +9,16 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp, buildDeps } from '../app.js';
 
+// `ssh -G` on the test box knows no aliases; give it one so the create flow can
+// be exercised with the shape real desktops have (per-account github aliases).
+vi.mock('../services/gitProviders.js', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../services/gitProviders.js')>();
+  return {
+    ...orig,
+    resolveSshAlias: async (host: string) => (host === 'github-personal' ? 'github.com' : null),
+  };
+});
+
 let tmp: string;
 let home: string;
 let prevHome: string | undefined;
@@ -230,9 +240,11 @@ describe('POST /api/w/:ws/remote-worktrees', () => {
  * the slow part of a first create and used to show as "Finalizing".
  */
 let lastCloneBody: Record<string, unknown> = {};
+let lastWorktreeBody: Record<string, unknown> = {};
 function stubCreateApis(o: { sandbox: boolean; events: string }) {
   const posted: string[] = [];
   lastCloneBody = {};
+  lastWorktreeBody = {};
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -253,6 +265,7 @@ function stubCreateApis(o: { sandbox: boolean; events: string }) {
       }
       if (u.startsWith(`${RUNNER_HTTP_BASE}/api/w/rws/worktrees`) && init?.method === 'POST') {
         posted.push('worktree');
+        lastWorktreeBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
         return json({ jobId: 'rj-1' });
       }
       if (u.startsWith(`${RUNNER_HTTP_BASE}/events/jobs/rj-1`)) {
@@ -357,6 +370,20 @@ describe('POST /api/w/:ws/remote-worktrees clone credentials', () => {
     expect(job.status).toBe('done');
     expect(lastCloneBody.url).toBe('https://gitlab.example.test/acme/app.git');
     expect(lastCloneBody.credential).toEqual({ username: 'oauth2', password: 'gl-tok' });
+  });
+  it('bundles the GitHub token for the worktree step when the local remote is an SSH alias', async () => {
+    // The clone step de-aliases `github-personal` and finds the owner's token;
+    // the worktree step on the runner fetches with the token in sandboxEnv (no
+    // GitHub App for a personal account). Both must see the same host.
+    await fs.writeFile(path.join(home, 'github.json'), JSON.stringify({ 'github.com/mohan8git': { token: 'gh-tok' } }));
+    stubCreateApis({ sandbox: true, events: doneOnly });
+    const { job } = await runCreate('git@github-personal:mohan8git/app.git');
+    expect(job.status).toBe('done');
+    expect(lastCloneBody.url).toBe('https://github.com/mohan8git/app.git');
+    expect(lastCloneBody.credential).toEqual({ username: 'x-access-token', password: 'gh-tok' });
+    const env = lastWorktreeBody.sandboxEnv as Record<string, string>;
+    expect(env.GITHUB_TOKEN).toBe('gh-tok');
+    expect(env.GIT_HTTP_USER).toBe('x-access-token');
   });
   it('sends the remote as-is and no credential when nothing is connected for the host', async () => {
     stubCreateApis({ sandbox: false, events: doneOnly });

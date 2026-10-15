@@ -546,7 +546,12 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
       // a push token answered via GIT_ASKPASS. Assembled locally (never leaves
       // this machine except into the runner's 0600 env-file) and validated again
       // on the runner's CreateBody. Omitted entirely when there's nothing to send.
-      const sandboxEnv = await sandboxEnvForRepo(localRepo);
+      // Keyed on the DE-ALIASED remote, same as the clone credential above: a
+      // local `git@github-personal:…` remote is still github.com, and the
+      // runner's worktree step fetches with THIS token when the org has no
+      // GitHub App — with the alias host it found no token, and a private repo
+      // that had just cloned fine failed one step later as "cannot authenticate".
+      const sandboxEnv = await sandboxEnvForRepo({ ...localRepo, cloneUrl });
 
       const { jobId } = await runner.fetch<{ jobId: string }>(
         body.runnerId,
@@ -611,7 +616,14 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
         { id: 'sandbox-build', label: 'Building sandbox (first time on a runner takes 10+ min)' },
       ]);
       step('sandbox-detect');
-      const sandboxEnv = localRepo ? await sandboxEnvForRepo(localRepo) : {};
+      // De-aliased for the same reason as the create flow: the token lookup is
+      // by real host.
+      const sandboxEnv = localRepo
+        ? await sandboxEnvForRepo({
+            ...localRepo,
+            cloneUrl: localRepo.cloneUrl ? await portableCloneUrl(localRepo.cloneUrl, resolveSshAlias) : localRepo.cloneUrl,
+          })
+        : {};
       const { jobId } = await runner.fetch<{ jobId: string }>(
         body.runnerId,
         `/api/w/${encodeURIComponent(body.remoteWsId)}/worktrees/${encodeURIComponent(body.path)}/sandbox`,
