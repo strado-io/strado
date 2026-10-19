@@ -297,7 +297,7 @@ describe('jarvis: natural-language plan route', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: 'plan', steps: [{ action: 'tab.open' }] });
     // calls/repos default to [] for an older box that does not send them.
-    expect(plan.mock.calls[0]![0]).toEqual({ text: 'shell please', context: { ...ctx, focus: null, calls: [], repos: [] }, thread: [{ role: 'user', text: 'hi' }] });
+    expect(plan.mock.calls[0]![0]).toEqual({ text: 'shell please', context: { ...ctx, focus: null, workspace: null, workspaces: [], calls: [], repos: [] }, thread: [{ role: 'user', text: 'hi' }] });
   });
 
   it('the open Focus and each Focus\'s worktrees reach the model; an older box without them still works', async () => {
@@ -311,6 +311,18 @@ describe('jarvis: natural-language plan route', () => {
     expect(plan.mock.calls[1]![0].context).toMatchObject({ focus: null });
     // Bounded like the rest of the context.
     const huge = { ...ctx, focuses: [{ name: 'big', worktrees: Array.from({ length: 31 }, (_, i) => `wt-${i}`) }] };
+    expect((await post('/jarvis/plan', { text: 'x', context: huge, thread: [] })).statusCode).toBe(400);
+  });
+
+  it('the current workspace and the workspace list reach the model; an older box without them still works', async () => {
+    const plan = vi.fn(async () => ({ kind: 'answer' as const, text: 'ok', model: 'm', ms: 1 }));
+    deps.jarvisModel = { plan, recap: vi.fn() };
+    const withWs = { ...ctx, workspace: { name: 'FleetX' }, workspaces: [{ name: 'FleetX' }, { name: 'Personal' }] };
+    expect((await post('/jarvis/plan', { text: 'which workspace am I in', context: withWs, thread: [] })).statusCode).toBe(200);
+    expect(plan.mock.calls[0]![0].context).toMatchObject({ workspace: { name: 'FleetX' }, workspaces: [{ name: 'FleetX' }, { name: 'Personal' }] });
+    expect((await post('/jarvis/plan', { text: 'x', context: ctx, thread: [] })).statusCode).toBe(200);
+    expect(plan.mock.calls[1]![0].context).toMatchObject({ workspace: null, workspaces: [] });
+    const huge = { ...ctx, workspaces: Array.from({ length: 31 }, (_, i) => ({ name: `ws-${i}` })) };
     expect((await post('/jarvis/plan', { text: 'x', context: huge, thread: [] })).statusCode).toBe(400);
   });
 

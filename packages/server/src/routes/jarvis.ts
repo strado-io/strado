@@ -90,6 +90,9 @@ const PlanBody = z.object({
     tabs: z.array(z.object({ name, mode: z.string().max(20), label: z.string().max(300).optional(), busy: z.boolean(), worktree: name }).strict()).max(60),
     // repo: the owning repo's name ("in Strado Website" picks its worktree).
     worktrees: z.array(z.object({ name, branch: z.string().max(300).optional(), repo: name.optional() }).strict()).max(50),
+    // The workspace this window is in, and every workspace by name.
+    workspace: z.object({ name }).strict().nullable().default(null),
+    workspaces: z.array(z.object({ name }).strict()).max(30).default([]),
     // The Focus open in this window, and each Focus's member worktrees.
     focus: z.object({ name }).strict().nullable().default(null),
     focuses: z.array(z.object({ name, worktrees: z.array(name).max(30).default([]) }).strict()).max(30),

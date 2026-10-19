@@ -83,6 +83,7 @@ export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCo
       activeFocusId: p.activeFocusId ?? null,
       shellNames: readShellNames(),
       workspaces: p.workspaces,
+      activeWorkspaceId: p.activeWorkspaceId,
       repos: p.repos,
       scripts: h ? jarvisServerPort(wsId).cachedScripts(h.path) : null,
       stations: p.stations,

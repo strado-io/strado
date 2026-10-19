@@ -214,6 +214,8 @@ export type ParseContext = {
   /** The Focus open in this window ("this focus"), else null. */
   currentFocus?: { id: string; name: string } | null;
   workspaces?: { id: string; name: string }[];
+  /** The workspace this window is in; null when unknown. */
+  currentWorkspace?: { id: string; name: string } | null;
   repos?: { path: string; name: string }[];
   /** package.json scripts of the current worktree (name → command). */
   packageScripts: Record<string, string>;

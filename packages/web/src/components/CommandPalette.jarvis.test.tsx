@@ -393,15 +393,17 @@ describe('CommandPalette — asking agents, and recaps', () => {
       : [{ id: 'r2', from: { agentId: 'claude-2@b' }, to: 'human', kind: 'reply', body: '2 fail in auth.', createdAt: 3 }]);
     s.type('ask the claudes in this focus if their tests pass');
     s.key('Enter');
-    expect(await screen.findByText(/Asked claude-1, the answer will show here/)).toHaveTextContent('claude-2 is busy, it’ll answer after this turn');
+    await screen.findByText(/Asked claude-1, the answer will show here/);
+    expect(screen.getByTestId('jarvis-answer')).toHaveTextContent('claude-2 is busy, it’ll answer after this turn');
     await answerArrives();
-    const box = await screen.findByText(/claude-1: Yes, all 40 pass\./);
-    expect(box).toHaveTextContent('claude-2 is busy, it’ll answer after this turn');
+    await screen.findByText(/claude-1: Yes, all 40 pass\./);
+    expect(screen.getByTestId('jarvis-answer')).toHaveTextContent('claude-2 is busy, it’ll answer after this turn');
     await act(async () => {
       sse.handler?.({ type: 'message.queued', data: { scopeId: 's', id: 'r2', from: 'claude-2@b', to: 'human', kind: 'reply', replyTo: 'q2' } });
       await new Promise((r) => setTimeout(r, 0));
     });
-    const both = await screen.findByText(/claude-2: 2 fail in auth\./);
+    await screen.findByText(/claude-2: 2 fail in auth\./);
+    const both = screen.getByTestId('jarvis-answer');
     expect(both).toHaveTextContent('claude-1: Yes, all 40 pass.');
     expect(both).not.toHaveTextContent('Asked');
   });

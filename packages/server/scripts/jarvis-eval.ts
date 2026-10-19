@@ -42,6 +42,8 @@ const each = (action: string, n: number, check: (s: Step) => string | null = () 
   for (const s of got) { const why = check(s); if (why) return why; }
   return null;
 };
+/** Two workspaces, this window in FleetX. */
+const withWorkspaces: JarvisContext = { ...ctx, calls: [], workspace: { name: 'FleetX' }, workspaces: [{ name: 'FleetX' }, { name: 'Personal' }, { name: 'Strado IO' }] };
 /** A codex agent running beside claude-1 (and no call open). */
 const withCodex: JarvisContext = { ...ctx, calls: [], agents: [...ctx.agents, { name: 'codex-1', mode: 'codex', lifecycle: 'working' }], tabs: [...ctx.tabs, { name: 'codex-1', mode: 'codex', busy: true, worktree: 'master' }] };
 
@@ -128,6 +130,11 @@ const CASES: Case[] = [
   { text: 'what is claude working on', expect: plan('agent.recap', { agent: 'claude-1' }) },
   { text: 'what has codex done so far', context: withCodex, expect: plan('agent.recap', { agent: 'codex-1' }) },
   { text: 'what are all the agents doing', expect: plan('agent.recap', { agent: 'all' }) },
+  // Workspaces
+  { text: 'which workspace am I in', context: withWorkspaces, expect: answers },
+  { text: 'list my workspaces', context: withWorkspaces, expect: answers },
+  { text: 'switch to the personal workspace', context: withWorkspaces, expect: plan('nav.workspace', { name: 'Personal' }) },
+  { text: 'go to fleetx', context: { ...withWorkspaces, workspace: { name: 'Personal' } }, expect: plan('nav.workspace', { name: 'FleetX' }) },
   // Focus-wide
   { text: 'open a shell in every worktree in this focus', context: inFocus, expect: each('tab.open', 2, (s) => (s.args.mode === 'shell' && ['FD-00029_hotfix', 'main'].includes(String(s.args.worktree)) ? null : `tab.open ${JSON.stringify(s.args)}`)) },
   { text: 'ask all the claudes in this focus if their tests pass', context: inFocus, expect: each('agent.ask', 2, (s) => (['FD-00029_hotfix/claude-1', 'main/claude-2'].includes(String(s.args.to)) ? null : `asked ${s.args.to}`)) },
