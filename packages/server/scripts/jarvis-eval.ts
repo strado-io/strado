@@ -78,6 +78,8 @@ const CASES: Case[] = [
   { text: 'focus the shell', expect: plan('tab.focus', { tab: 'shell-2' }) },
   { text: 'open a shell in the hotfix worktree', expect: plan('tab.open', { mode: 'shell', worktree: 'FD-00029_hotfix' }) },
   { text: 'switch to claude', expect: plan('tab.focus', { tab: 'claude-1' }), jev: true },
+  { text: 'rename this shell to test', context: { ...ctx, focused: 'shell-1' }, expect: plan('tab.rename', { tab: 'shell-1', name: /^test$/i }) },
+  { text: 'call claude 1 reviewer', expect: plan('tab.rename', { tab: 'claude-1', name: /reviewer/i }) },
   { text: 'close shell 1', expect: plan('tab.close', { tab: 'shell-1' }), jev: true },
   { text: 'stop what is running in shell 2', expect: plan('tab.interrupt', { tab: 'shell-2' }) },
   { text: 'move shell 1 below claude', expect: plan('tab.place', { tab: 'shell-1', split: 'down', anchor: 'claude-1' }), jev: true },

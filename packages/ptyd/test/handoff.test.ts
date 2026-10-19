@@ -43,8 +43,8 @@ afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function startDaemon(): Promise<ChildProcess> {
-  const child = spawn(process.execPath, [BUNDLE, `--socket=${sock}`], { stdio: ['ignore', 'ignore', 'pipe'] });
+function startDaemon(extraArgs: string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<ChildProcess> {
+  const child = spawn(process.execPath, [BUNDLE, `--socket=${sock}`, ...extraArgs], { stdio: ['ignore', 'ignore', 'pipe'], env });
   daemons.push(child);
   const stderr: Buffer[] = [];
   child.stderr!.on('data', (c) => stderr.push(c));
@@ -220,4 +220,94 @@ describe('fd handoff', () => {
     },
     30000,
   );
+});
+
+/** A stand-in for strado-disclaim: records each argv, then execs it (fds and the IPC channel pass through exec). */
+function fakeLauncher(): { path: string; calls: () => string[][] } {
+  const log = path.join(dir, 'launcher.log');
+  const p = path.join(dir, 'fake-disclaim');
+  fs.writeFileSync(p, `#!/bin/sh\nprintf '%s\\0' "$@" >> '${log}'\nprintf '\\n' >> '${log}'\nexec "$@"\n`, { mode: 0o755 });
+  return {
+    path: p,
+    calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => l.split('\0').filter(Boolean)) : []),
+  };
+}
+
+async function openShell(c: TestClient, marker: string): Promise<{ shellPid: number; daemon: number }> {
+  const daemon = await daemonPid(c); // the daemon wants a hello first
+  c.send({ type: 'open', id: '/tmp\0shell', meta: { shell: '/bin/sh', argv: ['-c', `printf ${marker}; cat`], cwd: '/tmp', cols: 80, rows: 24 } });
+  const ack = await c.waitFor((f) => (f.message as { type: string }).type === 'open-ack');
+  c.send({ type: 'subscribe', id: '/tmp\0shell', replay: true });
+  await c.waitFor((f) => (f.message as { type: string }).type === 'output' && !!f.payload?.toString().includes(marker));
+  return { shellPid: (ack.message as { pid: number }).pid, daemon };
+}
+
+describe('handoff through the launcher (macOS privacy identity)', () => {
+  it('a successor is started through the launcher, marked responsible, and keeps the sessions', async () => {
+    const launcher = fakeLauncher();
+    await startDaemon([`--launcher=${launcher.path}`, '--responsible']);
+    const a = await connect(sock);
+    const { shellPid } = await openShell(a, 'launch-marker');
+    a.send({ type: 'prepare-upgrade' });
+    const prepared = await a.waitFor((f) => (f.message as { type: string }).type === 'upgrade-prepared', 10000);
+    const result = (prepared.message as { result: { ok: boolean; successorPid?: number } }).result;
+    if (result.successorPid) successorPids.push(result.successorPid);
+    expect(result.ok).toBe(true);
+    a.close();
+    const calls = launcher.calls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(expect.arrayContaining(['--handoff', '--responsible', `--launcher=${launcher.path}`]));
+    const { client: b, pid } = await reconnectWithHello(sock);
+    expect(pid).toBe(result.successorPid);
+    b.send({ type: 'list' });
+    const reply = await b.waitFor((f) => (f.message as { type: string }).type === 'list-reply');
+    expect((reply.message as { sessions: Array<{ pid: number }> }).sessions.map((x) => x.pid)).toEqual([shellPid]);
+    // Responsible already: no second hop.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(launcher.calls()).toHaveLength(1);
+    b.close();
+  }, 30000);
+
+  it('a successor that is not its own responsible process re-homes itself through the launcher, sessions intact', async () => {
+    const launcher = fakeLauncher();
+    // The old daemon knows no launcher (as a 0.1.64 daemon would): its successor
+    // finds one and must hop once more on its own.
+    await startDaemon(['--launcher=none', '--responsible'], { ...process.env, STRADO_PTYD_LAUNCHER: launcher.path });
+    const a = await connect(sock);
+    const { shellPid, daemon: first } = await openShell(a, 'rehome-marker');
+    a.send({ type: 'prepare-upgrade' });
+    const prepared = await a.waitFor((f) => (f.message as { type: string }).type === 'upgrade-prepared', 10000);
+    const result = (prepared.message as { result: { ok: boolean; successorPid?: number } }).result;
+    if (result.successorPid) successorPids.push(result.successorPid);
+    expect(result.ok).toBe(true);
+    a.close();
+    expect(launcher.calls()).toHaveLength(0); // hop 1 went the old way
+    // Hop 2: the successor re-homes through the launcher.
+    const start = Date.now();
+    let pid = 0;
+    let b: TestClient | null = null;
+    while (Date.now() - start < 10000) {
+      const r = await reconnectWithHello(sock);
+      b?.close();
+      b = r.client; pid = r.pid;
+      if (launcher.calls().length === 1 && pid !== result.successorPid && pid !== first) break;
+      await new Promise((res) => setTimeout(res, 200));
+    }
+    successorPids.push(pid);
+    expect(launcher.calls()).toHaveLength(1);
+    expect(launcher.calls()[0]).toEqual(expect.arrayContaining(['--handoff', '--responsible']));
+    expect(pid).not.toBe(result.successorPid);
+    b!.send({ type: 'list' });
+    const reply = await b!.waitFor((f) => (f.message as { type: string }).type === 'list-reply');
+    expect((reply.message as { sessions: Array<{ pid: number }> }).sessions.map((x) => x.pid)).toEqual([shellPid]);
+    b!.send({ type: 'subscribe', id: '/tmp\0shell', replay: true });
+    await b!.waitFor((f) => (f.message as { type: string }).type === 'output' && !!f.payload?.toString().includes('rehome-marker'));
+    b!.send({ type: 'input', id: '/tmp\0shell' }, Buffer.from('still-alive\n'));
+    // Output may arrive in several frames: look across all of them.
+    const seen = () => b!.frames().filter((f) => (f.message as { type: string }).type === 'output').map((f) => f.payload?.toString() ?? '').join('');
+    const until = Date.now() + 5000;
+    while (!seen().includes('still-alive') && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+    expect(seen()).toContain('still-alive');
+    b!.close();
+  }, 40000);
 });

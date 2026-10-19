@@ -236,6 +236,8 @@ function str(a: Record<string, unknown>, key: string, opts: { required?: boolean
   if (CONTROL.test(t)) refuse(`${key} has control characters`);
   return t;
 }
+/** Same cap as the strip's double-click rename. */
+const TAB_NAME_MAX = 40;
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
 const SPLITS: Split[] = ['right', 'down', 'tab'];
 /** The server takes the user's words for a recap up to this long. */
@@ -390,6 +392,16 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
         const name = str(a, 'tab', { required: true, max: 200 })!;
         const verb = action.slice(4) as 'close' | 'focus' | 'interrupt';
         return withTab(tabName(name, at, opened), (t) => tabStep(ctx, verb, t));
+      }
+      case 'tab.rename': {
+        const name = str(a, 'tab', { required: true, max: 200 })!;
+        const label = (str(a, 'name', { max: 2000, line: true }) ?? '').slice(0, TAB_NAME_MAX).trim();
+        if (looksSecret(label)) refuse('That name looks like a secret');
+        return withTab(tabName(name, at, opened), (t) => {
+          const mode = t.kind === 'tab' ? t.ref.mode : t.kind === 'step' ? opened[t.index] : null;
+          if (mode === 'browser') refuse('Only terminal and agent tabs can be renamed');
+          return mk('tab.rename', { name: label }, t, { risk: 'layout', where: 'hub', undoable: true }, [targetChip(ctx, t, (n) => `Rename ${n}`)], ctx);
+        });
       }
       case 'tab.place': {
         const name = str(a, 'tab', { required: true, max: 200 })!;
@@ -626,6 +638,7 @@ export function describeRun(plan: Plan, run: RunOutcome, ctx: ParseContext): str
       case 'tab.focus': return [`focused ${target}`, `focus ${target}`];
       case 'tab.close': return [`closed ${target}`, `close ${target}`];
       case 'tab.interrupt': return [`interrupted ${target}`, `interrupt ${target}`];
+      case 'tab.rename': return s.args.name ? [`renamed ${target} to "${s.args.name}"`, `rename ${target} to "${s.args.name}"`] : [`reset the name of ${target}`, `reset the name of ${target}`];
       case 'tab.place': return [`moved ${target}${where(s.args.place)}`, `move ${target}${where(s.args.place)}`];
       case 'browser.open': return [`opened ${s.args.url}${where(s.args.place)}`, `open ${s.args.url}`];
       case 'agent.message': return [`messaged ${agentOf(s.args.agentId)}`, `message ${agentOf(s.args.agentId)}`];

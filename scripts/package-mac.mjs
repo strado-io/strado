@@ -137,6 +137,11 @@ assertSelfContainedNode(bundledNode);
 step('compile cmdwatch');
 run('cc', ['-O2', '-framework', 'ApplicationServices', 'packages/desktop/cmdwatch.c', '-o', path.join(PACK, 'bin', 'strado-cmdwatch')]);
 
+step('compile strado-disclaim (terminal daemon privacy identity)');
+// after-pack moves it into Strado Terminals.app beside the Node runtime: the
+// terminal daemon starts handoff successors through it (see ptyd main.ts).
+run('cc', ['-O2', '-Wall', 'packages/desktop/disclaim.c', '-o', path.join(PACK, 'bin', 'strado-disclaim')]);
+
 step('compile strado-speech (voice)');
 // The usage strings ride in an embedded __info_plist section: TCC reads them
 // from the helper too when it asks for the mic and speech recognition.

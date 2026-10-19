@@ -140,6 +140,17 @@ describe('buildParseContext', () => {
       ]);
     });
 
+    it('a renamed session (the strip\'s own names) shows by its name off screen too', () => {
+      const ctx = buildParseContext({ ...none, hub: null, worktrees: wts,
+        shellNames: { '/w/main::1': 'test', '/w/main::claude::3': 'fixer bot' },
+        peers: [
+          peer({ agentId: 'shell-1@main', alias: null, mode: 'shell', worktreePath: '/w/main', sessionId: '1', executionId: null }),
+          peer({ agentId: 'claude-3@main', alias: null, mode: 'claude', worktreePath: '/w/main', sessionId: '3', executionId: null }),
+          peer({ agentId: 'shell-2@main', alias: null, mode: 'shell', worktreePath: '/w/main', sessionId: '2', executionId: null }),
+        ] });
+      expect(ctx.tabs.map((t) => t.label)).toEqual(['test', 'fixer bot', 'Shell 2']);
+    });
+
     it('capped at 60 tabs, on-screen ones always kept', () => {
       const many = Array.from({ length: 80 }, (_, i) => peer({ agentId: `shell-${i + 1}@main`, alias: null, mode: 'shell', worktreePath: '/w/main', sessionId: String(i + 1), executionId: null }));
       const ctx = buildParseContext({ ...none, worktrees: wts, peers: many,

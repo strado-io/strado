@@ -7,16 +7,63 @@
 // dead-code-eliminates branches — argv survives every bundler.
 // Logs to stderr; stdout stays empty.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { PtydServer } from './server.js';
 import { readSnapshot, clearSnapshot, type HandoffSnapshot } from './snapshot.js';
 import { type HandoffMessage } from './protocol.js';
 
-const DAEMON_VERSION = '0.2.2'; // bump alongside package.json
+const DAEMON_VERSION = '0.2.3'; // bump alongside package.json
 
 function arg(name: string): string | undefined {
   const prefix = `--${name}=`;
   const hit = process.argv.find((a) => a.startsWith(prefix));
   return hit?.slice(prefix.length);
+}
+
+/**
+ * macOS privacy (TCC) judges every process by its "responsible process". A
+ * launchd-started daemon is its own — but a handoff successor inherits its
+ * predecessor's, and a predecessor from an older app version runs a binary
+ * the update has since replaced: macOS can no longer match ANY grant to it
+ * (Desktop, Full Disk Access, the microphone all fail). The packaged app ships
+ * strado-disclaim beside the runtime (inside Strado Terminals.app): starting a
+ * successor through it makes that successor its own responsible process, with
+ * the helper's stable identity. `--launcher=PATH|none` and
+ * STRADO_PTYD_LAUNCHER override the lookup (tests); off macOS there is none.
+ */
+function resolveLauncher(): string | null {
+  const flag = arg('launcher');
+  if (flag !== undefined) return flag === 'none' ? null : flag;
+  const env = process.env.STRADO_PTYD_LAUNCHER;
+  if (env) return env === 'none' ? null : env;
+  if (process.platform !== 'darwin') return null;
+  try {
+    const p = path.join(path.dirname(fs.realpathSync(process.execPath)), 'strado-disclaim');
+    return fs.existsSync(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Set by launchd jobs and by successors started through the launcher. */
+const RESPONSIBLE = process.argv.includes('--responsible');
+const REHOME_DELAY_MS = 500;
+
+/**
+ * A daemon that is not its own responsible process, with a launcher at hand,
+ * hands its sessions to a successor started through it — once, sessions intact.
+ * On failure it keeps serving as it is.
+ */
+function rehomeIfNeeded(server: PtydServer, launcher: string | null): void {
+  if (!launcher || RESPONSIBLE) return;
+  setTimeout(() => {
+    process.stderr.write(`[ptyd] not its own responsible process; re-homing through ${launcher}\n`);
+    server.prepareUpgrade().then(
+      (r) => { if (!r.ok) process.stderr.write(`[ptyd] re-home failed, still serving: ${r.reason}\n`); },
+      (err) => process.stderr.write(`[ptyd] re-home failed, still serving: ${(err as Error).message}\n`),
+    );
+  }, REHOME_DELAY_MS).unref();
 }
 
 async function main(): Promise<void> {
@@ -38,11 +85,13 @@ async function runFresh(): Promise<void> {
     throw new Error(`--buffer-bytes must be a positive integer, got: ${rawBuf}`);
   }
 
-  const server = new PtydServer({ socketPath, daemonVersion: DAEMON_VERSION, bufferCap });
+  const launcher = resolveLauncher();
+  const server = new PtydServer({ socketPath, daemonVersion: DAEMON_VERSION, bufferCap, launcher });
   await server.listen();
   process.stderr.write(`[ptyd] listening on ${socketPath} (v${DAEMON_VERSION}, pid=${process.pid})\n`);
 
   wireShutdown(server);
+  rehomeIfNeeded(server, launcher);
 }
 
 async function runHandoffReceiver(): Promise<void> {
@@ -72,7 +121,8 @@ async function runHandoffReceiver(): Promise<void> {
   }
   log(`read snapshot: sessions=${snapshot.sessions.length}`);
 
-  const server = new PtydServer({ socketPath, daemonVersion: DAEMON_VERSION });
+  const launcher = resolveLauncher();
+  const server = new PtydServer({ socketPath, daemonVersion: DAEMON_VERSION, launcher });
   try {
     server.adoptSnapshot(snapshot);
   } catch (err) {
@@ -113,6 +163,7 @@ async function runHandoffReceiver(): Promise<void> {
     `[ptyd] (handoff successor) listening on ${socketPath} (v${DAEMON_VERSION}, pid=${process.pid}, sessions=${snapshot.sessions.length})\n`,
   );
   wireShutdown(server);
+  rehomeIfNeeded(server, launcher);
 }
 
 function wireShutdown(server: PtydServer): void {
