@@ -11,12 +11,9 @@ const esc = { id: 'E1', scopeId: 'default', from: { agentId: 'claude-1@repo', ex
 const done = { ...esc, id: 'E0', status: 'resolved', resolution: 'sqlite', resolvedBy: 'human', resolvedAt: 2 };
 const task = { id: 'T1', scopeId: 'default', title: 'write tests', body: '', ticketKey: 'FLT-1', worktreePath: null, dependsOn: [], status: 'open', createdBy: { agentId: 'human' }, claimedBy: null, createdAt: 1, updatedAt: 1, claimedAt: null, doneAt: null };
 const claimed = { ...task, id: 'T2', title: 'fix bug', status: 'claimed', claimedBy: { agentId: 'shell-1@repo' } };
-const forkQ = { id: 'F1', scopeId: 'default', from: { agentId: 'human', executionId: 'human' }, source: { agentId: 'claude-1@repo', worktreePath: '/w/repo', mode: 'claude', sessionId: '1' }, target: { kind: 'peer', agentId: 'shell-1@repo' }, notes: 'migrate DB', taskId: null, summarySource: null, summary: null, status: 'queued', summaryMessageId: null, messageId: null, packageBytes: null, error: null, createdAt: 5, summaryDeadline: null, deliveredAt: null, acceptedAt: null };
-const forkFailed = { ...forkQ, id: 'F2', status: 'failed', error: 'target gone', target: { kind: 'new', mode: 'codex', worktreePath: '/w/repo', agentId: null }, createdAt: 4 };
-const forkDone = { ...forkQ, id: 'F3', status: 'accepted', summarySource: 'agent', acceptedAt: 9, createdAt: 3 };
-const fns = () => ({ resolve: vi.fn().mockResolvedValue(undefined), dismiss: vi.fn().mockResolvedValue(undefined), createTask: vi.fn().mockResolvedValue(undefined), assignTask: vi.fn().mockResolvedValue(undefined), releaseTask: vi.fn().mockResolvedValue(undefined), doneTask: vi.fn().mockResolvedValue(undefined), cancelTask: vi.fn().mockResolvedValue(undefined), createFork: vi.fn(), cancelFork: vi.fn(), refresh: vi.fn() });
+const fns = () => ({ resolve: vi.fn().mockResolvedValue(undefined), dismiss: vi.fn().mockResolvedValue(undefined), createTask: vi.fn().mockResolvedValue(undefined), assignTask: vi.fn().mockResolvedValue(undefined), releaseTask: vi.fn().mockResolvedValue(undefined), doneTask: vi.fn().mockResolvedValue(undefined), cancelTask: vi.fn().mockResolvedValue(undefined), refresh: vi.fn() });
 
-beforeEach(() => { ctx.value = { escalations: [esc, done], tasks: [task, claimed], forks: [forkQ, forkFailed, forkDone], peers, loaded: true, error: null, ...fns() }; });
+beforeEach(() => { ctx.value = { escalations: [esc, done], tasks: [task, claimed], peers, loaded: true, error: null, ...fns() }; });
 
 describe('IntercomPanel', () => {
   it('lists open escalations first with agent, title, body and context links; resolve sends the typed text', async () => {
@@ -36,7 +33,28 @@ describe('IntercomPanel', () => {
     const row = screen.getByTestId('escalation-E1');
     expect(within(row).getByRole('button', { name: 'Resolve' })).toBeDisabled();
     await userEvent.click(within(row).getByRole('button', { name: 'Dismiss' }));
+    expect(ctx.value.dismiss).not.toHaveBeenCalled();
+    await userEvent.click(within(row).getByRole('button', { name: 'Confirm dismiss' }));
     expect(ctx.value.dismiss).toHaveBeenCalledWith('E1');
+  });
+  it('Dismiss asks first; Keep cancels and leaves the typed answer in place', async () => {
+    render(<IntercomPanel initialTab="escalations" onClose={vi.fn()} />);
+    const row = screen.getByTestId('escalation-E1');
+    const box = within(row).getByRole('textbox', { name: /your answer/i });
+    await userEvent.type(box, 'half an answer');
+    await userEvent.click(within(row).getByRole('button', { name: 'Dismiss' }));
+    expect(within(row).getByText(/dismiss without answering/i)).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: 'Keep' }));
+    expect(ctx.value.dismiss).not.toHaveBeenCalled();
+    expect(box).toHaveValue('half an answer');
+    expect(within(row).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+  it('a retargeted peer ask says it timed out waiting on a peer; a plain escalation does not', () => {
+    const retargeted = { ...esc, id: 'E3', from: { agentId: 'gone-1@repo', executionId: 'y' }, askMessageId: 'M1', createdAt: 2 };
+    ctx.value = { ...ctx.value, escalations: [esc, retargeted] };
+    render(<IntercomPanel initialTab="escalations" onClose={vi.fn()} />);
+    expect(within(screen.getByTestId('escalation-E3')).getByText(/peer ask timed out/i)).toBeInTheDocument();
+    expect(within(screen.getByTestId('escalation-E1')).queryByText(/peer ask timed out/i)).not.toBeInTheDocument();
   });
   it('tasks tab groups open / claimed / done, creates a task from the inline form, and offers row actions', async () => {
     render(<IntercomPanel initialTab="tasks" onClose={vi.fn()} />);
@@ -72,6 +90,7 @@ describe('IntercomPanel', () => {
     await userEvent.type(box, 'never mind');
     expect(box).toHaveValue('never mind');
     await userEvent.click(within(row).getByRole('button', { name: 'Dismiss' }));
+    await userEvent.click(within(row).getByRole('button', { name: 'Confirm dismiss' }));
     expect(ctx.value.dismiss).toHaveBeenCalledWith('E1');
     expect(box).toHaveValue('');
   });
@@ -85,39 +104,8 @@ describe('IntercomPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalled();
   });
-  it('Forks tab lists in-flight forks with status, source → target and label; Cancel only while summarising/queued; Open jumps to the target tab', async () => {
-    const onOpenTab = vi.fn();
-    render(<IntercomPanel initialTab="forks" onClose={vi.fn()} onOpenTab={onOpenTab} />);
-    expect(screen.getByRole('button', { name: 'Forks (1)' })).toHaveAttribute('aria-pressed', 'true');
-    const row = screen.getByTestId('fork-F1');
-    expect(within(row).getByText('queued')).toBeInTheDocument();
-    expect(within(row).getByText('migrate DB')).toBeInTheDocument();
-    expect(within(row).getAllByText('bob').length).toBeGreaterThan(0); // target alias
-    await userEvent.click(within(row).getByRole('button', { name: 'Open' }));
-    expect(onOpenTab).toHaveBeenCalledWith('/w/repo', 'shell', '1');
-    await userEvent.click(within(row).getByRole('button', { name: 'Cancel fork' }));
-    expect(ctx.value.cancelFork).toHaveBeenCalledWith('F1');
-    expect(screen.queryByTestId('fork-F2')).not.toBeInTheDocument(); // settled are collapsed
-    await userEvent.click(screen.getByText('Settled (2)'));
-    const failed = screen.getByTestId('fork-F2');
-    expect(within(failed).getByText('target gone')).toBeInTheDocument();
-    expect(within(failed).queryByRole('button', { name: 'Cancel fork' })).not.toBeInTheDocument();
-    expect(within(failed).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument(); // new-tab target never spawned
-    expect(within(screen.getByTestId('fork-F3')).getByText('summary: agent')).toBeInTheDocument();
-  });
-  it('focusId highlights the matching fork row', () => {
-    render(<IntercomPanel initialTab="forks" focusId="F1" onClose={vi.fn()} />);
-    expect(screen.getByTestId('fork-F1').className).toMatch(/ring-sky-700/);
-  });
-  it('focusId naming a settled fork opens the Settled section on the initial render', () => {
-    render(<IntercomPanel initialTab="forks" focusId="F2" onClose={vi.fn()} />);
-    expect(screen.getByTestId('fork-F2').className).toMatch(/ring-sky-700/);
-  });
-  it('rerendering with a new focusId moves the ring to the new row', () => {
-    const { rerender } = render(<IntercomPanel initialTab="forks" focusId="F1" onClose={vi.fn()} />);
-    expect(screen.getByTestId('fork-F1').className).toMatch(/ring-sky-700/);
-    rerender(<IntercomPanel initialTab="forks" focusId="F3" onClose={vi.fn()} />);
-    expect(screen.getByTestId('fork-F1').className).not.toMatch(/ring-sky-700/);
-    expect(screen.getByTestId('fork-F3').className).toMatch(/ring-sky-700/);
+  it('focusId highlights the matching escalation row', () => {
+    render(<IntercomPanel initialTab="escalations" focusId="E1" onClose={vi.fn()} />);
+    expect(screen.getByTestId('escalation-E1').className).toMatch(/ring-amber-500/);
   });
 });

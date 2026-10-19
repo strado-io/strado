@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { defaultShell } from './platform.js';
 import { hooksDir } from './claudeHooks.js';
+import { opencodeConfigContent } from './opencodeLaunch.js';
 
 export type TerminalStatus = 'running' | 'exited';
 export type TerminalInfo = { status: TerminalStatus; pid: number | null; exitCode: number | null };
@@ -179,6 +180,10 @@ export function sessionEnv(key: string, cwd: string): Record<string, string> {
     // The bootstrap starts as a login shell, then execs the user's interactive
     // shell after applying the scoped PATH. Sandboxes override this to bash.
     STRADO_INNER_SHELL: defaultShell(),
+    // Registers the `strado` MCP for OpenCode (tab or typed in a Shell) per
+    // session, like Codex's -c flags: the user's global config is never
+    // written, and a stale global `strado` entry is overridden.
+    OPENCODE_CONFIG_CONTENT: opencodeConfigContent(env.OPENCODE_CONFIG_CONTENT),
   } as Record<string, string>;
 }
 

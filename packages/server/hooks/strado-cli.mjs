@@ -14,7 +14,6 @@ export const USAGE = `usage:
   strado task claim|done|release <id>
   strado escalate <title...> [-m <body>] [--task <id>]
   strado ask <agent> <message...> [--timeout <seconds>]
-  strado fork <agent> | --new <claude|codex|opencode|pi> [-m <notes>] [--task <id>]
 `;
 
 const TIMEOUT_MS = 5000;
@@ -62,12 +61,6 @@ function pad(s, n) { return s.length >= n ? s : s + ' '.repeat(n - s.length); }
 const ASK_POLL_MS = 2000;
 const ASK_DEFAULT_S = 120;
 
-// Mirror of STRADO_SENDER_ID (src/services/intercomSchema.ts): the synthetic
-// sender behind a fork's summary ask, package and acceptance notice.
-const STRADO_SENDER_ID = 'strado';
-const FORK_HAND_OVER_PREFIX = 'FORK HAND-OVER';
-const FORK_MODES = ['claude', 'codex', 'opencode', 'pi'];
-
 function takeFlag(rest, name) {           // removes `--name value` from rest, returns value or null
   const i = rest.indexOf(name);
   if (i === -1) return null;
@@ -85,7 +78,7 @@ export async function main(argv, env = process.env, io = { out: process.stdout, 
 
   const [verb, ...rest] = argv;
   if (!verb || verb === '-h' || verb === '--help') { await errLine(USAGE); return 2; }
-  if (verb !== 'send' && verb !== 'peers' && verb !== 'inbox' && verb !== 'task' && verb !== 'escalate' && verb !== 'ask' && verb !== 'fork') { await errLine(`error: unknown command '${verb}'\n${USAGE}`); return 2; }
+  if (verb !== 'send' && verb !== 'peers' && verb !== 'inbox' && verb !== 'task' && verb !== 'escalate' && verb !== 'ask') { await errLine(`error: unknown command '${verb}'\n${USAGE}`); return 2; }
   const token = env.STRADO_AGENT_TOKEN;
   if (!token) { await errLine('error: STRADO_AGENT_TOKEN is not set (run this inside a Strado tab)'); return 2; }
   const server = serverFromEnv(env);
@@ -131,19 +124,7 @@ export async function main(argv, env = process.env, io = { out: process.stdout, 
       for (const m of messages) {
         const from = sanitize((m.from && (m.from.alias || m.from.agentId)) || 'unknown');
         const when = new Date(m.createdAt).toISOString();
-        if (m.forkId && m.from && m.from.agentId === STRADO_SENDER_ID) {
-          const bodySan = sanitize(m.body);
-          const hint = `[reply with: strado send strado <message> --reply-to ${m.id}]`;
-          if (m.kind === 'request' && typeof m.body === 'string' && m.body.startsWith(FORK_HAND_OVER_PREFIX)) {
-            await out(`── strado · fork · ${m.id} · ${when}\n${bodySan}\n${hint}\n\n`);
-          } else if (m.kind === 'request') {
-            // The summary ask's own body already says how to reply; `hint` is
-            // for the hand-over, which does not.
-            await out(`── strado · fork-summary · ${m.id} · ${when}\n${bodySan}\n\n`);
-          } else {
-            await out(`── strado · fork · ${m.id} · ${when} · accepted\n${bodySan}\n\n`);
-          }
-        } else if (m.kind === 'request' && m.escalationId) {
+        if (m.kind === 'request' && m.escalationId) {
           const fromAgentId = sanitize(m.from.agentId);
           await out(`── ${from} · ask · ${m.id} · ${when}\n${sanitize(m.body)}\n[reply with: strado send ${fromAgentId} <answer> --reply-to ${m.id}]\n\n`);
         } else if (m.from && m.from.agentId === 'human' && m.escalationId) {
@@ -196,7 +177,8 @@ export async function main(argv, env = process.env, io = { out: process.stdout, 
       await out(`escalated ${escalation.id}; the human will reply to your inbox\n`);
       return 0;
     }
-    if (verb === 'ask') {
+    // ask
+    {
       const args = [...rest];
       const timeoutS = Number(takeFlag(args, '--timeout') ?? ASK_DEFAULT_S);
       const [agent, ...words] = args;
@@ -213,27 +195,6 @@ export async function main(argv, env = process.env, io = { out: process.stdout, 
         if (e.to === 'human') break;
       }
       throw new CliError(3, `error: no reply after ${Math.round(timeoutMs / 1000)} s — retargeted to the human; the answer will arrive in your inbox`);
-    }
-    // fork
-    {
-      const args = [...rest];
-      const notes = takeFlag(args, '-m');
-      const taskId = takeFlag(args, '--task');
-      const newTabMode = takeFlag(args, '--new');
-      let body;
-      if (newTabMode !== null) {
-        if (args.length > 0 || !FORK_MODES.includes(newTabMode)) throw new CliError(2, USAGE);
-        body = { newTab: { mode: newTabMode } };
-      } else {
-        if (args.length !== 1) throw new CliError(2, USAGE);
-        body = { to: okId(args[0]) };
-      }
-      const { fork } = await call('POST', '/api/intercom/forks', { ...body, ...(notes !== null ? { notes } : {}), ...(taskId !== null ? { taskId } : {}) });
-      const target = fork.target.kind === 'peer' ? fork.target.agentId : (fork.target.agentId ?? fork.target.mode);
-      if (fork.status === 'summarising') { await out(`fork ${fork.id} queued → ${target}; summary requested from you — reply to it in your inbox\n`); return 0; }
-      if (fork.status === 'delivered') { await out(`fork ${fork.id} delivered to ${target}\n`); return 0; }
-      await out(`fork ${fork.id} queued → ${target}\n`);
-      return 0;
     }
   } catch (err) {
     if (err instanceof CliError) { await errLine(err.message); return err.exitCode; }

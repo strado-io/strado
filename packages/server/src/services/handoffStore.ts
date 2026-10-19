@@ -1,5 +1,5 @@
 // Shared agent/conversation types. The handoff feature that owned this file was
-// removed in favour of intercom forks; the turn diary, agent session registry
+// removed; the turn diary, agent session registry
 // and conversation readers still share these shapes.
 export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
 

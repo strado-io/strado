@@ -62,20 +62,4 @@ describe('renderInbox', () => {
     expect(out).toContain('── human · resolution · M2 · 1970-01-01T00:00:00.000Z · re: escalation E2\nsqlite\n');
     expect(out).toContain('── bob · message · M3 · 1970-01-01T00:00:00.000Z\nplain\n');
   });
-
-  it('renders a fork hand-over, a fork summary ask, and a fork acceptance notice from strado', async () => {
-    const out = await renderInbox([
-      { id: 'F1', kind: 'request', forkId: 'FRK1', from: { agentId: 'strado', alias: null }, body: 'FORK HAND-OVER fix the parser\nmore', createdAt: 0 },
-      { id: 'F2', kind: 'request', forkId: 'FRK1', from: { agentId: 'strado', alias: null }, body: 'Strado is forking your work...', createdAt: 0 },
-      { id: 'F3', kind: 'message', forkId: 'FRK1', from: { agentId: 'strado', alias: null }, body: 'fork FRK1 accepted by claude-2@repo', createdAt: 0 },
-    ], null);
-    expect(out).toContain(
-      '── strado · fork · F1 · 1970-01-01T00:00:00.000Z\nFORK HAND-OVER fix the parser\nmore\n[reply with intercom_send to=strado kind=reply replyTo=F1 when you have taken over]\n',
-    );
-    // The summary ask carries its own reply instruction in the body, so no
-    // hint is appended after it; the hand-over above still gets one.
-    expect(out).toContain('── strado · fork-summary · F2 · 1970-01-01T00:00:00.000Z\nStrado is forking your work...\n');
-    expect(out).not.toContain('replyTo=F2');
-    expect(out).toContain('── strado · fork · F3 · 1970-01-01T00:00:00.000Z · accepted\nfork FRK1 accepted by claude-2@repo\n');
-  });
 });

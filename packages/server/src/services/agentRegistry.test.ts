@@ -423,7 +423,7 @@ describe('setAlias / resolve', () => {
     await expect(reg.setAlias('default', 'claude-1@str-13', 'Strado')).rejects.toMatchObject({ code: 'VALIDATION' });
   });
 
-  it('resolve("strado") is always NOT_FOUND: the fork sender is never a registered peer', async () => {
+  it('resolve("strado") is always NOT_FOUND: the reserved name is never a registered peer', async () => {
     await reg.register({ key: claudeKey(WT, '1'), cwd: WT, scopeId: 'default' });
     await expect(reg.resolve('default', 'strado')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(reg.resolve('default', 'STRADO')).rejects.toMatchObject({ code: 'NOT_FOUND' });

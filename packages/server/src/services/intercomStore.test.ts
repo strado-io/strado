@@ -5,10 +5,10 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { createEventBus, type BusEvent } from '../events/bus.js';
-import { BODY_MAX, CONTEXT_ITEMS_MAX, CONTEXT_MAX, EXPIRES_MAX_MS, RETENTION_MS, STRADO_SENDER_ID } from './intercomSchema.js';
+import { BODY_MAX, CONTEXT_ITEMS_MAX, CONTEXT_MAX, EXPIRES_MAX_MS, RETENTION_MS } from './intercomSchema.js';
 import {
   HUMAN, INTERCOM_CHANNEL, SCHEMA_VERSION, createDisabledIntercomStore, createIntercomStore, newMessageId,
-  type EscalationInput, type ForkInput, type IntercomStore, type SendInput, type TaskInput, type TurnInput,
+  type EscalationInput, type IntercomStore, type SendInput, type TaskInput, type TurnInput,
 } from './intercomStore.js';
 
 let dir: string;
@@ -99,7 +99,7 @@ describe('send', () => {
     const { receipt, replayed } = store.send(msg({ context: [{ kind: 'file', value: 'src/a.ts' }] }));
     off();
     expect(replayed).toBe(false);
-    expect(receipt).toMatchObject({ state: 'queued', createdAt: clock.now, expiresAt: null, deliveryCount: 0, replyId: null });
+    expect(receipt).toMatchObject({ state: 'queued', createdAt: clock.now, expiresAt: clock.now + RETENTION_MS, deliveryCount: 0, replyId: null });
     expect(events).toEqual([{ type: 'message.queued', data: { id: receipt.id, scopeId: 'ws', from: A, to: B, kind: 'message' } }]);
     expect(JSON.stringify(events)).not.toContain('hello');
   });
@@ -161,7 +161,7 @@ describe('send', () => {
     store.close();
     store = await open({ scopeCap: 2 });
     store.send(msg());
-    store.send(msg({ scopeId: 'other', toAgentId: A }));  // another scope does not count
+    store.send(msg({ scopeId: 'other' }));  // another scope does not count
     store.send(msg());
     expect(() => store.send(msg())).toThrowError(expect.objectContaining({ code: 'BACKPRESSURE' }));
   });
@@ -283,7 +283,7 @@ describe('listScope', () => {
     const b = store.send(msg({ body: 'b', fromAgentId: B, fromExecutionId: 'exB', toAgentId: A })).receipt.id;
     clock.now += 10;
     const c = store.send(msg({ body: 'c' })).receipt.id;
-    store.send(msg({ scopeId: 'other', toAgentId: A }));
+    store.send(msg({ scopeId: 'other' }));
     store.pull('ws', B, 'exB', 1);       // a delivered
     store.ack('ws', B, a);        // a acknowledged
     const all = store.listScope('ws');
@@ -293,6 +293,15 @@ describe('listScope', () => {
     expect(store.listScope('ws', { since: t0 + 10 }).map((m) => m.id)).toEqual([c, b]);
     expect(store.listScope('ws', { limit: 1 }).map((m) => m.id)).toEqual([c]);
     expect(store.listScope('ws', { limit: 999 }).length).toBe(3);
+  });
+
+  it('agent: one station\'s line found in the database, however busy the rest of the scope is', async () => {
+    const busy = await open({ scopeCap: 1000 });
+    const quiet = busy.send(msg({ body: 'quiet one', toAgentId: 'q@repo' })).receipt.id;
+    for (let i = 0; i < 260; i++) { clock.now += 1; busy.send(msg({ body: `chatter ${i}`, fromAgentId: B, fromExecutionId: 'exB', toAgentId: A })); }
+    expect(busy.listScope('ws', { agent: 'q@repo' }).map((m) => m.id)).toEqual([quiet]);
+    expect(busy.listScope('ws', { agent: B, limit: 5 })).toHaveLength(5);
+    busy.close?.();
   });
 });
 
@@ -306,21 +315,22 @@ describe('disabled store (task 4 methods)', () => {
 });
 
 describe('sweep', () => {
-  it('expires queued messages past expiresAt with an event, never delivered ones', () => {
+  it('expires queued and delivered messages past expiresAt with an event, never acknowledged ones', () => {
     const q2 = store.send(msg({ expiresInMs: 1000, body: 'a' })).receipt.id;
     clock.now += 1;
     const d2 = store.send(msg({ expiresInMs: 1000, body: 'b' })).receipt.id;
     store.pull('ws', B, 'exB', 2);                              // both delivered
+    store.ack('ws', B, d2);                                     // acknowledged: never expires
     const q3 = store.send(msg({ expiresInMs: 1000, body: 'c' })).receipt.id;   // stays queued
     clock.now += 1000;
     const off = listen();
     const r = store.sweep();
     off();
-    expect(r.expired).toBe(1);
+    expect(r.expired).toBe(2);
     expect(store.receipt('ws', A, q3).state).toBe('expired');
-    expect(store.receipt('ws', A, d2).state).toBe('delivered');
-    expect(store.receipt('ws', A, q2).state).toBe('delivered');
-    expect(events).toEqual([{ type: 'message.expired', data: { id: q3, scopeId: 'ws', from: A, to: B } }]);
+    expect(store.receipt('ws', A, d2).state).toBe('acknowledged');
+    expect(store.receipt('ws', A, q2).state).toBe('expired');
+    expect(events.map((e) => (e.data as { id: string }).id).sort()).toEqual([q2, q3].sort());
     expect(() => store.ack('ws', B, q3)).toThrowError(expect.objectContaining({ code: 'CONFLICT' }));
   });
 
@@ -338,9 +348,9 @@ describe('sweep', () => {
     const expired = store.send(msg({ expiresInMs: 1 })).receipt.id;  // expires_at = t0 + 1
     clock.now += 1;
     store.sweep();                                               // → expired
-    const delivered = store.send(msg()).receipt.id;
+    const delivered = store.send(msg({ expiresInMs: 0 })).receipt.id;
     store.pull('ws', B, 'exB', 1);                                      // only `delivered` is queued → delivered
-    const queued = store.send(msg()).receipt.id;
+    const queued = store.send(msg({ expiresInMs: 0 })).receipt.id;
     clock.now += 7 * 24 * 60 * 60 * 1000 - 2;                    // acked is 1 ms short of 7 d, expired 2 ms short
     expect(store.sweep().deleted).toBe(0);
     clock.now += 2;
@@ -361,7 +371,7 @@ describe('sweep', () => {
   });
 
   it('disabled store sweeps as a no-op', () => {
-    expect(createDisabledIntercomStore('x').sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0, forksDeleted: 0 });
+    expect(createDisabledIntercomStore('x').sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0 });
   });
 });
 
@@ -592,7 +602,7 @@ describe('turns', () => {
     const many = Array.from({ length: 55 }, (_, i) => turn({ turnIndex: i, prompt: `p${i}` }));
     store.recordTurns('ws', A, 'conv1', many);
     store.recordTurns('ws', B, 'convB', [turn({ turnIndex: 0 })]);
-    expect(store.sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 6, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0, forksDeleted: 0 });
+    expect(store.sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 6, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0 });
     const left = store.listTurns('ws', A, { limit: 100 });
     expect(left).toHaveLength(50);
     expect(left.map((t) => t.turnIndex)).toEqual(Array.from({ length: 50 }, (_, i) => 54 - i));
@@ -604,7 +614,7 @@ describe('turns', () => {
     const d = createDisabledIntercomStore('x');
     expect(() => d.recordTurns('ws', A, 'c', [])).toThrow(/unavailable/);
     expect(() => d.listTurns('ws', A, { limit: 1 })).toThrow(/unavailable/);
-    expect(d.sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0, forksDeleted: 0 });
+    expect(d.sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0 });
   });
 });
 
@@ -853,163 +863,11 @@ describe('escalations', () => {
   });
 });
 
-describe('forks', () => {
+describe('schema v5 (the removed fork feature)', () => {
   const exA = { agentId: A, executionId: 'exA' };
-  const exB = { agentId: B, executionId: 'exB' };
-  const fork = (over: Partial<ForkInput> = {}): ForkInput => ({ scopeId: 'ws', from: exA, source: { agentId: A, worktreePath: '/w/repo', mode: 'claude', sessionId: '1' }, target: { kind: 'peer', agentId: B }, notes: 'take over', ...over });
   beforeEach(async () => { store = await open(); });
 
-  it('commits a package and delivery together and never duplicates it on retry', () => {
-    const f = store.createFork(fork());
-    store.forkSetSummary('ws', f.id, 'diary', 'summary');
-    const delivered = store.deliverFork('ws', f.id, B, 'FORK HAND-OVER package', []);
-    expect(delivered.status).toBe('delivered');
-    expect(store.deliverFork('ws', f.id, B, 'retry', []).messageId).toBe(delivered.messageId);
-    expect(store.peek('ws', B, 20)).toHaveLength(1);
-    expect(events.filter((e) => e.type === 'fork.delivered')).toHaveLength(1);
-  });
-
-  it('rolls back invalid delivery and leaves a cancelled fork without a package', () => {
-    const f = store.createFork(fork());
-    expect(() => store.deliverFork('ws', f.id, B, '', [])).toThrow();
-    expect(store.getFork('ws', f.id).status).toBe('queued');
-    expect(store.peek('ws', B, 20)).toEqual([]);
-    store.cancelFork('ws', f.id);
-    expect(store.deliverFork('ws', f.id, B, 'package', []).status).toBe('cancelled');
-    expect(store.peek('ws', B, 20)).toEqual([]);
-  });
-
-  it('recovers an older package inserted before recording fork delivery', () => {
-    const f = store.createFork(fork());
-    const sent = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID,
-      toAgentId: B, kind: 'request', body: 'FORK HAND-OVER original', forkId: f.id }));
-    expect(store.deliverFork('ws', f.id, B, 'retry', []).messageId).toBe(sent.receipt.id);
-    expect(store.peek('ws', B, 20)).toHaveLength(1);
-  });
-
-  it('does not mistake an unrecorded summary ask for a delivered package', () => {
-    const f = store.createFork(fork());
-    const ask = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID,
-      toAgentId: A, kind: 'request', body: 'Strado is forking your work. Summarise it.', forkId: f.id }));
-    const delivered = store.deliverFork('ws', f.id, B, 'FORK HAND-OVER package', []);
-    expect(delivered.messageId).not.toBe(ask.receipt.id);
-    expect(delivered.target.agentId).toBe(B);
-    expect(store.peek('ws', B, 20)).toHaveLength(1);
-  });
-
-  it('creates queued, emits fork.created without notes', () => {
-    const f = store.createFork(fork());
-    expect(f).toMatchObject({ status: 'queued', summarySource: null, summary: null, target: { kind: 'peer', agentId: B } });
-    const ev = events.find((e) => e.type === 'fork.created');
-    expect(ev?.data).toEqual({ scopeId: 'ws', id: f.id, status: 'queued', source: A, target: B, targetKind: 'peer', summarySource: null });
-    expect(JSON.stringify(ev)).not.toContain('take over');
-  });
-
-  it('summary request → summarising; the source\'s reply to it sets the summary and re-queues; a stranger\'s reply does not', () => {
-    const f = store.createFork(fork());
-    const req = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: A, kind: 'request', body: 'summarise', forkId: f.id }));
-    const s = store.forkSummaryRequested('ws', f.id, req.receipt.id, clock.now + 60_000);
-    expect(s).toMatchObject({ status: 'summarising', summaryMessageId: req.receipt.id, summaryDeadline: clock.now + 60_000 });
-    store.send(msg({ fromAgentId: A, fromExecutionId: 'exA', toAgentId: STRADO_SENDER_ID, kind: 'reply', replyTo: req.receipt.id, body: 'goal: X; done: Y' }));
-    const q = store.getFork('ws', f.id);
-    expect(q).toMatchObject({ status: 'queued', summarySource: 'agent', summary: 'goal: X; done: Y' });
-    expect(events.map((e) => e.type)).toContain('fork.queued');
-    // The guard is the fork's own `source`, not merely "the request's recipient
-    // replied": a summary ask that went to anyone else is ignored.
-    const g = store.createFork(fork({ source: { agentId: B, worktreePath: '/w/repo', mode: 'claude', sessionId: '2' }, target: { kind: 'peer', agentId: C } }));
-    const stray = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: A, kind: 'request', body: 'summarise', forkId: g.id }));
-    store.forkSummaryRequested('ws', g.id, stray.receipt.id, clock.now + 60_000);
-    store.send(msg({ fromAgentId: A, fromExecutionId: 'exA', toAgentId: STRADO_SENDER_ID, kind: 'reply', replyTo: stray.receipt.id, body: 'not my fork' }));
-    expect(store.getFork('ws', g.id)).toMatchObject({ status: 'summarising', summarySource: null, summary: null });
-  });
-
-  it('a late summary reply after the fork moved on leaves the fork untouched', () => {
-    const f = store.createFork(fork());
-    const req = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: A, kind: 'request', body: 'summarise', forkId: f.id }));
-    store.forkSummaryRequested('ws', f.id, req.receipt.id, clock.now + 60_000);
-    store.forkSetSummary('ws', f.id, 'diary', 'from diary');
-    store.send(msg({ fromAgentId: A, fromExecutionId: 'exA', toAgentId: STRADO_SENDER_ID, kind: 'reply', replyTo: req.receipt.id, body: 'late' }));
-    expect(store.getFork('ws', f.id)).toMatchObject({ status: 'queued', summarySource: 'diary', summary: 'from diary' });
-  });
-
-  it('delivered → accepted on the target\'s ack, or on its reply; a stranger cannot', () => {
-    const f = store.createFork(fork());
-    const pkg = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: B, kind: 'request', body: 'FORK HAND-OVER', forkId: f.id }));
-    const d = store.forkDelivered('ws', f.id, pkg.receipt.id, B, 1234);
-    expect(d).toMatchObject({ status: 'delivered', messageId: pkg.receipt.id, packageBytes: 1234, deliveredAt: clock.now });
-    store.pull('ws', B, 'exB');
-    store.ack('ws', B, pkg.receipt.id);
-    expect(store.getFork('ws', f.id)).toMatchObject({ status: 'accepted', acceptedAt: clock.now });
-    expect(events.filter((e) => e.type === 'fork.accepted')).toHaveLength(1);
-    const g = store.createFork(fork());
-    const pkg2 = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: B, kind: 'request', body: 'FORK HAND-OVER', forkId: g.id }));
-    store.forkDelivered('ws', g.id, pkg2.receipt.id, B, 10);
-    store.send(msg({ fromAgentId: B, fromExecutionId: 'exB', toAgentId: STRADO_SENDER_ID, kind: 'reply', replyTo: pkg2.receipt.id, body: 'taken over' }));
-    expect(store.getFork('ws', g.id).status).toBe('accepted');
-    // Acceptance is gated on the fork's `target_agent`, not on whoever is
-    // entitled to ack the message: a fork pointing at C stays delivered.
-    const h = store.createFork(fork({ target: { kind: 'peer', agentId: C } }));
-    const pkg3 = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: B, kind: 'request', body: 'FORK HAND-OVER', forkId: h.id }));
-    store.forkDelivered('ws', h.id, pkg3.receipt.id, C, 10);
-    store.pull('ws', B, 'exB');
-    store.ack('ws', B, pkg3.receipt.id);
-    expect(store.getFork('ws', h.id).status).toBe('delivered');
-  });
-
-  it('cancel only while summarising or queued; failed is terminal; list newest first with status filter; stale summarising surfaces; sweep purges closed', () => {
-    const a = store.createFork(fork()); clock.now += 1;
-    const b = store.createFork(fork({ target: { kind: 'new', mode: 'codex', worktreePath: '/w/repo', agentId: null } })); clock.now += 1;
-    expect(store.cancelFork('ws', a.id).status).toBe('cancelled');
-    expect(store.cancelFork('ws', a.id).status).toBe('cancelled');
-    const req = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: A, kind: 'request', body: 's', forkId: b.id }));
-    store.forkSummaryRequested('ws', b.id, req.receipt.id, clock.now + 10);
-    clock.now += 11;
-    expect(store.staleSummarising(clock.now).map((f) => f.id)).toEqual([b.id]);
-    expect(store.forkFailed('ws', b.id, 'target did not register').status).toBe('failed');
-    expect(() => store.cancelFork('ws', b.id)).toThrow(expect.objectContaining({ code: 'CONFLICT', details: { reason: 'not_cancellable' } }));
-    expect(store.listForks('ws').map((f) => f.id)).toEqual([b.id, a.id]);
-    expect(store.listForks('ws', { status: 'failed' }).map((f) => f.id)).toEqual([b.id]);
-    clock.now += RETENTION_MS + 1;
-    expect(store.sweep().forksDeleted).toBe(2);
-  });
-
-  it('ackAll accepts the delivered fork it acknowledges, once', () => {
-    const f = store.createFork(fork());
-    const pkg = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: B, kind: 'request', body: 'FORK HAND-OVER', forkId: f.id }));
-    store.forkDelivered('ws', f.id, pkg.receipt.id, B, 10);
-    const { batchId } = store.pull('ws', B, 'exB');
-    store.confirm('ws', B, 'exB', batchId!);
-    expect(store.ackAll('ws', B, 'exB')).toBe(1);
-    expect(store.getFork('ws', f.id)).toMatchObject({ status: 'accepted', acceptedAt: clock.now });
-    expect(events.filter((e) => e.type === 'fork.accepted')).toHaveLength(1);
-    expect(store.ackAll('ws', B, 'exB')).toBe(0);
-    expect(events.filter((e) => e.type === 'fork.accepted')).toHaveLength(1);
-  });
-
-  it('forkSetSummary fills a fork with no summary yet and never overwrites the one that got there first', () => {
-    // A fork nobody was asked to summarise — the spec's "created", which is
-    // `queued` in this schema — takes the sweeper's diary or `none` summary.
-    const f = store.createFork(fork());
-    expect(store.forkSetSummary('ws', f.id, 'diary', 'from diary')).toMatchObject({ status: 'queued', summarySource: 'diary', summary: 'from diary' });
-    expect(events.filter((e) => e.type === 'fork.queued')).toHaveLength(1);
-    // Summarised already: a second call changes nothing and emits nothing.
-    expect(store.forkSetSummary('ws', f.id, 'none', null)).toMatchObject({ status: 'queued', summarySource: 'diary', summary: 'from diary' });
-    expect(events.filter((e) => e.type === 'fork.queued')).toHaveLength(1);
-    // The same guard is what makes a late diary fallback lose to the source's
-    // own reply, which re-queued the fork with summarySource 'agent'.
-    const g = store.createFork(fork());
-    const req = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: A, kind: 'request', body: 's', forkId: g.id }));
-    store.forkSummaryRequested('ws', g.id, req.receipt.id, clock.now + 60_000);
-    store.send(msg({ fromAgentId: A, fromExecutionId: 'exA', toAgentId: STRADO_SENDER_ID, kind: 'reply', replyTo: req.receipt.id, body: 'agent summary' }));
-    expect(store.forkSetSummary('ws', g.id, 'diary', 'from diary')).toMatchObject({ status: 'queued', summarySource: 'agent', summary: 'agent summary' });
-    // Past queued there is nothing left to summarise.
-    const h = store.createFork(fork());
-    const pkg = store.send(msg({ fromAgentId: STRADO_SENDER_ID, fromExecutionId: STRADO_SENDER_ID, toAgentId: B, kind: 'request', body: 'FORK HAND-OVER', forkId: h.id }));
-    store.forkDelivered('ws', h.id, pkg.receipt.id, B, 10);
-    expect(store.forkSetSummary('ws', h.id, 'diary', 'too late')).toMatchObject({ status: 'delivered', summarySource: null, summary: null });
-  });
-
-  it('migrating a version-4 store keeps rows and adds forks + messages.fork_id', async () => {
+  it('migrating a version-4 store keeps rows and still creates the unused forks table + messages.fork_id', async () => {
     store.send(msg()); store.createTask({ scopeId: 'ws', by: exA, title: 't' });
     store.close();
     const require = createRequire(import.meta.url);
@@ -1018,6 +876,108 @@ describe('forks', () => {
     store = await open();
     expect(store.listScope('ws')).toHaveLength(1);
     expect(store.listTasks('ws')).toHaveLength(1);
-    expect(store.listForks('ws')).toEqual([]);
+    store.close();
+    const db2 = new DatabaseSync(file);
+    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(SCHEMA_VERSION);
+    expect(db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'forks'").get()).toBeDefined();
+    expect((db2.prepare('PRAGMA table_info(messages)').all() as { name: string }[]).map((c) => c.name)).toContain('fork_id');
+    db2.close();
+    store = await open();
+  });
+
+  it('a store that already holds fork rows and fork-tagged messages still opens and reads them as plain messages', async () => {
+    store.send(msg());
+    store.close();
+    const require = createRequire(import.meta.url);
+    const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(file);
+    db.exec("UPDATE messages SET fork_id = 'F1'");
+    db.exec(`INSERT INTO forks (id, scope_id, from_agent, from_execution, source_agent, source_worktree, source_mode, source_session,
+      target_kind, target_agent, status, created_at) VALUES ('F1', 'ws', 'a', 'ea', 'a', '/w', 'claude', '1', 'peer', 'b', 'delivered', 0)`);
+    db.close();
+    store = await open();
+    const [m] = store.listScope('ws');
+    expect(m).toBeDefined();
+    expect(m).not.toHaveProperty('forkId');
+    expect(store.sweep()).not.toHaveProperty('forksDeleted');
+  });
+});
+
+describe('review fixes (expiry, pressure, ordering, self-send, ask reply)', () => {
+  const REDELIVER = 5 * 60 * 1000;
+
+  it('a delivered-but-unacked message is not redelivered, peeked or claimed past its expiresAt', () => {
+    const { id } = store.send(msg({ expiresInMs: REDELIVER + 1000 })).receipt;
+    store.pull('ws', B, 'exB');
+    clock.now += REDELIVER + 1000;
+    expect(store.peek('ws', B, 10)).toEqual([]);
+    expect(store.claim('ws', B, 'exB', [id]).messages).toEqual([]);
+    expect(store.pull('ws', B, 'exB').messages).toEqual([]);
+  });
+
+  it('sweep expires overdue delivered rows too, and purges them after retention', () => {
+    const { id } = store.send(msg({ expiresInMs: 1000 })).receipt;
+    store.pull('ws', B, 'exB');
+    clock.now += 1000;
+    const off = listen();
+    expect(store.sweep().expired).toBe(1);
+    off();
+    expect(store.receipt('ws', A, id).state).toBe('expired');
+    expect(events).toContainEqual({ type: 'message.expired', data: { id, scopeId: 'ws', from: A, to: B } });
+    clock.now += RETENTION_MS;
+    expect(store.sweep().deleted).toBe(1);
+  });
+
+  it('a message sent without expiresInMs expires after the retention window; 0 still means never', () => {
+    const omitted = store.send(msg()).receipt;
+    expect(omitted.expiresAt).toBe(clock.now + RETENTION_MS);
+    expect(store.send(msg({ expiresInMs: 0 })).receipt.expiresAt).toBeNull();
+  });
+
+  it('backpressure ignores rows whose expiresAt has passed, before any sweep', async () => {
+    store.close();
+    store = await open({ scopeCap: 2 });
+    store.send(msg({ expiresInMs: 1000 }));
+    store.send(msg({ expiresInMs: 1000 }));
+    clock.now += 1000;
+    expect(() => store.send(msg())).not.toThrow();
+  });
+
+  it('pull serves the oldest deliverable rows first, redeliveries included, like peek', () => {
+    const old = store.send(msg({ body: 'old' })).receipt.id;
+    store.pull('ws', B, 'exB', 1);
+    clock.now += REDELIVER;
+    store.send(msg({ body: 'n1' }));
+    store.send(msg({ body: 'n2' }));
+    const peeked = store.peek('ws', B, 2).map((m) => m.id);
+    const got = store.pull('ws', B, 'exB', 2).messages;
+    expect(got.map((m) => m.id)).toEqual(peeked);
+    expect(got[0]).toMatchObject({ id: old, redelivery: true });
+  });
+
+  it('rejects a message to yourself', () => {
+    expect(() => store.send(msg({ toAgentId: A }))).toThrowError(expect.objectContaining({ code: 'VALIDATION' }));
+  });
+
+  it('rejects an escalation addressed to its own asker', () => {
+    expect(() => store.createEscalation({ scopeId: 'ws', from: { agentId: A, executionId: 'exA' }, to: A, title: 't', body: 'b', context: [] }))
+      .toThrowError(expect.objectContaining({ code: 'VALIDATION' }));
+  });
+
+  it('the asker polling a resolved ask acknowledges the reply copy, so it never also lands in its inbox', () => {
+    const e = store.createEscalation({ scopeId: 'ws', from: { agentId: A, executionId: 'exA' }, to: B, title: 't', body: 'q?', context: [], timeoutMs: 10_000 });
+    const [ask] = store.pull('ws', B, 'exB').messages;
+    store.send(msg({ fromAgentId: B, fromExecutionId: 'exB', toAgentId: A, kind: 'reply', replyTo: ask!.id, body: 'yes' }));
+    expect(store.pollEscalation('ws', e.id, A)).toMatchObject({ status: 'resolved', resolution: 'yes' });
+    expect(store.peek('ws', A, 10)).toEqual([]);
+  });
+
+  it('a poll by anyone but the asker leaves the reply in the asker inbox', () => {
+    const e = store.createEscalation({ scopeId: 'ws', from: { agentId: A, executionId: 'exA' }, to: B, title: 't', body: 'q?', context: [], timeoutMs: 10_000 });
+    const [ask] = store.pull('ws', B, 'exB').messages;
+    store.send(msg({ fromAgentId: B, fromExecutionId: 'exB', toAgentId: A, kind: 'reply', replyTo: ask!.id, body: 'yes' }));
+    store.pollEscalation('ws', e.id, B);
+    store.pollEscalation('ws', e.id);
+    expect(store.peek('ws', A, 10).map((m) => m.body)).toEqual(['yes']);
   });
 });

@@ -22,6 +22,22 @@ contextBridge.exposeInMainWorld('strado', {
     ipcRenderer.on('strado:fullscreen', handler);
     return () => ipcRenderer.removeListener('strado:fullscreen', handler);
   },
+  // "Talk to Strado": on-device speech (macOS). start(names to prime
+  // recognition with); events: {type:'partial'|'final'|'level'|'error', …}.
+  voice: {
+    available: ipcRenderer.sendSync('strado:voice-available'),
+    start: (contextual) => ipcRenderer.invoke('strado:voice', 'start', { contextual }),
+    stop: () => ipcRenderer.invoke('strado:voice', 'stop'),
+    cancel: () => ipcRenderer.invoke('strado:voice', 'cancel'),
+    onEvent: (cb) => {
+      const handler = (_e, evt) => cb(evt);
+      ipcRenderer.on('strado:voice-event', handler);
+      return () => ipcRenderer.removeListener('strado:voice-event', handler);
+    },
+  },
+  // The command box holds the keyboard: a preview that grabs focus without a
+  // click hands it back.
+  holdKeyboard: (on) => ipcRenderer.send('strado:hold-keyboard', !!on),
   // Open a runner's dashboard in its own window (single-use attach URL).
   openRunner: (url) => ipcRenderer.invoke('strado:open-runner', url),
 

@@ -57,13 +57,14 @@ function renderDashboard() {
 describe('Dashboard ticket provider errors', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     ticketsIssues.mockReset();
   });
 
   it('renders a reconnect banner for a provider whose poll failed', async () => {
     ticketsIssues.mockResolvedValue({ issues: {}, missing: [], errors: { linear: 'Linear rejected the token' } });
     renderDashboard();
-    await waitFor(() => expect(screen.getAllByText('Repo One').length).toBeGreaterThan(0));
+    await screen.findByRole('heading', { name: 'What do you want to do?' }); // the tree has loaded
 
     expect(await screen.findByText(/Linear connection failed/)).toBeInTheDocument();
 
@@ -75,7 +76,7 @@ describe('Dashboard ticket provider errors', () => {
   it('clears the banner once a later poll comes back clean', async () => {
     ticketsIssues.mockResolvedValue({ issues: {}, missing: [], errors: { linear: 'Linear rejected the token' } });
     renderDashboard();
-    await waitFor(() => expect(screen.getAllByText('Repo One').length).toBeGreaterThan(0));
+    await screen.findByRole('heading', { name: 'What do you want to do?' }); // the tree has loaded
     expect(await screen.findByText(/Linear connection failed/)).toBeInTheDocument();
 
     // the recovered poll's response replaces the stale error wholesale — this
@@ -88,7 +89,7 @@ describe('Dashboard ticket provider errors', () => {
   it('does not render a banner when the batch has no errors', async () => {
     ticketsIssues.mockResolvedValue({ issues: {}, missing: [], errors: {} });
     renderDashboard();
-    await waitFor(() => expect(screen.getAllByText('Repo One').length).toBeGreaterThan(0));
+    await screen.findByRole('heading', { name: 'What do you want to do?' }); // the tree has loaded
     await waitFor(() => expect(ticketsIssues).toHaveBeenCalled());
     expect(screen.queryByText(/connection failed/)).not.toBeInTheDocument();
   });

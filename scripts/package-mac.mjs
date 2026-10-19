@@ -137,6 +137,12 @@ assertSelfContainedNode(bundledNode);
 step('compile cmdwatch');
 run('cc', ['-O2', '-framework', 'ApplicationServices', 'packages/desktop/cmdwatch.c', '-o', path.join(PACK, 'bin', 'strado-cmdwatch')]);
 
+step('compile strado-speech (voice)');
+// The usage strings ride in an embedded __info_plist section: TCC reads them
+// from the helper too when it asks for the mic and speech recognition.
+run('swiftc', ['-O', 'packages/desktop/speech.swift', '-o', path.join(PACK, 'bin', 'strado-speech'),
+  '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', 'packages/desktop/speech-Info.plist']);
+
 step('bundle desktop main/preload + strado MCP (minified)');
 run('npx', ['esbuild', 'packages/desktop/main.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', '--external:electron', `--outfile=${path.join(PACK, 'app', 'main.cjs')}`]);
 run('npx', ['esbuild', 'packages/desktop/preload.cjs', '--bundle', '--minify', '--platform=node', '--format=cjs', '--external:electron', `--outfile=${path.join(PACK, 'app', 'preload.cjs')}`]);

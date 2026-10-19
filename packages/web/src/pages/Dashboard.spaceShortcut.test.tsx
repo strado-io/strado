@@ -45,10 +45,11 @@ vi.mock('../api', () => ({
 vi.mock('./TerminalView', () => ({ TerminalView: () => <div data-testid="inline-hub" /> }));
 
 import { Dashboard } from './Dashboard';
+import { showSidebarOnHome } from './dashboardTestHome';
 
 const noop = vi.fn();
 function renderDashboard() {
-  return render(
+  const view = render(
     <Dashboard
       onNewWorktree={noop} onShowLogs={noop}
       onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
@@ -56,11 +57,14 @@ function renderDashboard() {
       update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
     />,
   );
+  showSidebarOnHome();
+  return view;
 }
 
 describe('Dashboard space shortcut', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     localStorage.setItem('strado:onboarding-welcomed', '1');
     localStorage.setItem('strado:onboarding-dismissed', '1');
     switchTo.mockClear();
@@ -70,7 +74,7 @@ describe('Dashboard space shortcut', () => {
     // Collapsing unmounts the sidebar, and with it the chord's own listener —
     // while the shell keeps intercepting Cmd+Shift+Arrow inside embeds and
     // forwarding it, so the chord became a swallowed no-op.
-    localStorage.setItem('strado:sidebar-collapsed', '1');
+    localStorage.setItem('strado:sidebar-collapsed:v2', '1');
     renderDashboard();
     await waitFor(() => expect(screen.getByLabelText('Open sidebar')).toBeInTheDocument());
     fireEvent.keyDown(window, { key: 'ArrowRight', metaKey: true, shiftKey: true });
@@ -78,7 +82,7 @@ describe('Dashboard space shortcut', () => {
   });
 
   it('responds to the forwarded embed hotkey with the sidebar collapsed', async () => {
-    localStorage.setItem('strado:sidebar-collapsed', '1');
+    localStorage.setItem('strado:sidebar-collapsed:v2', '1');
     const handlers: ((combo: string) => void)[] = [];
     (window as unknown as { strado: unknown }).strado = {
       onHotkey: (cb: (combo: string) => void) => { handlers.push(cb); return () => {}; },
@@ -94,7 +98,7 @@ describe('Dashboard space shortcut', () => {
   });
 
   it('stays at the last space rather than wrapping', async () => {
-    localStorage.setItem('strado:sidebar-collapsed', '1');
+    localStorage.setItem('strado:sidebar-collapsed:v2', '1');
     renderDashboard();
     await waitFor(() => expect(screen.getByLabelText('Open sidebar')).toBeInTheDocument());
     fireEvent.keyDown(window, { key: 'ArrowLeft', metaKey: true, shiftKey: true });
@@ -116,6 +120,7 @@ describe('Dashboard space shortcut', () => {
 describe('removed Dashboard sessions shortcut', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     localStorage.setItem('strado:onboarding-welcomed', '1');
     localStorage.setItem('strado:onboarding-dismissed', '1');
   });
@@ -137,6 +142,7 @@ describe('removed Dashboard sessions shortcut', () => {
 describe('Dashboard settings shortcut (⌘,)', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     localStorage.setItem('strado:onboarding-welcomed', '1');
     localStorage.setItem('strado:onboarding-dismissed', '1');
   });

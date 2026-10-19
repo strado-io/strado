@@ -1,6 +1,6 @@
 {
   "name": "@strado/server",
-  "version": "0.1.62",
+  "version": "0.1.63",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.131.0",
     "@fastify/static": "^7.0.0",
     "@fastify/websocket": "^8.3.1",
     "@strado/ptyd": "*",

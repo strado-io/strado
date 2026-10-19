@@ -1,19 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { ForkDto } from '../api';
-import { INTERCOM_EVENT_TYPES } from '../eventStream';
 import {
-  activeForks,
   collectionOf,
   computeIntercomNotifications,
   escalationForTab,
   escalationsByWorktree,
-  forkLabel,
-  forkTargetLabel,
   intercomReducer,
+  isRetargetedAsk,
   nextSeenIds,
   openEscalations,
   peerForTab,
-  settledForks,
+  type IntercomAction,
   type IntercomState,
 } from './intercom';
 
@@ -25,11 +21,11 @@ const esc = (over: Partial<IntercomState['escalations'][number]> = {}) => ({
   id: 'E1', scopeId: 'default', from: { agentId: 'claude-1@repo', executionId: 'x' }, to: 'human', title: 'db?', body: 'pg or sqlite', context: [],
   taskId: null, status: 'open' as const, resolution: null, resolvedBy: null, createdAt: 1, resolvedAt: null, expiresAt: null, ...over,
 });
-const base: IntercomState = { escalations: [], tasks: [], forks: [], peers, loaded: true, error: null };
+const base: IntercomState = { escalations: [], tasks: [], peers, loaded: true, error: null };
 
 describe('intercom reducer and selectors', () => {
   it('loaded replaces every collection; single-collection actions replace only theirs', () => {
-    const s = intercomReducer({ ...base, loaded: false }, { type: 'loaded', escalations: [esc()], tasks: [], forks: [], peers });
+    const s = intercomReducer({ ...base, loaded: false }, { type: 'loaded', escalations: [esc()], tasks: [], peers });
     expect(s.loaded).toBe(true);
     expect(s.escalations).toHaveLength(1);
     const s2 = intercomReducer(s, { type: 'escalations', escalations: [] });
@@ -86,49 +82,40 @@ describe('intercom reducer and selectors', () => {
     expect(r3.seen).toEqual(new Set(['a']));
     expect(r3.fire).toEqual([{ id: 'a', path: '/w/repo', mode: 'claude', sessionId: '1', title: 'repo: claude-1@repo needs a decision — db?', body: 'pg or sqlite' }]);
   });
+  it('a successful single-collection fetch clears a stale error', () => {
+    const actions: IntercomAction[] = [
+      { type: 'escalations', escalations: [] },
+      { type: 'tasks', tasks: [] },
+      { type: 'peers', peers: [] },
+    ];
+    for (const action of actions) {
+      expect(intercomReducer({ ...base, error: 'boom' }, action).error).toBeNull();
+    }
+  });
+  it('isRetargetedAsk: a human-bound escalation that began as a peer ask', () => {
+    expect(isRetargetedAsk(esc({ askMessageId: 'M1' }))).toBe(true);
+    expect(isRetargetedAsk(esc())).toBe(false);
+    expect(isRetargetedAsk(esc({ askMessageId: null }))).toBe(false);
+    expect(isRetargetedAsk(esc({ to: 'shell-1@repo', askMessageId: 'M1' }))).toBe(false);
+  });
+  it('nextSeenIds fires for a retargeted ask whose asker has exited, with no tab to open', () => {
+    const s: IntercomState = { ...base, peers: [], escalations: [esc({ id: 'r', askMessageId: 'M1' })] };
+    const r1 = nextSeenIds(new Set(), s, () => 'repo');
+    expect(r1.seen).toEqual(new Set(['r']));
+    expect(r1.fire).toEqual([{ id: 'r', path: null, mode: null, sessionId: null, title: 'claude-1@repo timed out waiting on a peer — db?', body: 'pg or sqlite' }]);
+    expect(nextSeenIds(r1.seen, s, () => 'repo').fire).toEqual([]);
+  });
+  it('a retargeted ask whose asker is still live notifies through its tab like any escalation', () => {
+    const s = { ...base, escalations: [esc({ id: 'r', askMessageId: 'M1' })] };
+    expect(nextSeenIds(new Set(), s, () => 'repo').fire).toEqual([{ id: 'r', path: '/w/repo', mode: 'claude', sessionId: '1', title: 'repo: claude-1@repo needs a decision — db?', body: 'pg or sqlite' }]);
+  });
 });
 
-const fork = (over: Partial<ForkDto> = {}): ForkDto => ({
-  id: 'F1', scopeId: 'default', from: { agentId: 'human', executionId: 'human' },
-  source: { agentId: 'claude-1@repo', worktreePath: '/w/repo', mode: 'claude', sessionId: '1' },
-  target: { kind: 'peer', agentId: 'shell-1@repo' }, notes: 'migrate DB\nmore', taskId: null,
-  summarySource: null, summary: null, status: 'queued', summaryMessageId: null, messageId: null, packageBytes: null,
-  error: null, createdAt: 10, summaryDeadline: null, deliveredAt: null, acceptedAt: null, ...over,
-});
-describe('forks', () => {
-  it('reducer: forks action replaces only forks; loaded carries forks', () => {
-    const s1 = intercomReducer(base, { type: 'forks', forks: [fork()] });
-    expect(s1.forks).toHaveLength(1); expect(s1.tasks).toEqual(base.tasks);
-    const s2 = intercomReducer(base, { type: 'loaded', escalations: [], tasks: [], forks: [fork(), fork({ id: 'F2' })], peers });
-    expect(s2.forks.map((f) => f.id)).toEqual(['F1', 'F2']); expect(s2.loaded).toBe(true);
-  });
-  it('collectionOf routes fork.* to forks', () => {
-    expect(collectionOf({ type: 'fork.queued', data: { scopeId: 'default', id: 'F1' } })).toBe('forks');
+describe('routing and tabs', () => {
+  it('collectionOf routes task.* to tasks, peer.* to peers, the rest to escalations', () => {
     expect(collectionOf({ type: 'task.done', data: { scopeId: 'default', id: 'T' } })).toBe('tasks');
     expect(collectionOf({ type: 'peer.registered', data: { scopeId: 'default', id: 'x' } })).toBe('peers');
-  });
-  it('INTERCOM_EVENT_TYPES lists the seven fork events', () => {
-    expect(INTERCOM_EVENT_TYPES.filter((t) => t.startsWith('fork.'))).toEqual(['fork.created', 'fork.summarising', 'fork.queued', 'fork.delivered', 'fork.accepted', 'fork.failed', 'fork.cancelled']);
-  });
-  it('activeForks / settledForks split by status, newest first', () => {
-    const s = { ...base, forks: [fork({ id: 'A', status: 'accepted', createdAt: 1 }), fork({ id: 'Q', createdAt: 2 }), fork({ id: 'S', status: 'summarising', createdAt: 3 }), fork({ id: 'X', status: 'failed', createdAt: 4 })] };
-    expect(activeForks(s).map((f) => f.id)).toEqual(['S', 'Q']);
-    expect(settledForks(s).map((f) => f.id)).toEqual(['X', 'A']);
-  });
-  it('forkLabel: first line of the notes, hard-cut at 120 chars with no ellipsis; worktree basename only when that first line is blank', () => {
-    expect(forkLabel(fork())).toBe('migrate DB');
-    expect(forkLabel(fork({ notes: '\n  \n' }))).toBe('repo');
-    // A blank first line falls back even though a later line has content.
-    expect(forkLabel(fork({ notes: '\nmigrate DB' }))).toBe('repo');
-    const long = forkLabel(fork({ notes: 'x'.repeat(200) }));
-    expect(long).toBe('x'.repeat(120));
-    expect(long).not.toContain('…');
-  });
-  it('forkTargetLabel: alias for a known peer, agent id otherwise, "new <mode> tab" until spawned', () => {
-    expect(forkTargetLabel(base, { kind: 'peer', agentId: 'shell-1@repo' })).toBe('bob');
-    expect(forkTargetLabel(base, { kind: 'peer', agentId: 'ghost@repo' })).toBe('ghost@repo');
-    expect(forkTargetLabel(base, { kind: 'new', mode: 'codex', worktreePath: '/w/repo', agentId: null })).toBe('new codex tab');
-    expect(forkTargetLabel(base, { kind: 'new', mode: 'codex', worktreePath: '/w/repo', agentId: 'codex-2@repo' })).toBe('new codex tab · codex-2@repo');
+    expect(collectionOf({ type: 'escalation.opened', data: { scopeId: 'default', id: 'E' } })).toBe('escalations');
   });
   it('peerForTab matches path + mode + session id', () => {
     expect(peerForTab(base, { path: '/w/repo', mode: 'shell', id: '1' })?.alias).toBe('bob');

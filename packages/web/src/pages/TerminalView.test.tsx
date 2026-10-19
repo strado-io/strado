@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // TerminalView reads intercom state for the focused tab's escalation banner;
@@ -8,13 +8,11 @@ const intercomStub = vi.hoisted(() => ({
   escalations: [] as unknown[],
   peers: [] as unknown[],
 }));
-const createFork = vi.hoisted(() => vi.fn());
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: intercomStub.escalations, tasks: [], forks: [], peers: intercomStub.peers, loaded: true, error: null,
+    escalations: intercomStub.escalations, tasks: [], peers: intercomStub.peers, loaded: true, error: null,
     refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
     assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
-    createFork: (...a: unknown[]) => createFork(...a), cancelFork: vi.fn(),
   }),
 }));
 
@@ -198,7 +196,6 @@ beforeEach(() => {
   kbFile.mockReset().mockResolvedValue({ content: '', size: 0, mtimeMs: 0 });
   intercomStub.escalations = [];
   intercomStub.peers = [];
-  createFork.mockReset().mockResolvedValue({ id: 'F1', status: 'summarising' });
   sseHandler = null;
   (globalThis as any).WebSocket = FakeWS;
   (globalThis as any).ResizeObserver = class { observe() {} disconnect() {} };
@@ -207,61 +204,6 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllMocks(); });
 
 describe('TerminalView', () => {
-  // Forking needs the tab's registered peer id, which only the intercom knows.
-  describe('forking the focused agent tab', () => {
-    const sourcePeer = {
-      agentId: 'claude-1@repo', alias: null, mode: 'claude', worktreePath: worktree.path,
-      sessionId: '1', lifecycle: 'idle', live: true,
-    };
-    const targetPeer = {
-      agentId: 'shell-1@repo', alias: 'bob', mode: 'shell', worktreePath: worktree.path,
-      sessionId: '1', lifecycle: 'idle', live: true,
-    };
-
-    it('leaves Fork disabled until the focused agent tab has registered as a peer', () => {
-      intercomStub.peers = [];
-      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} />);
-      expect(screen.getByRole('button', { name: 'Fork' })).toBeDisabled();
-    });
-
-    it('opens the dialog on the tab\'s peer, then closes it and reports the fork id', async () => {
-      intercomStub.peers = [sourcePeer, targetPeer];
-      createFork.mockResolvedValue({ id: 'F7', status: 'summarising' });
-      const onForked = vi.fn();
-      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onForked={onForked} />);
-
-      fireEvent.click(screen.getByRole('button', { name: 'Fork' }));
-      const dialog = screen.getByRole('dialog', { name: 'Fork to…' });
-      fireEvent.change(within(dialog).getByRole('textbox', { name: /notes for the target/i }), {
-        target: { value: 'carry on' },
-      });
-      await act(async () => {
-        fireEvent.click(within(dialog).getByRole('button', { name: 'Fork' }));
-      });
-
-      expect(createFork).toHaveBeenCalledWith({ source: 'claude-1@repo', to: 'shell-1@repo', notes: 'carry on' });
-      await vi.waitFor(() => expect(screen.queryByRole('dialog', { name: 'Fork to…' })).not.toBeInTheDocument());
-      expect(onForked).toHaveBeenCalledWith('F7');
-    });
-
-    it('keeps the dialog open and shows the error when the fork fails', async () => {
-      intercomStub.peers = [sourcePeer, targetPeer];
-      createFork.mockRejectedValue(new Error('target gone'));
-      const onForked = vi.fn();
-      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onForked={onForked} />);
-
-      fireEvent.click(screen.getByRole('button', { name: 'Fork' }));
-      const dialog = screen.getByRole('dialog', { name: 'Fork to…' });
-      await act(async () => {
-        fireEvent.click(within(dialog).getByRole('button', { name: 'Fork' }));
-      });
-
-      await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('target gone'));
-      expect(screen.getByRole('dialog', { name: 'Fork to…' })).toBeInTheDocument();
-      expect(onForked).not.toHaveBeenCalled();
-    });
-  });
-
   it('offers Browser in the new-session menu only inside Electron', () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     fireEvent.click(screen.getByLabelText('New session'));
@@ -1495,101 +1437,7 @@ describe('TerminalView', () => {
     }
   });
 
-  it('header run button starts the dev server and flips to stop when SSE reports it running', () => {
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="shell"
-        sessionId="1"
-        onClose={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByLabelText('Start dev server'));
-    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
-
-    pushSse({ path: baseWorktree.path, process: { status: 'running', detectedUrl: 'http://localhost:8080' } });
-    const stopBtn = screen.getByLabelText('Stop dev server');
-    expect(stopBtn.title).toContain('running');
-    expect(stopBtn.title).toContain('http://localhost:8080');
-    fireEvent.click(stopBtn);
-    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
-  });
-
-  it('run button says what the server is doing: starting, serving on a port, stopping', () => {
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="shell"
-        sessionId="1"
-        onClose={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByLabelText('Start dev server'));
-
-    // Spawned, nothing listening yet — and still cancellable.
-    pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
-    const starting = screen.getByLabelText('Stop dev server');
-    expect(starting).toHaveTextContent('Starting…');
-    expect(starting).not.toBeDisabled();
-
-    pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
-    expect(screen.getByLabelText('Stop dev server')).toHaveTextContent('Stop :3000');
-
-    fireEvent.click(screen.getByLabelText('Stop dev server'));
-    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
-    // The kill can take seconds; the button must not pretend it is done.
-    pushSse({ path: baseWorktree.path, process: { status: 'stopping', port: 3000 } });
-    const stopping = screen.getByLabelText('Stop dev server');
-    expect(stopping).toHaveTextContent('Stopping…');
-    expect(stopping).toBeDisabled();
-
-    pushSse({ path: baseWorktree.path, process: { status: 'stopped', port: 3000, exitCode: 0 } });
-    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('a start the server refuses is shown, not swallowed', async () => {
-    procStart.mockRejectedValue(new Error('empty startCommand'));
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="shell"
-        sessionId="1"
-        onClose={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByLabelText('Start dev server'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('empty startCommand');
-    // The button itself is still a Run button — nothing started.
-    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
-
-    // A later successful start clears the complaint.
-    procStart.mockResolvedValue({});
-    fireEvent.click(screen.getByLabelText('Start dev server'));
-    pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('a crash is named as one, with the exit code, and Run is offered again', () => {
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="shell"
-        sessionId="1"
-        onClose={vi.fn()}
-      />,
-    );
-    pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
-    pushSse({ path: baseWorktree.path, process: { status: 'crashed', port: 3000, exitCode: 137 } });
-
-    const btn = screen.getByLabelText('Start dev server');
-    expect(btn).toHaveTextContent('Crashed');
-    expect(screen.getByRole('alert')).toHaveTextContent('exit code 137');
-    fireEvent.click(btn);
-    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
-  });
-
-  it('shows the env-profile dropdown for repos that define profiles and switches via the API', async () => {
+  it('hands its dev server to the Dock: status, where it serves, and the env profiles (switching goes through the API)', async () => {
     reposList.mockResolvedValue([
       {
         id: 'r',
@@ -1598,20 +1446,30 @@ describe('TerminalView', () => {
         defaultEnvProfile: 'PROD',
       },
     ]);
-    worktreesList.mockResolvedValue([{ ...baseWorktree }]);
+    const running = { status: 'running', pid: 1, startedAt: null, port: 5173, detectedUrl: null, exitCode: null };
+    worktreesList.mockResolvedValue([{ ...baseWorktree, process: running }]);
+    const onDevState = vi.fn();
     render(
       <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        worktree={{ ...baseWorktree, shellSessions: ['1'], process: running } as unknown as Worktree}
         mode="shell"
         sessionId="1"
         onClose={vi.fn()}
+        onDevState={onDevState}
       />,
     );
-    const select = await screen.findByLabelText('Env profile'); // appears once the repos fetch lands
-    expect(select).toHaveValue('PROD');
-    fireEvent.change(select, { target: { value: 'DEV' } });
+    await waitFor(() => expect(onDevState).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: baseWorktree.path, status: 'running', port: 5173, detail: 'port 5173', remote: false, profiles: { names: ['PROD', 'DEV'], current: 'PROD' },
+    })));
+    expect(screen.queryByLabelText('Env profile')).not.toBeInTheDocument(); // it lives in the Dock's ▶ dev menu now
+    act(() => { onDevState.mock.lastCall![0].setProfile('DEV'); });
     expect(setEnvProfile).toHaveBeenCalledWith('default', baseWorktree.path, 'DEV');
-    expect(select).toHaveValue('DEV');
+    await waitFor(() => expect(onDevState).toHaveBeenLastCalledWith(expect.objectContaining({ profiles: { names: ['PROD', 'DEV'], current: 'DEV' } })));
+    // Start/stop are the hub's own calls (the same ones the old Run button made, local or on a runner).
+    await act(async () => { await onDevState.mock.lastCall![0].stop(); });
+    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
+    await act(async () => { await onDevState.mock.lastCall![0].start(); });
+    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
   });
 
   it('shows the workflow-status dropdown for tracked worktrees and patches via the API', () => {
@@ -1669,17 +1527,26 @@ describe('TerminalView', () => {
   // flow) no longer exists — the hub is scoped to a single worktree (see
   // "renders no cross-worktree super-tab picker" above).
 
-  it('Logs button opens the log drawer for the active worktree and Esc closes only the drawer', async () => {
+  it('the top keeps only the tab strip: no Run, Logs or escalation banner (they live in the Dock)', () => {
+    render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={vi.fn()} />);
+    expect(screen.queryByLabelText('Start dev server')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Logs')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Waiting on you/)).not.toBeInTheDocument();
+  });
+
+  it('the Dock\'s "logs" (logsSeq) opens the log drawer for the active worktree, and Esc closes only the drawer', async () => {
     const onClose = vi.fn();
-    render(
+    const view = render(
       <TerminalView
         worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
         mode="shell"
         sessionId="1"
         onClose={onClose}
+        logsSeq={0}
       />,
     );
-    fireEvent.click(screen.getByLabelText('Logs'));
+    expect(screen.queryByText('boot line')).not.toBeInTheDocument();
+    view.rerender(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={onClose} logsSeq={1} />);
     expect(await screen.findByText('boot line')).toBeInTheDocument();
     expect(procLogs).toHaveBeenCalledWith('default', baseWorktree.path, 500);
 
@@ -1860,48 +1727,6 @@ describe('TerminalView', () => {
 
   // A blocked agent is invisible once its terminal scrolls on, so the hub
   // itself says who is waiting — for the FOCUSED tab only.
-  describe('the focused tab\'s escalation banner', () => {
-    const peer = {
-      agentId: 'a1', alias: 'claude-1', worktreePath: worktree.path,
-      mode: 'claude', sessionId: '1',
-    };
-    const escalation = { id: 'E7', from: { agentId: 'a1' }, to: 'human', status: 'open', title: 'Drop the column?', createdAt: 1 };
-
-    it('names the escalation and opens the intercom panel on it', async () => {
-      intercomStub.peers = [peer];
-      intercomStub.escalations = [escalation];
-      const onOpenIntercom = vi.fn();
-      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onOpenIntercom={onOpenIntercom} />);
-
-      expect(screen.getByRole('status')).toHaveTextContent('Waiting on you: Drop the column?');
-      fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
-      expect(onOpenIntercom).toHaveBeenCalledWith('E7');
-    });
-
-    it('stays hidden when the escalation belongs to another tab', () => {
-      intercomStub.peers = [{ ...peer, sessionId: '2' }];
-      intercomStub.escalations = [escalation];
-      render(<TerminalView worktree={worktree} mode="claude" onClose={() => {}} onOpenIntercom={vi.fn()} />);
-
-      expect(screen.queryByRole('status')).not.toBeInTheDocument();
-    });
-
-    // Intercom is a LOCAL registry — a runner's agents never register in it, so
-    // a path/mode/session match there would be a coincidence, not this agent.
-    it('never shows for a remote hub', () => {
-      const remoteWt = {
-        ...worktree,
-        remote: { runnerId: 'r1', runnerName: 'runner', wsBase: 'wss://r1.example', wsId: 'default' },
-      } as unknown as Worktree;
-      runnerRpc.mockResolvedValue({ repos: [], worktrees: [] });
-      intercomStub.peers = [peer];
-      intercomStub.escalations = [escalation];
-      render(<TerminalView worktree={remoteWt} mode="claude" onClose={() => {}} onOpenIntercom={vi.fn()} />);
-
-      expect(screen.queryByRole('status')).not.toBeInTheDocument();
-    });
-  });
-
   // Clicking a runner's worktree opens THIS hub, not a separate surface — one
   // set of habits regardless of which machine the work is on.
   describe('a worktree that lives on a runner', () => {

@@ -12,6 +12,7 @@ const path = require('node:path');
 const { resolveProfile } = require('./profile.cjs');
 const { vscodeOrigin, headersForRequest } = require('./vscode-frame-security.cjs');
 const { rotateIfOversized } = require('./log-rotate.cjs');
+const { createVoice, resolveHelper } = require('./voice.cjs');
 // Which instance is this? Packaged builds get `stable`; the repo's npm scripts
 // set STRADO_PROFILE=dev. See profile.cjs.
 const PROFILE = resolveProfile();
@@ -512,6 +513,35 @@ if (!gotLock) {
     width: Math.max(0, Math.round((b?.width ?? 0) * scale)),
     height: Math.max(0, Math.round((b?.height ?? 0) * scale)),
   });
+  // "Talk to Strado" (voice.cjs): on-device speech via the strado-speech
+  // helper, started lazily on the first press of the talk key.
+  const voice = createVoice({
+    platform: process.platform,
+    spawn,
+    resolve: () => resolveHelper({ resources: RESOURCES, userData: app.getPath('userData'), here: __dirname, spawnSync, log: (m) => console.warn(`[strado] ${m}`) }),
+    log: (m) => console.warn(`[strado] ${m}`),
+    // ~/Library/Logs/<app>/voice.log: event types and errors only, never words.
+    trace: (() => {
+      const file = path.join(app.getPath('logs'), 'voice.log');
+      try { fs.mkdirSync(path.dirname(file), { recursive: true }); rotateIfOversized(file); } catch { /* best effort */ }
+      return (m) => { try { fs.appendFileSync(file, `${new Date().toISOString()} ${m}\n`); } catch { /* best effort */ } };
+    })(),
+  });
+  ipcMain.on('strado:voice-available', (e) => { e.returnValue = voice.available(); });
+  ipcMain.handle('strado:voice', (e, action, opts) => {
+    if (action === 'start') {
+      // A start that can't run reports through the event stream, like any
+      // other voice error, so the box never sits "listening" to nothing.
+      const r = voice.start(e.sender, opts);
+      if (!r.ok) e.sender.send('strado:voice-event', { type: 'error', code: r.code, message: 'voice is not available here' });
+      return r;
+    }
+    if (action === 'stop') voice.stop(e.sender);
+    else if (action === 'cancel') voice.cancel(e.sender);
+    return { ok: true };
+  });
+  app.on('will-quit', () => voice.dispose());
+
   // Native folder picker for "Add repo" — returns the chosen absolute path,
   // or null on cancel.
   ipcMain.handle('strado:pick-directory', async (e) => {
@@ -809,6 +839,8 @@ if (!gotLock) {
     return true;
   });
 
+  const keyboardHeld = new Set(); // renderer webContents ids whose command box holds the keyboard
+  const PREVIEW_CLICK_MS = 800;
   ipcMain.handle('strado:preview', (e, action, key, payload) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const zoom = e.sender.getZoomFactor?.() ?? 1;
@@ -849,7 +881,19 @@ if (!gotLock) {
         // page do not bubble to React. Forward focus to keep the split's active
         // tab highlight and keyboard actions pointed at the pane the user
         // actually clicked.
-        wc.on('focus', () => send({ type: 'focus' }));
+        // A click (or touch) inside the page is the user choosing it.
+        let pressedAt = 0;
+        wc.on('input-event', (_ev, input) => {
+          if (input.type === 'mouseDown' || input.type === 'gestureTapDown' || input.type === 'touchStart') pressedAt = Date.now();
+        });
+        wc.on('focus', () => {
+          // Not chosen, and the box holds the keyboard: hand it straight back.
+          if (keyboardHeld.has(win.webContents.id) && Date.now() - pressedAt > PREVIEW_CLICK_MS) {
+            if (!win.isDestroyed()) win.webContents.focus();
+            return;
+          }
+          send({ type: 'focus' });
+        });
         // Scripted popups (window.open with features — OAuth/Google Sign-In)
         // must be REAL child windows: the popup delivers its result through
         // window.opener/postMessage and closes itself. Navigating the preview
@@ -1186,6 +1230,12 @@ if (!gotLock) {
     : process.platform === 'linux' ? 'link'
     : 'none';
   ipcMain.on('strado:update-mode', (e) => { e.returnValue = updateMode; });
+  // The command box holds the keyboard (you are talking to Strado): a preview
+  // that takes focus without a click (a page's autofocus, a load) gives it back.
+  ipcMain.on('strado:hold-keyboard', (e, on) => {
+    if (on) keyboardHeld.add(e.sender.id); else keyboardHeld.delete(e.sender.id);
+  });
+
   ipcMain.on('strado:is-fullscreen', (e) => {
     e.returnValue = BrowserWindow.fromWebContents(e.sender)?.isFullScreen() ?? false;
   });
@@ -1400,6 +1450,8 @@ if (!gotLock) {
     // window; the deb "Download update" link relies on this).
     win.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:/i.test(url)) shell.openExternal(url);
+      // the voice permission link: only the Privacy panes, nothing else
+      else if (/^x-apple\.systempreferences:com\.apple\.preference\.security\?Privacy_[A-Za-z|_]+$/.test(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
     win.webContents.on('did-start-navigation', (e, _url, isInPlace, legacyMainFrame) => {

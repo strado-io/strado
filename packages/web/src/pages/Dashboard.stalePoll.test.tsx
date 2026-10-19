@@ -73,10 +73,11 @@ vi.mock('./TerminalView', () => ({ TerminalView: () => <div data-testid="inline-
 
 import { Dashboard } from './Dashboard';
 import { __resetFocuses } from '../hooks/useFocuses';
+import { openSidebarIfHome, showSidebarOnHome } from './dashboardTestHome';
 
 const noop = vi.fn();
 function renderDashboard() {
-  return render(
+  const view = render(
     <Dashboard
       onNewWorktree={noop} onShowLogs={noop}
       onMenu={noop} onOpenNote={noop} onOpenDiff={noop}
@@ -84,6 +85,8 @@ function renderDashboard() {
       update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }}
     />,
   );
+  showSidebarOnHome();
+  return view;
 }
 
 const workingOn = () => screen.getByRole('region', { name: 'Focus' });
@@ -91,6 +94,7 @@ const workingOn = () => screen.getByRole('region', { name: 'Focus' });
 describe('Dashboard poll vs workspace switch', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     __resetFocuses();
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ 'ws-a': 'f-ws-a', 'ws-b': 'f-ws-b' }));
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
@@ -123,6 +127,7 @@ describe('Dashboard poll vs workspace switch', () => {
       />,
     );
     await act(async () => {}); // ws-b's own load lands
+    openSidebarIfHome(); // home hides it again in the new workspace
     expect(within(workingOn()).getByText('B-1')).toBeInTheDocument();
 
     // Old workspace's poll finally answers — it must be dropped, not painted.

@@ -35,6 +35,8 @@ mac:
     # permission dialog — own the copy here.
     NSMicrophoneUsageDescription: >-
       Strado uses the microphone to dictate prompts to your coding agents.
+    NSSpeechRecognitionUsageDescription: >-
+      Strado turns what you say into commands on this Mac. Audio never leaves it.
 linux:
   category: Development
   # Linux-specific icon: full-bleed tile + bigger glyph (docks render icons

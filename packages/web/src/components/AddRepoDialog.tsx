@@ -34,15 +34,18 @@ export function AddRepoDialog({
   onAdded,
   onClose,
   anchor,
+  initialPath = null,
 }: {
   onAdded: () => void | Promise<void>;
   onClose: () => void;
   anchor?: AddRepoAnchor | null;
+  /** A path typed into the command box ("add repo ~/code/x"): opens on Open project, filled in. */
+  initialPath?: string | null;
 }) {
   const { workspace } = useWorkspace();
   const wsId = workspace.id;
-  const [step, setStep] = useState<Step>('choose');
-  const [path, setPath] = useState('');
+  const [step, setStep] = useState<Step>(initialPath ? 'open' : 'choose');
+  const [path, setPath] = useState(initialPath ?? '');
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneParent, setCloneParent] = useState('');
   const [projectName, setProjectName] = useState('');

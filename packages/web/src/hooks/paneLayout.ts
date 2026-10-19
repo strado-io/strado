@@ -142,3 +142,20 @@ export function rememberPaneLayouts(path: string, nodes: PaneNode[]): void {
     localStorage.setItem(STORE, JSON.stringify(all));
   } catch { /* storage full/blocked — splits just won't persist */ }
 }
+
+/**
+ * Put `newKey` beside `anchorKey` (right = row, down = col) across a
+ * worktree's split groups: lifted out of any group it already sat in, then
+ * split into the anchor's group — or, when the anchor is a plain full-size
+ * tab, a new two-pane group.
+ */
+export function placeLeaf(layouts: PaneNode[], newKey: string, anchorKey: string, split: 'right' | 'down'): PaneNode[] {
+  if (newKey === anchorKey) return layouts;
+  const dir = split === 'right' ? 'row' : 'col';
+  const lifted = layouts
+    .map((node) => (hasLeaf(node, newKey) ? removeLeaf(node, newKey) : node))
+    .filter((node): node is PaneNode => node?.kind === 'split');
+  const at = lifted.findIndex((node) => hasLeaf(node, anchorKey));
+  if (at >= 0) return lifted.map((node, i) => (i === at ? splitLeaf(node, anchorKey, newKey, dir) : node));
+  return [...lifted, splitLeaf({ kind: 'leaf', key: anchorKey }, anchorKey, newKey, dir)];
+}

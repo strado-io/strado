@@ -49,11 +49,14 @@ export const ALLOW: { method: string; path: string; prefix: boolean }[] = [
   { method: 'POST', path: '/api/intercom/escalations', prefix: false },
   { method: 'GET', path: '/api/intercom/escalations/', prefix: true },
   { method: 'POST', path: '/api/intercom/escalations/', prefix: true },
-  // Intercom (step 9a): an agent opens or reads a cross-agent fork from
-  // inside its own sandbox; the route itself enforces the worktree boundary
-  // on `newTab`.
-  { method: 'POST', path: '/api/intercom/forks', prefix: false },
-  { method: 'GET', path: '/api/intercom/forks/', prefix: true },
+  // App control: spawn/place only inside the caller's own worktree (the
+  // routes enforce it); state and agent status are reads. Browser tabs stay
+  // host-only — /api/intercom/ui/browser is deliberately absent.
+  { method: 'POST', path: '/api/intercom/agents/spawn', prefix: false },
+  { method: 'GET', path: '/api/intercom/agents/', prefix: true },
+  { method: 'POST', path: '/api/intercom/agents/', prefix: true },
+  { method: 'POST', path: '/api/intercom/ui/place', prefix: false },
+  { method: 'GET', path: '/api/intercom/ui/state', prefix: false },
   // Unlike status posts, this returns a secret. The request must carry a
   // worktree-scoped HMAC broker token; the forwarded route validates it before
   // minting a one-hour, one-repository GitHub credential.

@@ -11,11 +11,13 @@ const ProfileSchema = z.object({
   fullName: z.string().max(120).default(''),
   callMe: z.string().max(120).default(''),
   telemetryOptOut: z.boolean().default(false),
+  // Jarvis: never send command-box text to a model (enforced by /jarvis/plan).
+  jarvisLocalOnly: z.boolean().default(false),
 });
 
 export type Profile = z.infer<typeof ProfileSchema>;
 
-const DEFAULTS: Profile = { fullName: '', callMe: '', telemetryOptOut: false };
+const DEFAULTS: Profile = { fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false };
 
 export function profilePath(): string {
   const home = process.env.STRADO_HOME || path.join(os.homedir(), '.strado');

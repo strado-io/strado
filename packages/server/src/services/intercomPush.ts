@@ -28,6 +28,8 @@ export type IntercomPushDeps = {
   enabled: () => boolean;
   /** Test seam for the quiet-gate retries and the deferred Enter. Production: setTimeout + unref. */
   schedule?: (fn: () => void, ms: number) => { cancel(): void };
+  /** Test seam for the once-per-idle marker's lapse. Production: Date.now. */
+  now?: () => number;
   log?: (message: string, err: unknown) => void;
 };
 
@@ -35,8 +37,8 @@ export type IntercomPush = {
   /** Never rejects. 'sent' when a nudge was written, else 'skipped' (with a push.skipped event, deduped per idle period). */
   consider(scopeId: string, agentId: string, trigger: PushReason): Promise<'sent' | 'skipped'>;
   /**
-   * Force one line into a tab (step 9a: the fork hand-over nudge for harnesses
-   * with no hook path). Neither the claude-only mode gate nor the once-per-idle
+   * Force one line into a tab (a prompt typed on an agent's behalf, e.g. by
+   * Jarvis or a tab operation). Neither the claude-only mode gate nor the once-per-idle
    * -period dedupe applies — the caller, not the inbox, decided this line is
    * owed. The kill switch, the typing guard and the repaint guard still do:
    * writing over someone's half-typed command, into a TUI mid-paint, or after
@@ -60,6 +62,12 @@ export const NUDGE = (count: number): string =>
 export const MCP_NUDGE = (count: number): string =>
   `New intercom messages (${count}) from peers in this workspace. Call intercom_inbox and act on them.`;
 
+/** How long a sent nudge holds the once-per-idle marker without a turn
+ * starting. A nudge whose Enter was lost (tab exited at Enter time, input
+ * treated as a paste, or the Enter withheld because someone began typing)
+ * starts no turn, so nothing would ever clear the marker otherwise. */
+export const PUSHED_MARKER_TTL_MS = 60_000;
+
 const defaultSchedule: NonNullable<IntercomPushDeps['schedule']> = (fn, ms) => {
   const t = setTimeout(fn, ms);
   t.unref();
@@ -69,7 +77,8 @@ const defaultSchedule: NonNullable<IntercomPushDeps['schedule']> = (fn, ms) => {
 export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
   const schedule = deps.schedule ?? defaultSchedule;
   const log = deps.log ?? (() => {});
-  const pushed = new Set<string>();                        // tab keys nudged this idle period
+  const now = deps.now ?? Date.now;
+  const pushed = new Map<string, number>();                // tab key → when it was nudged this idle period
   // Newest queued message id each tab was last nudged about. A nudge starts a
   // turn; the turn ends; a hook-less harness posts turn-complete, which is a
   // 'stop' trigger — so a tab that cannot act on its inbox (no MCP tool, or a
@@ -86,7 +95,11 @@ export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
   const pending = new Map<string, { handle: { cancel(): void }; tries: number }>();
   const enters = new Map<string, { cancel(): void }>();    // one pending "write Enter" timer per key
   const inflight = new Set<Promise<unknown>>();
-  let turnEpoch = 0;                                       // bumped by turnStarted; catches a turn starting mid-await
+  // A turn starting mid-await cancels only that tab's push: the key is not
+  // known until the lookup returns, so record the epoch each key's last turn
+  // began at and compare it with the epoch the attempt started at.
+  let turnEpoch = 0;
+  const turnAt = new Map<string, number>();
 
   const emit = (type: 'push.sent' | 'push.skipped', data: Record<string, unknown>): void => {
     try {
@@ -105,6 +118,22 @@ export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
   const cancelPending = (key: string): void => {
     pending.get(key)?.handle.cancel();
     pending.delete(key);
+  };
+
+  /** A single burst ending in `\r` can be treated as a paste and left
+   * unsubmitted, so Enter is a separate, later write. One pending Enter per
+   * tab: a newer write replaces (and cancels) the older one rather than
+   * leaving it to fire a second Enter. Typing since the text was written
+   * withholds it — an Enter then would submit the user's half-typed line. */
+  const scheduleEnter = (key: string): void => {
+    enters.get(key)?.cancel();
+    enters.set(key, schedule(() => {
+      enters.delete(key);
+      const terminal = deps.terminal();
+      if (terminal.status(key).status !== 'running') return;
+      if (deps.activity.quiet(key).input < PUSH_ENTER_DELAY_MS) { log(`intercom push: Enter withheld for ${key} (input-busy)`, undefined); return; }
+      terminal.write(key, '\r');
+    }, PUSH_ENTER_DELAY_MS));
   };
 
   async function attempt(scopeId: string, agentId: string, trigger: PushReason, tries: number): Promise<'sent' | 'skipped'> {
@@ -163,25 +192,21 @@ export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
       const rows = deps.intercom.peek(scopeId, agentId, HOOK_PULL_LIMIT);
       const queued = rows.length;
       if (queued === 0) return skip('inbox-empty');
-      if (pushed.has(key)) return skip('already-pushed');
+      const pushedAt = pushed.get(key);
+      if (pushedAt !== undefined && now() - pushedAt < PUSHED_MARKER_TTL_MS) return skip('already-pushed');
       // Ids are ULIDs: the lexicographic max is the newest message.
       const head = rows.reduce((max, m) => (m.id > max ? m.id : max), rows[0]!.id);
       if (nudgedHead.get(key) === head) return skip('already-nudged');
       const q = deps.activity.quiet(key);
       if (q.input < PUSH_INPUT_QUIET_MS) return defer(key, 'input-busy');
       if (q.output < PUSH_OUTPUT_QUIET_MS) return defer(key, 'output-busy');
-      if (turnEpoch !== epoch) return skip('not-idle');
+      if ((turnAt.get(key) ?? 0) > epoch) return skip('not-idle');
       cancelPending(key);
       terminal.write(key, summary.mode === 'claude' ? NUDGE(queued) : MCP_NUDGE(queued));
-      pushed.add(key);
+      pushed.set(key, now());
       nudgedHead.set(key, head);
       emit('push.sent', { scopeId, agentId, trigger, queued });
-      // A single burst ending in `\r` can be treated as a paste and left
-      // unsubmitted; write Enter as a separate, later write instead.
-      enters.set(key, schedule(() => {
-        enters.delete(key);
-        if (deps.terminal().status(key).status === 'running') deps.terminal().write(key, '\r');
-      }, PUSH_ENTER_DELAY_MS));
+      scheduleEnter(key);
       return 'sent';
     } catch (err) {
       log(`intercom push: consider failed for ${agentId}`, err);
@@ -204,15 +229,12 @@ export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
       if (terminal.status(key).status !== 'running') return 'skipped';
       const q = deps.activity.quiet(key);
       if (q.input < PUSH_INPUT_QUIET_MS) return 'skipped';
-      // The fork service owns retries. Returning skipped must not also queue
+      // The caller owns retries. Returning skipped must not also queue
       // a hidden write, or both retry loops can submit the same prompt.
       if (q.output < PUSH_OUTPUT_QUIET_MS) return 'skipped';
       terminal.write(key, text);
       emit('push.sent', { key, forced: true });
-      enters.set(key, schedule(() => {
-        enters.delete(key);
-        if (deps.terminal().status(key).status === 'running') deps.terminal().write(key, '\r');
-      }, PUSH_ENTER_DELAY_MS));
+      scheduleEnter(key);
       return 'sent';
     } catch (err) {
       log(`intercom push: nudge failed for ${key}`, err);
@@ -224,6 +246,7 @@ export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
 
   const turnStarted: IntercomPush['turnStarted'] = (key) => {
     turnEpoch += 1;
+    turnAt.set(key, turnEpoch);
     pushed.delete(key);
     cancelPending(key);
     enters.get(key)?.cancel();
@@ -239,6 +262,7 @@ export function createIntercomPush(deps: IntercomPushDeps): IntercomPush {
     enters.get(key)?.cancel();
     enters.delete(key);
     pushed.delete(key);
+    turnAt.delete(key);
     nudgedHead.delete(key);
     const agentId = agentOfKey.get(key);
     if (agentId !== undefined) {

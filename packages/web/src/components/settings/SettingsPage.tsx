@@ -5,13 +5,14 @@ import { AppearanceSection } from './AppearanceSection';
 import { IntegrationsSection, type IntegrationId } from './IntegrationsSection';
 import { OrganizationSection } from './OrganizationSection';
 import { PrivacySection } from './PrivacySection';
+import { CommandBoxSection } from './CommandBoxSection';
 import { ProfileSection } from './ProfileSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
 import { RunnersPanel } from '../RunnersPanel';
 import { useEntitlements } from '../../hooks/entitlements';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -108,7 +109,7 @@ const GROUPS: NavGroup[] = [
   { title: 'Agents', items: [{ id: 'agents', label: 'Coding agents' }] },
   { title: 'Infrastructure', items: [{ id: 'runners', label: 'Runners' }] },
   { title: 'Connections', items: [{ id: 'integrations', label: 'Integrations' }] },
-  { title: 'System', items: [{ id: 'privacy', label: 'Privacy' }] },
+  { title: 'System', items: [{ id: 'commandbox', label: 'Command box' }, { id: 'privacy', label: 'Privacy' }] },
 ];
 
 // Which settings sections are Pro (cloud) features. Jira and Linear run on the
@@ -143,8 +144,11 @@ export function SettingsPage({
   onClose,
   onJiraConnected,
   onOpenFeedback,
+  bottomInset = false,
 }: {
   section?: SettingsSection;
+  /** Leave the bottom strip for the command box, which stays over Settings. */
+  bottomInset?: boolean;
   onClose: () => void;
   onJiraConnected?: () => void;
   onOpenFeedback?: () => void;
@@ -191,7 +195,7 @@ export function SettingsPage({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-zinc-950 text-zinc-200" data-testid="settings-page">
+    <div className={`fixed inset-x-0 top-0 ${bottomInset ? 'bottom-11' : 'bottom-0'} z-50 flex bg-zinc-950 text-zinc-200`} data-testid="settings-page">
         <nav aria-label="Settings" className="flex w-44 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/50 sm:w-56 lg:w-64">
           <div className="shrink-0 p-3 pb-4 sm:p-5">
             <button ref={backButton} type="button" onClick={onClose}
@@ -275,6 +279,7 @@ export function SettingsPage({
               />
             )}
             {active === 'privacy' && <PrivacySection />}
+            {active === 'commandbox' && <CommandBoxSection />}
           </div>
         </main>
     </div>

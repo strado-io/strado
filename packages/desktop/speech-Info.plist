@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded into the strado-speech binary (__TEXT,__info_plist): a command-line
+     helper that asks for microphone or speech permission without its own usage
+     strings is killed by macOS. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>io.strado.speech</string>
+  <key>CFBundleName</key>
+  <string>Strado</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Strado listens while you hold the talk key, to turn what you say into commands.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Strado turns what you say into commands on this Mac; audio never leaves the device.</string>
+</dict>
+</plist>

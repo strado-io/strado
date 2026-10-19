@@ -5,20 +5,14 @@ import path from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { AppError } from '../errors.js';
 import type { EventBus } from '../events/bus.js';
-// Byte-safe truncation, shared with the hook renderer; intercomContext imports
-// only *types* from this module, so this direction adds no runtime cycle.
-import { cutUtf8 } from './intercomContext.js';
 import {
   ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASK_TIMEOUT_MS, BODY_MAX, CONTEXT_ITEMS_MAX, CONTEXT_MAX, Context,
   ESCALATION_BODY_MAX, ESCALATION_LIST_DEFAULT, ESCALATION_LIST_MAX, ESCALATION_TITLE_MAX, EXPIRES_MAX_MS,
-  FORK_LIST_DEFAULT, FORK_LIST_MAX, FORK_NOTES_MAX, FORK_SUMMARY_MAX,
-  HUMAN_AGENT_ID, STRADO_SENDER_ID, PULL_DEFAULT, PULL_MAX,
+  HUMAN_AGENT_ID, PULL_DEFAULT, PULL_MAX,
   REDELIVERY_AFTER_MS, RETENTION_MS, SCOPE_CAP, TASK_DEPS_MAX, TASK_LIST_DEFAULT, TASK_LIST_MAX, TASK_OPEN_CAP,
   TASK_TITLE_MAX, TASK_BODY_MAX, TURNS_PER_AGENT, UI_LIST_DEFAULT, UI_LIST_MAX,
-  type ContextItem, type EscalationStatus, type ForkStatus, type MessageKind,
+  type ContextItem, type EscalationStatus, type MessageKind,
 } from './intercomSchema.js';
-
-export type { ForkStatus };
 
 export const SCHEMA_VERSION = 5;
 export const INTERCOM_CHANNEL = 'intercom';
@@ -85,45 +79,6 @@ export type EscalationInput = {
   timeoutMs?: number | null;
 };
 
-/** Where a fork hands its work: an existing peer, or a tab the server spawns
- * (whose agent id is unknown until it registers, hence nullable). */
-export type ForkTarget =
-  | { kind: 'peer'; agentId: string }
-  | { kind: 'new'; mode: 'claude' | 'codex' | 'opencode' | 'pi'; worktreePath: string; agentId: string | null };
-
-export type Fork = {
-  id: string;
-  scopeId: string;
-  /** Who asked for the hand-over (the source agent itself, or the human). */
-  from: Actor;
-  source: { agentId: string; worktreePath: string; mode: string; sessionId: string };
-  target: ForkTarget;
-  notes: string;
-  taskId: string | null;
-  /** How the summary was obtained: the source answered, the turn diary stood in, or neither. */
-  summarySource: 'agent' | 'diary' | 'none' | null;
-  summary: string | null;
-  status: ForkStatus;
-  /** The `request` that asked the source to summarise; null until one is sent. */
-  summaryMessageId: string | null;
-  /** The hand-over `request` delivered to the target. */
-  messageId: string | null;
-  packageBytes: number | null;
-  error: string | null;
-  createdAt: number;
-  summaryDeadline: number | null;
-  deliveredAt: number | null;
-  acceptedAt: number | null;
-};
-export type ForkInput = {
-  scopeId: string;
-  from: Actor;
-  source: Fork['source'];
-  target: ForkTarget;
-  notes: string;
-  taskId?: string | null;
-};
-
 export type MessageState = 'queued' | 'delivered' | 'acknowledged' | 'expired';
 
 export type Receipt = {
@@ -158,8 +113,6 @@ export type Message = {
   confirmed: boolean;
   /** Set when this message was sent as part of an escalation (an ask or its reply). */
   escalationId: string | null;
-  /** Set when this message was sent as part of a fork (the summary ask or the hand-over). */
-  forkId: string | null;
 };
 
 export type SendInput = {
@@ -174,7 +127,6 @@ export type SendInput = {
   idempotencyKey?: string | null;
   expiresInMs?: number | null;
   escalationId?: string | null;
-  forkId?: string | null;
 };
 
 export type SendResult = { receipt: Receipt; replayed: boolean };
@@ -208,7 +160,6 @@ export type SweepResult = {
   tasksDeleted: number;
   escalationsDeleted: number;
   escalationsRetargeted: number;
-  forksDeleted: number;
 };
 
 export type IntercomStore = {
@@ -229,7 +180,8 @@ export type IntercomStore = {
   /** Recipient marks a message handled. queued|delivered → acknowledged; idempotent. */
   ack(scopeId: string, agentId: string, id: string): Receipt;
   /** Read-only view of a workspace's traffic for the UI, newest first, every state. */
-  listScope(scopeId: string, opts?: { since?: number; limit?: number }): Message[];
+  /** `agent`: only messages that agent sent or received (one station's line). */
+  listScope(scopeId: string, opts?: { since?: number; limit?: number; agent?: string }): Message[];
   /** Upsert one conversation's turns. New turn_index → insert; existing with a different reply → update reply/reply_truncated/ended_at; identical → untouched. */
   recordTurns(scopeId: string, agentId: string, providerSessionId: string, turns: TurnInput[]): RecordTurnsResult;
   /** Newest first: recorded_at, then turn_index, then id. `before` is an exclusive cursor (a turn id); unknown or foreign → []. */
@@ -270,30 +222,10 @@ export type IntercomStore = {
   retargetOpenAsksTo(scopeId: string, agentId: string): Escalation[];
   /** Scope-bound lookup that also retargets an overdue peer ask first, using
    * the store's own clock — for an asker polling its own question between
-   * hourly sweeps. */
-  pollEscalation(scopeId: string, id: string): Escalation;
-  /** Open a fork hand-over. Starts `queued`; the service moves it to `summarising` if it asks the source for a summary. */
-  createFork(input: ForkInput): Fork;
-  /** Scope-bound lookup; NOT_FOUND outside the scope or unknown. */
-  getFork(scopeId: string, id: string): Fork;
-  /** Newest first, optionally filtered by status. */
-  listForks(scopeId: string, opts?: { status?: ForkStatus; limit?: number }): Fork[];
-  /** Record the summary `request` sent to the source and its deadline: queued → summarising. */
-  forkSummaryRequested(scopeId: string, id: string, summaryMessageId: string, deadline: number): Fork;
-  /** Attach the hand-over summary: summarising|queued → queued. The first summary wins — a fork that already has one, or that is past queued, is returned untouched. */
-  forkSetSummary(scopeId: string, id: string, source: 'agent' | 'diary' | 'none', text: string | null): Fork;
-  /** Record the hand-over `request` handed to the target: queued → delivered. */
-  forkDelivered(scopeId: string, id: string, messageId: string, targetAgentId: string, bytes: number): Fork;
-  /** Insert the package and record delivery in one transaction; safe to retry. */
-  deliverFork(scopeId: string, id: string, targetAgentId: string, body: string, context: SendInput['context']): Fork;
-  /** Give up on an open fork; a fork already closed is returned untouched. */
-  forkFailed(scopeId: string, id: string, error: string): Fork;
-  /** Cancel a fork the target has not been handed yet; idempotent once cancelled, CONFLICT not_cancellable otherwise. */
-  cancelFork(scopeId: string, id: string): Fork;
-  /** Forks whose summary deadline has passed, across every scope. */
-  staleSummarising(now: number): Fork[];
-  /** Queued deliveries left behind by a restart, bounded across scopes. */
-  queuedForks(): Fork[];
+   * hourly sweeps. When `askerAgentId` is the asker and the row is resolved,
+   * the reply copy in the asker's inbox is acknowledged: the poll itself
+   * handed the answer over, so the inbox must not deliver (and nudge) it twice. */
+  pollEscalation(scopeId: string, id: string, askerAgentId?: string): Escalation;
   close(): void;
 };
 
@@ -333,7 +265,6 @@ type Row = {
   delivered_to_execution: string | null;
   delivery_confirmed_at: number | null;
   escalation_id: string | null;
-  fork_id: string | null;
 };
 
 type TaskRow = {
@@ -379,45 +310,6 @@ const toEscalation = (r: EscalationRow): Escalation => ({
   id: r.id, scopeId: r.scope_id, from: { agentId: r.from_agent, executionId: r.from_execution }, to: r.to_agent, title: r.title, body: r.body,
   context: JSON.parse(r.context_json) as ContextItem[], taskId: r.task_id, status: r.status, resolution: r.resolution, resolvedBy: r.resolved_by,
   askMessageId: r.ask_message_id, replyMessageId: r.reply_message_id, createdAt: r.created_at, resolvedAt: r.resolved_at, expiresAt: r.expires_at,
-});
-
-type ForkRow = {
-  id: string;
-  scope_id: string;
-  from_agent: string;
-  from_execution: string;
-  source_agent: string;
-  source_worktree: string;
-  source_mode: string;
-  source_session: string;
-  target_kind: 'peer' | 'new';
-  target_agent: string | null;
-  target_mode: string | null;
-  target_worktree: string | null;
-  notes: string;
-  task_id: string | null;
-  summary_source: 'agent' | 'diary' | 'none' | null;
-  summary: string | null;
-  status: ForkStatus;
-  summary_message_id: string | null;
-  message_id: string | null;
-  package_bytes: number | null;
-  error: string | null;
-  created_at: number;
-  summary_deadline: number | null;
-  delivered_at: number | null;
-  accepted_at: number | null;
-};
-
-const toFork = (r: ForkRow): Fork => ({
-  id: r.id, scopeId: r.scope_id, from: { agentId: r.from_agent, executionId: r.from_execution },
-  source: { agentId: r.source_agent, worktreePath: r.source_worktree, mode: r.source_mode, sessionId: r.source_session },
-  target: r.target_kind === 'peer'
-    ? { kind: 'peer', agentId: r.target_agent as string }
-    : { kind: 'new', mode: r.target_mode as Extract<ForkTarget, { kind: 'new' }>['mode'], worktreePath: r.target_worktree as string, agentId: r.target_agent },
-  notes: r.notes, taskId: r.task_id, summarySource: r.summary_source, summary: r.summary, status: r.status,
-  summaryMessageId: r.summary_message_id, messageId: r.message_id, packageBytes: r.package_bytes, error: r.error,
-  createdAt: r.created_at, summaryDeadline: r.summary_deadline, deliveredAt: r.delivered_at, acceptedAt: r.accepted_at,
 });
 
 type TurnRow = {
@@ -565,6 +457,11 @@ CREATE INDEX escalations_ask ON escalations (ask_message_id) WHERE ask_message_i
 CREATE INDEX escalations_expiry ON escalations (expires_at) WHERE expires_at IS NOT NULL;
 `;
 const MESSAGES_ADD_ESCALATION = `ALTER TABLE messages ADD COLUMN escalation_id TEXT;`;
+// Schema v5 belonged to the removed intercom fork feature. Nothing reads or
+// writes `forks` or `messages.fork_id` any more, but both are still created so
+// the schema at user_version 5 stays identical for every build: an older build
+// opening a store this one created prepares statements against them, and a
+// v5 store must never be missing a table it expects.
 const FORKS_DDL = `
 CREATE TABLE forks (
   id                 TEXT PRIMARY KEY,
@@ -599,8 +496,6 @@ CREATE INDEX forks_msg ON forks (message_id) WHERE message_id IS NOT NULL;
 CREATE INDEX forks_deadline ON forks (summary_deadline) WHERE summary_deadline IS NOT NULL;
 `;
 const MESSAGES_ADD_FORK = `ALTER TABLE messages ADD COLUMN fork_id TEXT;`;
-/** How many overdue summaries one sweep may report. */
-const FORK_STALE_SCAN = 100;
 
 const DDL = MESSAGES_DDL + MESSAGES_ADD_ESCALATION + MESSAGES_ADD_FORK + TURNS_DDL + TASKS_DDL + ESCALATIONS_DDL + FORKS_DDL;
 const MIGRATE_2_TO_3 = TURNS_DDL;
@@ -661,6 +556,7 @@ function validate(input: SendInput, contextJson: string): void {
   if (!Number.isInteger(exp) || exp < 0 || exp > EXPIRES_MAX_MS) throw bad('expiresInMs out of range');
   if (input.kind === 'reply' && !input.replyTo) throw bad('replyTo is required for a reply');
   if (input.kind !== 'reply' && input.replyTo) throw bad('replyTo is only allowed on a reply');
+  if (input.toAgentId === input.fromAgentId) throw bad('cannot send a message to yourself');
 }
 
 const contentHash = (input: SendInput, contextJson: string): string =>
@@ -698,40 +594,27 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     byId: db.prepare('SELECT * FROM messages WHERE id = ?'),
     byIdem: db.prepare('SELECT * FROM messages WHERE scope_id = ? AND from_agent_id = ? AND idempotency_key = ?'),
     replyOf: db.prepare("SELECT id FROM messages WHERE reply_to = ? AND kind = 'reply'"),
-    pressure: db.prepare("SELECT COUNT(*) AS n FROM messages WHERE scope_id = ? AND state IN ('queued','delivered')"),
+    // A row past its expiresAt is dead weight until the next sweep flips it;
+    // it must not hold the scope at its cap in the meantime.
+    pressure: db.prepare("SELECT COUNT(*) AS n FROM messages WHERE scope_id = ? AND state IN ('queued','delivered') AND (expires_at IS NULL OR expires_at > ?)"),
     insert: db.prepare(`
       INSERT INTO messages (id, scope_id, from_agent_id, from_execution_id, to_agent_id, kind, reply_to, body,
-                            context_json, idempotency_key, content_hash, state, created_at, expires_at, escalation_id, fork_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`),
-    pullQueued: db.prepare(`
-      UPDATE messages SET state = 'delivered', delivered_at = ?, delivery_count = delivery_count + 1,
-                          delivery_batch = ?, delivered_to_execution = ?, delivery_confirmed_at = NULL
-      WHERE id IN (
-        SELECT id FROM messages
-        WHERE scope_id = ? AND to_agent_id = ? AND state = 'queued' AND (expires_at IS NULL OR expires_at > ?)
-        ORDER BY created_at, id LIMIT ?)
-      RETURNING *`),
-    pullRedeliver: db.prepare(`
-      UPDATE messages SET delivered_at = ?, delivery_count = delivery_count + 1,
-                          delivery_batch = ?, delivered_to_execution = ?, delivery_confirmed_at = NULL
-      WHERE id IN (
-        SELECT id FROM messages
-        WHERE scope_id = ? AND to_agent_id = ? AND state = 'delivered' AND delivered_at <= ?
-        ORDER BY created_at, id LIMIT ?)
-      RETURNING *`),
+                            context_json, idempotency_key, content_hash, state, created_at, expires_at, escalation_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`),
     peekQueued: db.prepare(`
       SELECT * FROM messages
       WHERE scope_id = ? AND to_agent_id = ? AND state = 'queued' AND (expires_at IS NULL OR expires_at > ?)
       ORDER BY created_at, id LIMIT ?`),
     peekRedeliver: db.prepare(`
       SELECT * FROM messages
-      WHERE scope_id = ? AND to_agent_id = ? AND state = 'delivered' AND delivered_at <= ?
+      WHERE scope_id = ? AND to_agent_id = ? AND state = 'delivered' AND delivered_at <= ? AND (expires_at IS NULL OR expires_at > ?)
       ORDER BY created_at, id LIMIT ?`),
     claimOne: db.prepare(`
       UPDATE messages SET state = 'delivered', delivered_at = ?, delivery_count = delivery_count + 1,
                           delivery_batch = ?, delivered_to_execution = ?, delivery_confirmed_at = NULL
       WHERE id = ? AND scope_id = ? AND to_agent_id = ?
-        AND ((state = 'queued' AND (expires_at IS NULL OR expires_at > ?)) OR (state = 'delivered' AND delivered_at <= ?))
+        AND (state = 'queued' OR (state = 'delivered' AND delivered_at <= ?))
+        AND (expires_at IS NULL OR expires_at > ?)
       RETURNING *`),
     confirmBatch: db.prepare(`
       UPDATE messages SET delivery_confirmed_at = ?
@@ -745,9 +628,10 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
       RETURNING *`),
     ack: db.prepare("UPDATE messages SET state = 'acknowledged', acknowledged_at = ? WHERE id = ?"),
     listScope: db.prepare('SELECT * FROM messages WHERE scope_id = ? AND created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?'),
+    listScopeAgent: db.prepare('SELECT * FROM messages WHERE scope_id = ? AND created_at >= ? AND (from_agent_id = ? OR to_agent_id = ?) ORDER BY created_at DESC, id DESC LIMIT ?'),
     expire: db.prepare(`
       UPDATE messages SET state = 'expired'
-      WHERE state = 'queued' AND expires_at IS NOT NULL AND expires_at <= ?
+      WHERE state IN ('queued','delivered') AND expires_at IS NOT NULL AND expires_at <= ?
       RETURNING *`),
     purge: db.prepare(`
       DELETE FROM messages
@@ -799,29 +683,6 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     escList: db.prepare(`SELECT * FROM escalations WHERE scope_id = ? AND (? IS NULL OR status = ?)
       ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, created_at DESC, id DESC LIMIT ?`),
     escPurge: db.prepare("DELETE FROM escalations WHERE status IN ('resolved','dismissed') AND resolved_at <= ?"),
-    forkById: db.prepare('SELECT * FROM forks WHERE id = ?'),
-    forkBySummaryMsg: db.prepare("SELECT * FROM forks WHERE summary_message_id = ? AND status = 'summarising'"),
-    forkByMsg: db.prepare("SELECT * FROM forks WHERE message_id = ? AND status = 'delivered'"),
-    forkInsert: db.prepare(`INSERT INTO forks (id, scope_id, from_agent, from_execution, source_agent, source_worktree, source_mode, source_session,
-                                               target_kind, target_agent, target_mode, target_worktree, notes, task_id, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`),
-    forkAsk: db.prepare("UPDATE forks SET status = 'summarising', summary_message_id = ?, summary_deadline = ? WHERE id = ?"),
-    forkSummary: db.prepare("UPDATE forks SET status = 'queued', summary_source = ?, summary = ?, summary_deadline = NULL WHERE id = ?"),
-    forkDeliver: db.prepare("UPDATE forks SET status = 'delivered', message_id = ?, target_agent = ?, package_bytes = ?, delivered_at = ?, summary_deadline = NULL WHERE id = ?"),
-    forkAccept: db.prepare("UPDATE forks SET status = 'accepted', accepted_at = ? WHERE id = ?"),
-    forkFail: db.prepare("UPDATE forks SET status = 'failed', error = ?, summary_deadline = NULL WHERE id = ?"),
-    forkCancel: db.prepare("UPDATE forks SET status = 'cancelled', summary_deadline = NULL WHERE id = ?"),
-    // Bounded like every other cross-scope read: the most overdue forks first,
-    // and a later sweep picks up anything past the cap.
-    forkStale: db.prepare("SELECT * FROM forks WHERE status = 'summarising' AND summary_deadline IS NOT NULL AND summary_deadline <= ? ORDER BY summary_deadline, id LIMIT ?"),
-    forkQueued: db.prepare("SELECT * FROM forks WHERE status = 'queued' ORDER BY created_at, id LIMIT ?"),
-    forkPackage: db.prepare("SELECT * FROM messages WHERE fork_id = ? AND scope_id = ? AND from_agent_id = 'strado' AND kind = 'request' AND body LIKE 'FORK HAND-OVER %' AND id <> COALESCE(?, '') LIMIT 1"),
-    forkList: db.prepare(`SELECT * FROM forks WHERE scope_id = ? AND (? IS NULL OR status = ?)
-      ORDER BY created_at DESC, id DESC LIMIT ?`),
-    // Retention runs off accepted_at where there is one and created_at
-    // otherwise: a fork's whole lifecycle is seconds long, so the created_at
-    // fallback is the close of a failed or cancelled row for every practical purpose.
-    forkPurge: db.prepare("DELETE FROM forks WHERE status IN ('accepted','failed','cancelled') AND COALESCE(accepted_at, created_at) <= ?"),
   } satisfies Record<string, StatementSync>;
 
   const tx = <T>(fn: () => T): T => {
@@ -841,18 +702,6 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
 
   const emitEsc = (type: string, r: EscalationRow, extra: Record<string, unknown> = {}): void =>
     opts.bus.emit(INTERCOM_CHANNEL, { type, data: { scopeId: r.scope_id, id: r.id, from: r.from_agent, to: r.to_agent, title: r.title, status: r.status, taskId: r.task_id, ...extra } });
-
-  // Never carries `notes` or `summary`: both are working context the event
-  // stream (and every UI subscribed to it) has no business broadcasting.
-  const emitFork = (type: string, r: ForkRow): void =>
-    opts.bus.emit(INTERCOM_CHANNEL, {
-      type,
-      data: {
-        scopeId: r.scope_id, id: r.id, status: r.status, source: r.source_agent,
-        target: r.target_agent, targetKind: r.target_kind, summarySource: r.summary_source,
-        ...(r.error === null ? {} : { error: r.error }),
-      },
-    });
 
   const emitTurn = (type: 'turn.recorded' | 'turn.updated', scopeId: string, agentId: string, turnId: string): void =>
     opts.bus.emit(INTERCOM_CHANNEL, { type, data: { scopeId, agentId, turnId } });
@@ -904,7 +753,6 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     batchId: r.delivery_batch,
     confirmed: r.delivery_confirmed_at !== null,
     escalationId: r.escalation_id,
-    forkId: r.fork_id,
   });
 
   const toTask = (r: TaskRow): Task => ({
@@ -950,46 +798,41 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
       if (req.state === 'expired') throw new AppError('CONFLICT', 'the request has expired');
       if (stmts.replyOf.get(req.id)) throw new AppError('CONFLICT', 'the request already has a reply');
     }
-    const { n } = stmts.pressure.get(input.scopeId) as { n: number };
+    const { n } = stmts.pressure.get(input.scopeId, t) as { n: number };
     if (n >= scopeCap) throw new AppError('BACKPRESSURE', `scope has ${n} unacknowledged messages`);
     const id = newMessageId(t);
-    const expiresAt = input.expiresInMs ? t + input.expiresInMs : null;
+    // Omitted means "until retention": a message to an agent that never comes
+    // back must not hold the scope's pressure budget forever. 0 means never.
+    const expiresIn = input.expiresInMs ?? RETENTION_MS;
+    const expiresAt = expiresIn ? t + expiresIn : null;
     stmts.insert.run(
       id, input.scopeId, input.fromAgentId, input.fromExecutionId, input.toAgentId, input.kind,
       input.replyTo ?? null, input.body, contextJson, input.idempotencyKey ?? null, hash, t, expiresAt,
-      input.escalationId ?? null, input.forkId ?? null,
+      input.escalationId ?? null,
     );
     return { row: stmts.byId.get(id) as Row, replayed: false };
   };
 
   const send = (input: SendInput): SendResult => {
     const t = now();
-    const { row, replayed, resolved, forked } = tx(() => {
+    const { row, replayed, resolved } = tx(() => {
       const { row, replayed } = insertMessage(input, t);
       // An ordinary reply to an escalation's ask *is* the answer: resolve the
       // escalation in the same transaction rather than making the peer call
       // resolveEscalation as well. A retargeted ask no longer names the peer
       // as its target, so a late reply lands as a plain reply and nothing more.
       let resolved: EscalationRow | null = null;
-      let forked: { type: string; row: ForkRow } | null = null;
       if (!replayed && input.kind === 'reply') {
         const ask = stmts.escByAsk.get(input.replyTo!) as EscalationRow | undefined;
         if (ask && ask.to_agent === input.fromAgentId) {
           stmts.escResolve.run(input.body, input.fromAgentId, row.id, t, ask.id);
           resolved = stmts.escById.get(ask.id) as EscalationRow;
         }
-        // The same reasoning for forks: the source's reply to the summary ask
-        // *is* the summary, and the target's reply to the hand-over *is* the
-        // acceptance. Both lookups are status-scoped, so a reply that arrives
-        // after the fork moved on (or from anyone but the agent the fork
-        // names) leaves the fork alone.
-        forked = advanceForkOnReply(input.replyTo!, input.fromAgentId, input.body, t);
       }
-      return { row, replayed, resolved, forked };
+      return { row, replayed, resolved };
     });
-    if (!replayed) emit('message.queued', row, { kind: input.kind });
+    if (!replayed) emit('message.queued', row, { kind: input.kind, ...(row.reply_to ? { replyTo: row.reply_to } : {}) });
     if (resolved) emitEsc('escalation.resolved', resolved, { resolvedBy: input.fromAgentId });
-    if (forked) emitFork(forked.type, forked.row);
     return { receipt: toReceipt(row), replayed };
   };
 
@@ -997,45 +840,25 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
 
   const byCreated = (a: Row, b: Row): number => (a.created_at - b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-  const pull = (scopeId: string, agentId: string, executionId: string, limit = PULL_DEFAULT): PullResult => {
-    const lim = Math.min(Math.max(1, Math.floor(limit)), PULL_MAX);
-    const t = now();
-    const batchId = newMessageId(t);
-    const { fresh, redo } = tx(() => {
-      const fresh = (stmts.pullQueued.all(t, batchId, executionId, scopeId, agentId, t, lim) as Row[]).sort(byCreated);
-      const room = lim - fresh.length;
-      const redo = room > 0
-        ? (stmts.pullRedeliver.all(t, batchId, executionId, scopeId, agentId, t - REDELIVERY_AFTER_MS, room) as Row[]).sort(byCreated)
-        : [];
-      return { fresh, redo };
-    });
-    const out = [
-      ...fresh.map((r) => ({ r, redelivery: false })),
-      ...redo.map((r) => ({ r, redelivery: true })),
-    ].sort((x, y) => byCreated(x.r, y.r));
-    for (const { r, redelivery } of out) emit('message.delivered', r, { redelivery });
-    return { batchId: out.length ? batchId : null, messages: out.map(({ r, redelivery }) => toMessage(r, redelivery)) };
-  };
-
   const peek = (scopeId: string, agentId: string, limit: number): Message[] => {
     const lim = Math.min(Math.max(1, Math.floor(limit)), PULL_MAX);
     const t = now();
     const fresh = (stmts.peekQueued.all(scopeId, agentId, t, lim) as Row[]).map((r) => ({ r, redelivery: false }));
-    const redo = (stmts.peekRedeliver.all(scopeId, agentId, t - REDELIVERY_AFTER_MS, lim) as Row[]).map((r) => ({ r, redelivery: true }));
+    const redo = (stmts.peekRedeliver.all(scopeId, agentId, t - REDELIVERY_AFTER_MS, t, lim) as Row[]).map((r) => ({ r, redelivery: true }));
     return [...fresh, ...redo]
       .sort((x, y) => byCreated(x.r, y.r))
       .slice(0, lim)
       .map(({ r, redelivery }) => toMessage(r, redelivery));
   };
 
-  const claim = (scopeId: string, agentId: string, executionId: string, ids: string[]): PullResult => {
-    if (ids.length === 0) return { batchId: null, messages: [] };
+  /** Deliver the ids `select` names (read inside the same transaction) as one batch. */
+  const claimRows = (scopeId: string, agentId: string, executionId: string, select: () => string[]): PullResult => {
     const t = now();
     const batchId = newMessageId(t);
     const rows = tx(() => {
       const out: Row[] = [];
-      for (const id of ids) {
-        const r = stmts.claimOne.get(t, batchId, executionId, id, scopeId, agentId, t, t - REDELIVERY_AFTER_MS) as Row | undefined;
+      for (const id of select()) {
+        const r = stmts.claimOne.get(t, batchId, executionId, id, scopeId, agentId, t - REDELIVERY_AFTER_MS, t) as Row | undefined;
         if (r) out.push(r);
       }
       return out.sort(byCreated);
@@ -1044,45 +867,45 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     return { batchId: rows.length ? batchId : null, messages: rows.map((r) => toMessage(r, r.delivery_count > 1)) };
   };
 
+  const claim = (scopeId: string, agentId: string, executionId: string, ids: string[]): PullResult =>
+    ids.length === 0 ? { batchId: null, messages: [] } : claimRows(scopeId, agentId, executionId, () => ids);
+
+  /** Exactly what peek would hand back, oldest first across fresh and
+   * redeliverable rows: serving queued rows first would starve an
+   * unacknowledged older message for as long as new ones keep arriving. */
+  const pull = (scopeId: string, agentId: string, executionId: string, limit = PULL_DEFAULT): PullResult =>
+    claimRows(scopeId, agentId, executionId, () => peek(scopeId, agentId, limit).map((m) => m.id));
+
   const confirm = (scopeId: string, agentId: string, executionId: string, batchId: string): number =>
     tx(() => (stmts.confirmBatch.all(now(), batchId, scopeId, agentId, executionId) as { id: string }[]).length);
 
   const ackAll = (scopeId: string, agentId: string, executionId: string): number => {
     const t = now();
-    // Fork acceptance has to hang off *every* ack path, not just `ack`: this
-    // is the one a Claude tab's Stop hook uses, and a fork accepted only
-    // through `ack` would sit at `delivered` forever for that target.
-    const acked = tx(() =>
-      (stmts.ackAll.all(t, scopeId, agentId, executionId) as Row[]).map((row) => ({ row, fork: acceptForkOf(row.id, agentId, t) })));
-    for (const { row, fork } of acked) {
-      emit('message.acknowledged', row);
-      if (fork) emitFork('fork.accepted', fork);
-    }
+    const acked = tx(() => stmts.ackAll.all(t, scopeId, agentId, executionId) as Row[]);
+    for (const row of acked) emit('message.acknowledged', row);
     return acked.length;
   };
 
   const ack = (scopeId: string, agentId: string, id: string): Receipt => {
     const t = now();
-    const { row, changed, accepted } = tx(() => {
+    const { row, changed } = tx(() => {
       const r = stmts.byId.get(id) as Row | undefined;
       if (!r || r.scope_id !== scopeId || r.to_agent_id !== agentId) throw new AppError('NOT_FOUND', `no message "${id}"`);
-      if (r.state === 'acknowledged') return { row: r, changed: false, accepted: null as ForkRow | null };
+      if (r.state === 'acknowledged') return { row: r, changed: false };
       if (r.state === 'expired') throw new AppError('CONFLICT', 'message has expired');
       stmts.ack.run(t, id);
-      // Acknowledging the hand-over is the target taking the work on; no
-      // separate "accept" call is needed (or wanted: the agent already had to
-      // ack the message to clear its inbox).
-      const accepted = acceptForkOf(id, agentId, t);
-      return { row: stmts.byId.get(id) as Row, changed: true, accepted };
+      return { row: stmts.byId.get(id) as Row, changed: true };
     });
     if (changed) emit('message.acknowledged', row);
-    if (accepted) emitFork('fork.accepted', accepted);
     return toReceipt(row);
   };
 
-  const listScope = (scopeId: string, opts: { since?: number; limit?: number } = {}): Message[] => {
+  const listScope = (scopeId: string, opts: { since?: number; limit?: number; agent?: string } = {}): Message[] => {
     const lim = Math.min(Math.max(1, Math.floor(opts.limit ?? UI_LIST_DEFAULT)), UI_LIST_MAX);
-    return (stmts.listScope.all(scopeId, opts.since ?? 0, lim) as Row[]).map((r) => toMessage(r, false));
+    const rows = opts.agent === undefined
+      ? stmts.listScope.all(scopeId, opts.since ?? 0, lim)
+      : stmts.listScopeAgent.all(scopeId, opts.since ?? 0, opts.agent, opts.agent, lim);
+    return (rows as Row[]).map((r) => toMessage(r, false));
   };
 
   const recordTurns = (scopeId: string, agentId: string, providerSessionId: string, turns: TurnInput[]): RecordTurnsResult => {
@@ -1126,7 +949,7 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
 
   const sweep = (): SweepResult => {
     const t = now();
-    const { expiredRows, deleted, turnsDeleted, tasksDeleted, escalationsDeleted, forksDeleted, asksBefore, asksAfter } = tx(() => {
+    const { expiredRows, deleted, turnsDeleted, tasksDeleted, escalationsDeleted, asksBefore, asksAfter } = tx(() => {
       const expiredRows = stmts.expire.all(t) as Row[];
       // Before the purge: an ask nobody answered in time becomes the human's
       // problem, and retargeting leaves it open, so it survives the purge below.
@@ -1137,12 +960,11 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
       const turnsDeleted = Number(stmts.purgeTurnsOld.run(cutoff).changes) + Number(stmts.purgeTurnsExcess.run(TURNS_PER_AGENT).changes);
       const tasksDeleted = Number(stmts.taskPurge.run(cutoff).changes);
       const escalationsDeleted = Number(stmts.escPurge.run(cutoff).changes);
-      const forksDeleted = Number(stmts.forkPurge.run(cutoff).changes);
-      return { expiredRows, deleted, turnsDeleted, tasksDeleted, escalationsDeleted, forksDeleted, asksBefore, asksAfter };
+      return { expiredRows, deleted, turnsDeleted, tasksDeleted, escalationsDeleted, asksBefore, asksAfter };
     });
     for (const r of expiredRows) emit('message.expired', r);
     emitRetargeted(asksBefore, asksAfter);
-    return { expired: expiredRows.length, deleted, turnsDeleted, tasksDeleted, escalationsDeleted, escalationsRetargeted: asksAfter.length, forksDeleted };
+    return { expired: expiredRows.length, deleted, turnsDeleted, tasksDeleted, escalationsDeleted, escalationsRetargeted: asksAfter.length };
   };
 
   const taskOpenCap = opts.taskOpenCap ?? TASK_OPEN_CAP;
@@ -1369,10 +1191,10 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
    * sweep, comparing the deadline against the store's own clock (`now()`,
    * injectable in tests) — never `Date.now()`, which would disagree with it
    * under an injected clock. */
-  const pollEscalation = (scopeId: string, id: string): Escalation => {
+  const pollEscalation = (scopeId: string, id: string, askerAgentId?: string): Escalation => {
     const r = escRow(scopeId, id);
     if (r.status !== 'open' || r.to_agent === HUMAN_AGENT_ID || r.expires_at === null || r.expires_at > now()) {
-      return toEscalation(r);
+      return consumeAnswer(r, askerAgentId);
     }
     retargetSelected(() => {
       const fresh = stmts.escById.get(id) as EscalationRow | undefined;
@@ -1382,149 +1204,20 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     });
     return toEscalation(escRow(scopeId, id));
   };
-
-  const forkRow = (scopeId: string, id: string): ForkRow => {
-    const r = stmts.forkById.get(id) as ForkRow | undefined;
-    if (!r || r.scope_id !== scopeId) throw new AppError('NOT_FOUND', `no fork "${id}"`);
-    return r;
-  };
-
-  /** The summary write only; the caller owns the transaction and the event.
-   * The first summary wins: a fork that already has one, or that has moved
-   * past `queued`, returns null. That covers both callers — the service fills
-   * a fork it never asked to summarise (a dead or shell source: the spec's
-   * `created` → `queued`, and `queued` is the state `createFork` starts in),
-   * while the sweeper's late diary fallback cannot overwrite the source's own
-   * reply, which got there first. */
-  const setSummaryInTx = (r: ForkRow, source: 'agent' | 'diary' | 'none', text: string | null): ForkRow | null => {
-    if (r.status !== 'summarising' && r.status !== 'queued') return null;
-    if (r.summary_source !== null) return null;
-    stmts.forkSummary.run(source, text, r.id);
-    return stmts.forkById.get(r.id) as ForkRow;
-  };
-
-  /** The acceptance write only; the caller owns the transaction and the event. */
-  const acceptForkOf = (messageId: string, byAgentId: string, t: number): ForkRow | null => {
-    const r = stmts.forkByMsg.get(messageId) as ForkRow | undefined;
-    if (!r || r.target_agent !== byAgentId) return null;
-    stmts.forkAccept.run(t, r.id);
-    return stmts.forkById.get(r.id) as ForkRow;
-  };
-
-  /** The fork half of `send`'s reply handling; the caller owns the transaction
-   * and the event. Both branches are no-ops unless the replier is the agent
-   * the fork names and the fork is in the state that expects the reply. */
-  const advanceForkOnReply = (replyTo: string, fromAgentId: string, body: string, t: number): { type: string; row: ForkRow } | null => {
-    const asked = stmts.forkBySummaryMsg.get(replyTo) as ForkRow | undefined;
-    if (asked && asked.source_agent === fromAgentId) {
-      const next = setSummaryInTx(asked, 'agent', cutUtf8(body, FORK_SUMMARY_MAX));
-      return next ? { type: 'fork.queued', row: next } : null;
-    }
-    const accepted = acceptForkOf(replyTo, fromAgentId, t);
-    return accepted ? { type: 'fork.accepted', row: accepted } : null;
-  };
-
-  const createFork = (input: ForkInput): Fork => {
-    if (Buffer.byteLength(input.notes, 'utf8') > FORK_NOTES_MAX) throw new AppError('VALIDATION', `notes exceeds ${FORK_NOTES_MAX} bytes`);
+  /** Acknowledge a resolved escalation's reply on the asker's behalf. Only the
+   * asker's own unacknowledged copy moves; anyone else's poll is a plain read. */
+  const consumeAnswer = (r: EscalationRow, askerAgentId: string | undefined): Escalation => {
+    if (r.status !== 'resolved' || askerAgentId !== r.from_agent || r.reply_message_id === null) return toEscalation(r);
     const t = now();
-    const target = input.target;
-    const row = tx(() => {
-      const id = newMessageId(t);
-      stmts.forkInsert.run(
-        id, input.scopeId, input.from.agentId, input.from.executionId,
-        input.source.agentId, input.source.worktreePath, input.source.mode, input.source.sessionId,
-        target.kind, target.agentId, target.kind === 'new' ? target.mode : null,
-        target.kind === 'new' ? target.worktreePath : null, input.notes, input.taskId ?? null, t,
-      );
-      return stmts.forkById.get(id) as ForkRow;
+    const acked = tx(() => {
+      const m = stmts.byId.get(r.reply_message_id!) as Row | undefined;
+      if (!m || m.to_agent_id !== askerAgentId || (m.state !== 'queued' && m.state !== 'delivered')) return null;
+      stmts.ack.run(t, m.id);
+      return stmts.byId.get(m.id) as Row;
     });
-    emitFork('fork.created', row);
-    return toFork(row);
+    if (acked) emit('message.acknowledged', acked);
+    return toEscalation(r);
   };
-  const getFork = (scopeId: string, id: string): Fork => toFork(forkRow(scopeId, id));
-  const listForks = (scopeId: string, o: { status?: ForkStatus; limit?: number } = {}): Fork[] => {
-    const lim = Math.min(Math.max(1, Math.floor(o.limit ?? FORK_LIST_DEFAULT)), FORK_LIST_MAX);
-    return (stmts.forkList.all(scopeId, o.status ?? null, o.status ?? null, lim) as ForkRow[]).map(toFork);
-  };
-  const forkSummaryRequested = (scopeId: string, id: string, summaryMessageId: string, deadline: number): Fork => {
-    const row = tx(() => {
-      const r = forkRow(scopeId, id);
-      if (r.status !== 'queued') conflict('not_queued', `fork is ${r.status}`);
-      stmts.forkAsk.run(summaryMessageId, deadline, id);
-      return stmts.forkById.get(id) as ForkRow;
-    });
-    emitFork('fork.summarising', row);
-    return toFork(row);
-  };
-  const forkSetSummary = (scopeId: string, id: string, source: 'agent' | 'diary' | 'none', text: string | null): Fork => {
-    const { row, changed } = tx(() => {
-      const r = forkRow(scopeId, id);
-      const next = setSummaryInTx(r, source, text === null ? null : cutUtf8(text, FORK_SUMMARY_MAX));
-      return { row: next ?? r, changed: next !== null };
-    });
-    if (changed) emitFork('fork.queued', row);
-    return toFork(row);
-  };
-  const forkDelivered = (scopeId: string, id: string, messageId: string, targetAgentId: string, bytes: number): Fork => {
-    const t = now();
-    const row = tx(() => {
-      const r = forkRow(scopeId, id);
-      if (r.status !== 'queued') conflict('not_queued', `fork is ${r.status}`);
-      stmts.forkDeliver.run(messageId, targetAgentId, bytes, t, id);
-      return stmts.forkById.get(id) as ForkRow;
-    });
-    emitFork('fork.delivered', row);
-    return toFork(row);
-  };
-
-  const deliverFork: IntercomStore['deliverFork'] = (scopeId, id, targetAgentId, body, context) => {
-    const t = now();
-    const { row, message, inserted } = tx(() => {
-      const r = forkRow(scopeId, id);
-      if (r.status !== 'queued') return { row: r, message: null, inserted: false };
-      // Recover packages inserted by older versions before forkDelivered ran.
-      const existing = stmts.forkPackage.get(id, scopeId, r.summary_message_id) as Row | undefined;
-      const input: SendInput = { scopeId, fromAgentId: STRADO_SENDER_ID,
-        fromExecutionId: STRADO_SENDER_ID, toAgentId: targetAgentId, kind: 'request', body, context, forkId: id };
-      if (!existing) validate(input, JSON.stringify(context));
-      const message = existing ?? insertMessage(input, t).row;
-      stmts.forkDeliver.run(message.id, message.to_agent_id, Buffer.byteLength(message.body, 'utf8'), t, id);
-      return { row: stmts.forkById.get(id) as ForkRow, message, inserted: !existing };
-    });
-    if (message) {
-      if (inserted) emit('message.queued', message, { kind: 'request' });
-      emitFork('fork.delivered', row);
-    }
-    return toFork(row);
-  };
-  /** A closed fork is returned untouched rather than refused: the callers are
-   * timeout and spawn-failure paths that race a cancel or an acceptance, and
-   * neither wants to handle a CONFLICT it cannot act on. */
-  const forkFailed = (scopeId: string, id: string, error: string): Fork => {
-    const { row, changed } = tx(() => {
-      const r = forkRow(scopeId, id);
-      if (r.status !== 'summarising' && r.status !== 'queued' && r.status !== 'delivered') return { row: r, changed: false };
-      stmts.forkFail.run(error, id);
-      return { row: stmts.forkById.get(id) as ForkRow, changed: true };
-    });
-    if (changed) emitFork('fork.failed', row);
-    return toFork(row);
-  };
-  const cancelFork = (scopeId: string, id: string): Fork => {
-    const { row, changed } = tx(() => {
-      const r = forkRow(scopeId, id);
-      if (r.status === 'cancelled') return { row: r, changed: false };
-      // Once the hand-over is with the target, cancelling would strand a
-      // request the target may already be acting on.
-      if (r.status !== 'summarising' && r.status !== 'queued') conflict('not_cancellable', `fork is ${r.status}`);
-      stmts.forkCancel.run(id);
-      return { row: stmts.forkById.get(id) as ForkRow, changed: true };
-    });
-    if (changed) emitFork('fork.cancelled', row);
-    return toFork(row);
-  };
-  const staleSummarising = (at: number): Fork[] => (stmts.forkStale.all(at, FORK_STALE_SCAN) as ForkRow[]).map(toFork);
-  const queuedForks = (): Fork[] => (stmts.forkQueued.all(FORK_STALE_SCAN) as ForkRow[]).map(toFork);
 
   return {
     send,
@@ -1556,17 +1249,6 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     retargetEscalation,
     retargetOpenAsksTo,
     pollEscalation,
-    createFork,
-    getFork,
-    listForks,
-    forkSummaryRequested,
-    forkSetSummary,
-    forkDelivered,
-    deliverFork,
-    forkFailed,
-    cancelFork,
-    staleSummarising,
-    queuedForks,
     close: () => db.close(),
   };
 }
@@ -1588,7 +1270,7 @@ export function createDisabledIntercomStore(reason: string): IntercomStore {
     listScope: fail,
     recordTurns: fail,
     listTurns: fail,
-    sweep: () => ({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0, forksDeleted: 0 }),
+    sweep: () => ({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0 }),
     createTask: fail,
     getTask: fail,
     listTasks: fail,
@@ -1606,17 +1288,6 @@ export function createDisabledIntercomStore(reason: string): IntercomStore {
     retargetEscalation: fail,
     retargetOpenAsksTo: () => [],
     pollEscalation: fail,
-    createFork: fail,
-    getFork: fail,
-    listForks: fail,
-    forkSummaryRequested: fail,
-    forkSetSummary: fail,
-    forkDelivered: fail,
-    deliverFork: fail,
-    forkFailed: fail,
-    cancelFork: fail,
-    staleSummarising: () => [],
-    queuedForks: () => [],
     close: () => {},
   };
 }

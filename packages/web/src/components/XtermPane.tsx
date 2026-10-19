@@ -66,6 +66,12 @@ const NORD_TERMINAL_THEME: ITheme = {
   brightBlue: '#81a1c1', brightMagenta: '#b48ead', brightCyan: '#8fbcbb', brightWhite: '#eceff4',
 };
 
+/** The command bar has the keyboard: a pane becoming focused (a tab a command
+ * opened or brought up) must not take it — you keep talking to Strado. */
+function barHoldsKeyboard(): boolean {
+  return document.activeElement instanceof HTMLElement && document.activeElement.dataset.stradoBar !== undefined;
+}
+
 function activeTerminalTheme(): ITheme {
   switch (document.documentElement.dataset.appTheme) {
     case 'true-black': return TRUE_BLACK_TERMINAL_THEME;
@@ -461,7 +467,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         authFailures = 0;
         if (fitIfVisible()) sendResize();
         // Never steal focus into a background pane of a split.
-        if (focusedRef.current) term.focus();
+        if (focusedRef.current && !barHoldsKeyboard()) term.focus();
       };
       ws.onclose = (ev) => {
         settled();
@@ -560,7 +566,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
 
   // Becoming the focused pane moves keyboard focus into this terminal.
   useEffect(() => {
-    if (focused) termRef.current?.focus();
+    if (focused && !barHoldsKeyboard()) termRef.current?.focus();
   }, [focused]);
 
   // A cached terminal may become visible at a different size from the pane it
@@ -575,7 +581,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
-      if (focused) term.focus();
+      if (focused && !barHoldsKeyboard()) term.focus();
     });
     return () => cancelAnimationFrame(raf);
   }, [visible, focused]);

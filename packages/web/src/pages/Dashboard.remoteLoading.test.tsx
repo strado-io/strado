@@ -42,6 +42,7 @@ vi.mock('./TerminalView', () => ({ TerminalView: () => <div data-testid="inline-
 
 import { api } from '../api';
 import { Dashboard } from './Dashboard';
+import { openSidebarIfHome, showSidebarOnHome } from './dashboardTestHome';
 
 const noop = vi.fn();
 function dashboard(remoteRefreshKey = 0) {
@@ -56,14 +57,17 @@ function dashboard(remoteRefreshKey = 0) {
   );
 }
 function renderDashboard(remoteRefreshKey = 0) {
-  return render(
+  const view = render(
     dashboard(remoteRefreshKey),
   );
+  showSidebarOnHome();
+  return view;
 }
 
 describe('Dashboard runner loading state', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
     resolveRemote = null;
     vi.mocked(api.runners.remoteWorktrees).mockClear();
@@ -96,6 +100,7 @@ describe('Dashboard runner loading state', () => {
       />,
     );
     await act(async () => {}); // ws-b local load lands; its remote fetch hangs
+    openSidebarIfHome(); // home hides it again in the new workspace
 
     expect(screen.getByText('Checking runners…')).toBeInTheDocument();
   });

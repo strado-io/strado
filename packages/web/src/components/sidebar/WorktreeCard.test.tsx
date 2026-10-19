@@ -41,6 +41,14 @@ describe('WorktreeCard', () => {
     expect(screen.getByText('feat/x')).toHaveClass('text-zinc-500');
   });
 
+  it('only the open worktree looks selected: a closed one has a quiet, regular-weight title', () => {
+    const { rerender } = render(<WorktreeCard title="master" subtitle="" time="" active={false} onOpen={() => {}} label="master" />);
+    expect(screen.getByText('master')).not.toHaveClass('font-medium');
+    expect(screen.getByText('master')).not.toHaveClass('text-zinc-50');
+    rerender(<WorktreeCard title="master" subtitle="" time="" active onOpen={() => {}} label="master" />);
+    expect(screen.getByText('master')).toHaveClass('font-medium', 'text-zinc-50');
+  });
+
   it('gives a repo a stable two-letter avatar coloured by its id', () => {
     const a = render(<RepoAvatar id="r1" name="Fleetx Dashboard" />).container.firstElementChild!;
     const b = render(<RepoAvatar id="r1" name="Fleetx Dashboard" />).container.firstElementChild!;

@@ -1,15 +1,13 @@
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { requireAgent } from '../hooks/requireAgent.js';
 import { AppError } from '../errors.js';
-import { assertPathUnder } from '../paths.js';
-import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { formatInboxContext, selectUnderBudget } from '../services/intercomContext.js';
-import type { ForkCreateInput } from '../services/forkService.js';
 import {
   BODY_MAX, CONTEXT_MAX, ConfirmBody, DiaryQuery, EscalationCreateBody, EscalationListQuery, EscalationResolveBody,
-  ESCALATION_BODY_MAX, ForkCreateBody, ForkListQuery, HOOK_PULL_LIMIT, HookBody, HUMAN_AGENT_ID, ListQuery, PullBody,
+  ESCALATION_BODY_MAX, HOOK_PULL_LIMIT, HookBody, HUMAN_AGENT_ID, ListQuery, PullBody,
   READ_LINES_DEFAULT, READ_LINES_MAX, ReadQuery, RUN_TIMEOUT_MAX_MS, RUN_TIMEOUT_MIN_MS, RUN_TIMEOUT_MS, RunBody, SendBody, SHELL_RUN_ENV,
-  STRADO_SENDER_ID, TaskAssignBody, TaskCreateBody, TaskListQuery, TASKS_ENV,
+  TaskAssignBody, TaskCreateBody, TaskListQuery, TASKS_ENV, UI_LIST_MAX,
 } from '../services/intercomSchema.js';
 import { ShellRunError } from '../services/shellRunner.js';
 import { parseSessionKey, sessionKeyFor } from '../services/terminalManager.js';
@@ -43,56 +41,23 @@ function assertSandboxBoundary(app: FastifyInstance, ex: Execution, target: Agen
   }
 }
 
-/** A sandboxed caller may only open a fork's `newTab` inside its own
- * worktree, whatever `source` the fork names — otherwise a sandboxed thread's
- * fork would be a way to spawn a tab elsewhere on the host. */
-function assertForkSandboxBoundary(app: FastifyInstance, ex: Execution, worktreePath: string): void {
+/** The task half of the boundary: a sandboxed tab may create or claim only
+ * tasks that name no worktree or its own. A null path is everyone's. */
+function assertTaskSandboxBoundary(app: FastifyInstance, ex: Execution, worktreePath: string | null): void {
   const callerPath = parseSessionKey(ex.key).path;
-  if (app.deps.sandboxSlugs.slugOf(callerPath) === null) return;
+  if (app.deps.sandboxSlugs.slugOf(callerPath) === null || worktreePath === null) return;
   if (worktreePath !== callerPath) {
-    throw new AppError('FORBIDDEN', 'a sandboxed tab can only open a new tab in its own worktree');
+    throw new AppError('FORBIDDEN', 'a sandboxed tab can only take tasks of its own worktree');
   }
-}
-
-/** A `newTab.worktreePath` is a caller-supplied string (the schema allows any
- * 4096 characters) that becomes a spawned login shell's cwd and the directory
- * `<path>/.claude/settings.local.json` is written into. Hold it to the same
- * rule the terminal socket uses: a repo of this workspace must own it, either
- * as its own checkout or inside its canonical worktree root. */
-async function assertForkWorktreePath(app: FastifyInstance, scopeId: string, worktreePath: string): Promise<void> {
-  const invalid = (): AppError => new AppError('VALIDATION', 'invalid worktreePath');
-  const stores = await app.deps.registry.get(scopeId);
-  const repos = await stores.repos.list();
-  const repo = findOwningRepo(repos, worktreePath, app.deps.homeStateDir, { includeRepoRoot: true });
-  if (!repo) throw invalid();
-  try {
-    assertPathUnder(worktreePath, [repo.path, ...worktreeRootsFor(app.deps.homeStateDir, repo)]);
-  } catch {
-    // PATH_FORBIDDEN would be a 403 naming host paths; this is a bad field.
-    throw invalid();
-  }
-}
-
-/** Exactly one of `to` / `newTab` is guaranteed by the schema; this turns
- * whichever arrived into a `ForkCreateInput['target']`, resolving a peer
- * reference (404 unknown) and refusing a fork whose target is its own source. */
-async function resolveForkTarget(
-  app: FastifyInstance, scopeId: string, source: AgentSummary, b: ForkCreateBody,
-): Promise<ForkCreateInput['target']> {
-  if (b.to !== undefined) {
-    const to = await app.deps.agents.resolve(scopeId, b.to);
-    if (to.agentId === source.agentId) {
-      throw new AppError('CONFLICT', 'fork source and target are the same agent', { reason: 'source_is_target' });
-    }
-    return { kind: 'peer', agentId: to.agentId };
-  }
-  return { kind: 'new', mode: b.newTab!.mode, worktreePath: b.newTab!.worktreePath ?? source.worktreePath };
 }
 
 /** Resolve `agent` (exact id or unique alias, never a guess) and list its turns newest first. */
-async function diaryFor(app: FastifyInstance, scopeId: string, query: unknown) {
+async function diaryFor(app: FastifyInstance, scopeId: string, query: unknown, caller?: Execution) {
   const q = DiaryQuery.parse(query ?? {});
   const agent = await app.deps.agents.resolve(scopeId, q.agent);
+  // A peer's diary is its conversation: reading one across the boundary is
+  // the same leak read_tab is guarded against.
+  if (caller) assertSandboxBoundary(app, caller, agent);
   const turns = app.deps.intercom.listTurns(scopeId, agent.agentId, { limit: q.limit, before: q.before });
   return { agent: { agentId: agent.agentId, alias: agent.alias }, turns };
 }
@@ -106,17 +71,15 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
     const ex = requireAgent(app, req);
     const body = SendBody.parse(req.body);
     const toRef = body.to.trim().toLowerCase();
-    if (toRef === HUMAN_AGENT_ID) throw new AppError('VALIDATION', 'use intercom_escalate to reach the human');
-    // `strado` is the synthetic sender behind a fork's summary ask and
-    // hand-over: it is reachable only by replying to a request it sent, never
-    // by name, and never through the registry (it is not a registered agent).
-    let toAgentId: string;
-    if (toRef === STRADO_SENDER_ID) {
-      if (body.kind !== 'reply') throw new AppError('VALIDATION', '"strado" only receives replies to its own requests');
-      toAgentId = STRADO_SENDER_ID;
-    } else {
+    // The human is reached by escalation, except to answer a question the
+    // human asked this agent (the store checks replyTo names one).
+    if (toRef === HUMAN_AGENT_ID && body.kind !== 'reply') throw new AppError('VALIDATION', 'use intercom_escalate to reach the human (or kind=reply to answer a question the human asked you)');
+    let toAgentId = HUMAN_AGENT_ID;
+    if (toRef !== HUMAN_AGENT_ID) {
       // Alias or exact id; throws NOT_FOUND (unknown) or CONFLICT (ambiguous).
-      toAgentId = (await app.deps.agents.resolve(ex.scopeId, body.to)).agentId;
+      const target = await app.deps.agents.resolve(ex.scopeId, body.to);
+      assertSandboxBoundary(app, ex, target);
+      toAgentId = target.agentId;
     }
     const { receipt, replayed } = app.deps.intercom.send({
       scopeId: ex.scopeId,
@@ -159,7 +122,7 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
   // Turn diary (step 4b): what a peer tab was asked and answered, newest first.
   app.get('/api/intercom/diary', async (req) => {
     const ex = requireAgent(app, req);
-    return diaryFor(app, ex.scopeId, req.query);
+    return diaryFor(app, ex.scopeId, req.query, ex);
   });
 
   // Shell adapters (step 6). `run`: type a command into a peer SHELL tab of the
@@ -174,6 +137,12 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
     const target = await app.deps.agents.resolve(ex.scopeId, body.target);
     assertSandboxBoundary(app, ex, target);
     if (target.mode !== 'shell') throw new AppError('VALIDATION', 'target is not a shell tab');
+    // A tab opened by agent_spawn types only into nothing it did not open:
+    // typing `claude` or a curl into the human's shell would run with that
+    // shell's (unmarked) identity and slip the spawn-depth limit.
+    if (app.deps.spawnGuard.isSpawned(ex.executionId)) {
+      throw new AppError('FORBIDDEN', 'a tab opened by agent_spawn cannot type into other shells', { reason: 'spawn_depth' });
+    }
     if (!target.live) throw new AppError('VALIDATION', 'target is not live');
     const key = sessionKeyFor(target.mode, target.worktreePath, target.sessionId);
     const timeoutMs = Math.min(RUN_TIMEOUT_MAX_MS, Math.max(RUN_TIMEOUT_MIN_MS, body.timeoutMs ?? RUN_TIMEOUT_MS));
@@ -212,6 +181,7 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
   app.post('/api/intercom/tasks', { bodyLimit: 64 * 1024 }, async (req, reply) => {
     const ex = requireAgent(app, req); assertTasksEnabled();
     const b = TaskCreateBody.parse(req.body);
+    assertTaskSandboxBoundary(app, ex, b.worktreePath ?? null);
     reply.code(201);
     return { task: app.deps.intercom.createTask({ scopeId: ex.scopeId, by: actorOf(ex), title: b.title, body: b.body, ticketKey: b.ticketKey ?? null, dependsOn: b.dependsOn, worktreePath: b.worktreePath ?? null }) };
   });
@@ -227,13 +197,19 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
   ] as const) {
     app.post<{ Params: { id: string } }>(`/api/intercom/tasks/:id/${verb}`, async (req) => {
       const ex = requireAgent(app, req); assertTasksEnabled();
+      if (verb === 'claim') assertTaskSandboxBoundary(app, ex, app.deps.intercom.getTask(ex.scopeId, req.params.id).worktreePath);
       return { task: fn(ex.scopeId, req.params.id, ex) };
     });
   }
   app.post('/api/intercom/escalations', { bodyLimit: ESCALATION_BODY_MAX + CONTEXT_MAX + 16 * 1024 }, async (req, reply) => {
     const ex = requireAgent(app, req); assertTasksEnabled();
     const b = EscalationCreateBody.parse(req.body);
-    const to = b.to === undefined ? HUMAN_AGENT_ID : (await app.deps.agents.resolve(ex.scopeId, b.to)).agentId;
+    let to = HUMAN_AGENT_ID;
+    if (b.to !== undefined) {
+      const target = await app.deps.agents.resolve(ex.scopeId, b.to);
+      assertSandboxBoundary(app, ex, target);
+      to = target.agentId;
+    }
     if (to === ex.agentId) throw new AppError('VALIDATION', 'cannot ask yourself');
     reply.code(201);
     return { escalation: app.deps.intercom.createEscalation({ scopeId: ex.scopeId, from: actorOf(ex), to, title: b.title, body: b.body, context: b.context, taskId: b.taskId ?? null, timeoutMs: b.timeoutMs ?? null }) };
@@ -245,7 +221,7 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
     // An asker polling its own question must see the timeout without waiting
     // for the hourly sweep: pollEscalation retargets an overdue peer ask on
     // read, comparing the deadline against the store's own clock.
-    return { escalation: app.deps.intercom.pollEscalation(ex.scopeId, req.params.id) };
+    return { escalation: app.deps.intercom.pollEscalation(ex.scopeId, req.params.id, ex.agentId) };
   });
   app.post<{ Params: { id: string } }>('/api/intercom/escalations/:id/resolve', { bodyLimit: ESCALATION_BODY_MAX + 16 * 1024 }, async (req) => {
     const ex = requireAgent(app, req); assertTasksEnabled();
@@ -295,43 +271,6 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
     return { confirmed: app.deps.intercom.confirm(ex.scopeId, ex.agentId, ex.executionId, batchId) };
   });
 
-  // Cross-agent fork (step 9a): hand a live thread's working context to a
-  // peer or a freshly spawned tab. Delivery (the summary ask, the package,
-  // the nudge) happens off the bus through ForkService; this route only opens
-  // the row and hands back where it stands.
-  app.post('/api/intercom/forks', { bodyLimit: 64 * 1024 }, async (req, reply) => {
-    const ex = requireAgent(app, req); assertTasksEnabled();
-    const b = ForkCreateBody.parse(req.body);
-    const source = await app.deps.agents.resolve(ex.scopeId, b.source ?? ex.agentId);
-    // A fork hands the source's summary, repository snapshot and notes to the
-    // target's inbox, so naming a foreign source is a read of that worktree.
-    assertSandboxBoundary(app, ex, source);
-    const target = await resolveForkTarget(app, ex.scopeId, source, b);
-    if (target.kind === 'new') {
-      assertForkSandboxBoundary(app, ex, target.worktreePath);
-      await assertForkWorktreePath(app, ex.scopeId, target.worktreePath);
-    }
-    const fork = await app.deps.forks.create({
-      scopeId: ex.scopeId, from: actorOf(ex), source: { agentId: source.agentId },
-      target, notes: b.notes, taskId: b.taskId ?? null,
-    });
-    reply.code(201);
-    return { fork };
-  });
-
-  app.get<{ Params: { id: string } }>('/api/intercom/forks/:id', async (req) => {
-    const ex = requireAgent(app, req); assertTasksEnabled();
-    // Visibility first, on the row as it stands — a stranger must not be the
-    // one whose read advances a summarising fork past its deadline. Only once
-    // the caller is confirmed does poll() run (never store.getFork() for the
-    // actual response: a `summarising` row past its deadline advances to the
-    // diary fallback on read, same as an escalation retarget).
-    const raw = app.deps.intercom.getFork(ex.scopeId, req.params.id);
-    if (raw.from.agentId !== ex.agentId && raw.source.agentId !== ex.agentId && raw.target.agentId !== ex.agentId) {
-      throw new AppError('NOT_FOUND', `no fork "${req.params.id}"`);
-    }
-    return { fork: app.deps.forks.poll(ex.scopeId, req.params.id) };
-  });
 }
 
 /** Workspace-scoped, read-only UI view. No token, like every other /api/w route. */
@@ -339,12 +278,50 @@ export async function registerIntercomScopedRoutes(app: FastifyInstance): Promis
   app.get('/intercom/messages', async (req) => {
     const q = ListQuery.parse(req.query ?? {});
     const scopeId = req.workspace!.id;
-    return { messages: await withAliases(app, scopeId, app.deps.intercom.listScope(scopeId, q)) };
+    // `agent`: one station's line (the dock card's "Recent"), sent or received.
+    const raw = (req.query as { agent?: unknown } | undefined)?.agent;
+    const agent = typeof raw === 'string' && raw.length > 0 && raw.length <= 200 ? raw : null;
+    // Filtered in the query: a quiet station in a busy workspace still has its line.
+    const rows = app.deps.intercom.listScope(scopeId, agent === null ? q : { ...q, agent });
+    return { messages: await withAliases(app, scopeId, rows) };
   });
 
   app.get('/intercom/diary', async (req) => diaryFor(app, req.workspace!.id, req.query));
 
   app.get('/intercom/peers', async (req) => ({ peers: await app.deps.agents.list(req.workspace!.id) }));
+
+  // The dock's station lights (spec: 2026-10-17-strado-dock-intercom-design.md):
+  // every tab in the workspace, with the calls waiting on the human, in one
+  // read. A Claude at a permission prompt is calling too: it is blocked on
+  // the human exactly like an open escalation.
+  app.get('/intercom/stations', async (req) => {
+    const scopeId = req.workspace!.id;
+    const agents = await app.deps.agents.list(scopeId);
+    const open = process.env[TASKS_ENV] === '0' ? [] : app.deps.intercom.listEscalations(scopeId, { status: 'open', limit: 200 });
+    const now = Date.now();
+    const stations = agents.map((a) => {
+      const calls = open
+        .filter((e) => e.to === HUMAN_AGENT_ID && e.from.agentId === a.agentId)
+        .map((e) => ({ id: e.id, title: e.title, body: e.body, createdAt: e.createdAt }));
+      const q = app.deps.ptyActivity.quiet(sessionKeyFor(a.mode, a.worktreePath, a.sessionId));
+      const idleFor = Math.min(q.input, q.output);
+      return {
+        agentId: a.agentId,
+        alias: a.alias,
+        name: a.alias ?? a.agentId.split('@')[0]!,
+        mode: a.mode,
+        worktreePath: a.worktreePath,
+        worktreeName: path.basename(a.worktreePath),
+        sessionId: a.sessionId,
+        lifecycle: a.lifecycle,
+        live: a.live,
+        needsYou: calls.length > 0 || a.lifecycle === 'needs_input',
+        calls,
+        lastActivityAt: Number.isFinite(idleFor) ? now - idleFor : null,
+      };
+    });
+    return { stations };
+  });
 
   // Human-facing tasks + escalation (step 8): no token — the caller is the
   // human, identified by the `HUMAN` actor constant, never a bearer token.
@@ -381,31 +358,4 @@ export async function registerIntercomScopedRoutes(app: FastifyInstance): Promis
     return { escalation: app.deps.intercom.resolveEscalation(req.workspace!.id, req.params.id, HUMAN, b.resolution) };
   });
   app.post<{ Params: { id: string } }>('/intercom/escalations/:id/dismiss', async (req) => { assertTasksEnabled(); return { escalation: app.deps.intercom.dismissEscalation(req.workspace!.id, req.params.id) }; });
-
-  // Human-facing fork (step 9a): no token, no sandbox boundary — the caller
-  // is the browser, not a sandboxed tab. `source` is required: unlike an
-  // agent's own call, there is no caller identity to default it from.
-  app.post('/intercom/forks', { bodyLimit: 64 * 1024 }, async (req, reply) => {
-    assertTasksEnabled();
-    const b = ForkCreateBody.parse(req.body);
-    if (b.source === undefined) throw new AppError('VALIDATION', 'source is required');
-    const scopeId = req.workspace!.id;
-    const source = await app.deps.agents.resolve(scopeId, b.source);
-    const target = await resolveForkTarget(app, scopeId, source, b);
-    if (target.kind === 'new') await assertForkWorktreePath(app, scopeId, target.worktreePath);
-    const fork = await app.deps.forks.create({
-      scopeId, from: HUMAN, source: { agentId: source.agentId }, target, notes: b.notes, taskId: b.taskId ?? null,
-    });
-    reply.code(201);
-    return { fork };
-  });
-  app.get('/intercom/forks', async (req) => {
-    assertTasksEnabled();
-    const q = ForkListQuery.parse(req.query ?? {});
-    return { forks: app.deps.intercom.listForks(req.workspace!.id, { status: q.status, limit: q.limit }) };
-  });
-  app.post<{ Params: { id: string } }>('/intercom/forks/:id/cancel', async (req) => {
-    assertTasksEnabled();
-    return { fork: app.deps.intercom.cancelFork(req.workspace!.id, req.params.id) };
-  });
 }

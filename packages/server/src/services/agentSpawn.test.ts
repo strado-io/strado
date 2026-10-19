@@ -113,7 +113,7 @@ function fakes(over: { registerThrows?: boolean; ensureThrows?: boolean; session
 }
 
 describe('spawnAgentTab', () => {
-  it('allocates distinct live tabs when two forks start concurrently', async () => {
+  it('allocates distinct live tabs when two spawns start concurrently', async () => {
     const f = fakes();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
