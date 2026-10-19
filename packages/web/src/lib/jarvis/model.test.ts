@@ -60,7 +60,7 @@ describe('buildModelContext', () => {
     expect(m.worktree).toEqual({ name: 'app' });
     expect(m.focused).toBe('reviewer');
     expect(m.worktrees).toEqual([{ name: 'app', branch: 'main' }, { name: 'api', branch: 'FLT-123-fix-login' }]);
-    expect(m.focuses).toEqual([{ name: 'Release' }]);
+    expect(m.focuses).toEqual([{ name: 'Release', worktrees: [] }]);
     expect(m.scripts).toEqual(['dev', 'test']);
     expect(m.packageManager).toBe('pnpm');
     expect(buildModelContext(ctx()).packageManager).toBe('npm');

@@ -156,7 +156,7 @@ describe('CommandPalette: talk to Strado (push-to-talk)', () => {
     expect(screen.queryByText('🎤')).not.toBeInTheDocument();
   });
 
-  it('hold ⌥Space anywhere (even in a terminal): listening with a meter, partials fill the box, release submits the final as typed', async () => {
+  it('hold ⌥Space anywhere (even in a terminal): listening with a meter, partials fill the box, release puts the final in the box; ⏎ sends it as typed', async () => {
     const v = fakeVoice();
     const s = setup({ voice: v.bridge });
     s.shellPane.focus();
@@ -174,6 +174,8 @@ describe('CommandPalette: talk to Strado (push-to-talk)', () => {
     fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
     expect(v.bridge.stop).toHaveBeenCalled();
     v.emit({ type: 'final', text: 'run ls' });
+    expect(s.server.run).not.toHaveBeenCalled(); // waits for ⏎
+    s.key('Enter');
     await waitFor(() => expect(s.server.run).toHaveBeenCalledWith(ref('shell', '1'), 'ls'));
   });
 
@@ -296,6 +298,8 @@ describe('CommandPalette: talk to Strado (push-to-talk)', () => {
       expect(v.bridge.stop).toHaveBeenCalledTimes(1);
       vi.useRealTimers();
       v.emit({ type: 'final', text: 'run ls' });
+      expect(s.server.run).not.toHaveBeenCalled(); // waits for ⏎
+      s.key('Enter');
       await waitFor(() => expect(s.server.run).toHaveBeenCalledWith(ref('shell', '1'), 'ls'));
     });
 
@@ -708,6 +712,113 @@ describe('CommandPalette as the always-visible command bar', () => {
   });
 });
 
+describe('CommandPalette: a voice command is never sent by itself', () => {
+  const talk = (v: ReturnType<typeof fakeVoice>, s: ReturnType<typeof setup>, words: string) => {
+    fireEvent.keyDown(s.shellPane, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: words });
+    fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'final', text: words });
+  };
+
+  it('the final lands in the box (focused, caret at the end) and waits: nothing runs until ⏎', async () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    talk(v, s, 'run ls');
+    expect(s.input).toHaveValue('run ls');
+    expect(document.activeElement).toBe(s.input);
+    expect(s.input.selectionStart).toBe('run ls'.length);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(s.server.run).not.toHaveBeenCalled();
+    s.key('Enter');
+    await waitFor(() => expect(s.server.run).toHaveBeenCalledWith(ref('shell', '1'), 'ls'));
+  });
+
+  it('talking again adds to what is there (with a space), so a request can be said in several goes', async () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    talk(v, s, 'run');
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: 'ls' });
+    expect(s.input).toHaveValue('run ls'); // live, after what was there
+    fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'final', text: 'ls' });
+    expect(s.input).toHaveValue('run ls');
+    expect(s.server.run).not.toHaveBeenCalled();
+    s.key('Enter');
+    await waitFor(() => expect(s.server.run).toHaveBeenCalledWith(ref('shell', '1'), 'ls'));
+  });
+
+  it('Esc while talking again puts back the text from before that go', () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    talk(v, s, 'run');
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: 'something else' });
+    s.key('Escape');
+    expect(s.input).toHaveValue('run');
+  });
+});
+
+describe('CommandPalette: a long request grows the box upward (up to 4 lines), never cut off', () => {
+  // jsdom lays nothing out: the content height is faked from the text's length.
+  const tall = (v: string) => (v.length > 60 ? 200 : v.length > 30 ? 52 : 32);
+  beforeEach(() => {
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get(this: HTMLTextAreaElement) { return tall(this.value); } });
+  });
+  afterEach(() => { delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight; });
+  const long = 'open a claude in every worktree in this focus and ask each of them whether their tests pass';
+
+  it('the box is a one-row field that wraps words; it grows with the text, then scrolls inside past 4 lines', () => {
+    const s = setup();
+    expect(s.input.tagName).toBe('TEXTAREA');
+    expect(s.input).toHaveAttribute('rows', '1');
+    expect(s.input.className).toContain('whitespace-pre-wrap');
+    act(() => s.input.focus());
+    s.type('run ls');
+    expect(s.input.style.height).toBe('32px');
+    expect(s.input.style.overflowY).toBe('hidden');
+    s.type('open a claude in every worktree in this');
+    expect(s.input.style.height).toBe('52px');
+    s.type(long);
+    expect(s.input.style.height).toBe('92px'); // 4 lines, then it scrolls
+    expect(s.input.style.overflowY).toBe('auto');
+  });
+
+  it('⏎ sends, never a newline; after it the box is one line again', async () => {
+    const s = setup();
+    act(() => s.input.focus());
+    s.type(long);
+    s.type('run ls');
+    expect(fireEvent.keyDown(s.input, { key: 'Enter' })).toBe(false);
+    await waitFor(() => expect(s.server.run).toHaveBeenCalled());
+    expect(s.input).toHaveValue('');
+    expect(s.input.style.height).toBe('32px');
+  });
+
+  it('a pasted multi-line text becomes one line (a command is one line)', () => {
+    const s = setup();
+    act(() => s.input.focus());
+    s.type('run\nls');
+    expect(s.input).toHaveValue('run ls');
+  });
+
+  it('listening: the live words wrap and stay in view (scrolled to the newest); the waveform wraps with them', () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: long });
+    expect(s.input.style.height).toBe('92px');
+    expect(s.input.scrollTop).toBe(200);
+    expect(screen.getByTestId('voice-caret').parentElement!.className).toContain('whitespace-pre-wrap');
+  });
+
+  it('the home screen\'s big box grows the same way', () => {
+    const s = setup({ hero: true });
+    s.type(long);
+    expect(s.input.style.height).toBe('120px'); // 4 lines of the big box
+  });
+});
+
 describe('CommandPalette: a spoken question gets a spoken answer', () => {
   let speech: { speak: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> };
   beforeEach(() => {
@@ -728,11 +839,37 @@ describe('CommandPalette: a spoken question gets a spoken answer', () => {
     v.emit({ type: 'partial', text: 'what is claude-1 doing' });
     fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
     v.emit({ type: 'final', text: 'what is claude-1 doing' });
+    s.key('Enter');
     expect(await screen.findByText('claude-1 is fixing the login test.')).toBeInTheDocument();
     expect(said()).toEqual(['claude-1 is fixing the login test.']);
     speech.cancel.mockClear();
     fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
     expect(speech.cancel).toHaveBeenCalled();
+  });
+
+  it('said in two goes, then ⏎: still spoken, so read aloud', async () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'final', text: 'what is' });
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'final', text: 'claude-1 doing' });
+    s.key('Enter');
+    await waitFor(() => expect(speech.speak).toHaveBeenCalled());
+  });
+
+  it('said, then edited by typing: it is typed now, not read aloud', async () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'final', text: 'what is claude-1 doin' });
+    s.type('what is claude-1 doing');
+    s.key('Enter');
+    expect(await screen.findByText('claude-1 is fixing the login test.')).toBeInTheDocument();
+    expect(speech.speak).not.toHaveBeenCalled();
   });
 
   it('typed: shown, not read aloud', async () => {
@@ -752,6 +889,7 @@ describe('CommandPalette: a spoken question gets a spoken answer', () => {
     fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
     fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
     v.emit({ type: 'final', text: 'what is claude-1 doing' });
+    s.key('Enter');
     await waitFor(() => expect(speech.speak).toHaveBeenCalled());
     const text = said()[0]!;
     expect(text.length).toBeLessThanOrEqual(301);

@@ -28,6 +28,20 @@ const ctx: JarvisContext = {
   repos: [{ name: 'Fleetx Dashboard' }, { name: 'Strado' }],
 };
 const home: JarvisContext = { ...ctx, worktree: null, focused: null, tabs: [] };
+/** The "release" Focus is open: FD-00029_hotfix and main, a claude in each. */
+const inFocus: JarvisContext = {
+  ...ctx, calls: [],
+  focus: { name: 'release' },
+  focuses: [{ name: 'test', worktrees: ['master'] }, { name: 'release', worktrees: ['FD-00029_hotfix', 'main'] }],
+  agents: [...ctx.agents, { name: 'FD-00029_hotfix/claude-1', mode: 'claude', lifecycle: 'idle' }, { name: 'main/claude-2', mode: 'claude', lifecycle: 'working' }],
+};
+/** Every step is `action`, there are `n` of them, and each passes `check`. */
+const each = (action: string, n: number, check: (s: Step) => string | null = () => null): Expect => (r) => {
+  const got = steps(r);
+  if (got.length !== n || got.some((s) => s.action !== action)) return `steps ${JSON.stringify(got.map((s) => s.action))}, wanted ${n} × ${action}`;
+  for (const s of got) { const why = check(s); if (why) return why; }
+  return null;
+};
 /** A codex agent running beside claude-1 (and no call open). */
 const withCodex: JarvisContext = { ...ctx, calls: [], agents: [...ctx.agents, { name: 'codex-1', mode: 'codex', lifecycle: 'working' }], tabs: [...ctx.tabs, { name: 'codex-1', mode: 'codex', busy: true, worktree: 'master' }] };
 
@@ -112,6 +126,17 @@ const CASES: Case[] = [
   { text: 'what is claude working on', expect: plan('agent.recap', { agent: 'claude-1' }) },
   { text: 'what has codex done so far', context: withCodex, expect: plan('agent.recap', { agent: 'codex-1' }) },
   { text: 'what are all the agents doing', expect: plan('agent.recap', { agent: 'all' }) },
+  // Focus-wide
+  { text: 'open a shell in every worktree in this focus', context: inFocus, expect: each('tab.open', 2, (s) => (s.args.mode === 'shell' && ['FD-00029_hotfix', 'main'].includes(String(s.args.worktree)) ? null : `tab.open ${JSON.stringify(s.args)}`)) },
+  { text: 'ask all the claudes in this focus if their tests pass', context: inFocus, expect: each('agent.ask', 2, (s) => (['FD-00029_hotfix/claude-1', 'main/claude-2'].includes(String(s.args.to)) ? null : `asked ${s.args.to}`)) },
+  { text: 'what are the agents in this focus doing', context: inFocus, expect: plan('agent.recap', { agent: 'all', focus: 'release' }) },
+  { text: 'remove main from this focus', context: inFocus, expect: plan('focus.edit', { op: 'remove', focus: 'release' }) },
+  { text: 'open claude in the hotfix worktree', context: inFocus, expect: plan('tab.open', { mode: 'claude', worktree: 'FD-00029_hotfix' }) },
+  { text: 'what is in this focus', context: inFocus, expect: answers },
+  // Home screen: the only shell lives in another worktree, and the box still sees it.
+  { text: 'can you close the shell in strado main?', context: { ...home, calls: [], worktrees: [{ name: 'Strado/main', branch: 'main', repo: 'Strado' }, { name: 'Strado Website/main', branch: 'main', repo: 'Strado Website' }], tabs: [{ name: 'Strado/main/shell-1', mode: 'shell', busy: false, worktree: 'Strado/main' }] }, expect: plan('tab.close', { tab: 'Strado/main/shell-1' }) },
+  // A repo named instead of a worktree (the "Strado MCP" Focus holds two repos).
+  { text: 'open shell in strado website', context: { ...ctx, calls: [], worktree: { name: 'Strado_Mcp' }, worktrees: [{ name: 'Strado_Mcp', branch: 'Strado_Mcp', repo: 'Strado' }, { name: 'Strado Website/main', branch: 'main', repo: 'Strado Website' }, { name: 'Strado/main', branch: 'main', repo: 'Strado' }], focus: { name: 'Strado MCP' }, focuses: [{ name: 'Strado MCP', worktrees: ['Strado_Mcp', 'Strado Website/main'] }], repos: [{ name: 'Strado' }, { name: 'Strado Website' }] }, expect: plan('tab.open', { mode: 'shell', worktree: 'Strado Website/main' }) },
   { text: 'did claude 1 finish the migration', expect: plan('agent.recap', { agent: 'claude-1' }) },
   { text: 'ask claude 1 to talk with codex about the migration', context: { ...ctx, agents: [...ctx.agents, { name: 'codex-1', mode: 'codex', lifecycle: 'idle' }], tabs: [...ctx.tabs, { name: 'codex-1', mode: 'codex', busy: false, worktree: 'master' }] }, expect: (r) => plan('agent.message', { to: 'claude-1', text: /codex-1/ })(r) ?? (steps(r).length === 1 ? null : 'messaged more than the first agent') },
   { text: 'tell codex yes go ahead and delete it', expect: plan('call.answer', { caller: 'codex-1' }) },

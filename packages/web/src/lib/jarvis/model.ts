@@ -6,7 +6,7 @@
 // Spec: docs/specs/2026-10-17-jarvis-natural-language-design.md (private repo).
 import { looksSecret } from './history';
 import {
-  agentName, callStep, explain, focusedTarget, here, isAgentMode, messageStep, mk, openStep, placeChip, plan, resolveAgent, resolveTarget, runScript, runStep,
+  agentName, callStep, explain, findWorktree, worktreeLabel, focusedTarget, here, isAgentMode, messageStep, mk, openStep, placeChip, plan, resolveAgent, resolveTarget, runScript, runStep,
   shellCommand, tabStep, targetChip, normaliseUrl, type Resolved,
 } from './parse';
 import { withSafety } from './safety';
@@ -22,8 +22,12 @@ export type ModelContext = {
   worktree: { name: string } | null;
   focused: string | null;
   tabs: { name: string; mode: TabMode; label?: string; busy: boolean; worktree: string }[];
-  worktrees: { name: string; branch?: string }[];
-  focuses: { name: string }[];
+  /** Unique names ("<repo>/<name>" where plain names collide), most recent first. */
+  worktrees: { name: string; branch?: string; repo?: string }[];
+  /** Each Focus with its member worktrees (context names, ≤ 30). */
+  focuses: { name: string; worktrees: string[] }[];
+  /** The Focus open in this window: "this focus". */
+  focus: { name: string } | null;
   scripts: string[];
   packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
   agents: { name: string; mode: TabMode; lifecycle: 'working' | 'idle' }[];
@@ -71,7 +75,7 @@ export function sendable(text: string): Sendable {
 // ---------- names ----------
 
 const worktreeName = (ctx: ParseContext, path: string): string =>
-  scrub(ctx.worktrees.find((w) => w.path === path)?.name) ?? scrub(path.split('/').filter(Boolean).pop()) ?? 'worktree';
+  scrub(worktreeLabel(ctx, path)) ?? scrub(path.split('/').filter(Boolean).pop()) ?? 'worktree';
 
 /** Every tab's unique model-facing name: plain in the current worktree,
  * `<worktree>/<name>` elsewhere. Deterministic, so the same context always
@@ -154,12 +158,20 @@ export function buildModelContext(ctx: ParseContext): ModelContext {
     }),
     // Most recent first: on home the model offers these as the choices.
     worktrees: [...ctx.worktrees].sort((a, b) => (b.lastUsedAt ?? -1) - (a.lastUsedAt ?? -1)).slice(0, MODEL_CAPS.worktrees).flatMap((w) => {
-      const name = scrub(w.name);
+      const name = scrub(worktreeLabel(ctx, w.path));
       if (!name) return [];
       const branch = scrub(w.branch);
-      return [{ name, ...(branch ? { branch } : {}) }];
+      const repo = scrub(w.repoName);
+      return [{ name, ...(branch ? { branch } : {}), ...(repo ? { repo } : {}) }];
     }),
-    focuses: ctx.focuses.flatMap((f) => { const name = scrub(f.name); return name ? [{ name }] : []; }).slice(0, MODEL_CAPS.focuses),
+    focuses: ctx.focuses.flatMap((f) => {
+      const name = scrub(f.name);
+      if (!name) return [];
+      const worktrees = (f.worktreePaths ?? []).filter((p) => ctx.worktrees.some((w) => w.path === p))
+        .flatMap((p) => { const n = scrub(worktreeName(ctx, p)); return n ? [n] : []; }).slice(0, FOCUS_MEMBERS_MAX);
+      return [{ name, worktrees }];
+    }).slice(0, MODEL_CAPS.focuses),
+    focus: (() => { const n = scrub(ctx.currentFocus?.name); return n ? { name: n } : null; })(),
     scripts: Object.keys(ctx.packageScripts).flatMap((s) => { const n = scrub(s); return n ? [n] : []; }).slice(0, MODEL_CAPS.scripts),
     packageManager: ctx.packageManager ?? 'npm',
     agents: agents.slice(0, MODEL_CAPS.agents),
@@ -228,6 +240,9 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
 const SPLITS: Split[] = ['right', 'down', 'tab'];
 /** The server takes the user's words for a recap up to this long. */
 const RECAP_QUESTION_MAX = 2000;
+/** Per Focus in the model context, and agents a Focus-wide recap covers. */
+const FOCUS_MEMBERS_MAX = 30;
+const RECAP_AGENTS_MAX = 20;
 const OPEN_MODES: (AgentMode | 'shell')[] = ['shell', 'claude', 'codex', 'opencode', 'pi'];
 
 const squash = (s: string): string => s.trim().replace(/\s+/g, ' ');
@@ -267,11 +282,11 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
     if (!ctx.worktrees.some((w) => w.path === chipWt)) return explain('That worktree is gone', 'model');
     planWt = chipWt;
   }
-  /** A worktree by name, branch, ticket or directory name; undefined when none. */
+  /** A worktree by name (parse.ts findWorktree); several matches are refused with the choices. */
   const worktreeByName = (name: string): string | undefined => {
-    const n = name.trim().replace(/^#/, '').toLowerCase();
-    return (ctx.worktrees.find((x) => [x.name, x.branch, x.ticketKey].some((v) => v?.toLowerCase() === n))
-      ?? ctx.worktrees.find((x) => worktreeName(ctx, x.path).toLowerCase() === n))?.path;
+    const f = findWorktree(ctx, name);
+    if (f.kind === 'ambiguous') refuse(`Which ${name.trim()}: ${f.paths.map((p) => worktreeName(ctx, p)).join(', ')}?`);
+    return f.kind === 'ok' ? f.path : undefined;
   };
   const worktree = (name: string | undefined): string => {
     if (name === undefined) return planWt ?? here(ctx) ?? refuse('no worktree is open — name one');
@@ -314,6 +329,18 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
   };
   const isPlace = (v: Place | Resolved): v is Place => 'split' in v;
   const placeOr = (v: Place | Resolved): Place => (isPlace(v) ? v : v.kind === 'none' ? refuse(v.message) : refuse(`Which ${v.kind === 'ambiguous' ? v.what : 'tab'}? Name the anchor exactly`));
+
+  /** A Focus by its name (any case), or "this focus" / "the focus" for the one open here. */
+  const focusNamed = (name: string): ParseContext['focuses'][number] => {
+    if (/^(this|the|current|this current)( focus)?$/i.test(name.trim())) {
+      const cur = ctx.currentFocus ?? refuse('No Focus is open here');
+      return ctx.focuses.find((f) => f.id === cur.id) ?? { ...cur, worktreePaths: [] };
+    }
+    const hits = ctx.focuses.filter((f) => f.name.toLowerCase() === name.trim().toLowerCase());
+    if (hits.length === 0) refuse(`No Focus "${name}"`);
+    if (hits.length > 1) refuse(`Two Focuses are called "${name}"; rename one first`);
+    return hits[0]!;
+  };
 
   /** An agent named by the model: an exact model-facing name first, then the
    * box's own rules (a bare kind is the focused one, other worktrees only as "wt/name"). */
@@ -397,9 +424,17 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
       case 'agent.recap': {
         const name = str(a, 'agent', { required: true, max: 200 })!;
         const question = opts.text?.trim().slice(0, RECAP_QUESTION_MAX) || null;
-        const recap = (agentIds: string[] | 'all') => mk('agent.recap', { agentIds, question }, { kind: 'none' }, { risk: 'read', where: 'server', undoable: false },
-          [{ arg: 'agentIds', label: agentIds === 'all' ? 'Recap all agents' : `Recap ${agentIds.map((id) => agentName(ctx, id)).join(', ')}`, candidates: [] }], ctx);
-        if (/^(all|everyone|every agent|all agents)$/i.test(name)) return { kind: 'ok', step: recap('all') };
+        const recap = (agentIds: string[] | 'all', focus?: string) => mk('agent.recap', { agentIds, question, ...(focus ? { focus } : {}) }, { kind: 'none' }, { risk: 'read', where: 'server', undoable: false },
+          [{ arg: 'agentIds', label: focus ? `Recap the agents in ${focus}` : agentIds === 'all' ? 'Recap all agents' : `Recap ${agentIds.map((id) => agentName(ctx, id)).join(', ')}`, candidates: [] }], ctx);
+        if (/^(all|everyone|every agent|all agents)$/i.test(name)) {
+          const focusName = str(a, 'focus', { max: 200 });
+          if (!focusName) return { kind: 'ok', step: recap('all') };
+          // Every agent working in that Focus's worktrees (none is an answer too).
+          const f = focusNamed(focusName);
+          const paths = new Set(f.worktreePaths ?? []);
+          const ids = ctx.peers.filter((p) => isAgentMode(p.mode) && paths.has(p.worktreePath)).map((p) => p.agentId).slice(0, RECAP_AGENTS_MAX);
+          return { kind: 'ok', step: recap(ids, f.name) };
+        }
         return toAgent(name, (id) => recap([id]));
       }
       case 'nav.worktree': {
@@ -491,10 +526,7 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
         let focusId: string | null = null;
         if (op !== 'create') {
           if (!focusName) refuse('Which Focus?');
-          const hits = byName(focusName!);
-          if (hits.length === 0) refuse(`No Focus "${focusName}"`);
-          if (hits.length > 1) refuse(`Two Focuses are called "${focusName}"; rename one first`);
-          focusId = hits[0]!.id;
+          focusId = focusNamed(focusName!).id;
         }
         const name = op === 'create' || op === 'rename' ? str(a, 'name', { max: 60, line: true }) ?? refuse(`The Focus needs a ${op === 'rename' ? 'new ' : ''}name`) : null;
         if (name && byName(name).some((f) => f.id !== focusId)) refuse(`A Focus called "${name}" already exists`);

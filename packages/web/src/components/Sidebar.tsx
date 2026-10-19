@@ -25,7 +25,7 @@ export type SidebarView = { kind: 'worktrees' } | { kind: 'reviews' } | { kind: 
 export type Props = {
   repos: RepoConfig[];
   worktrees: Worktree[];
-  selected: SidebarView;
+  selected: SidebarView | null;
   onSelect: (view: SidebarView) => void;
   onOpenSettings: () => void;
   onCollapse: () => void;

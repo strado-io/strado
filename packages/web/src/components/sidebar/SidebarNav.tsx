@@ -46,17 +46,18 @@ function NavButton({ label, icon, active = false, onClick }: {
 }
 
 export function SidebarNav({ selected, onSelect, onOpenSettings }: {
-  selected: SidebarView;
+  /** The page shown; null on home (no page is current there). */
+  selected: SidebarView | null;
   onSelect: (view: SidebarView) => void;
   onOpenSettings: () => void;
 }) {
   return (
     <nav aria-label="Pages" className="flex items-center gap-1 px-1">
-      <NavButton label="Worktrees" icon={worktreesIcon} active={selected.kind === 'worktrees'}
+      <NavButton label="Worktrees" icon={worktreesIcon} active={selected?.kind === 'worktrees'}
         onClick={() => onSelect({ kind: 'worktrees' })} />
-      <NavButton label="Code reviews" icon={reviewsIcon} active={selected.kind === 'reviews'}
+      <NavButton label="Code reviews" icon={reviewsIcon} active={selected?.kind === 'reviews'}
         onClick={() => onSelect({ kind: 'reviews' })} />
-      <NavButton label="Usage" icon={usageIcon} active={selected.kind === 'usage'}
+      <NavButton label="Usage" icon={usageIcon} active={selected?.kind === 'usage'}
         onClick={() => onSelect({ kind: 'usage' })} />
       <span className="flex-1" />
       <NavButton label="Open settings" icon={settingsIcon} onClick={onOpenSettings} />

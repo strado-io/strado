@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRendererOverlay } from '../contexts/RendererOverlay';
 import type { StationDto } from '../api';
 import { chipEndingAt, chipKey, chipLabel, chipSegments, insertChip, mentionAt, pruneChips, sigilOf, toRankStation, toWire, type Chip } from '../lib/mention/chips';
@@ -80,6 +80,11 @@ export type CommandBarHandle = { focus: () => void; browse: () => void };
 const PLAN_ENTER_GUARD_MS = 500;
 /** How much of an answer is read aloud (a spoken question gets a spoken answer). */
 const SPEAK_MAX = 300;
+/** A long request grows the box (upward in the Dock) up to this many lines, then scrolls inside. */
+const BOX_LINES = 4;
+/** Line height and vertical padding (px) of the bar's and the home box's text; the classes below match. */
+const BAR_BOX = { line: 20, pad: 12, text: 'py-1.5 text-[13px] leading-5' };
+const HERO_BOX = { line: 24, pad: 24, text: 'py-3 text-base leading-6' };
 /** Read an answer aloud, cut at a word near SPEAK_MAX; any earlier one stops. */
 function speak(text: string) {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
@@ -88,10 +93,14 @@ function speak(text: string) {
   synth.cancel();
   synth.speak(new SpeechSynthesisUtterance(cut));
 }
+/** What was in the box, then what was said after it (one space between). */
+const withSaid = (before: string, said: string) => (!said.trim() ? before : before.trim() ? `${before.replace(/\s+$/, '')} ${said}` : said);
 const hush = () => { try { window.speechSynthesis?.cancel(); } catch { /* no speech here */ } };
 /** What was typed (or said) for each question still waiting: its answer shows under it.
  * Module-level, so it survives the box being replaced (home → Dock). */
 const askedText = new Map<string, string>();
+/** The lines under each asked text, one per question (or the recap): an answer replaces its own. */
+const answerLines = new Map<string, { id: string; line: string }[]>();
 /** Quiet this long in the partials while still holding: ask early (speculate). */
 const SPECULATE_PAUSE_MS = 400;
 /** Space held this long in the box turns into push-to-talk; a tap is far shorter. */
@@ -318,7 +327,7 @@ export function CommandPalette({
   const threadScopeRef = useRef<string | null>(null);
   const [disclosed, setDisclosed] = useState(() => { try { return localStorage.getItem(DISCLOSED_KEY) === '1'; } catch { return true; } });
   useEffect(() => () => askRef.current?.abort(), []);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const repoName = useMemo(() => new Map(repos.map((r) => [r.id, r.name])), [repos]);
@@ -739,18 +748,19 @@ export function CommandPalette({
     if (result.recap || result.asks.length > 0) {
       recordOutcome();
       const spoken = spokenRef.current === text;
-      const lines: string[] = [];
-      if (result.recap) { lines.push(result.recap); if (spoken) speak(result.recap); }
+      const lines: { id: string; line: string }[] = [];
+      if (result.recap) { lines.push({ id: 'recap', line: result.recap }); if (spoken) speak(result.recap); }
       for (const a of result.asks) {
         const name = agentName(a.to.agentId, a.to.alias);
         askedText.set(a.id, text);
         expectAnswer(jarvis.wsId, { id: a.id, agentId: a.to.agentId, name, spoken });
-        lines.push(a.delivered === 'sent' ? `Asked ${name}, the answer will show here` : `${name} is busy, it’ll answer after this turn`);
+        lines.push({ id: a.id, line: a.delivered === 'sent' ? `Asked ${name}, the answer will show here` : `${name} is busy, it’ll answer after this turn` });
       }
+      answerLines.set(text, lines);
       jarvis.onRan({ ok: true, summary: plan.summary, undo: result.undo, undoable });
       askRef.current = null;
       setModelState(null);
-      setOutcome({ text, view: { kind: 'answer', text: lines.join('\n\n') } });
+      setOutcome({ text, view: { kind: 'answer', text: lines.map((l) => l.line).join('\n\n') } });
       patchRow(key, { busy: false });
       return;
     }
@@ -834,7 +844,6 @@ export function CommandPalette({
   // What was in the box before listening (Esc puts it back), and the final
   // transcript waiting to be submitted once it is the box's text.
   const beforeVoiceRef = useRef('');
-  const voiceSubmitRef = useRef<string | null>(null);
   /** The last thing said (not typed): a request that is exactly it gets its answer read aloud. */
   const spokenRef = useRef<string | null>(null);
   const agentName = (agentId: string, alias?: string | null): string => {
@@ -850,18 +859,20 @@ export function CommandPalette({
     const asked = askedText.get(a.questionId) ?? '';
     askedText.delete(a.questionId);
     if (a.spoken) speak(a.text);
+    // Its own line under the question becomes the answer; the others stay as they are.
+    const lines = (answerLines.get(asked) ?? []).map((l) => (l.id === a.questionId ? { ...l, line } : l));
+    if (!lines.some((l) => l.id === a.questionId)) lines.push({ id: a.questionId, line });
+    answerLines.set(asked, lines);
     const show = () => {
       setQuery(asked); setCaret(asked.length); setChips([]); setPasted(false);
       askRef.current = null; setModelState(null); setQuiet(false);
-      setOutcome({ text: asked, view: { kind: 'answer', text: line } });
+      setOutcome({ text: asked, view: { kind: 'answer', text: (answerLines.get(asked) ?? lines).map((l) => l.line).join('\n\n') } });
       inputRef.current?.focus();
     };
     if (document.activeElement === inputRef.current && (query === asked || query.trim() === '')) show();
     else jarvis?.onRan({ ok: true, notice: true, summary: line, undo: [], undoable: false, action: { label: 'Show', run: show } });
   };
   useEffect(() => onAgentAnswer((a) => answerRef.current(a)), []);
-  // Bumped with each final: it often equals the last partial already in the box.
-  const [voiceFinals, setVoiceFinals] = useState(0);
   // Ask early on a pause while still talking (≥ 400 ms of the same partial);
   // the final reuses that answer when the words match (lib/jarvis/speculate).
   const speculateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -873,18 +884,33 @@ export function CommandPalette({
   const v = useVoice({
     bridge: voice,
     contextual: () => (jarvis ? contextualNames(jarvis.context()) : []),
+    // What is said goes after what was already in the box, so a request can be
+    // said in several goes. It is never sent by itself: ⏎ sends it.
     onPartial: (t) => {
-      setPasted(false); setChips([]); setQuery(t); setCaret(t.length);
+      const full = withSaid(beforeVoiceRef.current, t);
+      setPasted(false); setChips([]); setQuery(full); setCaret(full.length);
       stopSpeculating();
       if (!jarvis || jarvis.model?.status !== 'ready' || !t.trim()) return;
       speculateTimerRef.current = setTimeout(() => {
         speculateTimerRef.current = null;
         if (voiceRef.current.v.phase !== 'listening') return;
         const ctx = jarvis.context();
-        speculator.speculate(modelText(t, ctx), ctx, threadRef.current.turns());
+        speculator.speculate(modelText(full, ctx), ctx, threadRef.current.turns());
       }, SPECULATE_PAUSE_MS);
     },
-    onFinal: (t) => { stopSpeculating(); setPasted(false); setChips([]); voiceSubmitRef.current = t; spokenRef.current = t; setQuery(t); setCaret(t.length); setVoiceFinals((n) => n + 1); },
+    onFinal: (t) => {
+      stopSpeculating();
+      const full = withSaid(beforeVoiceRef.current, t);
+      spokenRef.current = full; // ⏎ on exactly this is a spoken request (answered aloud)
+      setPasted(false); setChips([]); setQuery(full); setCaret(full.length);
+      inputRef.current?.focus();
+      requestAnimationFrame(() => inputRef.current?.setSelectionRange(full.length, full.length));
+      // Ask ahead so ⏎ is quick (the answer is used only if the words still match).
+      if (jarvis && jarvis.model?.status === 'ready' && full.trim()) {
+        const ctx = jarvis.context();
+        speculator.speculate(modelText(full, ctx), ctx, threadRef.current.turns());
+      }
+    },
     onCancel: () => { dropSpeculation(); setQuery(beforeVoiceRef.current); setCaret(beforeVoiceRef.current.length); },
     onEmpty: () => dropSpeculation(),
     onError: () => dropSpeculation(),
@@ -899,16 +925,21 @@ export function CommandPalette({
     setKeepKeyboard(true);
     v.start();
   };
-  useEffect(() => {
-    if (voiceCaretRef.current && inputRef.current) voiceCaretRef.current.scrollLeft = inputRef.current.scrollWidth;
-  }, [query, listening]);
-  // The final, now in the box: submit it exactly as if typed.
-  useEffect(() => {
-    if (voiceSubmitRef.current === null || voiceSubmitRef.current !== query) return;
-    voiceSubmitRef.current = null;
-    submit(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, voiceFinals]);
+  // Before paint, so the box never flashes at the wrong height.
+  useLayoutEffect(() => {
+    // Grow with the text (wrapped words), up to BOX_LINES; past that it scrolls
+    // inside, and while listening the newest words stay in view.
+    const el = inputRef.current;
+    if (!el) return;
+    const box = hero ? HERO_BOX : BAR_BOX;
+    const max = box.line * BOX_LINES + box.pad;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, box.line + box.pad), max)}px`;
+    el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
+    if (listening) el.scrollTop = el.scrollHeight;
+    if (mirrorRef.current) mirrorRef.current.scrollTop = el.scrollTop;
+    if (voiceCaretRef.current) voiceCaretRef.current.scrollTop = el.scrollTop;
+  }, [query, listening, hero]);
   // Hold ⌥Space anywhere in the window — caught on the way down, so a
   // terminal never sees it; auto-repeat is ignored. Release stops.
   const voiceRef = useRef({ v, beginVoice, dialogOpen });
@@ -959,7 +990,7 @@ export function CommandPalette({
     else voiceRef.current.v.stop();
   };
   /** onKeyDown's Space; true when it handled the key. */
-  const spaceHoldKey = (e: React.KeyboardEvent<HTMLInputElement>): boolean => {
+  const spaceHoldKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (e.key !== ' ' || e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) {
       // Another key before the hold turns: they're typing (fast "a b" rolls).
       if (spaceHoldRef.current?.timer) endSpaceHold();
@@ -1042,7 +1073,7 @@ export function CommandPalette({
     else if (picker?.kind === 'worktrees' && picker.rows[i]) pickWorktree(picker.rows[i]!);
   };
   /** Keys the open picker owns; true when handled. */
-  const pickerKey = (e: React.KeyboardEvent<HTMLInputElement>): boolean => {
+  const pickerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (!picker || !mention) return false;
     const rows: unknown[] = picker.rows;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -1064,7 +1095,7 @@ export function CommandPalette({
     return false;
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // ⏎ that accepts an IME candidate is the input method's, not ours.
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     // Esc while talking: cancel, and put back what was typed before.
@@ -1331,7 +1362,7 @@ export function CommandPalette({
           ) : `Voice didn’t work: ${v.error.message ?? v.error.code}`}
         </div>
       )}
-      <div className={hero ? 'flex h-12 items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 focus-within:border-zinc-500' : 'flex h-8 items-center gap-2'}>
+      <div className={hero ? 'flex min-h-12 items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 focus-within:border-zinc-500' : 'flex min-h-8 items-center gap-2'}>
         <svg aria-hidden width={hero ? 16 : 13} height={hero ? 16 : 13} viewBox="0 0 16 16" className="shrink-0 text-zinc-500">
           <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
           <path d="M10.5 10.5l3 3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -1339,7 +1370,7 @@ export function CommandPalette({
         <div className="relative min-w-0 flex-1">
         {chips.length > 0 && (
           // The same text under a transparent input, with chips marked; the caret stays the input's.
-          <div ref={mirrorRef} aria-hidden className={`pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre text-zinc-100 ${hero ? 'text-base' : 'text-[13px]'}`}>
+          <div ref={mirrorRef} aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-zinc-100 ${(hero ? HERO_BOX : BAR_BOX).text}`}>
             {chipSegments(query, chips).map((seg, i) => (seg.chip
               ? <span key={i} data-testid={`chip-${chipKey(seg.chip)}`} className={`rounded-sm ${sigilOf(seg.chip) === '#' ? 'bg-emerald-900/60 text-emerald-100' : 'bg-sky-900/70 text-sky-100'}`}>{seg.text}</span>
               : <span key={i}>{seg.text}</span>))}
@@ -1348,13 +1379,14 @@ export function CommandPalette({
         {listening && (
           // The cursor while listening (as in Claude Code): a live waveform
           // right after the words, in place of the blinking caret.
-          <div ref={voiceCaretRef} aria-hidden className={`pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre ${hero ? 'text-base' : 'text-[13px]'}`}>
+          <div ref={voiceCaretRef} aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words pr-5 ${(hero ? HERO_BOX : BAR_BOX).text}`}>
             <span className="invisible">{query}</span>
             <VoiceCaret level={v.level} />
           </div>
         )}
-        <input
+        <textarea
           ref={inputRef}
+          rows={1}
           data-strado-bar=""
           value={query}
           onFocus={() => {
@@ -1381,7 +1413,8 @@ export function CommandPalette({
             setQuiet(false);
             setKeepKeyboard(true); // you are talking to Strado now
             if (v.phase === 'error') v.dismissError();
-            const val = e.target.value;
+            // A command is one line: a pasted newline becomes a space.
+            const val = e.target.value.replace(/\r?\n/g, ' ');
             spokenRef.current = null;
             setPasted(pasteRef.current ? true : val === '' ? false : pasted);
             pasteRef.current = false;
@@ -1393,15 +1426,15 @@ export function CommandPalette({
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onScroll={(e) => {
-            if (mirrorRef.current) mirrorRef.current.scrollLeft = e.currentTarget.scrollLeft;
-            if (voiceCaretRef.current) voiceCaretRef.current.scrollLeft = e.currentTarget.scrollLeft;
+            if (mirrorRef.current) mirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+            if (voiceCaretRef.current) voiceCaretRef.current.scrollTop = e.currentTarget.scrollTop;
           }}
           onPaste={() => { pasteRef.current = true; }}
           onKeyDown={onKeyDown}
           // Listening: the waveform cursor stands where the words will go.
           placeholder={listening ? '' : hero ? 'Tell Strado…  e.g. open master and run dev   ⌘K' : jarvis ? 'Tell Strado what to do…  ⌘K' : 'Search focuses, worktrees, repos…  ⌘K'}
           aria-label="Global search"
-          className={`relative w-full min-w-0 bg-transparent outline-none ${hero ? 'h-12 text-base' : 'h-8 text-[13px]'} placeholder:text-zinc-600 ${chips.length > 0 ? 'text-transparent caret-zinc-100' : 'text-zinc-100'}${listening ? ' caret-transparent pr-5' : ''}`}
+          className={`relative block w-full min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent outline-none ${(hero ? HERO_BOX : BAR_BOX).text} placeholder:text-zinc-600 ${chips.length > 0 ? 'text-transparent caret-zinc-100' : 'text-zinc-100'}${listening ? ' caret-transparent pr-5' : ''}`}
         />
         </div>
         {listening && (

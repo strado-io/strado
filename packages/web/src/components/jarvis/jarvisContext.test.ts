@@ -40,4 +40,112 @@ describe('buildParseContext', () => {
     expect(ctx.worktrees[0]!.lastUsedAt).toBeUndefined();
     expect(ctx.worktrees[1]!.lastUsedAt).toBe(42);
   });
+  describe('Focuses: the open one, and each one\'s worktrees', () => {
+    const focuses = [
+      { id: 'f1', name: 'Release', members: ['local:/w/a', 'remote:runner-1:/srv/x', 'local:/w/b'], createdAt: 't', lastActiveAt: 't' },
+      { id: 'f2', name: 'Empty', members: [], createdAt: 't', lastActiveAt: 't' },
+    ];
+    const base = { hub: null, peers: [], lastActedOn: null, worktrees: [], workspaces: [], repos: [], scripts: null, focuses };
+
+    it('each Focus carries its local worktree paths (a runner\'s worktrees are left out)', () => {
+      const ctx = buildParseContext(base);
+      expect(ctx.focuses).toEqual([
+        { id: 'f1', name: 'Release', worktreePaths: ['/w/a', '/w/b'] },
+        { id: 'f2', name: 'Empty', worktreePaths: [] },
+      ]);
+    });
+
+    it('the Focus open in this window is currentFocus; none open (or a stale id) is null', () => {
+      expect(buildParseContext({ ...base, activeFocusId: 'f1' }).currentFocus).toEqual({ id: 'f1', name: 'Release' });
+      expect(buildParseContext({ ...base, activeFocusId: null }).currentFocus).toBeNull();
+      expect(buildParseContext({ ...base, activeFocusId: 'gone' }).currentFocus).toBeNull();
+      expect(buildParseContext(base).currentFocus).toBeNull();
+    });
+  });
+  it('each worktree names its repo (by repoId; a repo\'s own checkout by path; unknown is null)', () => {
+    const ctx = buildParseContext({
+      hub: null, peers: [], lastActedOn: null, focuses: [], workspaces: [], scripts: null,
+      repos: [{ id: 'r1', name: 'Strado', path: '/code/strado' }, { id: 'r2', name: 'Strado Website', path: '/code/site' }] as never,
+      worktrees: [
+        { path: '/wt/strado/mcp', repoId: 'r1', branch: 'mcp' },
+        { path: '/code/site', repoId: null, branch: 'main' },
+        { path: '/wt/other/x', repoId: 'gone', branch: 'x' },
+      ] as never,
+    });
+    expect(ctx.worktrees).toMatchObject([
+      { path: '/wt/strado/mcp', repoName: 'Strado' },
+      { path: '/code/site', repoName: 'Strado Website' },
+      { path: '/wt/other/x', repoName: null },
+    ]);
+  });
+  describe('worktree names are unique', () => {
+    const build = (worktrees: unknown[]) => buildParseContext({
+      hub: null, peers: [], lastActedOn: null, focuses: [], workspaces: [], scripts: null,
+      repos: [{ id: 'r1', name: 'Strado', path: '/code/strado' }, { id: 'r2', name: 'Strado Website', path: '/code/site' }] as never,
+      worktrees: worktrees as never,
+    }).worktrees.map((w) => w.name);
+
+    it('a name only one worktree has stays plain', () => {
+      expect(build([{ path: '/wt/a/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' } }, { path: '/code/site', repoId: 'r2', branch: 'main' }])).toEqual(['FD-9', 'main']);
+    });
+
+    it('a shared name (two repos\' "main") is "<repo>/<name>" for each of them', () => {
+      expect(build([
+        { path: '/code/strado', repoId: 'r1', branch: 'main' },
+        { path: '/code/site', repoId: 'r2', branch: 'main' },
+        { path: '/wt/a/x', repoId: 'r1', branch: 'x' },
+      ])).toEqual(['Strado/main', 'Strado Website/main', 'x']);
+    });
+
+    it('case-insensitive clash too; with no repo, the last two path segments', () => {
+      expect(build([
+        { path: '/code/strado', repoId: 'r1', branch: 'Main' },
+        { path: '/elsewhere/proj/main', repoId: null, branch: 'main' },
+      ])).toEqual(['Strado/Main', 'proj/main']);
+    });
+
+    it('still clashing after the repo (same ticket twice in one repo): the last two path segments', () => {
+      expect(build([
+        { path: '/wt/strado/FD-9', repoId: 'r1', branch: 'a', meta: { ticketId: 'FD-9' } },
+        { path: '/wt/strado/FD-9-retry', repoId: 'r1', branch: 'b', meta: { ticketId: 'FD-9' } },
+      ])).toEqual(['strado/FD-9', 'strado/FD-9-retry']);
+    });
+  });
+  describe('tabs in every local worktree, not just the one on screen', () => {
+    const wts = [{ path: '/w/a', branch: 'a' }, { path: '/w/main', branch: 'main' }, { path: '/w/old', branch: 'old' }] as never;
+    const none = { lastActedOn: null, focuses: [], workspaces: [], repos: [], scripts: null };
+
+    it('home (no hub): a live shell in another worktree is a tab, labelled like the strip, off screen', () => {
+      const ctx = buildParseContext({ ...none, hub: null, worktrees: wts,
+        peers: [peer({ agentId: 'shell-1@main', alias: null, mode: 'shell', worktreePath: '/w/main', sessionId: '1', executionId: 'X1' })] });
+      expect(ctx.tabs).toEqual([
+        { worktreePath: '/w/main', mode: 'shell', sessionId: '1', label: 'Shell', busy: false, agentId: 'shell-1@main', alias: null, executionId: 'X1', onScreen: false },
+      ]);
+    });
+
+    it('on-screen tabs first (marked), then other worktrees\' sessions by how recently their worktree was opened; no duplicates, live and local only', () => {
+      const ctx = buildParseContext({ ...none, worktrees: wts, lru: { '/w/old': 1, '/w/main': 9 },
+        hub: { path: '/w/a', context: { tabs: [{ worktreePath: '/w/a', mode: 'claude', sessionId: '1', label: 'Claude', busy: false }], focused: null } },
+        peers: [
+          peer({}), // on screen already
+          peer({ agentId: 'codex-2@old', alias: null, mode: 'codex', worktreePath: '/w/old', sessionId: '2', executionId: null, lifecycle: 'working' }),
+          peer({ agentId: 'claude-3@main', alias: 'fixer', mode: 'claude', worktreePath: '/w/main', sessionId: '3', executionId: 'E3' }),
+          peer({ agentId: 'shell-9@main', mode: 'shell', worktreePath: '/w/main', sessionId: '9', live: false }),
+          peer({ agentId: 'claude-1@runner', worktreePath: '/srv/remote', sessionId: '1' }),
+        ] });
+      expect(ctx.tabs.map((t) => [t.worktreePath, t.label, (t as { onScreen?: boolean }).onScreen, t.busy])).toEqual([
+        ['/w/a', 'Claude', true, false],
+        ['/w/main', 'Claude 3', false, false],
+        ['/w/old', 'Codex 2', false, true],
+      ]);
+    });
+
+    it('capped at 60 tabs, on-screen ones always kept', () => {
+      const many = Array.from({ length: 80 }, (_, i) => peer({ agentId: `shell-${i + 1}@main`, alias: null, mode: 'shell', worktreePath: '/w/main', sessionId: String(i + 1), executionId: null }));
+      const ctx = buildParseContext({ ...none, worktrees: wts, peers: many,
+        hub: { path: '/w/a', context: { tabs: [{ worktreePath: '/w/a', mode: 'claude', sessionId: '1', label: 'Claude', busy: false }], focused: null } } });
+      expect(ctx.tabs).toHaveLength(60);
+      expect(ctx.tabs[0]!.worktreePath).toBe('/w/a');
+    });
+  });
 });

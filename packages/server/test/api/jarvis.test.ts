@@ -132,6 +132,20 @@ describe('jarvis: actions as the human', () => {
     expect((await app.inject({ method: 'GET', url: `/api/w/default/jarvis/scripts?worktreePath=${encodeURIComponent(repo)}` })).statusCode).toBe(401);
   });
 
+  it('a fresh shell that has printed nothing yet is not "settled": the command waits for its first output', async () => {
+    const realQuiet = deps.ptyActivity.quiet.bind(deps.ptyActivity);
+    let silentUntil = Date.now() + 1500; // a slow, quiet profile: no prompt for 1.5 s
+    deps.ptyActivity.quiet = (key: string) => (Date.now() < silentUntil ? { input: Infinity, output: Infinity } : realQuiet(key));
+    const realRun = deps.shellRunner.run.bind(deps.shellRunner);
+    let typedAt = 0;
+    deps.shellRunner.run = (key, command, opts) => { typedAt = Date.now(); return realRun(key, command, opts); };
+    const started = Date.now();
+    silentUntil = started + 1500;
+    const res = await post('/jarvis/spawn', { mode: 'shell', worktreePath: repo, command: 'echo quiet-profile' });
+    expect(res.statusCode).toBe(201);
+    expect(typedAt - started).toBeGreaterThanOrEqual(1500);
+  }, 30_000);
+
   it('a run right after a spawn waits for the new shell, then runs', async () => {
     const spawned = (await post('/jarvis/spawn', { mode: 'shell', worktreePath: repo })).json();
     const run = await post('/jarvis/run', { target: shellRef(spawned.agent.sessionId), command: 'echo after-spawn' });
@@ -283,7 +297,21 @@ describe('jarvis: natural-language plan route', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: 'plan', steps: [{ action: 'tab.open' }] });
     // calls/repos default to [] for an older box that does not send them.
-    expect(plan.mock.calls[0]![0]).toEqual({ text: 'shell please', context: { ...ctx, calls: [], repos: [] }, thread: [{ role: 'user', text: 'hi' }] });
+    expect(plan.mock.calls[0]![0]).toEqual({ text: 'shell please', context: { ...ctx, focus: null, calls: [], repos: [] }, thread: [{ role: 'user', text: 'hi' }] });
+  });
+
+  it('the open Focus and each Focus\'s worktrees reach the model; an older box without them still works', async () => {
+    const plan = vi.fn(async () => ({ kind: 'answer' as const, text: 'ok', model: 'm', ms: 1 }));
+    deps.jarvisModel = { plan, recap: vi.fn() };
+    const withFocus = { ...ctx, worktrees: [{ name: 'main', branch: 'main', repo: 'Strado Website' }], focus: { name: 'release' }, focuses: [{ name: 'release', worktrees: ['FD-29', 'main'] }, { name: 'test' }] };
+    expect((await post('/jarvis/plan', { text: 'what is in this focus', context: withFocus, thread: [] })).statusCode).toBe(200);
+    expect(plan.mock.calls[0]![0].context).toMatchObject({ worktrees: [{ name: 'main', repo: 'Strado Website' }], focus: { name: 'release' }, focuses: [{ name: 'release', worktrees: ['FD-29', 'main'] }, { name: 'test', worktrees: [] }] });
+    // Older box: no focus field, Focus entries without worktrees.
+    expect((await post('/jarvis/plan', { text: 'x', context: ctx, thread: [] })).statusCode).toBe(200);
+    expect(plan.mock.calls[1]![0].context).toMatchObject({ focus: null });
+    // Bounded like the rest of the context.
+    const huge = { ...ctx, focuses: [{ name: 'big', worktrees: Array.from({ length: 31 }, (_, i) => `wt-${i}`) }] };
+    expect((await post('/jarvis/plan', { text: 'x', context: huge, thread: [] })).statusCode).toBe(400);
   });
 
   it('Jev and the model race: a confident Jev decision wins and cancels the model; otherwise the model answers', async () => {
@@ -336,7 +364,8 @@ describe('jarvis: natural-language plan route', () => {
 
   it(`caps model calls at ${PLAN_PER_MINUTE} a minute`, async () => {
     const plan = vi.fn(async () => ({ kind: 'answer' as const, text: 'ok', model: 'm', ms: 1 }));
-    deps.jarvisModel = { plan };
+    deps.jarvisModel = { plan, recap: vi.fn() };
+    deps.jevRouter = { route: async () => null }; // the cap, not the router's network
     for (let i = 0; i < PLAN_PER_MINUTE; i++) expect((await post('/jarvis/plan', { text: 'x', context: ctx, thread: [] })).statusCode).toBe(200);
     const res = await post('/jarvis/plan', { text: 'x', context: ctx, thread: [] });
     expect(res.statusCode).toBe(503);
