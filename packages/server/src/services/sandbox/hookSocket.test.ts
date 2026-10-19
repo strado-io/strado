@@ -314,11 +314,8 @@ describe('intercom routes through the hook socket', () => {
     expect(isAllowed('POST', '/api/intercom/escalations/01ARZ3NDEKTSV4RRFFQ69G5FAV/resolve')).toBe(true);
     expect(isAllowed('GET', '/api/intercom/escalations')).toBe(false);
     expect(isAllowed('POST', '/api/intercom/tasksx')).toBe(false);
-
-    expect(isAllowed('POST', '/api/intercom/forks')).toBe(true);
-    expect(isAllowed('GET', '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(true);
-    expect(isAllowed('GET', '/api/intercom/forks')).toBe(false);
-    expect(isAllowed('POST', '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV/cancel')).toBe(false);
-    expect(isAllowed('POST', '/api/intercom/forksx')).toBe(false);
+    // The removed fork routes are no longer reachable from a sandbox.
+    expect(isAllowed('POST', '/api/intercom/forks')).toBe(false);
+    expect(isAllowed('GET', '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(false);
   });
 });

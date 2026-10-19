@@ -388,3 +388,12 @@ body {
     animation: none;
   }
 }
+
+/* The command box's listening cursor (CommandPalette VoiceCaret): each bar
+   ripples gently on its own phase; the mic level sets its height. */
+@keyframes voice-bar {
+  0%, 100% { transform: scaleY(0.7); }
+  50%      { transform: scaleY(1.25); }
+}
+.voice-bar { animation: voice-bar 900ms ease-in-out infinite; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { .voice-bar { animation: none; } }

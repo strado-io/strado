@@ -16,15 +16,9 @@ const PULL_LIMIT = 50;
 export const ASK_POLL_MS = 2000;
 export const ASK_DEFAULT_TIMEOUT_MS = 120000;
 
-// Mirror of STRADO_SENDER_ID (src/services/intercomSchema.ts): the synthetic
-// sender behind a fork's summary ask, package and acceptance notice.
-const STRADO_SENDER_ID = 'strado';
-const FORK_HAND_OVER_PREFIX = 'FORK HAND-OVER';
-const forkReplyHint = (id) => `[reply with intercom_send to=strado kind=reply replyTo=${id} when you have taken over]`;
+export class NoTab extends Error {}
 
-class NoTab extends Error {}
-
-function makeCall(env) {
+export function makeCall(env) {
   return async function call(method, urlPath, body, timeoutMs = TIMEOUT_MS) {
     const token = env.STRADO_AGENT_TOKEN;
     const server = serverFromEnv(env);
@@ -40,11 +34,11 @@ function makeCall(env) {
 
 // A tool body that throws NoTab renders the friendly sentence as a normal
 // result; everything else propagates and rpc.mjs turns it into isError.
-const guarded = (fn) => async (args) => {
+export const guarded = (fn) => async (args) => {
   try { return await fn(args ?? {}); } catch (err) { if (err instanceof NoTab) return text(NOT_A_TAB); throw err; }
 };
 
-const required = (args, ...names) => {
+export const required = (args, ...names) => {
   for (const n of names) if (args[n] === undefined || args[n] === null || args[n] === '') throw new Error(`${n} is required`);
 };
 
@@ -59,17 +53,6 @@ export async function renderInbox(messages, ack) {
   const out = messages.map((m) => {
     const from = (m.from && (m.from.alias || m.from.agentId)) || 'unknown';
     const when = iso(m.createdAt);
-    if (m.forkId && m.from && m.from.agentId === STRADO_SENDER_ID) {
-      if (m.kind === 'request' && typeof m.body === 'string' && m.body.startsWith(FORK_HAND_OVER_PREFIX)) {
-        return `── strado · fork · ${m.id} · ${when}\n${m.body}\n${forkReplyHint(m.id)}\n`;
-      }
-      if (m.kind === 'request') {
-        // No hint appended: SUMMARY_PROMPT already ends with its own reply
-        // instruction, and a second one just contradicts it.
-        return `── strado · fork-summary · ${m.id} · ${when}\n${m.body}\n`;
-      }
-      return `── strado · fork · ${m.id} · ${when} · accepted\n${m.body}\n`;
-    }
     if (m.kind === 'request' && m.escalationId) {
       return `── ${from} · ask · ${m.id} · ${when}\n${m.body}\n[reply with intercom_send kind=reply replyTo=${m.id}]\n`;
     }
@@ -97,11 +80,11 @@ export function intercomTools(env = process.env) {
   return [
     {
       name: 'intercom_send',
-      description: 'Send a message to a peer agent in this workspace by id or alias. kind=request expects a reply; kind=reply with replyTo answers one. Claude peers receive messages automatically at their next prompt or are nudged when idle; other peers read them with intercom_inbox.',
+      description: 'Send a message to a peer agent in this workspace by id or alias. kind=request expects a reply; kind=reply with replyTo answers one (to=human answers a question the person asked you from the command box). Claude peers receive messages automatically at their next prompt or are nudged when idle; other peers read them with intercom_inbox.',
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', description: 'peer agent id or alias (see intercom_peers)' },
+          to: { type: 'string', description: 'peer agent id or alias (see intercom_peers), or "human" for a reply to the person' },
           body: { type: 'string' },
           kind: { type: 'string', enum: ['message', 'request', 'reply'], default: 'message' },
           replyTo: { type: 'string', description: 'id of the request being answered; required for kind=reply' },
@@ -270,34 +253,6 @@ export function intercomTools(env = process.env) {
           if (e.to === 'human') return text(`[no reply after ${Math.round(timeoutMs / 1000)} s — retargeted to the human; the answer will arrive in your inbox]`);
         }
         return text(`[no reply after ${Math.round(timeoutMs / 1000)} s — retargeted to the human; the answer will arrive in your inbox]`);
-      }),
-    },
-    {
-      name: 'intercom_fork',
-      description: 'Hand this thread\'s working context to a peer agent or a brand-new tab. A bounded package (a summary of this thread, its last turns, a repository snapshot, and references) is delivered to the target; if you are live, you are asked to summarise first. Non-blocking — delivery and acceptance happen off this call; check intercom_inbox or intercom_diary for what happens next.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          to: { type: 'string', description: 'peer agent id or alias to fork to (see intercom_peers); exactly one of to / newTab is required' },
-          newTab: { type: 'string', enum: ['claude', 'codex', 'opencode', 'pi'], description: 'spawn a brand-new tab of this harness in this worktree instead of forking to a peer' },
-          notes: { type: 'string', description: 'what the target should know; its first line becomes the fork\'s label' },
-          taskId: { type: 'string', description: 'a shared task (see task_create) the target should claim' },
-        },
-        additionalProperties: false,
-      },
-      run: guarded(async (a) => {
-        if ((a.to === undefined) === (a.newTab === undefined)) throw new Error('exactly one of to or newTab is required');
-        if (a.to !== undefined && /[\s/%?#]/.test(a.to)) throw new Error('to must be an agent id or alias without spaces or slashes');
-        const target = a.to !== undefined ? { to: a.to } : { newTab: { mode: a.newTab } };
-        const { fork } = await call('POST', '/api/intercom/forks', {
-          ...target,
-          ...(a.notes !== undefined ? { notes: a.notes } : {}),
-          ...(a.taskId !== undefined ? { taskId: a.taskId } : {}),
-        });
-        const targetLabel = fork.target.kind === 'peer' ? fork.target.agentId : (fork.target.agentId ?? fork.target.mode);
-        if (fork.status === 'summarising') return text(`fork ${fork.id} queued → ${targetLabel}; summary requested from you — reply to it in your inbox`);
-        if (fork.status === 'delivered') return text(`fork ${fork.id} delivered to ${targetLabel}`);
-        return text(`fork ${fork.id} queued → ${targetLabel}`);
       }),
     },
   ];

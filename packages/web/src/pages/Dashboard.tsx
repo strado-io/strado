@@ -4,6 +4,21 @@ import { api, type FocusTicket, type RemoteWorktree, type RunnerStatus, type Tic
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
 import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } from '../hooks/claudeNotifications';
 import { useIntercom } from '../contexts/IntercomContext';
+import { UiControlProvider } from '../contexts/UiControlContext';
+import { JarvisPaletteHost, JarvisToast, type JarvisRun } from '../components/jarvis/JarvisPaletteHost';
+import type { CommandBarHandle } from '../components/CommandPalette';
+import { Dock } from '../components/dock/Dock';
+import { StationCard } from '../components/dock/StationCard';
+import { HomeScreen } from '../components/home/HomeScreen';
+import { recentWorktrees } from '../lib/home/recent';
+import { lightOf } from '../lib/dock/stations';
+import type { DevState } from '../components/dock/DevServerButton';
+import { LineView } from '../components/dock/LineView';
+import { useStations } from '../hooks/stations';
+import { useFeed } from '../hooks/feed';
+import { jarvisServerPort } from '../lib/jarvis/serverPort';
+import type { StationDto } from '../api';
+import type { TabRef as JarvisTabRef } from '../lib/jarvis/types';
 import { escalationsByWorktree, nextSeenIds, openEscalations } from '../hooks/intercom';
 import { playDoneBeep } from '../lib/beep';
 import type { MergeRequest, RepoConfig, Worktree, WorkflowStatus } from '../types';
@@ -16,15 +31,16 @@ import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
+import { setAppearance } from '../hooks/useAppearance';
+import type { JarvisAppPort } from '../lib/jarvis/execute';
 import { FeedbackDialog } from '../components/FeedbackDialog';
 import { IntercomPanel } from '../components/IntercomPanel';
-import { CommandPalette } from '../components/CommandPalette';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
 import { NEW_FOCUS_EVENT, useFocusShortcut } from '../hooks/focusShortcut';
-import { remotePinId } from '../components/sidebar/pinIds';
-import { bumpWorktreeOpened } from '../lib/worktreeLru';
+import { localPinId, remotePinId } from '../components/sidebar/pinIds';
+import { bumpWorktreeOpened, readWorktreeLru } from '../lib/worktreeLru';
 import { rememberClosedAgent } from '../hooks/agentTabs';
 import { track } from '../telemetry';
 import { TerminalView } from './TerminalView';
@@ -78,15 +94,18 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-const STORE_SIDEBAR = 'strado:sidebar-collapsed';
+// v2: the Dock build starts with the sidebar hidden, whatever an older build stored.
+const STORE_SIDEBAR = 'strado:sidebar-collapsed:v2';
 
 // Tasks remains the initial destination; code reviews is the second
 // workspace-level view. We intentionally do not restore the old retired view
 // values from `strado:view`.
 // No hub open: the Worktrees page, every repo and worktree in the space.
 const INITIAL_VIEW: SidebarView = { kind: 'worktrees' };
+// Hidden until asked for (⌘B): the Dock at the bottom is all a day needs.
 function readSidebarCollapsed(): boolean {
-  return localStorage.getItem(STORE_SIDEBAR) === '1';
+  const stored = localStorage.getItem(STORE_SIDEBAR);
+  return stored === null ? true : stored === '1';
 }
 
 // Per-Focus memory of the open worktree, so switching Focus (or space) brings
@@ -315,7 +334,10 @@ export function Dashboard(props: {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId]);
-  const [showPalette, setShowPalette] = useState(false);
+  // The always-visible command bar at the bottom; ⌘K (and the sidebar's
+  // search button) put the cursor in it.
+  const commandBarRef = useRef<CommandBarHandle | null>(null);
+  const focusCommandBar = () => commandBarRef.current?.focus();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
@@ -342,8 +364,15 @@ export function Dashboard(props: {
   const [ticketsOn, setTicketsOn] = useState(false);
   const { providerErrors } = useTickets();
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  // Bumped when the command box changes a setting while Settings is open: the
+  // page remounts and reads the new value.
+  const [settingsNonce, setSettingsNonce] = useState(0);
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsSection !== null;
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [showAddRepo, setShowAddRepo] = useState(false);
+  // A path typed with "add repo <path>", for the dialog to open on.
+  const [addRepoPath, setAddRepoPath] = useState<string | null>(null);
   const [addRepoAnchor, setAddRepoAnchor] = useState<AddRepoAnchor | null>(null);
   // Full-screen renderer overlays can be owned here or one level up in App.
   // The Browser preview and its DevTools are native WebContentsViews, so they
@@ -351,7 +380,7 @@ export function Dashboard(props: {
   // Smaller overlays (the sidebar's worktree hover card) register themselves.
   const overlays = useRendererOverlayRegistry();
   const modalOpen = !!(
-    props.modalOpen || showPalette || settingsSection || feedbackOpen || showAddRepo || overlays.anyOpen
+    props.modalOpen || settingsSection || feedbackOpen || showAddRepo || overlays.anyOpen
   );
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem('strado:onboarding-welcomed') === '1');
   const refreshTicketProviders = useCallback(() => {
@@ -401,7 +430,7 @@ export function Dashboard(props: {
   // The intercom panel lives here, above every surface that opens it (the row
   // badge, a notification, the header count, the hub's banner), so there is
   // only ever one panel and one piece of state describing what it shows.
-  const [intercomPanel, setIntercomPanel] = useState<{ tab: 'escalations' | 'tasks' | 'forks'; worktreePath?: string; focusId?: string } | null>(null);
+  const [intercomPanel, setIntercomPanel] = useState<{ tab: 'escalations' | 'tasks'; worktreePath?: string; focusId?: string } | null>(null);
 
   useEffect(() => {
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -431,7 +460,8 @@ export function Dashboard(props: {
       notification.onclick = () => {
         window.focus();
         // land on the exact session tab the notification came from
-        if (worktree) openInlineHub(worktree, n.mode, n.sessionId);
+        // A retargeted ask from an exited asker has no tab: the drawer only.
+        if (worktree && n.mode && n.sessionId) openInlineHub(worktree, n.mode, n.sessionId);
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -459,7 +489,8 @@ export function Dashboard(props: {
       const notification = new Notification(n.title, n.body ? { body: n.body } : undefined);
       notification.onclick = () => {
         window.focus();
-        if (worktree) openInlineHub(worktree, n.mode, n.sessionId);
+        // A retargeted ask from an exited asker has no tab: the drawer only.
+        if (worktree && n.mode && n.sessionId) openInlineHub(worktree, n.mode, n.sessionId);
         setIntercomPanel({ tab: 'escalations', focusId: n.id });
       };
     }
@@ -469,6 +500,37 @@ export function Dashboard(props: {
   useEffect(() => {
     localStorage.setItem(STORE_SIDEBAR, sidebarCollapsed ? '1' : '0');
   }, [sidebarCollapsed]);
+
+  // Home with nothing open is the start screen. Asking for the list (the
+  // sidebar's Worktrees, "All worktrees →", the box's "worktrees") shows the
+  // full list instead, and stays asked: Back from a worktree opened there
+  // returns to the list. "Go home" (and app start) is home again.
+  const [homeAll, setHomeAll] = useState(false);
+  const onHome = !selectedRemote && !(selectedPath && state.worktrees.some((w) => w.path === selectedPath))
+    && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0 && !homeAll;
+  // Home never shows the sidebar on its own (its Focus rows read as "a worktree
+  // is open"); ⌘B or the open button shows it there for this visit, unstored.
+  // Landing on home BY a sidebar action (a Focus switch…) keeps it: never hide
+  // what is under the user's hand.
+  const [homeSidebar, setHomeSidebar] = useState(false);
+  // Was the last pointer/key press in the sidebar (or a popover it opened)?
+  // The document clears it first; the sidebar's React capture handler (which
+  // portals bubble through) sets it after.
+  const lastInSidebarRef = useRef(false);
+  useEffect(() => {
+    const clear = () => { lastInSidebarRef.current = false; };
+    document.addEventListener('pointerdown', clear, true);
+    document.addEventListener('keydown', clear, true);
+    return () => { document.removeEventListener('pointerdown', clear, true); document.removeEventListener('keydown', clear, true); };
+  }, []);
+  const [prevOnHome, setPrevOnHome] = useState(onHome);
+  if (prevOnHome !== onHome) {
+    setPrevOnHome(onHome);
+    setHomeSidebar(onHome && !sidebarCollapsed && lastInSidebarRef.current);
+  }
+  const sidebarHidden = onHome ? !homeSidebar : sidebarCollapsed;
+  const onHomeRef = useRef(onHome);
+  onHomeRef.current = onHome;
 
   // Collapsing the sidebar unmounts it, and with it the space chord's own
   // listener — while the shell keeps intercepting the chord inside embeds and
@@ -481,7 +543,7 @@ export function Dashboard(props: {
     Promise.resolve(switchTo(target.id)).catch((err: unknown) =>
       dispatch({ type: 'error', message: `Could not switch to that workspace: ${(err as Error).message}` }),
     );
-  }, sidebarCollapsed);
+  }, sidebarHidden);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -489,13 +551,11 @@ export function Dashboard(props: {
       // ⌘B: left sidebar
       if (e.key.toLowerCase() === 'b') {
         e.preventDefault();
-        setSidebarCollapsed((prev) => !prev);
+        if (onHomeRef.current) setHomeSidebar((v) => !v);
+        else setSidebarCollapsed((prev) => !prev);
       } else if (e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        // Opening or closing, ⌘K always means the full palette: a filter set
-        // by the parked-groups link must not survive into the next open.
-        setShowPalette((p) => !p);
-        
+        focusCommandBar();
       } else if (e.key === ',') {
         e.preventDefault();
         setSettingsSection('profile');
@@ -507,7 +567,7 @@ export function Dashboard(props: {
     // Shortcuts pressed inside an embed (Browser preview view, VS Code iframe)
     // never reach window listeners; the shell forwards them over IPC.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
-      if (combo === 'palette') { setShowPalette((p) => !p);  }
+      if (combo === 'palette') focusCommandBar();
       else if (combo === 'settings') setSettingsSection('profile');
     });
     return () => {
@@ -517,11 +577,6 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep palette telemetry separate from native-view suppression; the latter
-  // is passed directly to TerminalView together with every other modal.
-  useEffect(() => {
-    if (showPalette) track('palette_used');
-  }, [showPalette]);
 
   // Paths currently in state — lets the SSE handler tell "update for a row I
   // have" from "a worktree I've never seen" without re-subscribing on every
@@ -560,6 +615,10 @@ export function Dashboard(props: {
   // An opened worktree joins the active Focus. Assigned every render so the
   // open callbacks above see the current Focus.
   const focusApi = useFocuses(wsId);
+  // Jarvis (⌘K commands): the last run's undo toast, and the tab the last
+  // command acted on ("it" for the next one) — kept across palette opens.
+  const [jarvisRun, setJarvisRun] = useState<JarvisRun | null>(null);
+  const jarvisLastActed = useRef<JarvisTabRef | null>(null);
   useFocusShortcut({ focuses: focusApi.focuses, activeId: focusApi.activeId, activate: focusApi.activate });
   focusGateRef.current = () => (!focusApi.loaded ? 'wait' : focusApi.active ? 'open' : 'ask');
   noteOpenedRef.current = (pinId) => {
@@ -695,6 +754,89 @@ export function Dashboard(props: {
 
   const selectedWorktree = selectedPath ? state.worktrees.find((w) => w.path === selectedPath) ?? null : null;
 
+  // ---------- the Dock ----------
+  const { stations } = useStations(wsId);
+  // What sits above the Dock: a station's card or the Line view; only ever opened by the user.
+  const [dockPanel, setDockPanel] = useState<{ kind: 'station'; agentId: string } | { kind: 'line' } | null>(null);
+  // Listen: a station's recent messages on its card, the whole line in the Line view.
+  const cardFeed = useFeed(wsId, dockPanel?.kind === 'station' ? dockPanel.agentId : null, dockPanel?.kind === 'station');
+  const lineFeed = useFeed(wsId, null, dockPanel?.kind === 'line');
+  const [devError, setDevError] = useState<{ path: string; message: string } | null>(null);
+  // Bumped by the Dock's "logs": the hub opens its log drawer.
+  const [logsSeq, setLogsSeq] = useState(0);
+  // The hub's dev server (local or on a runner), as it reports it.
+  const [hubDev, setHubDev] = useState<DevState | null>(null);
+  const dockWorktree = selectedRemote
+    ? { name: selectedRemote.branch ?? selectedRemote.name, branch: null }
+    : selectedWorktree
+      ? { name: selectedWorktree.meta?.ticketId || selectedWorktree.branch || selectedWorktree.path.split('/').pop() || selectedWorktree.path, branch: selectedWorktree.branch ?? null }
+      : null;
+  const devFor = (w: Worktree) => ({
+    status: w.process?.status ?? 'idle',
+    port: w.process?.port ?? null,
+    error: devError?.path === w.path ? devError.message : null,
+    onStart: () => {
+      setDevError(null);
+      api.worktrees.start(wsId, w.path).catch((err: unknown) => setDevError({ path: w.path, message: (err as Error).message }));
+    },
+    onStop: () => {
+      api.worktrees.stop(wsId, w.path).catch((err: unknown) => setDevError({ path: w.path, message: (err as Error).message }));
+    },
+    onLogs: () => setLogsSeq((n) => n + 1),
+  });
+  const devFromHub = (d: DevState) => ({
+    status: d.status,
+    port: d.port,
+    detail: d.detail,
+    remote: d.remote,
+    profiles: d.profiles,
+    onProfile: d.setProfile,
+    error: devError?.path === d.path ? devError.message : null,
+    onStart: () => {
+      setDevError(null);
+      d.start().catch((err: unknown) => setDevError({ path: d.path, message: (err as Error).message }));
+    },
+    onStop: () => {
+      d.stop().catch((err: unknown) => setDevError({ path: d.path, message: (err as Error).message }));
+    },
+    onLogs: () => setLogsSeq((n) => n + 1),
+  });
+  const dockDev = hubDev ? devFromHub(hubDev) : selectedWorktree && !selectedRemote ? devFor(selectedWorktree) : null;
+  const openStationTab = (s: StationDto) => {
+    setDockPanel(null);
+    const w = state.worktrees.find((x) => x.path === s.worktreePath);
+    if (w) openInlineHub(w, s.mode as typeof selectedMode, s.sessionId);
+  };
+  const cardStation = dockPanel?.kind === 'station' ? stations.find((s) => s.agentId === dockPanel.agentId) : undefined;
+  const dockPanelEl = cardStation ? (
+    <StationCard
+      key={cardStation.agentId}
+      station={cardStation}
+      recent={cardFeed}
+      onAnswer={(callId, text) => api.intercom.escalations.resolve(wsId, callId, text)}
+      onDismiss={(callId) => api.intercom.escalations.dismiss(wsId, callId)}
+      onTalk={async (text) => {
+        const d = (await jarvisServerPort(wsId).message(cardStation.agentId, text)) as { delivered?: string } | undefined;
+        const name = cardStation.alias ?? cardStation.name;
+        // How it landed, in the box's own words (always via the intercom).
+        if (d?.delivered === 'sent') setJarvisRun({ ok: true, notice: true, summary: `Sent to ${name} via intercom`, undo: [], undoable: false });
+        else if (d?.delivered === 'queued') setJarvisRun({ ok: true, notice: true, summary: `${name} is busy — it’ll read it after this turn`, undo: [], undoable: false });
+      }}
+      onOpenTab={() => openStationTab(cardStation)}
+      onClose={() => setDockPanel(null)}
+    />
+  ) : dockPanel?.kind === 'line' ? (
+    <LineView
+      stations={stations}
+      worktreePath={selectedRemote ? null : selectedPath}
+      feed={lineFeed}
+      tasks={intercom.tasks ?? []}
+      onOpenStation={(agentId) => setDockPanel({ kind: 'station', agentId })}
+      onOpenDetails={() => { setDockPanel(null); setIntercomPanel({ tab: 'escalations' }); }}
+      onClose={() => setDockPanel(null)}
+    />
+  ) : null;
+
   // The rail spans machines: local worktrees plus every runner's, mapped to the
   const handleStop = async (w: Worktree) => {
     try {
@@ -754,11 +896,133 @@ export function Dashboard(props: {
     );
   }
 
+  // App control: an agent's `focus:true` placement switches this window to
+  // the worktree it names (local worktrees only — the server can't name a
+  // runner's).
+  const openWorktreeForAgent = (path: string): boolean => {
+    const w = state.worktrees.find((x) => x.path === path);
+    if (!w) return false;
+    openInlineHub(w);
+    return true;
+  };
+
+  // The rest of the app for the command box: pages, Settings, plain settings.
+  const appPort: JarvisAppPort = {
+    page: (page) => {
+      setSettingsSection(null);
+      if (page === 'home') { selectView(INITIAL_VIEW); setHomeAll(false); }
+      else if (page === 'worktrees') { selectView({ kind: 'worktrees' }); setHomeAll(true); }
+      else selectView({ kind: page });
+    },
+    settings: (section) => { setSettingsSection(section); setSettingsNonce((n) => n + 1); },
+    set: async (setting, value) => {
+      if (setting === 'profile.name') await api.profile.save({ fullName: value });
+      else if (setting === 'profile.callMe') await api.profile.save({ callMe: value });
+      else if (setting === 'privacy.telemetry') await api.profile.save({ telemetryOptOut: value === 'off' });
+      else if (setting === 'commandbox.localOnly') await api.profile.save({ jarvisLocalOnly: value === 'on' });
+      else {
+        const key = ({ 'appearance.theme': 'preset', 'appearance.font': 'font', 'appearance.diffFont': 'diffFont', 'appearance.terminalFont': 'terminalFont' } as const)[setting as 'appearance.theme'];
+        if (!key || !setAppearance(key, value)) throw new Error(`Can't set ${setting} to ${value}`);
+      }
+      // Settings open: show the new value there.
+      if (settingsOpenRef.current) setSettingsNonce((n) => n + 1);
+    },
+    // The same state ⌘B and the collapse/open buttons use (home's is per visit).
+    sidebar: (show) => {
+      const next = show ?? sidebarHidden;
+      if (onHome) setHomeSidebar(next);
+      else setSidebarCollapsed(!next);
+    },
+    // Focus edits go through the sidebar's own calls: a new Focus becomes the
+    // active one, and deleting the active one leaves none active.
+    focus: async ({ op, focusId, name, worktreePaths }) => {
+      const members = worktreePaths.map((path) => {
+        const w = state.worktrees.find((x) => x.path === path);
+        if (!w) throw new Error(`No worktree at ${path}`);
+        return localPinId(w);
+      });
+      const id = () => { if (!focusId) throw new Error('Which Focus?'); return focusId; };
+      if (op === 'create') {
+        if (!name?.trim()) throw new Error('A new Focus needs a name');
+        return { focusId: (await focusApi.create(name.trim(), members)).id };
+      } else if (op === 'rename') {
+        if (!name?.trim()) throw new Error('Rename it to what?');
+        await focusApi.rename(id(), name.trim());
+      } else if (op === 'delete') await focusApi.remove(id());
+      else if (op === 'add') await focusApi.addMembers(id(), members);
+      else for (const m of members) await focusApi.setMembership(id(), m, false);
+    },
+  };
+
+  // The command bar: the home screen's big box while home shows, the Dock's
+  // otherwise, and over Settings while Settings is open (one at a time).
+  const commandBar = (hero: boolean) => (
+    <JarvisPaletteHost
+      app={appPort}
+      // Real dialogs only (the bar's own popover and hover cards are overlays, not dialogs).
+      dialogOpen={!!(props.modalOpen || feedbackOpen || showAddRepo)}
+      embedded={!hero}
+      hero={hero}
+      stations={stations}
+      barRef={commandBarRef}
+      onOpen={() => track('palette_used')}
+      wsId={wsId}
+      lastActedOn={jarvisLastActed}
+      onOpenCommandSettings={() => setSettingsSection('commandbox')}
+      onRan={(r) => setJarvisRun(r)}
+      nav={{
+        worktree: (path) => { const w = state.worktrees.find((x) => x.path === path); if (w) openInlineHub(w); },
+        focus: (id) => focusApi.activate(id),
+        workspace: (id) => { props.onCloseOverlays(); void switchTo(id); },
+        repo: (repoPath) => { const r = state.repos.find((x) => x.path === repoPath); if (r) { props.onCloseOverlays(); props.onNewWorktree(r.id); } },
+        line: () => setDockPanel({ kind: 'line' }),
+        addRepo: (path) => { props.onCloseOverlays(); setAddRepoAnchor(null); setAddRepoPath(path); setShowAddRepo(true); },
+        newWorktree: (repoPath) => {
+          const r = repoPath ? state.repos.find((x) => x.path === repoPath) : undefined;
+          props.onCloseOverlays();
+          props.onNewWorktree(r?.id);
+        },
+      }}
+      focusName={focusApi.active?.name}
+      focusMemberIds={focusApi.active ? new Set(focusApi.active.members) : undefined}
+      focuses={focusApi.focuses}
+      activeFocusId={focusApi.activeId}
+      onSwitchFocus={focusApi.activate}
+      repos={state.repos}
+      worktrees={state.worktrees}
+      workspaces={allWorkspaces}
+      activeWorkspaceId={wsId}
+      remoteWorktrees={remote.worktrees}
+      onOpenRemoteWorktree={openRemoteWorktree}
+      onOpenWorktree={(w, fromWs) => {
+        if (fromWs && fromWs !== wsId) {
+          // hub (if open) must come down before the workspace flips —
+          // mounted across the switch it would reconnect its old
+          // sessions against the new workspace
+          props.onCloseOverlays();
+          setSelectedPath(null);
+          pendingOpenRef.current = { wsId: fromWs, worktree: w };
+          void switchTo(fromWs);
+        } else {
+          openInlineHub(w);
+        }
+      }}
+      onGoRepo={(repoId) => { props.onCloseOverlays(); props.onNewWorktree(repoId); }}
+      onSwitchWorkspace={(id) => {
+        props.onCloseOverlays();
+        void switchTo(id);
+      }}
+      onClose={() => {}}
+    />
+  );
+
   return (
+    <UiControlProvider wsId={wsId} openWorktree={openWorktreeForAgent}>
     <RendererOverlayContext.Provider value={overlays.report}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
-      {!sidebarCollapsed && (
+      {!sidebarHidden && (
+        <div className="contents" onPointerDownCapture={() => { lastInSidebarRef.current = true; }} onKeyDownCapture={() => { lastInSidebarRef.current = true; }}>
         <Sidebar
           repos={state.repos}
           worktrees={state.worktrees}
@@ -769,15 +1033,15 @@ export function Dashboard(props: {
           onRebuildSandbox={(w) => props.onRebuildSandbox?.(w)}
           onOpenRemoteWorktree={openRemoteWorktree}
           selected={activeView}
-          onSelect={selectView}
+          onSelect={(view) => { selectView(view); if (view.kind === 'worktrees') setHomeAll(true); }}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
-          onCollapse={() => setSidebarCollapsed(true)}
+          onCollapse={() => (onHome ? setHomeSidebar(false) : setSidebarCollapsed(true))}
           onAddRepo={(anchor) => {
             setAddRepoAnchor(anchor ?? null);
             setShowAddRepo(true);
           }}
-          onSearch={() => setShowPalette(true)}
+          onSearch={focusCommandBar}
           onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}
@@ -787,6 +1051,7 @@ export function Dashboard(props: {
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
         />
+        </div>
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -811,8 +1076,8 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
-              onOpenIntercom={(id) => setIntercomPanel({ tab: 'escalations', focusId: id })}
-              onForked={(id) => setIntercomPanel({ tab: 'forks', focusId: id })}
+              logsSeq={logsSeq}
+              onDevState={setHubDev}
             />
           </div>
         ) : selectedWorktree ? (
@@ -829,8 +1094,8 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
-              onOpenIntercom={(id) => setIntercomPanel({ tab: 'escalations', focusId: id })}
-              onForked={(id) => setIntercomPanel({ tab: 'forks', focusId: id })}
+              logsSeq={logsSeq}
+              onDevState={setHubDev}
             />
           </div>
         ) : activeView.kind === 'reviews' ? (
@@ -894,6 +1159,20 @@ export function Dashboard(props: {
                     {providerLabel(provider)} connection failed — reconnect in Settings
                   </button>
                 ))}
+              {onHome ? (
+              <HomeScreen
+                bar={settingsSection ? null : commandBar(true)}
+                recent={recentWorktrees(state.worktrees, state.repos, readWorktreeLru())}
+                waiting={stations.filter((st) => lightOf(st) === 'calling').length}
+                onOpenRecent={(w) => openInlineHub(w)}
+                onAllWorktrees={() => setHomeAll(true)}
+                onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
+                onNewWorktree={() => props.onNewWorktree()}
+                onWaiting={() => setDockPanel({ kind: 'line' })}
+                sidebarCollapsed={sidebarHidden}
+                onExpandSidebar={() => setHomeSidebar(true)}
+              />
+              ) : (
               <WorktreesPage
                 key={wsId}
                 wsId={wsId}
@@ -925,52 +1204,34 @@ export function Dashboard(props: {
                 onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
                 onError={(message) => dispatch({ type: 'error', message })}
               />
+              )}
               </>
             )}
           </div>
         )}
+        <Dock
+          worktree={dockWorktree}
+          worktreePath={selectedRemote ? null : selectedPath}
+          onBrowse={() => commandBarRef.current?.browse()}
+          stations={stations}
+          onOpenStation={(agentId) => setDockPanel({ kind: 'station', agentId })}
+          onOpenLine={() => setDockPanel({ kind: 'line' })}
+          dev={dockDev}
+          panel={dockPanelEl}
+          onClosePanel={() => setDockPanel(null)}
+          bare={onHome}
+        >
+        {onHome || settingsSection ? null : commandBar(false)}
+        </Dock>
       </main>
       </div>
 
-      {showPalette && (
-        <CommandPalette
-          focusName={focusApi.active?.name}
-          focusMemberIds={focusApi.active ? new Set(focusApi.active.members) : undefined}
-          focuses={focusApi.focuses}
-          activeFocusId={focusApi.activeId}
-          onSwitchFocus={focusApi.activate}
-          repos={state.repos}
-          worktrees={state.worktrees}
-          workspaces={allWorkspaces}
-          activeWorkspaceId={wsId}
-          remoteWorktrees={remote.worktrees}
-          onOpenRemoteWorktree={openRemoteWorktree}
-          onOpenWorktree={(w, fromWs) => {
-            if (fromWs && fromWs !== wsId) {
-              // hub (if open) must come down before the workspace flips —
-              // mounted across the switch it would reconnect its old
-              // sessions against the new workspace
-              props.onCloseOverlays();
-              setSelectedPath(null);
-              pendingOpenRef.current = { wsId: fromWs, worktree: w };
-              void switchTo(fromWs);
-            } else {
-              openInlineHub(w);
-            }
-          }}
-          onGoRepo={(repoId) => { props.onCloseOverlays(); props.onNewWorktree(repoId); }}
-          onSwitchWorkspace={(id) => {
-            props.onCloseOverlays();
-            void switchTo(id);
-          }}
-          onClose={() => { setShowPalette(false);  }}
-        />
-      )}
 
       {settingsSection && (
         <SettingsPage
-          key={settingsSection}
+          key={`${settingsSection}:${settingsNonce}`}
           section={settingsSection}
+          bottomInset
           onClose={() => setSettingsSection(null)}
           onJiraConnected={() => {
             track('jira_connected');
@@ -978,6 +1239,11 @@ export function Dashboard(props: {
           }}
           onOpenFeedback={() => setFeedbackOpen(true)}
         />
+      )}
+      {settingsSection && (
+        <div className="fixed inset-x-0 bottom-0 z-[60] flex h-11 items-center border-t border-zinc-900 bg-zinc-950 px-4" data-testid="settings-command-bar">
+          {commandBar(false)}
+        </div>
       )}
 
       {intercomPanel && (
@@ -1008,6 +1274,7 @@ export function Dashboard(props: {
       {showAddRepo && (
         <AddRepoDialog
           anchor={addRepoAnchor}
+          initialPath={addRepoPath}
           onAdded={async () => {
             const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
             commitTree(repos, worktrees);
@@ -1015,11 +1282,14 @@ export function Dashboard(props: {
           onClose={() => {
             setShowAddRepo(false);
             setAddRepoAnchor(null);
+            setAddRepoPath(null);
           }}
         />
       )}
 
+      {jarvisRun && <JarvisToast wsId={wsId} run={jarvisRun} onDone={() => setJarvisRun(null)} />}
     </div>
     </RendererOverlayContext.Provider>
+    </UiControlProvider>
   );
 }

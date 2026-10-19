@@ -313,6 +313,10 @@ export class TunnelClient {
       const headers: Record<string, string> = { ...req.headers };
       delete headers['host'];
       delete headers['content-length'];
+      // The local server sees every relayed request arrive from 127.0.0.1;
+      // this is how it tells a remote (phone, browser elsewhere) hub window
+      // from the desktop's own. Overwrites any value the far side sent.
+      headers['x-strado-via'] = 'relay';
       const res = await fetch(`http://${this.localBase}${req.path}`, {
         method: req.method,
         headers,

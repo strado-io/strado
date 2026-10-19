@@ -13,61 +13,92 @@
 
 import { text } from './rpc.mjs';
 
+// ---------- CDP ----------
+
+/** Per-call ceiling. A target that never answers (a hung awaitPromise, a
+ * wedged renderer) must fail the one tool call, not hold the agent's turn
+ * for the whole MCP client timeout. */
+export const CDP_CALL_TIMEOUT_MS = 30_000;
+
+export class Cdp {
+  constructor(url, { timeoutMs = CDP_CALL_TIMEOUT_MS } = {}) {
+    this.url = url;
+    this.timeoutMs = timeoutMs;
+    this.nextId = 0;
+    this.pending = new Map();
+    this.listeners = new Map();
+    this.closed = false;
+  }
+  connect() {
+    return new Promise((resolve, reject) => {
+      const WS = globalThis.WebSocket;
+      if (!WS) { reject(new Error('this Node has no global WebSocket; Node 22 or newer is required')); return; }
+      this.ws = new WS(this.url);
+      this.ws.onopen = () => resolve();
+      this.ws.onerror = () => reject(new Error(`cannot reach CDP target at ${this.url}`));
+      // A dropped socket answers nothing more: fail what is in flight now
+      // rather than letting each call wait out its timeout.
+      this.ws.onclose = () => {
+        this.closed = true;
+        for (const [id, p] of this.pending) { this.pending.delete(id); p.reject(new Error(`CDP connection closed during ${p.method}`)); }
+      };
+      this.ws.onmessage = (ev) => {
+        const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
+        if (msg.id !== undefined) {
+          const p = this.pending.get(msg.id);
+          if (!p) return;
+          this.pending.delete(msg.id);
+          if (msg.error) p.reject(new Error(msg.error.message));
+          else p.resolve(msg.result);
+        } else if (msg.method) {
+          for (const cb of this.listeners.get(msg.method) ?? []) cb(msg.params);
+        }
+      };
+    });
+  }
+  send(method, params = {}) {
+    return new Promise((resolve, reject) => {
+      if (this.closed) { reject(new Error(`CDP connection closed before ${method}`)); return; }
+      const id = ++this.nextId;
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`${method} timed out after ${Math.round(this.timeoutMs / 1000)} s`));
+      }, this.timeoutMs);
+      const done = (fn) => (v) => { clearTimeout(timer); fn(v); };
+      this.pending.set(id, { method, resolve: done(resolve), reject: done(reject) });
+      this.ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  on(method, cb) {
+    const list = this.listeners.get(method) ?? [];
+    list.push(cb);
+    this.listeners.set(method, list);
+  }
+  close() {
+    try {
+      this.ws?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '0.0.0.0']);
+
+/** True when `url` points at the Strado server itself. Its hub routes are the
+ * human's and unauthenticated; a preview driven by an agent must never load them. */
+export function isStradoOrigin(url, server) {
+  let u; let s;
+  try { u = new URL(url); s = new URL(server); } catch { return false; }
+  const port = (x) => Number(x.port || (x.protocol === 'https:' ? 443 : 80));
+  const local = (h) => LOOPBACK.has(h.toLowerCase());
+  return port(u) === port(s) && (u.hostname.toLowerCase() === s.hostname.toLowerCase() || (local(u.hostname) && local(s.hostname)));
+}
+
 export function previewTools(env = process.env) {
   const SERVER = env.STRADO_SERVER || 'http://127.0.0.1:7777';
   const WORKTREE = env.STRADO_WORKTREE || process.cwd();
   const sandboxed = Boolean(env.STRADO_SERVER_SOCKET);
-
-  // ---------- CDP ----------
-
-  class Cdp {
-    constructor(url) {
-      this.url = url;
-      this.nextId = 0;
-      this.pending = new Map();
-      this.listeners = new Map();
-    }
-    connect() {
-      return new Promise((resolve, reject) => {
-        const WS = globalThis.WebSocket;
-        if (!WS) { reject(new Error('this Node has no global WebSocket; Node 22 or newer is required')); return; }
-        this.ws = new WS(this.url);
-        this.ws.onopen = () => resolve();
-        this.ws.onerror = () => reject(new Error(`cannot reach CDP target at ${this.url}`));
-        this.ws.onmessage = (ev) => {
-          const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
-          if (msg.id !== undefined) {
-            const p = this.pending.get(msg.id);
-            if (!p) return;
-            this.pending.delete(msg.id);
-            if (msg.error) p.reject(new Error(msg.error.message));
-            else p.resolve(msg.result);
-          } else if (msg.method) {
-            for (const cb of this.listeners.get(msg.method) ?? []) cb(msg.params);
-          }
-        };
-      });
-    }
-    send(method, params = {}) {
-      return new Promise((resolve, reject) => {
-        const id = ++this.nextId;
-        this.pending.set(id, { resolve, reject });
-        this.ws.send(JSON.stringify({ id, method, params }));
-      });
-    }
-    on(method, cb) {
-      const list = this.listeners.get(method) ?? [];
-      list.push(cb);
-      this.listeners.set(method, list);
-    }
-    close() {
-      try {
-        this.ws?.close();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
 
   // All Browser tabs open for THIS worktree, sorted by tab id ('1' first).
   async function resolveTargets() {
@@ -357,11 +388,14 @@ export function previewTools(env = process.env) {
         required: ['url'],
         additionalProperties: false,
       },
-      run: ({ url, tab }) =>
-        withPage(async (cdp) => {
-          await cdp.send('Page.navigate', { url: /^https?:\/\//.test(url) ? url : `http://${url}` });
+      run: ({ url, tab }) => {
+        const target = /^https?:\/\//.test(url) ? url : `http://${url}`;
+        if (isStradoOrigin(target, SERVER)) throw new Error('agents cannot open the Strado app itself in a Browser tab');
+        return withPage(async (cdp) => {
+          await cdp.send('Page.navigate', { url: target });
           return text(`navigating to ${url}`);
-        }, tab),
+        }, tab);
+      },
     },
     {
       name: 'preview_reload',

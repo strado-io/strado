@@ -3,6 +3,7 @@ import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 import { installClaudeHooks, installOpencodePlugin, piExtensionPath } from '../services/claudeHooks.js';
 import { agentSpawnSpec, withAgentSpawnLock } from '../services/agentSpawn.js';
+import { probeOpencodeStandalone } from '../services/opencodeLaunch.js';
 import { installClaudeMcp } from '../services/claudeMcp.js';
 import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { peekLines } from '../services/terminalText.js';
@@ -135,8 +136,8 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       // a second tab resuming the SAME conversation as the first would have
       // both sessions fighting over one thread, so extras start fresh. That
       // rule, the login-shell bootstrap and the per-mode command all live in
-      // services/agentSpawn.ts now, so a fork opening a tab with no client
-      // attached spawns exactly what this route does.
+      // services/agentSpawn.ts now, so agent_spawn opening a tab with no
+      // client attached spawns exactly what this route does.
       // A parked Claude tab (claudePark.ts) has no process. Attaching to it
       // must not quietly respawn it — every cached pane reconnects on app
       // load, which would undo all parking — so a plain attach only gets the
@@ -155,6 +156,7 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
       }
       // No conversation id: it was parked before anything was typed, so
       // waking it is just a fresh Claude (the default spec).
+      if (mode === 'opencode') await probeOpencodeStandalone();
       const spec = parkedEntry?.providerSessionId
         ? { file: defaultShell(), args: ['-l', '-c', `claude --resume ${shellQuote(parkedEntry.providerSessionId)}`] }
         : agentSpawnSpec(mode, sessionId, target);

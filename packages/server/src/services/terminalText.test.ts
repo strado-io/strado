@@ -11,6 +11,13 @@ describe('stripAnsi', () => {
     expect(stripAnsi('12%\r45%\r100%\r\n')).toBe('100%\n');
   });
 
+  it('turns a cursor-forward (CSI n C) into n spaces, so TUI gaps between words survive', () => {
+    expect(stripAnsi('hello\x1b[1Cworld')).toBe('hello world');
+    expect(stripAnsi('a\x1b[3Cb')).toBe('a   b');
+    expect(stripAnsi('a\x1b[Cb')).toBe('a b');          // no count means 1
+    expect(stripAnsi(`a\x1b[99999Cb`)).toBe(`a${' '.repeat(500)}b`);   // capped
+  });
+
   it('turns CRLF into LF', () => {
     expect(stripAnsi('one\r\ntwo\r\n')).toBe('one\ntwo\n');
   });

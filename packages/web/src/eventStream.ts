@@ -18,19 +18,38 @@ export function worktreesReducer(state: Worktree[], event: WorktreeEvent): Workt
 
 export type Unsub = () => void;
 
+// One /events/worktrees stream for the whole window, ref-counted by its
+// subscribers. Browsers allow only 6 HTTP/1.1 connections per host and every
+// EventSource holds one for good: a stream per subscriber (board, hub,
+// intercom…) starved ordinary fetches until the app looked frozen.
+const worktreeHandlers = new Set<(evt: WorktreeEvent) => void>();
+let worktreeSource: EventSource | null = null;
+
 export function subscribeWorktrees(handler: (evt: WorktreeEvent) => void): Unsub {
-  const es = new EventSource('/events/worktrees');
-  const listener = (e: MessageEvent) => {
-    try {
-      handler({ type: 'worktree.updated', data: JSON.parse(e.data) });
-    } catch {
-      // ignore malformed messages
-    }
-  };
-  es.addEventListener('worktree.updated', listener as EventListener);
+  // A distinct entry per call, so subscribing the same function twice still
+  // takes two unsubscribes.
+  const entry = (evt: WorktreeEvent) => handler(evt);
+  worktreeHandlers.add(entry);
+  if (!worktreeSource) {
+    const es = new EventSource('/events/worktrees');
+    es.addEventListener('worktree.updated', ((e: MessageEvent) => {
+      let evt: WorktreeEvent;
+      try { evt = { type: 'worktree.updated', data: JSON.parse(e.data) }; } catch { return; /* ignore malformed messages */ }
+      for (const h of [...worktreeHandlers]) {
+        try { h(evt); } catch (err) { console.error('[worktrees] subscriber failed', err); }
+      }
+    }) as EventListener);
+    worktreeSource = es;
+  }
+  let active = true;
   return () => {
-    es.removeEventListener('worktree.updated', listener as EventListener);
-    es.close();
+    if (!active) return;
+    active = false;
+    worktreeHandlers.delete(entry);
+    if (worktreeHandlers.size === 0 && worktreeSource) {
+      worktreeSource.close();
+      worktreeSource = null;
+    }
   };
 }
 
@@ -117,7 +136,7 @@ export type EnvInstallEvent =
   | { type: 'output'; data: { id: string; line: string } }
   | { type: 'done'; data: { id: string; ok: boolean; message: string | null; tool: ToolStatus | null } };
 
-export const INTERCOM_EVENT_TYPES = ['task.created', 'task.claimed', 'task.released', 'task.done', 'task.cancelled', 'task.assigned', 'escalation.opened', 'escalation.resolved', 'escalation.dismissed', 'escalation.retargeted', 'fork.created', 'fork.summarising', 'fork.queued', 'fork.delivered', 'fork.accepted', 'fork.failed', 'fork.cancelled', 'peer.registered', 'peer.dropped'] as const;
+export const INTERCOM_EVENT_TYPES = ['task.created', 'task.claimed', 'task.released', 'task.done', 'task.cancelled', 'task.assigned', 'escalation.opened', 'escalation.resolved', 'escalation.dismissed', 'escalation.retargeted', 'peer.registered', 'peer.dropped', 'feed.changed', 'message.queued'] as const;
 export type IntercomEventType = (typeof INTERCOM_EVENT_TYPES)[number];
 export type IntercomEvent = { type: IntercomEventType; data: { scopeId: string; id: string } & Record<string, unknown> };
 
@@ -150,4 +169,32 @@ export function subscribeEnvInstall(handler: (evt: EnvInstallEvent) => void): Un
     return () => es.removeEventListener(t, listener as EventListener);
   });
   return () => { for (const off of offs) off(); es.close(); };
+}
+
+/** A layout command the server sent to this one window; answered with an ack. */
+export type UiCommand = { id: string; op: string; args: Record<string, unknown> };
+
+/** `/events/ui` registers this window (`client`) for the workspace while open.
+ * `onReady` fires on every (re)connect — the server's `ui.ready` — which is
+ * when the window must (re)send its state. */
+export function subscribeUi(
+  wsId: string,
+  clientId: string,
+  handlers: { onCommand: (cmd: UiCommand) => void; onReady: () => void },
+): Unsub {
+  // No remote flag: the server treats any non-loopback connection as remote.
+  const es = new EventSource(`/events/ui?ws=${encodeURIComponent(wsId)}&client=${encodeURIComponent(clientId)}`);
+  const onCommand = (e: MessageEvent) => {
+    let cmd: UiCommand;
+    try { cmd = JSON.parse(e.data); } catch { return; /* ignore malformed messages */ }
+    if (cmd && typeof cmd.id === 'string' && typeof cmd.op === 'string') handlers.onCommand({ ...cmd, args: cmd.args ?? {} });
+  };
+  const onReady = () => handlers.onReady();
+  es.addEventListener('ui.command', onCommand as EventListener);
+  es.addEventListener('ui.ready', onReady);
+  return () => {
+    es.removeEventListener('ui.command', onCommand as EventListener);
+    es.removeEventListener('ui.ready', onReady);
+    es.close();
+  };
 }

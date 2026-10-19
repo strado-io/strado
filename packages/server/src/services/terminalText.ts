@@ -3,11 +3,16 @@
  * result is a best-effort plain-text view — good enough for previews and for
  * an agent reading a peer tab, and deliberately never used by handoffs. */
 
-/** Remove ANSI escapes and control bytes; apply carriage-return overwrites; CRLF → LF. */
+const CURSOR_FORWARD_MAX = 500;
+
+/** Remove ANSI escapes and control bytes; cursor-forward becomes spaces; apply carriage-return overwrites; CRLF → LF. */
 export function stripAnsi(text: string): string {
   return text
     // OSC sequences (titles, hyperlinks), then CSI/other escapes
     .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    // Cursor-forward is how TUIs (Claude, Codex) draw the gap between words;
+    // dropping it would glue them together. Capped: no line needs more.
+    .replace(/\x1b\[(\d*)C/g, (_, n: string) => ' '.repeat(Math.min(CURSOR_FORWARD_MAX, Number(n || '1'))))
     .replace(/\x1b\[[0-9;?]*[0-9A-Za-z]/g, '')
     .replace(/\x1b[()][0-9A-Za-z]/g, '')
     .replace(/\x1b[=>]/g, '')

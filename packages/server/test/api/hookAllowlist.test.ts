@@ -42,8 +42,11 @@ const PROBES: Record<string, string | undefined> = {
   '/api/intercom/escalations': '/api/intercom/escalations',
   'GET /api/intercom/escalations/': '/api/intercom/escalations/01ARZ3NDEKTSV4RRFFQ69G5FAV',
   'POST /api/intercom/escalations/': '/api/intercom/escalations/01ARZ3NDEKTSV4RRFFQ69G5FAV/resolve',
-  '/api/intercom/forks': '/api/intercom/forks',
-  '/api/intercom/forks/': '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  '/api/intercom/agents/spawn': '/api/intercom/agents/spawn',
+  'GET /api/intercom/agents/': '/api/intercom/agents/claude-1@repo/status',
+  'POST /api/intercom/agents/': '/api/intercom/agents/claude-1@repo/close',
+  '/api/intercom/ui/place': '/api/intercom/ui/place',
+  '/api/intercom/ui/state': '/api/intercom/ui/state',
   '/api/git/credential': '/api/git/credential',
 };
 

@@ -101,4 +101,9 @@ describe('AddRepoDialog', () => {
 
     await vi.waitFor(() => expect(create).toHaveBeenCalledWith('workspace-1', 'My Service', '/projects'));
   });
+
+  it('typed "add repo <path>": opens straight on Open project with the path filled in', () => {
+    render(<AddRepoDialog onAdded={() => {}} onClose={() => {}} initialPath="~/code/x" />);
+    expect(screen.getByLabelText('Repository path')).toHaveValue('~/code/x');
+  });
 });

@@ -66,4 +66,12 @@ describe('/api/model-credential', () => {
     const get = await app.inject({ method: 'GET', url: '/api/model-credential' });
     expect(get.json()).toEqual({ present: false, last4: null });
   });
+
+  it('a window relayed from another machine can never set a key (model or router)', async () => {
+    for (const url of ['/api/model-credential', '/api/router-credential']) {
+      const res = await app.inject({ method: 'POST', url, headers: { 'x-strado-via': 'relay' }, payload: { key: 'sk-ant-relayed-1111' } });
+      expect(res.statusCode, url).toBe(403);
+    }
+    expect((await app.inject({ method: 'GET', url: '/api/model-credential' })).json()).toEqual({ present: false, last4: null });
+  });
 });

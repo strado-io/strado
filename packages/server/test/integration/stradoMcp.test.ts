@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
+import { refKey } from '../../src/routes/appControl';
 import { exec } from '../../src/shell';
 import { claudeKey, shellKey } from '../../src/services/terminalManager';
 
@@ -46,7 +47,8 @@ export function startMcp(env: Record<string, string | undefined>, cwd: string): 
 }
 
 export const PREVIEW = ['preview_tabs', 'preview_status', 'preview_screenshot', 'preview_eval', 'preview_console', 'preview_network', 'preview_click', 'preview_fill', 'preview_navigate', 'preview_reload'];
-export const INTERCOM = ['intercom_send', 'intercom_peers', 'intercom_inbox', 'intercom_diary', 'run_in_shell', 'read_tab', 'task_create', 'task_list', 'task_claim', 'task_done', 'task_release', 'intercom_escalate', 'intercom_ask', 'intercom_fork'];
+export const APP = ['agent_spawn', 'ui_place', 'preview_open', 'ui_state', 'agent_close', 'shell_interrupt', 'agent_wait'];
+export const INTERCOM = ['intercom_send', 'intercom_peers', 'intercom_inbox', 'intercom_diary', 'run_in_shell', 'read_tab', 'task_create', 'task_list', 'task_claim', 'task_done', 'task_release', 'intercom_escalate', 'intercom_ask'];
 
 describe('strado MCP server — protocol and preview tools', () => {
   let mcp: McpClient | null = null;
@@ -55,7 +57,7 @@ describe('strado MCP server — protocol and preview tools', () => {
   it('initialize names the server "strado"; tools/list has the preview tools first', async () => {
     mcp = startMcp({ STRADO_WORKTREE: '/nowhere' }, process.cwd());
     const init = await mcp.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } });
-    expect(init.result.serverInfo).toEqual({ name: 'strado', version: '0.4.0' });
+    expect(init.result.serverInfo).toEqual({ name: 'strado', version: '0.5.0' });
     mcp.notify('notifications/initialized');
     const list = await mcp.call('tools/list');
     const names = list.result.tools.map((t: Json) => t.name);
@@ -132,10 +134,10 @@ describe('strado MCP server — intercom tools against a real app', () => {
   };
   afterEach(async () => { await mcp?.close(); mcp = null; deps.terminal.killUnder(repo); await app.close(); await rmTmp(); });
 
-  it('lists exactly 24 tools, intercom after preview', async () => {
+  it('lists exactly 31 tools: preview, then intercom, then app control', async () => {
     mcp = startMcp(shellEnv(), repo);
     const list = await mcp.call('tools/list');
-    expect(list.result.tools.map((t: Json) => t.name)).toEqual([...PREVIEW, ...INTERCOM]);
+    expect(list.result.tools.map((t: Json) => t.name)).toEqual([...PREVIEW, ...INTERCOM, ...APP]);
   });
 
   it('peers marks the caller; send lands in the peer\'s pull with the right kind; reply without replyTo is an error', async () => {
@@ -201,11 +203,37 @@ describe('strado MCP server — intercom tools against a real app', () => {
     expect(read).toContain('from-mcp');
   });
 
+  it('agent_spawn: a shell right of the caller running a command, then one below it', async () => {
+    const got: { op: string; args: Json }[] = [];
+    deps.uiClients.connect({
+      clientId: 'win-1', wsId: 'default', remote: false,
+      send: (cmd) => { got.push(cmd); queueMicrotask(() => deps.uiClients.ack('default', 'win-1', cmd.id, { applied: true })); },
+    });
+    deps.uiClients.report('default', 'win-1', { focused: true, worktreePath: repo, visibleKeys: [refKey({ worktreePath: repo, mode: 'shell', sessionId: '1' })], layout: null });
+    mcp = startMcp(shellEnv(), repo);
+    const first = textOf(await callTool('agent_spawn', { mode: 'shell', command: 'echo spawned-ok' }));
+    expect(first).toMatch(/^opened shell-2@repo \(shell\) in .+; placed right of you$/m);
+    expect(first).toContain('spawned-ok');
+    const second = textOf(await callTool('agent_spawn', { mode: 'shell', command: 'echo second-ok', split: 'down', anchor: 'shell-2@repo' }));
+    expect(second).toMatch(/^opened shell-3@repo \(shell\) .+; placed below shell-2@repo$/m);
+    expect(got.map((c) => [(c.args.tab as Json).sessionId, c.args.split, (c.args.anchor as Json).sessionId])).toEqual([['2', 'right', '1'], ['3', 'down', '2']]);
+    const state = textOf(await callTool('ui_state'));
+    expect(state).toContain('window win-1 [target, focused]');
+    expect(state).toContain('visible: shell-1@repo');
+  }, 60_000);
+
+  it('agent_spawn with no window still opens the tab; preview_open says why it could not', async () => {
+    mcp = startMcp(shellEnv(), repo);
+    expect(textOf(await callTool('agent_spawn', { mode: 'shell', split: 'none' }))).toMatch(/^opened shell-2@repo \(shell\) .+; not placed \(split=none\)$/);
+    expect(textOf(await callTool('preview_open', { url: 'google.com' }))).toBe('could not open https://google.com/: no Strado window is open');
+    expect(textOf(await callTool('agent_wait', { agent: 'shell-2@repo' }))).toContain('is a shell');
+  }, 60_000);
+
   it('without a token the intercom tools say so and the server stays up', async () => {
     mcp = startMcp({ STRADO_STATUS_PORT: String(port), STRADO_WORKTREE: repo }, repo);
     expect(textOf(await callTool('intercom_peers'))).toBe('this is not a Strado tab; open it from Strado to talk to peers');
     const list = await mcp.call('tools/list');
-    expect(list.result.tools).toHaveLength(24);
+    expect(list.result.tools).toHaveLength(PREVIEW.length + INTERCOM.length + APP.length);
   });
 
   it('an unreachable server is an isError with the transport message, never the token', async () => {
@@ -263,27 +291,4 @@ describe('strado MCP server — intercom tools against a real app', () => {
       expect(deps.intercom.listEscalations('default', { status: 'open' })[0]!.to).toBe('human');
     } finally { await shell.close(); }
   }, 20_000);
-
-  it('intercom_fork queues a peer hand-over; delivering off the bus lands it in the target\'s inbox, and acking it accepts the fork', async () => {
-    mcp = startMcp(claudeEnv(), repo);
-    // claude-1@repo is registered but not live, so the source goes straight to
-    // the diary fallback instead of being asked to summarise.
-    const created = await mcp.call('tools/call', { name: 'intercom_fork', arguments: { to: 'shell-1@repo', notes: 'take over the parser fix' } });
-    const createdText = created.result.content[0].text as string;
-    const id = createdText.match(/^fork (\S+) queued → shell-1@repo$/)![1]!;
-    expect(createdText).toBe(`fork ${id} queued → shell-1@repo`);
-
-    await deps.forks.settle();
-
-    const shell = startMcp(shellEnv(), repo);
-    try {
-      const inbox = await shell.call('tools/call', { name: 'intercom_inbox', arguments: {} });
-      const body = inbox.result.content[0].text as string;
-      expect(body).toContain('── strado · fork · ');
-      expect(body).toContain('FORK HAND-OVER');
-      expect(body).toContain('[reply with intercom_send to=strado kind=reply replyTo=');
-    } finally { await shell.close(); }
-
-    expect(deps.intercom.getFork('default', id).status).toBe('accepted');
-  });
 });

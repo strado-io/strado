@@ -63,11 +63,12 @@ describe('Dashboard SWR seed', () => {
         }],
       },
     }));
+    localStorage.setItem('strado:worktree-lru', JSON.stringify({ '/wt/FD-1': 1 }));
     renderDashboard();
     // Synchronously present — the mocked fetches never resolve, so this row can
     // only have come from the localStorage seed painting before revalidation.
-    // The Worktrees page heads a section with it (the sidebar lists only the Focus).
-    expect(screen.getAllByText('Cached Repo').length).toBeGreaterThan(0);
+    // The home screen's Recent lists it with its repo.
+    expect(screen.getByRole('list', { name: 'Recent' })).toHaveTextContent('Cached Repo');
     // Let the mount's settled requests land inside act, so they don't warn.
     await act(async () => {});
   });

@@ -53,6 +53,23 @@ export function applyStoredAppearance() {
   document.documentElement.dataset.terminalFont = terminalFont;
 }
 
+const APPEARANCE_SET_EVENT = 'strado:appearance-set';
+type AppearanceKey = 'preset' | 'font' | 'diffFont' | 'terminalFont';
+const KEY_OF: Record<AppearanceKey, string> = { preset: PRESET_KEY, font: FONT_KEY, diffFont: DIFF_FONT_KEY, terminalFont: TERMINAL_FONT_KEY };
+const VALID: Record<AppearanceKey, (v: string) => boolean> = { preset: isPreset, font: isFont, diffFont: isDiffFont, terminalFont: isTerminalFont };
+
+/** Change one appearance setting from outside Settings (the command box):
+ * stored and applied at once; every useAppearance picks it up. */
+export function setAppearance(key: AppearanceKey, value: string): boolean {
+  if (!VALID[key](value)) return false;
+  localStorage.setItem(KEY_OF[key], value);
+  if (key === 'preset') localStorage.setItem(LEGACY_THEME_KEY, presetMode(value as ThemePreset));
+  applyStoredAppearance();
+  window.dispatchEvent(new CustomEvent(APPEARANCE_CHANGE_EVENT, { detail: key === 'preset' ? { preset: value } : key === 'terminalFont' ? { terminalFont: value } : {} }));
+  window.dispatchEvent(new Event(APPEARANCE_SET_EVENT));
+  return true;
+}
+
 export function useAppearance() {
   const initial = storedAppearance();
   const [preset, setPreset] = useState<ThemePreset>(initial.preset);
@@ -82,6 +99,16 @@ export function useAppearance() {
     document.documentElement.dataset.terminalFont = terminalFont;
     window.dispatchEvent(new CustomEvent(APPEARANCE_CHANGE_EVENT, { detail: { terminalFont } }));
   }, [terminalFont]);
+
+  // Set from outside (setAppearance): show it here too.
+  useEffect(() => {
+    const sync = () => {
+      const now = storedAppearance();
+      setPreset(now.preset); setFont(now.font); setDiffFont(now.diffFont); setTerminalFont(now.terminalFont);
+    };
+    window.addEventListener(APPEARANCE_SET_EVENT, sync);
+    return () => window.removeEventListener(APPEARANCE_SET_EVENT, sync);
+  }, []);
 
   return { preset, setPreset, font, setFont, diffFont, setDiffFont, terminalFont, setTerminalFont };
 }

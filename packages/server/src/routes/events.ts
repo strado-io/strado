@@ -69,16 +69,29 @@ export async function registerEventRoutes(app: FastifyInstance) {
     },
   );
 
-  // Step 8: task and escalation events; step 9a adds `fork.*`; `peer.*` (a tab
-  // registered or died, ids only) lets the UI refresh its roster. Never
-  // `message.*`, which stays private to the sender/recipient's own pull/hook.
+  // Step 8: task and escalation events; `peer.*` (a tab
+  // registered or died, ids only) lets the UI refresh its roster. No other
+  // `message.*`: those stay private to the sender/recipient's own pull/hook.
   // `ws` filters to one workspace; omitted, every workspace's events stream.
   app.get<{ Querystring: { ws?: string } }>('/events/intercom', async (req, reply) => {
     openStream(reply);
     const ws = typeof req.query?.ws === 'string' && req.query.ws.length > 0 ? req.query.ws : null;
     const unsubscribe = app.deps.bus.on('intercom', (evt) => {
       const type = String(evt.type);
-      if (!type.startsWith('task.') && !type.startsWith('escalation.') && !type.startsWith('fork.') && !type.startsWith('peer.')) return;
+      // The dock's Line view: "the feed changed, refetch". Scope only — no
+      // ids, no parties, no body; the hub reads the list through its route.
+      if (type === 'message.queued') {
+        const d = evt.data as { id?: unknown; scopeId?: unknown; from?: unknown; to?: unknown; kind?: unknown; replyTo?: unknown };
+        if (typeof d.scopeId !== 'string' || (ws !== null && d.scopeId !== ws)) return;
+        writeEvent(reply, 'feed.changed', { scopeId: d.scopeId });
+        // An answer to the human's own question is the hub's mail: the box
+        // waits for it. Ids only; the body is read through the feed route.
+        if (d.to === 'human' && d.kind === 'reply') {
+          writeEvent(reply, 'message.queued', { id: d.id, scopeId: d.scopeId, from: d.from, to: d.to, kind: d.kind, replyTo: d.replyTo });
+        }
+        return;
+      }
+      if (!type.startsWith('task.') && !type.startsWith('escalation.') && !type.startsWith('peer.')) return;
       const data = evt.data as { scopeId?: unknown };
       if (ws !== null && data.scopeId !== ws) return;
       writeEvent(reply, type, evt.data);

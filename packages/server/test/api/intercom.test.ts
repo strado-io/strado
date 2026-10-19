@@ -71,7 +71,7 @@ describe('intercom fail-soft', () => {
     const health = await app.inject({ method: 'GET', url: '/api/health' });
     expect(health.statusCode).toBe(200);
     expect(() => deps.intercom.listScope('default')).toThrowError(expect.objectContaining({ code: 'UNAVAILABLE' }));
-    expect(deps.intercom.sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0, forksDeleted: 0 });
+    expect(deps.intercom.sweep()).toEqual({ expired: 0, deleted: 0, turnsDeleted: 0, tasksDeleted: 0, escalationsDeleted: 0, escalationsRetargeted: 0 });
   });
 
   it('the turn diary routes answer 503 on a disabled store', async () => {
@@ -97,6 +97,28 @@ describe('intercom routes', () => {
     tokA = (await deps.agents.register({ key: claudeKey(repo, '1'), cwd: repo, scopeId: 'default' })).token;
     tokB = (await deps.agents.register({ key: claudeKey(repo, '2'), cwd: repo, scopeId: 'default' })).token;
     tokC = (await deps.agents.register({ key: shellKey(repo, '1'), cwd: repo, scopeId: 'default' })).token;
+  });
+
+  it('GET /api/w/:ws/intercom/stations lists every tab with the calls waiting on the human', async () => {
+    const realList = deps.agents.list.bind(deps.agents);
+    deps.agents.list = async (scopeId: string) => (await realList(scopeId)).map((a) => a.agentId === 'claude-2@repo' ? { ...a, lifecycle: 'needs_input' as const, live: true } : a);
+    const call = await app.inject({ method: 'POST', url: '/api/intercom/escalations', headers: auth(tokA), payload: { title: 'Change Mohan?', body: 'found it in webhooks' } });
+    expect(call.statusCode).toBe(201);
+    // A peer-addressed escalation is not a call for the human.
+    await app.inject({ method: 'POST', url: '/api/intercom/escalations', headers: auth(tokA), payload: { to: 'claude-2@repo', title: 'peer q', body: 'q?' } });
+    deps.ptyActivity.noteOutput(claudeKey(repo, '1'));
+
+    const res = await app.inject({ method: 'GET', url: '/api/w/default/intercom/stations' });
+    expect(res.statusCode).toBe(200);
+    const byId = Object.fromEntries(res.json().stations.map((s: { agentId: string }) => [s.agentId, s]));
+    expect(Object.keys(byId).sort()).toEqual(['claude-1@repo', 'claude-2@repo', 'shell-1@repo']);
+    expect(byId['claude-1@repo']).toMatchObject({
+      name: 'claude-1', mode: 'claude', worktreeName: path.basename(repo), sessionId: '1', needsYou: true,
+      calls: [{ id: call.json().escalation.id, title: 'Change Mohan?', body: 'found it in webhooks' }],
+    });
+    expect(byId['claude-1@repo'].lastActivityAt).toBeGreaterThan(Date.now() - 5000);
+    expect(byId['claude-2@repo']).toMatchObject({ needsYou: true, calls: [] }); // permission prompt
+    expect(byId['shell-1@repo']).toMatchObject({ needsYou: false, calls: [], lastActivityAt: null });
   });
 
   it('401 UNAUTHENTICATED on every route without a token', async () => {
@@ -205,6 +227,31 @@ describe('intercom routes', () => {
     expect(r.json().peers.map((p: any) => p.agentId)).toEqual(['claude-1@repo', 'claude-2@repo', 'shell-1@repo']);
     expect(JSON.stringify(r.json())).not.toMatch(/token/i);
   });
+
+  it('a sandboxed tab reaches only peers of its own worktree by message, ask, diary and task; the human stays reachable', async () => {
+    const other = path.join(tmp, 'other-wt');
+    await fs.mkdir(other, { recursive: true });
+    await deps.agents.register({ key: claudeKey(other, '1'), cwd: other, scopeId: 'default' });
+    const post = (url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: auth(tokA), payload: payload as object });
+    // Unsandboxed: cross-worktree traffic is fine.
+    expect((await post('/api/intercom/messages', { to: 'claude-1@other-wt', body: 'hi' })).statusCode).toBe(201);
+    const foreignTask = deps.intercom.createTask({ scopeId: 'default', by: HUMAN, title: 'theirs', worktreePath: other });
+    const anyTask = deps.intercom.createTask({ scopeId: 'default', by: HUMAN, title: 'anyone' });
+    deps.sandboxSlugs.set(repo, 'repo-sbx');
+    try {
+      const msg = await post('/api/intercom/messages', { to: 'claude-1@other-wt', body: 'hi' });
+      expect(msg.statusCode).toBe(403);
+      expect(msg.json().error.code).toBe('FORBIDDEN');
+      expect((await post('/api/intercom/escalations', { to: 'claude-1@other-wt', title: 'q', body: 'q?' })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'GET', url: '/api/intercom/diary?agent=claude-1@other-wt', headers: auth(tokA) })).statusCode).toBe(403);
+      expect((await post('/api/intercom/tasks', { title: 'x', worktreePath: other })).statusCode).toBe(403);
+      expect((await post(`/api/intercom/tasks/${foreignTask.id}/claim`, {})).statusCode).toBe(403);
+      // Its own worktree, the human, and unscoped tasks stay reachable.
+      expect((await post('/api/intercom/messages', { to: 'claude-2@repo', body: 'hi' })).statusCode).toBe(201);
+      expect((await post('/api/intercom/escalations', { title: 'q', body: 'q?' })).statusCode).toBe(201);
+      expect((await post(`/api/intercom/tasks/${anyTask.id}/claim`, {})).statusCode).toBe(200);
+    } finally { deps.sandboxSlugs.delete(repo); }
+  });
 });
 
 describe('intercom routes when disabled', () => {
@@ -226,6 +273,22 @@ describe('GET /api/w/:ws/intercom/messages', () => {
   beforeEach(async () => {
     await makeRepo();
     await boot();
+  });
+
+  it('agent= narrows to one station\'s line, sent or received, and still honours limit', async () => {
+    const a = await deps.agents.register({ key: claudeKey(repo, '1'), cwd: repo, scopeId: 'default' });
+    const b = await deps.agents.register({ key: claudeKey(repo, '2'), cwd: repo, scopeId: 'default' });
+    const c = await deps.agents.register({ key: claudeKey(repo, '3'), cwd: repo, scopeId: 'default' });
+    const send = (tok: string, to: string, body: string) =>
+      app.inject({ method: 'POST', url: '/api/intercom/messages', headers: { authorization: `Bearer ${tok}` }, payload: { to, body } });
+    await send(a.token, 'claude-2@repo', 'a→b');
+    await send(b.token, 'claude-3@repo', 'b→c');
+    await send(c.token, 'claude-1@repo', 'c→a');
+    const line = async (q: string) => (await app.inject({ method: 'GET', url: `/api/w/default/intercom/messages?${q}` })).json().messages.map((m: { body: string }) => m.body).sort();
+    expect(await line('agent=claude-1@repo')).toEqual(['a→b', 'c→a']);
+    expect(await line('agent=claude-3@repo')).toEqual(['b→c', 'c→a']);
+    expect(await line('agent=claude-1@repo&limit=1')).toHaveLength(1);
+    expect(await line('agent=nobody@repo')).toEqual([]);
   });
 
   it('lists both directions with state, newest first, honouring since and limit, without tokens', async () => {
@@ -922,7 +985,7 @@ describe('tasks and escalations routes', () => {
   it('send to "human" is a 400 pointing at intercom_escalate; alias "human" is refused', async () => {
     const r = await app.inject({ method: 'POST', url: '/api/intercom/messages', headers: H(tokA), payload: { to: 'human', body: 'hi' } });
     expect(r.statusCode).toBe(400);
-    expect(r.json().error.message).toBe('use intercom_escalate to reach the human');
+    expect(r.json().error.message).toBe('use intercom_escalate to reach the human (or kind=reply to answer a question the human asked you)');
     await expect(deps.agents.setAlias('default', 'claude-1@repo', 'human')).rejects.toMatchObject({ code: 'VALIDATION' });
   });
 
@@ -945,273 +1008,14 @@ describe('tasks and escalations routes', () => {
     expect(text).toContain('event: escalation.opened');
     expect(text).not.toContain('message.queued');
     expect(text).not.toContain('not on the wire');
+    // Only a scope-level "refetch" signal: no ids, parties or body.
+    expect(text).toContain('event: feed.changed\ndata: {"scopeId":"default"}');
+    expect(text).not.toContain('claude-2@repo');
     expect(text).not.toContain('elsewhere'); // a different workspace's task is excluded by the ws filter
     ac.abort();
   });
-});
 
-describe('fork routes', () => {
-  let tokA: string; let tokB: string; let tokC: string;
-  const auth = (t: string) => ({ authorization: `Bearer ${t}` });
-  const H = (t: string) => ({ ...auth(t), 'content-type': 'application/json' });
-  const JSON_H = { 'content-type': 'application/json' };
-
-  beforeEach(async () => {
-    await makeRepo();
-    // No deps.terminal swap: the source's liveness (and, for the newTab
-    // cases, the spawn itself) has to run through the manager buildDeps
-    // created (in-process under STRADO_INPROC_PTY, as in "push delivery" and
-    // "tasks and escalations routes" above).
-    deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
-    app = await buildApp(deps);
-    await app.inject({
-      method: 'POST', url: '/api/w/default/repos',
-      payload: { id: 'app', name: 'App', path: repo, projectSubdir: null, startCommand: 'true', defaultPort: 3000, editor: 'code' },
-    });
-    tokA = (await deps.agents.register({ key: claudeKey(repo, '1'), cwd: repo, scopeId: 'default' })).token;
-    tokB = (await deps.agents.register({ key: claudeKey(repo, '2'), cwd: repo, scopeId: 'default' })).token;
-    tokC = (await deps.agents.register({ key: shellKey(repo, '1'), cwd: repo, scopeId: 'default' })).token;
-  });
-  afterEach(() => { deps.terminal.killUnder(repo); });
-
-  it('401 without a token on every agent fork route; 503 when the kill switch is off', async () => {
-    for (const c of [
-      { method: 'POST', url: '/api/intercom/forks', payload: { to: 'claude-2@repo' } },
-      { method: 'GET', url: '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV' },
-    ] as const) {
-      const r = await app.inject({ ...c });
-      expect(r.statusCode, c.url).toBe(401);
-    }
-    process.env.STRADO_INTERCOM_TASKS = '0';
-    try {
-      const create = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'claude-2@repo' } });
-      expect(create.statusCode).toBe(503);
-      const get = await app.inject({ method: 'GET', url: '/api/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV', headers: H(tokA) });
-      expect(get.statusCode).toBe(503);
-      const humanCreate = await app.inject({ method: 'POST', url: '/api/w/default/intercom/forks', headers: JSON_H, payload: { source: 'claude-1@repo', to: 'claude-2@repo' } });
-      expect(humanCreate.statusCode).toBe(503);
-      const humanList = await app.inject({ method: 'GET', url: '/api/w/default/intercom/forks' });
-      expect(humanList.statusCode).toBe(503);
-      const humanCancel = await app.inject({ method: 'POST', url: '/api/w/default/intercom/forks/01ARZ3NDEKTSV4RRFFQ69G5FAV/cancel' });
-      expect(humanCancel.statusCode).toBe(503);
-    } finally { process.env.STRADO_INTERCOM_TASKS = ''; }
-  });
-
-  it('agent peer fork: summarising → source summary reply → delivered → target ack → accepted; delivered is no longer cancellable', async () => {
-    await deps.terminal.ensure(claudeKey(repo, '1'), repo, { file: '/bin/sh', args: ['-i'] });
-    // The target must be live too, or delivery finds it "gone" and fails.
-    await deps.terminal.ensure(claudeKey(repo, '2'), repo, { file: '/bin/sh', args: ['-i'] });
-    const create = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'claude-2@repo', notes: 'fix the parser' } });
-    expect(create.statusCode).toBe(201);
-    const fork = create.json().fork;
-    expect(fork.status).toBe('summarising');
-    expect(fork.source).toMatchObject({ agentId: 'claude-1@repo' });
-    expect(fork.target).toEqual({ kind: 'peer', agentId: 'claude-2@repo' });
-
-    // The source's inbox carries strado's summary ask, tagged with the fork.
-    const pullA = await app.inject({ method: 'POST', url: '/api/intercom/pull', headers: H(tokA), payload: {} });
-    const summaryMsg = pullA.json().messages.find((m: any) => m.forkId === fork.id);
-    expect(summaryMsg).toMatchObject({ from: { agentId: 'strado' }, kind: 'request' });
-
-    // A stranger cannot see the fork; the source can.
-    const byC = await app.inject({ method: 'GET', url: `/api/intercom/forks/${fork.id}`, headers: H(tokC) });
-    expect(byC.statusCode).toBe(404);
-    const byA = await app.inject({ method: 'GET', url: `/api/intercom/forks/${fork.id}`, headers: H(tokA) });
-    expect(byA.statusCode).toBe(200);
-
-    // The source's reply *is* the summary: kind=reply, to=strado, skipping registry resolution.
-    const reply = await app.inject({
-      method: 'POST', url: '/api/intercom/messages', headers: H(tokA),
-      payload: { to: 'strado', kind: 'reply', replyTo: summaryMsg.id, body: 'Goal: fix parser. Done: lexer. Open: edge cases.' },
-    });
-    expect(reply.statusCode).toBe(201);
-
-    await deps.forks.settle();
-
-    const delivered = await app.inject({ method: 'GET', url: `/api/intercom/forks/${fork.id}`, headers: H(tokB) });
-    expect(delivered.statusCode).toBe(200);
-    expect(delivered.json().fork.status).toBe('delivered');
-    expect(delivered.json().fork.summarySource).toBe('agent');
-
-    const cantCancel = await app.inject({ method: 'POST', url: `/api/w/default/intercom/forks/${fork.id}/cancel` });
-    expect(cantCancel.statusCode).toBe(409);
-    expect(cantCancel.json().error.details.reason).toBe('not_cancellable');
-
-    const pullB = await app.inject({ method: 'POST', url: '/api/intercom/pull', headers: H(tokB), payload: {} });
-    const pkgMsg = pullB.json().messages.find((m: any) => m.forkId === fork.id && m.kind === 'request');
-    expect(pkgMsg.body).toMatch(/^FORK HAND-OVER/);
-    expect(pkgMsg.body).toContain('Goal: fix parser');
-
-    const ack = await app.inject({ method: 'POST', url: `/api/intercom/messages/${pkgMsg.id}/ack`, headers: auth(tokB) });
-    expect(ack.statusCode).toBe(200);
-
-    const accepted = await app.inject({ method: 'GET', url: `/api/intercom/forks/${fork.id}`, headers: H(tokA) });
-    expect(accepted.json().fork.status).toBe('accepted');
-  });
-
-  it('404s an unknown fork target; 409s source_is_target; source defaults to the caller', async () => {
-    const unknown = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'ghost' } });
-    expect(unknown.statusCode).toBe(404);
-
-    const self = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'claude-1@repo' } });
-    expect(self.statusCode).toBe(409);
-    expect(self.json().error.details.reason).toBe('source_is_target');
-  });
-
-  it('a sandboxed tab cannot name a source registered in another worktree', async () => {
-    const other = path.join(tmp, 'other-wt');
-    await fs.mkdir(other, { recursive: true });
-    await deps.agents.register({ key: claudeKey(other, '1'), cwd: other, scopeId: 'default' });
-    deps.sandboxSlugs.set(repo, 'repo-sbx');
-    try {
-      // Without the boundary this hands W2's summary, git status and notes to
-      // a tab contained in W1 — the fork's own inbox is the delivery channel.
-      const forbidden = await app.inject({
-        method: 'POST', url: '/api/intercom/forks', headers: H(tokA),
-        payload: { source: 'claude-1@other-wt', to: 'claude-1@repo' },
-      });
-      expect(forbidden.statusCode).toBe(403);
-      expect(forbidden.json().error.code).toBe('FORBIDDEN');
-
-      // Its own agent as the source is still fine.
-      const ok = await app.inject({
-        method: 'POST', url: '/api/intercom/forks', headers: H(tokA),
-        payload: { source: 'claude-1@repo', to: 'claude-2@repo' },
-      });
-      expect(ok.statusCode).toBe(201);
-    } finally { deps.sandboxSlugs.delete(repo); }
-  });
-
-  it('refuses a newTab worktreePath no repo of the workspace owns, on both fork routes', async () => {
-    const outside = path.join(tmp, 'somewhere-else');
-    const before = deps.intercom.listForks('default').length;
-    const agent = await app.inject({
-      method: 'POST', url: '/api/intercom/forks', headers: H(tokA),
-      payload: { newTab: { mode: 'codex', worktreePath: outside } },
-    });
-    expect(agent.statusCode).toBe(400);
-    expect(agent.json().error.code).toBe('VALIDATION');
-
-    const human = await app.inject({
-      method: 'POST', url: '/api/w/default/intercom/forks', headers: JSON_H,
-      payload: { source: 'claude-1@repo', newTab: { mode: 'codex', worktreePath: outside } },
-    });
-    expect(human.statusCode).toBe(400);
-    expect(human.json().error.code).toBe('VALIDATION');
-    expect(deps.intercom.listForks('default')).toHaveLength(before);
-
-    // The registered checkout itself is a legal target.
-    const ok = await app.inject({
-      method: 'POST', url: '/api/w/default/intercom/forks', headers: JSON_H,
-      payload: { source: 'claude-1@repo', newTab: { mode: 'codex', worktreePath: repo } },
-    });
-    expect(ok.statusCode).toBe(201);
-    await deps.forks.settle();
-  });
-
-  it('agent newTab fork defaults worktreePath to the caller and enforces the sandbox boundary', async () => {
-    deps.sandboxSlugs.set(repo, 'repo-sbx');
-    const forbidden = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { newTab: { mode: 'codex', worktreePath: '/elsewhere' } } });
-    expect(forbidden.statusCode).toBe(403);
-    expect(forbidden.json().error.code).toBe('FORBIDDEN');
-    deps.sandboxSlugs.delete(repo);
-
-    const ok = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { newTab: { mode: 'codex' } } });
-    expect(ok.statusCode).toBe(201);
-    expect(ok.json().fork.target).toMatchObject({ kind: 'new', mode: 'codex', worktreePath: repo, agentId: null });
-  });
-
-  it('human routes: source is required; newTab spawns and delivers; list and cancel', async () => {
-    const noSource = await app.inject({ method: 'POST', url: '/api/w/default/intercom/forks', headers: JSON_H, payload: { newTab: { mode: 'codex' } } });
-    expect(noSource.statusCode).toBe(400);
-
-    // Under the repo's canonical worktree root: any other path is refused.
-    const newWt = path.join(tmp, 'home', 'worktrees', 'app', 'newtab-wt');
-    await fs.mkdir(newWt, { recursive: true });
-    const created = await app.inject({
-      method: 'POST', url: '/api/w/default/intercom/forks', headers: JSON_H,
-      payload: { source: 'claude-1@repo', newTab: { mode: 'codex', worktreePath: newWt }, notes: 'take over' },
-    });
-    expect(created.statusCode).toBe(201);
-    const fork = created.json().fork;
-    // The source is not live, so create() resolves the diary fallback (empty
-    // diary here) synchronously; delivery to the new tab is still pending.
-    expect(fork.status).toBe('queued');
-    expect(fork.target).toMatchObject({ kind: 'new', mode: 'codex', worktreePath: newWt, agentId: null });
-
-    await deps.forks.settle();
-    deps.terminal.killUnder(newWt);
-
-    const list = await app.inject({ method: 'GET', url: '/api/w/default/intercom/forks?status=delivered' });
-    expect(list.statusCode).toBe(200);
-    const row = list.json().forks.find((f: any) => f.id === fork.id);
-    expect(row, JSON.stringify(list.json().forks)).toBeDefined();
-    expect(row.target.agentId).toMatch(/^codex-\d+@/);
-
-    const cancel = await app.inject({ method: 'POST', url: `/api/w/default/intercom/forks/${fork.id}/cancel` });
-    expect(cancel.statusCode).toBe(409);
-  });
-
-  it('cancel: summarising → cancelled, idempotent', async () => {
-    await deps.terminal.ensure(claudeKey(repo, '1'), repo, { file: '/bin/sh', args: ['-i'] });
-    const create = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'claude-2@repo' } });
-    const id = create.json().fork.id;
-    expect(create.json().fork.status).toBe('summarising');
-    const cancelled = await app.inject({ method: 'POST', url: `/api/w/default/intercom/forks/${id}/cancel` });
-    expect(cancelled.statusCode).toBe(200);
-    expect(cancelled.json().fork.status).toBe('cancelled');
-    const again = await app.inject({ method: 'POST', url: `/api/w/default/intercom/forks/${id}/cancel` });
-    expect(again.statusCode).toBe(200);
-    expect(again.json().fork.status).toBe('cancelled');
-  });
-
-  it("a non-participant's GET on a summarising fork past its deadline is 404 and does not advance it", async () => {
-    await deps.terminal.ensure(claudeKey(repo, '1'), repo, { file: '/bin/sh', args: ['-i'] });
-    // Backdate the summary deadline without waiting 60 real seconds: forkService's
-    // own `now()` re-reads Date.now() on every call (unlike the store's, captured
-    // once at construction), so a transient spy only ever affects the deadline this
-    // create() computes — nothing else in this request is time-sensitive.
-    const past = Date.now() - 61_000;
-    const spy = vi.spyOn(Date, 'now').mockReturnValue(past);
-    let create;
-    try {
-      create = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'claude-2@repo' } });
-    } finally {
-      spy.mockRestore();
-    }
-    expect(create.statusCode).toBe(201);
-    const fork = create.json().fork;
-    expect(fork.status).toBe('summarising');
-
-    const byC = await app.inject({ method: 'GET', url: `/api/intercom/forks/${fork.id}`, headers: H(tokC) });
-    expect(byC.statusCode).toBe(404);
-    // The unauthorized read must not have advanced it past its (already
-    // elapsed) deadline — checked against the raw store, which never advances.
-    expect(deps.intercom.getFork('default', fork.id).status).toBe('summarising');
-  });
-
-  it('"strado" is reserved: refused as an alias, unresolvable as a peer or fork target, reachable only via a reply to its own request', async () => {
-    const badKind = await app.inject({ method: 'POST', url: '/api/intercom/messages', headers: H(tokA), payload: { to: 'strado', body: 'hi' } });
-    expect(badKind.statusCode).toBe(400);
-    expect(badKind.json().error.message).toBe('"strado" only receives replies to its own requests');
-
-    const badReply = await app.inject({
-      method: 'POST', url: '/api/intercom/messages', headers: H(tokA),
-      payload: { to: 'STRADO', kind: 'reply', replyTo: '01ARZ3NDEKTSV4RRFFQ69G5FAV', body: 'x' },
-    });
-    expect(badReply.statusCode).toBe(409); // no such request ever came from strado
-
-    await expect(deps.agents.setAlias('default', 'claude-1@repo', 'strado')).rejects.toMatchObject({ code: 'VALIDATION' });
-    await expect(deps.agents.resolve('default', 'strado')).rejects.toMatchObject({ code: 'NOT_FOUND' });
-
-    const toStrado = await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'strado' } });
-    expect(toStrado.statusCode).toBe(404);
-
-    const peers = await app.inject({ method: 'GET', url: '/api/intercom/peers', headers: H(tokA) });
-    expect(peers.json().peers.map((p: any) => p.agentId)).not.toContain('strado');
-  });
-
-  it('GET /events/intercom carries fork.* filtered by ws, and never the notes', async () => {
+  it("GET /events/intercom names an answer to the human's question (ids only, never the body)", async () => {
     await app.listen({ port: 0, host: '127.0.0.1' });
     const port = (app.server.address() as { port: number }).port;
     const ac = new AbortController();
@@ -1219,20 +1023,43 @@ describe('fork routes', () => {
     const reader = res.body!.getReader();
     const chunks: string[] = [];
     const readUntil = async (needle: string) => { for (let i = 0; i < 20 && !chunks.join('').includes(needle); i++) { const { value } = await reader.read(); if (value) chunks.push(Buffer.from(value).toString()); } };
-    // A fork in a different workspace must never reach a ws=default subscriber.
-    deps.intercom.createFork({
-      scopeId: 'other', from: HUMAN,
-      source: { agentId: 'x@elsewhere', worktreePath: '/elsewhere', mode: 'shell', sessionId: '1' },
-      target: { kind: 'peer', agentId: 'y@elsewhere' }, notes: 'elsewhere-fork-notes',
-    });
-    await app.inject({ method: 'POST', url: '/api/intercom/forks', headers: H(tokA), payload: { to: 'claude-2@repo', notes: 'super-secret-notes-xyz' } });
-    await readUntil('fork.created');
+    const { receipt } = deps.intercom.send({ scopeId: 'default', fromAgentId: HUMAN.agentId, fromExecutionId: HUMAN.executionId, toAgentId: 'claude-1@repo', kind: 'request', replyTo: null, body: 'do the tests pass?', context: [], idempotencyKey: null, expiresInMs: null });
+    const r = await app.inject({ method: 'POST', url: '/api/intercom/messages', headers: H(tokA), payload: { to: 'human', kind: 'reply', replyTo: receipt.id, body: 'secret-ish answer text' } });
+    expect(r.statusCode).toBe(201);
+    await readUntil(`"replyTo":"${receipt.id}"`);
     const text = chunks.join('');
-    expect(text).toContain('event: fork.created');
-    expect(text).not.toContain('super-secret-notes-xyz');
-    expect(text).not.toContain('elsewhere-fork-notes'); // never on the wire regardless of workspace
-    expect(text).not.toContain('"scopeId":"other"'); // a different workspace's fork is excluded by the ws filter
+    expect(text).toContain(`event: message.queued\ndata: {"id":"${r.json().id}","scopeId":"default","from":"claude-1@repo","to":"human","kind":"reply","replyTo":"${receipt.id}"}`);
+    expect(text).not.toContain('do the tests pass?');
+    expect(text).not.toContain('secret-ish answer text');
     ac.abort();
+  });
+});
+
+describe('reserved names and peer events', () => {
+  let tokA: string;
+  const H = (t: string) => ({ authorization: `Bearer ${t}`, 'content-type': 'application/json' });
+
+  beforeEach(async () => {
+    await makeRepo();
+    deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
+    app = await buildApp(deps);
+    await app.inject({
+      method: 'POST', url: '/api/w/default/repos',
+      payload: { id: 'app', name: 'App', path: repo, projectSubdir: null, startCommand: 'true', defaultPort: 3000, editor: 'code' },
+    });
+    tokA = (await deps.agents.register({ key: claudeKey(repo, '1'), cwd: repo, scopeId: 'default' })).token;
+  });
+  afterEach(() => { deps.terminal.killUnder(repo); });
+
+  it('"strado" is reserved: refused as an alias, unresolvable as a peer or message target', async () => {
+    const toStrado = await app.inject({ method: 'POST', url: '/api/intercom/messages', headers: H(tokA), payload: { to: 'strado', body: 'hi' } });
+    expect(toStrado.statusCode).toBe(404);
+
+    await expect(deps.agents.setAlias('default', 'claude-1@repo', 'strado')).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(deps.agents.resolve('default', 'strado')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    const peers = await app.inject({ method: 'GET', url: '/api/intercom/peers', headers: H(tokA) });
+    expect(peers.json().peers.map((p: any) => p.agentId)).not.toContain('strado');
   });
 
   it('GET /events/intercom carries peer.registered and peer.dropped (ids only), filtered by ws', async () => {
@@ -1255,28 +1082,5 @@ describe('fork routes', () => {
     expect(text).not.toContain(ex.token);
     expect(text).not.toContain('"scopeId":"other"');
     ac.abort();
-  });
-
-  it('human GET /api/w/:ws/intercom/forks is scoped to its own workspace', async () => {
-    await app.deps.workspaces.add({
-      id: 'other', name: 'Other', color: '#112233', icon: 'O', defaultEditor: 'code', defaultPortBase: 9080, logDir: null,
-    });
-    const other = deps.intercom.createFork({
-      scopeId: 'other', from: HUMAN,
-      source: { agentId: 'x@elsewhere', worktreePath: '/elsewhere', mode: 'shell', sessionId: '1' },
-      target: { kind: 'peer', agentId: 'y@elsewhere' }, notes: '',
-    });
-    const mine = await app.inject({ method: 'POST', url: '/api/w/default/intercom/forks', headers: JSON_H, payload: { source: 'claude-1@repo', to: 'claude-2@repo' } });
-    expect(mine.statusCode).toBe(201);
-
-    const listDefault = await app.inject({ method: 'GET', url: '/api/w/default/intercom/forks' });
-    const idsDefault = listDefault.json().forks.map((f: any) => f.id);
-    expect(idsDefault).toContain(mine.json().fork.id);
-    expect(idsDefault).not.toContain(other.id);
-
-    const listOther = await app.inject({ method: 'GET', url: '/api/w/other/intercom/forks' });
-    const idsOther = listOther.json().forks.map((f: any) => f.id);
-    expect(idsOther).toContain(other.id);
-    expect(idsOther).not.toContain(mine.json().fork.id);
   });
 });

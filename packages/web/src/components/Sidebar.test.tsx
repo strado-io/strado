@@ -276,7 +276,8 @@ describe('Sidebar tree', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
     const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
-    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('font-medium');
+    // Weight marks the open worktree only; nothing is open here.
+    expect(within(card).getByRole('button', { name: 'FD-1' })).not.toHaveClass('font-medium');
     expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();

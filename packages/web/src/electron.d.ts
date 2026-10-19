@@ -13,6 +13,14 @@ type StradoPreviewEvent =
   | { key: string; type: 'favicon'; favicon: string | null }
   | { key: string; type: 'focus' };
 
+// Talk to Strado: the native on-device speech helper's events (one session at a time).
+type StradoVoiceEvent =
+  | { type: 'ready' }
+  | { type: 'partial'; text: string }
+  | { type: 'final'; text: string }
+  | { type: 'level'; rms: number }
+  | { type: 'error'; code: string; message?: string };
+
 interface Window {
   strado?: {
     // host OS; absent on older shells and in a plain browser
@@ -67,6 +75,18 @@ interface Window {
     // native folder picker for "Add repo" — absent on older shells;
     // resolves to the chosen absolute path or null if cancelled
     pickDirectory?: () => Promise<string | null>;
+    // While on, a Browser preview taking focus without a click in it hands the
+    // keyboard straight back to this page (the command box is holding it);
+    // absent on older shells
+    holdKeyboard?: (on: boolean) => void;
+    // push-to-talk speech (macOS, on device); absent elsewhere — hide the mic
+    voice?: {
+      available: boolean | (() => boolean | Promise<boolean>);
+      start: (contextual: string[]) => Promise<unknown> | void;
+      stop: () => Promise<unknown> | void;
+      cancel: () => Promise<unknown> | void;
+      onEvent: (cb: (e: StradoVoiceEvent) => void) => () => void;
+    };
     // self-update download/install — absent on older shells
     update?: (action: 'download' | 'install', payload?: { url: string; sha256: string }) => Promise<{ ok: boolean }>;
     onUpdateEvent?: (

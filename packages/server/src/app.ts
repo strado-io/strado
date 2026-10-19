@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createEventBus, EventBus } from './events/bus.js';
@@ -38,8 +39,10 @@ import { createTurnDiary, type TurnDiary } from './services/turnDiary.js';
 import { createPtyActivity, type PtyActivity } from './services/ptyActivity.js';
 import { createIntercomPush, type IntercomPush } from './services/intercomPush.js';
 import { createShellRunner, type ShellRunner } from './services/shellRunner.js';
-import { agentSpawnInstallers, spawnAgentTab } from './services/agentSpawn.js';
-import { createForkService, type ForkService } from './services/forkService.js';
+import { createUiClients, type UiClients } from './services/uiClients.js';
+import { createSpawnGuard, type SpawnGuard } from './services/spawnGuard.js';
+import { createJarvisModel, type JarvisModel } from './services/jarvisModel.js';
+import { createJevRouter, type JevRouter } from './services/jevRouter.js';
 import { PUSH_ENV } from './services/intercomSchema.js';
 import { claudeProjectDir, createParkStore, hasBackgroundJobs, noTranscriptSince, parkMinutesFromEnv, processStartMs, startClaudeParkSweep, type ParkStore } from './services/claudePark.js';
 
@@ -74,9 +77,19 @@ export type Deps = {
   ptyActivity: PtyActivity;
   intercomPush: IntercomPush;
   shellRunner: ShellRunner;
-  // Intercom step 9a: cross-agent fork — the summary ask, the diary fallback,
-  // the packaged hand-over and the new-tab spawn behind it.
-  forks: ForkService;
+  // App control: the server → window command channel (splits, focus, Browser
+  // tabs are client-only state) and the guard every agent_spawn passes.
+  uiClients: UiClients;
+  spawnGuard: SpawnGuard;
+  // Jarvis (the hub's command box) acts as the human through unauthenticated
+  // /api/w routes; this per-boot secret, handed only to a loopback hub, is
+  // what those routes check on top of the Origin/Host guard.
+  hubToken: string;
+  // Jarvis natural language: the box's free text → a plan of registry actions,
+  // through the user's own Anthropic key. Injectable so tests never call out.
+  jarvisModel: JarvisModel;
+  /** Fast single-action decisions (Jev on OpenRouter) tried before the model. */
+  jevRouter: JevRouter;
   // Provider-native conversation stores live under the user's home. Kept
   // separate from homeStateDir (~/.strado) and overridable in tests.
   agentHomeDir: string;
@@ -361,24 +374,6 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     bus,
     log: (message, err) => debugLog.log('intercom', `${message}: ${err instanceof Error ? err.message : String(err)}`),
   });
-  const livePush: IntercomPush = intercomPush;
-  // Intercom step 9a. `spawn` is bound here rather than inside the service so
-  // the service stays free of the terminal route's install/hook concerns.
-  const forks = createForkService({
-    store: liveIntercom,
-    agents,
-    sessions: agentSessions,
-    push: () => livePush,
-    bus,
-    spawn: (input) => spawnAgentTab({
-      terminal: liveTerminal,
-      agents,
-      bus,
-      installers: () => agentSpawnInstallers(input.mode, input.worktreePath,
-        (message, err) => debugLog.log('mcp', `${message}: ${err instanceof Error ? err.message : String(err)}`)),
-    }, input),
-    log: (message, err) => debugLog.log('intercom', err === undefined ? message : `${message}: ${err instanceof Error ? err.message : String(err)}`),
-  });
   // Arrival trigger: a message queued for an idle Claude tab is pushed at once.
   bus.on(INTERCOM_CHANNEL, (evt) => {
     if (evt.type !== 'message.queued') return;
@@ -414,7 +409,15 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     ptyActivity,
     intercomPush,
     shellRunner,
-    forks,
+    uiClients: createUiClients(),
+    hubToken: randomBytes(32).toString('base64url'),
+    jarvisModel: createJarvisModel({ log: (message) => debugLog.log('jarvis', message) }),
+    jevRouter: createJevRouter({ log: (message) => debugLog.log('jarvis', message) }),
+    spawnGuard: createSpawnGuard({
+      isLive: async (scopeId, executionId) => (await agents.list(scopeId)).some((a) => a.executionId === executionId && a.live),
+      file: path.join(homeStateDir, 'spawn-markers.json'),
+      log: (message) => debugLog.log('app-control', message),
+    }),
     agentHomeDir,
     gitChanges,
     activity,
@@ -466,8 +469,6 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     } catch (err) {
       app.log.warn({ err }, 'intercom sweep failed');
     }
-    // Resume queued deliveries and summary deadlines left behind by a restart.
-    void deps.forks.sweepStale().catch((err) => app.log.warn({ err }, 'intercom fork sweep failed'));
   };
   runSweep();
   const sweepTimer = setInterval(runSweep, 60 * 60 * 1000);
@@ -618,6 +619,10 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerAgentScopedRoutes(scoped);
     const { registerIntercomScopedRoutes } = await import('./routes/intercom.js');
     await registerIntercomScopedRoutes(scoped);
+    const { registerAppControlScopedRoutes } = await import('./routes/appControl.js');
+    await registerAppControlScopedRoutes(scoped);
+    const { registerJarvisScopedRoutes } = await import('./routes/jarvis.js');
+    await registerJarvisScopedRoutes(scoped);
     const { registerGitProviderWorktreeRoutes } = await import('./routes/gitProvider.js');
     await registerGitProviderWorktreeRoutes(scoped);
   }, { prefix: '/api/w/:wsId' });
@@ -634,6 +639,11 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // Intercom routes: same token model as /api/agents/me, outside the prefix.
   const { registerIntercomRoutes } = await import('./routes/intercom.js');
   await registerIntercomRoutes(app);
+  // App control (agent_spawn, ui_place, preview_open, ui_state) + /events/ui.
+  const { registerAppControlRoutes } = await import('./routes/appControl.js');
+  await registerAppControlRoutes(app);
+  const { registerJarvisRoutes } = await import('./routes/jarvis.js');
+  await registerJarvisRoutes(app);
 
   // VS Code web server control — workspace-agnostic, outside the prefix scope
   const { registerVsCodeRoutes } = await import('./routes/vscode.js');

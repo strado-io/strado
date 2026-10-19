@@ -46,7 +46,10 @@ export function FocusPill({ focus, open, onClick, pillRef }: {
       className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] ${
         focus ? 'text-zinc-200 hover:bg-zinc-900' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'}`}>
       <span className={`shrink-0 ${focus ? 'text-sky-400' : 'text-zinc-600'}`}><FocusIcon /></span>
-      <span className="min-w-0 flex-1 truncate font-medium">{focus?.name ?? 'No focus'}</span>
+      {/* "Focus · name": a group of worktrees, not one that is open. */}
+      <span className="min-w-0 flex-1 truncate">
+        {focus ? <><span className="text-zinc-500">Focus · </span><span className="font-medium">{focus.name}</span></> : 'No focus'}
+      </span>
       <svg {...icon} width={12} height={12} className="shrink-0 text-zinc-600"><path d="m6 9 6 6 6-6" /></svg>
     </button>
   );

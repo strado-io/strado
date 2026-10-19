@@ -4,7 +4,7 @@
 // while the process is alive, and injects Codex's completion notifier and Pi's
 // status extension.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -72,6 +72,15 @@ function realPathEnv() {
     .join(path.delimiter);
 }
 
+function opencodeHasStandalone(env) {
+  try {
+    const r = spawnSync('opencode', ['--help'], { env, encoding: 'utf8', timeout: 5000 });
+    return /--standalone\b/.test(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+  } catch {
+    return false;
+  }
+}
+
 export async function launchAgent(agent) {
   if (!['claude', 'codex', 'opencode', 'pi'].includes(agent)) {
     throw new Error(`unsupported agent launcher: ${agent}`);
@@ -93,6 +102,16 @@ export async function launchAgent(agent) {
       cwd,
     ])}`;
     argv.unshift('-c', notify);
+  }
+  // OpenCode 2.x runs the TUI against one shared background service, which
+  // spawns MCP servers and plugins with ITS environment, not this Shell's, so
+  // the strado MCP would have no tab identity. A private server inherits ours.
+  // Only for the TUI (no subcommand), only when this opencode has the flag,
+  // and never over a --server/--standalone the user chose.
+  if (agent === 'opencode' && (argv.length === 0 || argv[0].startsWith('-'))
+    && !argv.some((a) => a === '--server' || a.startsWith('--server=') || a === '--standalone')
+    && opencodeHasStandalone(env)) {
+    argv.unshift('--standalone');
   }
   // Pi has no ambient hook config to write: an extension is loaded by path, so
   // point this run at ours the same way a dedicated Pi tab does.

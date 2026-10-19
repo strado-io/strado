@@ -58,8 +58,15 @@ vi.mock('../api', () => ({
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
         process: { status: 'idle' }, tracked: true,
         hasClaudeSession: true, claudeSessions: ['1', '2'] },
-    ]) },
+    ]), start: vi.fn().mockResolvedValue({ status: 'starting' }), stop: vi.fn().mockResolvedValue({ status: 'stopping' }) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
+    intercom: {
+      stations: vi.fn().mockResolvedValue([
+        { agentId: 'claude-1@app', alias: null, name: 'claude-1', mode: 'claude', worktreePath: '/wt/FD-9', worktreeName: 'FD-9', sessionId: '1',
+          lifecycle: 'idle', live: true, needsYou: true, calls: [{ id: 'e1', title: 'Which database?', body: '', createdAt: 1 }], lastActivityAt: 1 },
+      ]),
+      escalations: { resolve: vi.fn().mockResolvedValue({}), dismiss: vi.fn().mockResolvedValue({}) },
+    },
     tickets: {
       providers: vi.fn().mockResolvedValue([]),
       issues: vi.fn().mockResolvedValue({ issues: {}, missing: [], errors: {} }),
@@ -69,19 +76,55 @@ vi.mock('../api', () => ({
     org: { get: vi.fn().mockRejectedValue(new Error('no Strado account on this machine')) },
   },
 }));
+// Plain text goes to the model; here it reads "add repo …" as the Add repo dialog.
+const askModel = vi.hoisted(() => vi.fn());
+vi.mock('../lib/jarvis/modelClient', async () => ({
+  ...(await vi.importActual<typeof import('../lib/jarvis/modelClient')>('../lib/jarvis/modelClient')),
+  askModel: (...a: unknown[]) => askModel(...a),
+}));
+// The server side of a plan: spawning a tab answers with the new tab.
+const spawn = vi.hoisted(() => vi.fn());
+vi.mock('../lib/jarvis/serverPort', async () => {
+  const actual = await vi.importActual<typeof import('../lib/jarvis/serverPort')>('../lib/jarvis/serverPort');
+  return { ...actual, jarvisServerPort: (ws: string) => ({ ...actual.jarvisServerPort(ws), spawn: (...a: unknown[]) => spawn(...a) }) };
+});
+// The hub registers itself for the box, as the real one does once it is up.
+const hubPlace = vi.hoisted(() => vi.fn());
+function HubBridge({ path }: { path: string }) {
+  useUiHubBridge({
+    path, visible: () => [], layout: () => null, apply: async () => ({ applied: true }) as never,
+    jarvis: {
+      path, snapshot: () => null, restore: () => {}, place: (...a: unknown[]) => hubPlace(...a), focus: () => true,
+      openBrowser: async () => null, closeLocal: () => {}, context: () => ({ tabs: [], focused: null }),
+    },
+  });
+  return null;
+}
+// What the hub hands the Dock about its dev server (here: a runner's worktree).
+const hubDev = {
+  path: '/wt/FD-9', status: 'running', port: 3000, detail: 'localhost:3101 → runner-1:3000', remote: true,
+  profiles: { names: ['PROD', 'DEV'], current: 'PROD' }, setProfile: vi.fn(),
+  start: vi.fn().mockResolvedValue({}), stop: vi.fn().mockResolvedValue({}),
+};
 // Stand in for the hub so the test asserts selection, not terminal internals.
 vi.mock('./TerminalView', () => ({
-  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId }: any) => (
+  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId, onDevState }: any) => (
     <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}
       data-mode={mode ?? ''} data-session={sessionId ?? ''}>
       hub:{worktree.path}
       <button onClick={onClose}>‹ Back</button>
+      <button onClick={() => onDevState?.(hubDev)}>hub reports dev</button>
+      <HubBridge path={worktree.path} />
     </div>
   ),
 }));
 
 import { Dashboard } from './Dashboard';
+import { useUiHubBridge } from '../contexts/UiControlContext';
 import { __resetFocuses } from '../hooks/useFocuses';
+import { releaseKeyboard } from '../components/CommandPalette';
+
+afterEach(() => releaseKeyboard());
 
 const noop = vi.fn();
 const dashboard = () => (
@@ -98,9 +141,26 @@ function renderDashboard() {
 
 // The Worktrees page (the landing view) heads a section with the repo's
 // name, so waiting on it means the tree has loaded.
-const repoRow = () => screen.getAllByText('Repo One')[0]!;
+// The Focus pill lives in the sidebar, which home hides: show it first.
+const focusPill = (name: string) => {
+  const open = screen.queryByLabelText('Open sidebar');
+  if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
+  return screen.getByRole('button', { name: `Focus: ${name}` });
+};
+// Home hides the sidebar; these tests drive it, so show it (idempotent).
+const repoRow = () => {
+  const open = screen.queryByLabelText('Open sidebar');
+  if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
+  return screen.getAllByText('Repo One')[0]!;
+};
+// Home with nothing open: the start screen's question means the tree has loaded.
+const home = () => screen.findByRole('heading', { name: 'What do you want to do?' });
 // The ticket id on the sidebar's Focus card (it lands once the Focus list has loaded).
-const sidebarRow = () => within(screen.getByRole('region', { name: 'Focus' })).findByText('FD-9');
+// Home hides the sidebar, so open it (⌘B) when it is not there.
+const sidebarRow = async () => {
+  if (!screen.queryByRole('region', { name: 'Focus' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
+  return within(await screen.findByRole('region', { name: 'Focus' })).findByText('FD-9');
+};
 // A Focus holding the one worktree, active on this device.
 function seedFocus() {
   fakeFocuses.reset([{ id: 'f1', name: 'Working on', members: ['local:/wt/FD-9'], createdAt: 't', lastActiveAt: 't' }]);
@@ -113,8 +173,186 @@ describe('Dashboard inline hub', () => {
     wsMock.all = [];
     wsMock.switchTo = () => {};
     localStorage.clear();
+    // These tests drive the sidebar; it starts hidden on a first run (the Dock is enough).
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0');
     __resetFocuses();
     seedFocus();
+  });
+
+  it('home: one question and the big command box, no Dock strip; Recent opens a worktree, and the box goes back to the Dock', async () => {
+    localStorage.setItem('strado:worktree-lru', JSON.stringify({ '/wt/FD-9': Date.now() - 60_000 }));
+    renderDashboard();
+    expect(await screen.findByRole('heading', { name: 'What do you want to do?' })).toBeInTheDocument();
+    const boxes = screen.getAllByLabelText('Global search');
+    expect(boxes).toHaveLength(1); // no second box in the Dock
+    expect(boxes[0]).toHaveAttribute('placeholder', 'Tell Strado…  e.g. open master and run dev   ⌘K');
+    expect(screen.queryByTestId('dock')).not.toBeInTheDocument(); // one command area on home
+    fireEvent.click(within(screen.getByRole('list', { name: 'Recent' })).getByRole('button', { name: /FD-9/ }));
+    await screen.findByTestId('inline-hub');
+    expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toHaveAttribute('placeholder', 'Tell Strado what to do…  ⌘K');
+  });
+
+  it('home: "All worktrees →" shows the full list; "⚑ N waiting" opens the Line', async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { name: 'What do you want to do?' });
+    fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
+    expect(screen.getByRole('dialog', { name: 'Line' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+  });
+
+  it('home: typing "add repo <path>" in the big box asks the model, whose nav.addRepo opens the Add repo dialog on that path', async () => {
+    askModel.mockResolvedValueOnce({ kind: 'plan', steps: [{ action: 'nav.addRepo', args: { path: '/code/x' } }], model: 'm', ms: 1 });
+    renderDashboard();
+    await screen.findByRole('heading', { name: 'What do you want to do?' });
+    const box = screen.getByLabelText('Global search');
+    fireEvent.change(box, { target: { value: 'add repo /code/x' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(await screen.findByLabelText('Repository path')).toHaveValue('/code/x');
+    expect(askModel).toHaveBeenCalledWith('default', expect.objectContaining({ text: 'add repo /code/x' }), expect.anything());
+  });
+
+  it('home: a plan for a worktree opens it first, then its new tab appears there; the box moves to the Dock', async () => {
+    spawn.mockResolvedValue({ tab: { worktreePath: '/wt/FD-9', mode: 'claude', sessionId: '3' } });
+    hubPlace.mockResolvedValue({ ok: true });
+    askModel.mockResolvedValueOnce({ kind: 'plan', steps: [{ action: 'tab.open', args: { mode: 'claude', worktree: 'FD-9', place: { split: 'right' } } }], model: 'm', ms: 1 });
+    renderDashboard();
+    await home();
+    const box = screen.getByLabelText('Global search');
+    fireEvent.change(box, { target: { value: 'open claude in FD-9' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
+    await waitFor(() => expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ mode: 'claude', worktreePath: '/wt/FD-9' })));
+    await waitFor(() => expect(hubPlace).toHaveBeenCalledWith({ worktreePath: '/wt/FD-9', mode: 'claude', sessionId: '3' }, expect.anything(), expect.any(Number)));
+    expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toBeInTheDocument();
+  });
+
+  it('home has no ⎇ chip (Recent and "All worktrees →" list them); on the Worktrees page the Dock\'s chip lists them in its box', async () => {
+    renderDashboard();
+    await home();
+    expect(screen.queryByRole('button', { name: 'No worktree open — switch' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+    fireEvent.click(await within(await screen.findByTestId('dock')).findByRole('button', { name: 'No worktree open — switch' }));
+    const pop = screen.getByTestId('command-bar-popover');
+    expect(pop).toHaveAttribute('data-placement', 'above');
+    fireEvent.click(within(pop).getByText('FD-9'));
+    expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
+  });
+
+  it('home always shows without the sidebar, even when it is stored open; ⌘B opens it there, without storing it', async () => {
+    renderDashboard(); // beforeEach stored the sidebar open
+    await home();
+    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'b', metaKey: true });
+    expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+    expect(localStorage.getItem('strado:sidebar-collapsed:v2')).toBe('0');
+    fireEvent.keyDown(window, { key: 'b', metaKey: true });
+    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+  });
+
+  it('landing on home by a sidebar action (a Focus switch) keeps the sidebar; landing any other way (Back) hides it', async () => {
+    fakeFocuses.reset([
+      { id: 'f1', name: 'Working on', members: ['local:/wt/FD-9'], createdAt: 't', lastActiveAt: '2026-02-01' },
+      { id: 'f2', name: 'Perf', members: [], createdAt: 't', lastActiveAt: '2026-01-01' },
+    ]);
+    renderDashboard();
+    fireEvent.click(await sidebarRow());
+    await screen.findByTestId('inline-hub');
+    // From the sidebar's Focus pill: the hub closes and home shows, the sidebar stays under the hand.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Focus: Working on' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Focus: Working on' }));
+    const dialog = screen.getByRole('dialog', { name: 'Switch focus' });
+    fireEvent.pointerDown(within(dialog).getByRole('button', { name: /Perf/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Perf/ }));
+    await home();
+    expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
+  });
+
+  it('Back from the hub lands on home with the sidebar hidden', async () => {
+    renderDashboard();
+    fireEvent.click(await sidebarRow());
+    await screen.findByTestId('inline-hub');
+    fireEvent.pointerDown(screen.getByRole('button', { name: '‹ Back' }));
+    fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
+    await home();
+    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+  });
+
+  it('the sidebar starts hidden on the first run of this build, even with a stored "open" from before', async () => {
+    localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed', '0');
+    renderDashboard();
+    await screen.findByRole('heading', { name: 'What do you want to do?' });
+    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+  });
+
+  it('first run: the sidebar starts hidden — the big box is all you need; ⌘B brings it back', async () => {
+    localStorage.removeItem('strado:sidebar-collapsed:v2');
+    renderDashboard();
+    await home();
+    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Global search')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'b', metaKey: true });
+    expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+  });
+
+  it('"+N" opens the Line: stations grouped by worktree, a click there opens the card', async () => {
+    renderDashboard();
+    await home();
+    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' })); // the Dock (home has none)
+    fireEvent.click(await screen.findByRole('button', { name: '1 station in other worktrees, 1 calling you' }));
+    const line = screen.getByRole('dialog', { name: 'Line' });
+    expect(within(line).getByRole('group', { name: 'FD-9' })).toBeInTheDocument();
+    fireEvent.click(within(line).getByRole('button', { name: 'claude-1 — calling you' }));
+    expect(screen.getByRole('dialog', { name: 'claude-1' })).toHaveTextContent('Which database?');
+  });
+
+  it('a calling light opens its card; ⏎ on the reply line answers the call', async () => {
+    const { api } = await import('../api');
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(await sidebarRow());
+    await screen.findByTestId('inline-hub');
+    fireEvent.click(await screen.findByRole('button', { name: 'claude-1 — calling you' }));
+    const card = screen.getByRole('dialog', { name: 'claude-1' });
+    expect(card).toHaveTextContent('Which database?');
+    const reply = within(card).getByLabelText('Answer claude-1');
+    fireEvent.change(reply, { target: { value: 'postgres' } });
+    fireEvent.keyDown(reply, { key: 'Enter' });
+    await waitFor(() => expect(api.intercom.escalations.resolve).toHaveBeenCalledWith('default', 'e1', 'postgres'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'claude-1' })).not.toBeInTheDocument());
+  });
+
+  it('▶ dev runs what the hub reports: its port-forward detail, its env profiles, its own start/stop', async () => {
+    renderDashboard();
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(await sidebarRow());
+    await screen.findByTestId('inline-hub');
+    fireEvent.click(screen.getByRole('button', { name: 'hub reports dev' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dev server menu' }));
+    const menu = screen.getByRole('menu', { name: 'Dev server' });
+    expect(menu).toHaveTextContent('localhost:3101 → runner-1:3000');
+    expect(within(menu).getByLabelText('Env profile')).toHaveValue('PROD');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop dev server' }));
+    await waitFor(() => expect(hubDev.stop).toHaveBeenCalled());
+  });
+
+  it('the Dock follows the open worktree: its chip names it, ▶ dev starts its server, the chip lists worktrees', async () => {
+    const { api } = await import('../api');
+    renderDashboard();
+    await home();
+    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' })); // the Dock (home has none)
+    expect(await screen.findByRole('button', { name: 'No worktree open — switch' })).toBeInTheDocument();
+    fireEvent.click(await sidebarRow());
+    await screen.findByTestId('inline-hub');
+    expect(screen.getByRole('button', { name: 'Worktree: FD-9 · fd-9 — switch' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Start dev server' }));
+    await waitFor(() => expect(api.worktrees.start).toHaveBeenCalledWith('default', '/wt/FD-9'));
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree: FD-9 · fd-9 — switch' }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Global search'));
+    expect(within(screen.getByTestId('command-bar-popover')).getByText('FD-9')).toBeInTheDocument();
   });
 
   it('shows the Worktrees page and no hub initially', async () => {
@@ -157,12 +395,29 @@ describe('Dashboard inline hub', () => {
 
   it('opens the workspace-level code reviews page from the sidebar', async () => {
     renderDashboard();
+    await home();
+    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     // Intercom is a workspace action on the Worktrees page, even with no running servers.
     expect(screen.getByRole('button', { name: 'Open intercom' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
     expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();
+  });
+
+  it('the command bar is always docked at the bottom; ⌘K puts the cursor in it (no modal)', async () => {
+    renderDashboard();
+    // Home: the box is the page, already focused.
+    await home();
+    expect(document.activeElement).toBe(screen.getByLabelText('Global search'));
+    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    const bar = within(screen.getByTestId('dock')).getByLabelText('Global search');
+    expect(screen.getByTestId('command-bar')).toBeInTheDocument();
+    expect(document.activeElement).not.toBe(bar);
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(document.activeElement).toBe(bar);
+    expect(screen.getByLabelText('Global search')).toBe(bar); // the same box, not a modal copy
   });
 
   it('picking a repo in the command palette starts a new worktree in it', async () => {
@@ -182,8 +437,8 @@ describe('Dashboard inline hub', () => {
     fakeFocuses.reset([]);
     localStorage.removeItem('strado:active-focus-by-ws');
     renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    expect(await screen.findByRole('button', { name: 'Focus: none' })).toBeInTheDocument();
+    await home();
+    await waitFor(() => expect(focusPill('none')).toBeInTheDocument());
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
     fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
@@ -196,7 +451,7 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create & switch' }));
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
     await waitFor(() => expect(fakeFocuses.api.create).toHaveBeenCalledWith('default', { name: 'Billing', members: ['local:/wt/FD-9'], ticket: { provider: 'jira', key: 'FD-9' } }));
-    expect(await screen.findByRole('button', { name: 'Focus: Billing' })).toBeInTheDocument();
+    await waitFor(() => expect(focusPill('Billing')).toBeInTheDocument());
     expect(await sidebarRow()).toBeInTheDocument();
   });
 
@@ -204,7 +459,7 @@ describe('Dashboard inline hub', () => {
     fakeFocuses.reset([{ id: 'f1', name: 'Billing', members: [], createdAt: 't', lastActiveAt: 't' }]);
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ default: 'f1' }));
     renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    await home();
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
     fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
@@ -247,8 +502,8 @@ describe('Dashboard inline hub', () => {
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ default: 'f1' }));
     localStorage.setItem('strado:selected-by-focus', JSON.stringify({ f1: '/wt/FD-9' }));
     renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    await screen.findByRole('button', { name: 'Focus: Billing' });
+    await home();
+    await waitFor(() => focusPill('Billing'));
     expect(screen.queryByTestId('inline-hub')).toBeNull();
     expect(JSON.parse(localStorage.getItem('strado:selected-by-focus')!)).toEqual({ f1: '/wt/FD-9' });
   });
@@ -265,7 +520,7 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Focus: Working on' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Switch focus' })).getByRole('button', { name: /Perf/ }));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
-    expect(screen.getByRole('button', { name: 'Focus: Perf' })).toBeInTheDocument();
+    expect(focusPill('Perf')).toBeInTheDocument();
   });
 
   it('switching back to a Focus reopens the worktree it had open', async () => {
@@ -278,7 +533,7 @@ describe('Dashboard inline hub', () => {
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
     const switchTo = (from: string, to: RegExp) => {
-      fireEvent.click(screen.getByRole('button', { name: `Focus: ${from}` }));
+      fireEvent.click(focusPill(from));
       fireEvent.click(within(screen.getByRole('dialog', { name: 'Switch focus' })).getByRole('button', { name: to }));
     };
     switchTo('Working on', /Perf/);
@@ -292,6 +547,7 @@ describe('Dashboard inline hub', () => {
 describe('Dashboard sidebar hover card', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
     __resetFocuses();
     seedFocus();
     vi.useFakeTimers({ shouldAdvanceTime: true });

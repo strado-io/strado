@@ -20,6 +20,9 @@ function signNestedBinaries(resourcesDir, identity, entitlements) {
     // app (bin/node runs the server and JITs; spawn-helper just needs runtime)
     { file: path.join(resourcesDir, 'bin', 'node'), entitle: true },
     { file: path.join(resourcesDir, 'bin', 'strado-cmdwatch'), entitle: false },
+    // the voice helper opens the mic: without device.audio-input the hardened
+    // runtime blocks it before macOS ever shows the permission prompt
+    { file: path.join(resourcesDir, 'bin', 'strado-speech'), entitle: true },
     {
       file: path.join(resourcesDir, 'server', 'node_modules', 'node-pty',
         'prebuilds', 'darwin-arm64', 'spawn-helper'),

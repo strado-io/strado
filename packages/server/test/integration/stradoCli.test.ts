@@ -218,25 +218,4 @@ describe('strado CLI', () => {
     expect(r.stdout).toContain(`· re: escalation ${humanEscId}\n`);
     expect(r.stdout).toContain('ok, go with the first\n');
   });
-
-  it('fork: queues a peer hand-over, prints the fork id, and shows up in the target\'s inbox with the reply hint; usage errors exit 2', async () => {
-    // The target must be live, or delivery finds it "gone" and never ships the package.
-    await deps.terminal.ensure(claudeKey(repo, '1'), repo, { file: '/bin/sh', args: ['-i'] });
-    const r = await cli(['fork', 'claude-1@repo', '-m', 'take over'], {});
-    expect(r.code).toBe(0);
-    const id = r.stdout.match(/^fork (\S+) queued → claude-1@repo\n$/)![1]!;
-
-    await deps.forks.settle();
-
-    const inbox = await cli(['inbox'], { STRADO_AGENT_TOKEN: tokClaude, STRADO_AGENT_ID: 'claude-1@repo' });
-    expect(inbox.code).toBe(0);
-    expect(inbox.stdout).toContain('── strado · fork · ');
-    expect(inbox.stdout).toContain('FORK HAND-OVER');
-    expect(inbox.stdout).toContain(`[reply with: strado send strado <message> --reply-to `);
-    expect(deps.intercom.getFork('default', id).status).toBe('accepted');
-
-    expect((await cli(['fork'], {})).code).toBe(2);
-    expect((await cli(['fork', 'claude-1@repo', '--new', 'codex'], {})).code).toBe(2);
-    expect((await cli(['fork', '--new', 'bogus'], {})).code).toBe(2);
-  });
 });

@@ -72,7 +72,7 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
       <div className="flex min-w-0 items-center gap-1.5">
         {titleLeading && <span className="flex h-4 w-3.5 shrink-0 items-center justify-center">{titleLeading}</span>}
         <button type="button" aria-label={label} title={label}
-          className={`block min-w-0 flex-1 truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
+          className={`block min-w-0 flex-1 truncate text-left text-[13px] leading-5 ${active ? 'font-medium' : ''} ${titleColor} ${titleClassName}`}>
           {title}
         </button>
       </div>

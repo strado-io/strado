@@ -3,11 +3,12 @@ import type { EventBus } from '../events/bus.js';
 import type { AgentRegistry, Execution } from './agentRegistry.js';
 import { codexNotifyScriptPath, hooksDir, installClaudeHooks, installOpencodePlugin, piExtensionPath } from './claudeHooks.js';
 import { installClaudeMcp } from './claudeMcp.js';
+import { opencodeStandaloneKnown, probeOpencodeStandalone } from './opencodeLaunch.js';
 import { defaultShell } from './platform.js';
 import { sessionKeyFor, sessionsPayload, type LiveSession, type SpawnSpec, type TerminalManager } from './terminalManager.js';
 
-// Step 9a: the agent-tab spawn the terminal WebSocket route has always done,
-// lifted out of the route so a fork can open a tab with no client attached.
+// The agent-tab spawn the terminal WebSocket route has always done, lifted
+// out of the route so agent_spawn can open a tab with no client attached.
 // The route still owns the socket, the handoff branch and the reattach path;
 // everything here is what BOTH callers need to agree on, byte for byte.
 
@@ -46,7 +47,12 @@ export function agentLaunchCommand(mode: AgentMode, sessionId: string, codexFlag
       ? `codex ${codexFlags} resume --last || codex ${codexFlags}`
       : `codex ${codexFlags}`;
   }
-  if (mode === 'opencode') return sessionId === '1' ? 'opencode --continue || opencode' : 'opencode';
+  if (mode === 'opencode') {
+    // A private server per tab (see opencodeLaunch.ts), so MCP and plugins
+    // get this tab's identity rather than the shared service's.
+    const oc = opencodeStandaloneKnown() ? 'opencode --standalone' : 'opencode';
+    return sessionId === '1' ? `${oc} --continue || ${oc}` : oc;
+  }
   if (mode === 'pi') {
     // Pi has no ambient hook config to write — its status extension is loaded
     // by path, so every launch carries `-e`. Same primary-session rule.
@@ -75,7 +81,7 @@ export function agentSpawnSpec(mode: AgentMode | 'shell', sessionId: string, wor
 /** The lowest free tab number for a (worktree, mode) pair — `max + 1`, never
  * below 1. Ids that are not plain numbers (a Shell-hosted agent reports
  * `shell:N`) never own a tab of their own, so they do not count. */
-export function nextSessionId(live: LiveSession[], mode: AgentMode, worktreePath: string): string {
+export function nextSessionId(live: LiveSession[], mode: AgentMode | 'shell', worktreePath: string): string {
   let max = 0;
   for (const s of live) {
     if (s.path !== worktreePath || s.mode !== mode) continue;
@@ -88,15 +94,17 @@ export function nextSessionId(live: LiveSession[], mode: AgentMode, worktreePath
 /** Hook/MCP/plugin installs the terminal route runs before a spawn. Every one
  * is best-effort: a broken install must never stop a tab from opening. */
 export async function agentSpawnInstallers(
-  mode: AgentMode,
+  mode: AgentMode | 'shell',
   worktreePath: string,
   log: (message: string, err: unknown) => void = () => {},
 ): Promise<void> {
-  if (mode === 'claude') {
+  // A shell tab gets both installs, like the terminal route: the user may
+  // launch Claude or OpenCode inside it.
+  if (mode === 'claude' || mode === 'shell') {
     try { await installClaudeHooks(worktreePath); } catch { /* best-effort */ }
     try { await installClaudeMcp(worktreePath); } catch (err) { log(`claude MCP registration failed for ${worktreePath}`, err); }
   }
-  if (mode === 'opencode') {
+  if (mode === 'opencode' || mode === 'shell') {
     try { await installOpencodePlugin(worktreePath); } catch { /* best-effort */ }
   }
 }
@@ -111,7 +119,8 @@ export type SpawnAgentTabDeps = {
 
 export type SpawnAgentTabInput = {
   wsId: string;
-  mode: AgentMode;
+  /** `shell` opens a plain shell tab (app control's `agent_spawn mode=shell`). */
+  mode: AgentMode | 'shell';
   worktreePath: string;
   size?: { cols: number; rows: number };
 };
@@ -122,7 +131,7 @@ export type SpawnAgentTabResult = { key: string; sessionId: string; execution: E
  * its process-wide dependencies. */
 export type SpawnAgentTab = (input: SpawnAgentTabInput) => Promise<SpawnAgentTabResult>;
 
-// No client is attached when a fork opens a tab, so there is no fitted size to
+// No client is attached when agent_spawn opens a tab, so there is no fitted size to
 // honour. 120x40 is a readable default that every harness TUI lays out at.
 export const SPAWN_DEFAULT_SIZE = { cols: 120, rows: 40 } as const;
 
@@ -147,6 +156,7 @@ export async function withAgentSpawnLock<T>(terminal: TerminalManager, cwd: stri
  */
 export async function spawnAgentTab(deps: SpawnAgentTabDeps, input: SpawnAgentTabInput): Promise<SpawnAgentTabResult> {
   return withAgentSpawnLock(deps.terminal, input.worktreePath, input.mode, async () => {
+    if (input.mode === 'opencode') await probeOpencodeStandalone();
     const sessionId = nextSessionId(deps.terminal.liveSessions(), input.mode, input.worktreePath);
     const key = sessionKeyFor(input.mode, input.worktreePath, sessionId);
     const spec = agentSpawnSpec(input.mode, sessionId, input.worktreePath);

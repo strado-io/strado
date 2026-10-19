@@ -65,7 +65,7 @@ describe('SidebarBody: the active Focus', () => {
     withFocus('local:/r2/other', 'local:/gone', 'local:/r1/wt');
     render(<SidebarBody {...props()} />);
     expect(pill()).toHaveAccessibleName('Focus: Billing');
-    expect(pill()).toHaveTextContent('Billing');
+    expect(pill()).toHaveTextContent('Focus · Billing'); // a Focus, not a selected worktree
     const section = screen.getByRole('region', { name: 'Focus' });
     const cards = within(section).getAllByRole('button', { name: 'fx-412' });
     expect(cards).toHaveLength(2);

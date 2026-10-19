@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { EscalationDto, ForkDto, IntercomTaskDto, PeerDto } from '../api';
+import type { EscalationDto, IntercomTaskDto, PeerDto } from '../api';
 import { useIntercom } from '../contexts/IntercomContext';
-import { activeForks, forkLabel, forkTargetLabel, openEscalations, peerOf, settledForks, type IntercomState } from '../hooks/intercom';
+import { isRetargetedAsk, openEscalations, peerOf, type IntercomState } from '../hooks/intercom';
 import { relativeTime } from '../lib/relativeTime';
 
 export type IntercomPanelProps = {
-  initialTab: 'escalations' | 'tasks' | 'forks';
+  initialTab: 'escalations' | 'tasks';
   worktreePath?: string;
   focusId?: string;
   onClose: () => void;
@@ -46,19 +46,15 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
   const s = useIntercom();
   const [tab, setTab] = useState(initialTab);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // The row whose Dismiss is awaiting confirmation: dismissing drops the
+  // typed answer, so it takes a second click.
+  const [confirmDismiss, setConfirmDismiss] = useState<string | null>(null);
   // Per-row in-flight ids, so two rows can be busy at once without one row's
   // action unblocking another's (a plain scalar `busy` would do that).
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [taskBusy, setTaskBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  // Settled forks stay unmounted while collapsed — jsdom (and browsers) only
-  // hide a closed <details>' children visually, they remain queryable, so a
-  // "settled rows are collapsed" test needs them actually absent from the DOM.
-  // Seeded open when the drawer is opened focused on a fork that has already
-  // settled (often a failed one), so the highlighted row isn't hidden behind
-  // a click.
-  const [forksSettledOpen, setForksSettledOpen] = useState(() => !!focusId && settledForks(s).some((f) => f.id === focusId));
   const [title, setTitle] = useState('');
   const [ticketKey, setTicketKey] = useState('');
   const focusRef = useRef<HTMLDivElement | null>(null);
@@ -92,18 +88,11 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
     scrolledTo.current = focusId;
   }, [focusId, tab]);
 
-  // If focusId changes (or arrives) naming a fork that has already settled,
-  // reveal it rather than leaving it collapsed behind the Settled toggle.
-  useEffect(() => {
-    if (focusId && settledForks(s).some((f) => f.id === focusId)) setForksSettledOpen(true);
-  }, [focusId, s.forks]);
-
   // Autofocus on mount only, like HandoffDialog's textarea — `?.focus?.()`
   // guards jsdom (and an empty list, where the ref never attaches).
   useEffect(() => {
     if (initialTab === 'tasks') titleInputRef.current?.focus?.();
     else if (initialTab === 'escalations') firstEscalationRef.current?.focus?.();
-    // 'forks' has nothing to autofocus.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -145,8 +134,6 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
   const claimedTasks = s.tasks.filter((t) => t.status === 'claimed');
   const doneTasks = s.tasks.filter((t) => t.status === 'done' || t.status === 'cancelled');
   const livePeers = s.peers.filter((p) => p.live);
-  const forksActive = activeForks(s);
-  const forksSettled = settledForks(s);
   const shown = error ?? s.error;
 
   const tabClass = (which: typeof tab) =>
@@ -167,6 +154,9 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
           <AgentLabel s={s} agentId={e.from.agentId} onOpenTab={onOpenTab} />
           <span className="shrink-0">{when(e.createdAt)}</span>
         </div>
+        {isRetargetedAsk(e) && (
+          <div className="mt-1.5 text-[11px] text-amber-400/90">Peer ask timed out — handed to you instead.</div>
+        )}
         <div className="mt-1.5 break-words text-sm font-semibold text-zinc-100">{e.title}</div>
         {e.body && <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-zinc-300">{e.body}</div>}
         {e.context.length > 0 && (
@@ -198,8 +188,23 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
           placeholder="Answer the agent…"
           className="mt-2 h-16 w-full resize-none rounded-md border border-zinc-800 bg-zinc-900 p-2 text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
         />
-        <div className="mt-2 flex justify-end gap-2">
-          <button type="button" disabled={isBusy} onClick={() => void run(e.id, () => s.dismiss(e.id), () => setAnswers((prev) => ({ ...prev, [e.id]: '' })))} className={BTN}>Dismiss</button>
+        <div className="mt-2 flex items-center justify-end gap-2">
+          {confirmDismiss === e.id ? (
+            <>
+              <span className="mr-auto text-[11px] text-zinc-400">Dismiss without answering?</span>
+              <button type="button" disabled={isBusy} onClick={() => setConfirmDismiss(null)} className={BTN}>Keep</button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => void run(e.id, () => s.dismiss(e.id), () => { setAnswers((prev) => ({ ...prev, [e.id]: '' })); setConfirmDismiss(null); })}
+                className={BTN}
+              >
+                Confirm dismiss
+              </button>
+            </>
+          ) : (
+            <button type="button" disabled={isBusy} onClick={() => setConfirmDismiss(e.id)} className={BTN}>Dismiss</button>
+          )}
           <button
             type="button"
             disabled={isBusy || !answer.trim()}
@@ -265,46 +270,6 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
     );
   };
 
-  const renderFork = (f: ForkDto) => {
-    const isBusy = busyIds.has(f.id);
-    const targetPeer = f.target.kind === 'peer' ? peerOf(s, f.target.agentId) : f.target.agentId ? peerOf(s, f.target.agentId) : undefined;
-    return (
-      <div
-        key={f.id}
-        data-testid={`fork-${f.id}`}
-        ref={focusId === f.id ? focusRef : undefined}
-        className={`rounded-lg border bg-zinc-900/40 p-3 ${focusId === f.id ? 'border-zinc-800 ring-1 ring-sky-700' : 'border-zinc-800'}`}
-      >
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500">
-          <span className={BADGE}>{f.status}</span>
-          <AgentLabel s={s} agentId={f.source.agentId} onOpenTab={onOpenTab} />
-          <span className="shrink-0">→</span>
-          {targetPeer ? (
-            <AgentLabel s={s} agentId={targetPeer.agentId} onOpenTab={onOpenTab} />
-          ) : (
-            <span className="truncate text-zinc-300">{forkTargetLabel(s, f.target)}</span>
-          )}
-          <span className="truncate text-zinc-300">{forkLabel(f)}</span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
-          <span>{when(f.createdAt)}</span>
-          {f.summarySource && <span className={BADGE}>{`summary: ${f.summarySource}`}</span>}
-          {f.status === 'failed' && f.error && <span className="text-red-300 break-words">{f.error}</span>}
-        </div>
-        {(f.status === 'summarising' || f.status === 'queued' || (onOpenTab && targetPeer)) && (
-          <div className="mt-2 flex items-center justify-end gap-2">
-            {(f.status === 'summarising' || f.status === 'queued') && (
-              <button type="button" disabled={isBusy} onClick={() => void run(f.id, () => s.cancelFork(f.id))} className={BTN}>Cancel fork</button>
-            )}
-            {onOpenTab && targetPeer && (
-              <button type="button" onClick={() => onOpenTab(targetPeer.worktreePath, targetPeer.mode, targetPeer.sessionId)} className={BTN}>Open</button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const group = (label: string, list: IntercomTaskDto[]) =>
     list.length === 0 ? null : (
       <section key={label} className="mt-4 first:mt-0">
@@ -342,9 +307,6 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
           <button type="button" aria-pressed={tab === 'tasks'} onClick={() => switchTab('tasks')} className={tabClass('tasks')}>
             {`Tasks (${openTasks.length + claimedTasks.length})`}
           </button>
-          <button type="button" aria-pressed={tab === 'forks'} onClick={() => switchTab('forks')} className={tabClass('forks')}>
-            {`Forks (${forksActive.length})`}
-          </button>
         </div>
         {shown && <div role="alert" className="mt-3 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">{shown}</div>}
 
@@ -374,25 +336,6 @@ export function IntercomPanel({ initialTab, worktreePath, focusId, onClose, onOp
                     </li>
                   ))}
                 </ul>
-              </details>
-            )}
-          </div>
-        ) : tab === 'forks' ? (
-          <div className="mt-4">
-            {forksActive.length === 0 ? (
-              <p className="text-xs text-zinc-500">No forks in flight</p>
-            ) : (
-              <div className="space-y-2">{forksActive.map(renderFork)}</div>
-            )}
-            {forksSettled.length > 0 && (
-              <details className="mt-4 border-t border-zinc-900 pt-3" open={forksSettledOpen}>
-                <summary
-                  className="cursor-pointer text-xs text-zinc-500"
-                  onClick={(event) => { event.preventDefault(); setForksSettledOpen((v) => !v); }}
-                >
-                  {`Settled (${forksSettled.length})`}
-                </summary>
-                {forksSettledOpen && <div className="mt-2 space-y-2">{forksSettled.map(renderFork)}</div>}
               </details>
             )}
           </div>

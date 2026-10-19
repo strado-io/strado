@@ -4,7 +4,7 @@ import type { RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
-import { api, type AgentMode, type ForkCreateInput } from '../api';
+import { api, type UiCommandAck, type UiTabRef } from '../api';
 import { subscribeWorktrees } from '../eventStream';
 import { useCapabilities } from '../hooks/capabilities';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
@@ -28,26 +28,28 @@ import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
-  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, LogsIcon, OpencodeIcon, PiIcon,
-  PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
+  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, OpencodeIcon, PiIcon,
+  PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
 import { agentTabStatus, shellHostedAgent } from '../hooks/agentTabStatus';
 import {
-  dockLeaf, hasLeaf, leafKeys, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
+  dockLeaf, hasLeaf, leafKeys, placeLeaf, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
   removeLeaf, splitLeaf, withRatio, type PaneDockSide, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
+import type { DevState } from '../components/dock/DevServerButton';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
-import { ForkDialog } from '../components/ForkDialog';
-import { EscalationBanner } from '../components/EscalationBanner';
 import { useIntercom } from '../contexts/IntercomContext';
-import { escalationForTab, peerForTab } from '../hooks/intercom';
+import { useUiHubBridge, type JarvisHubContext } from '../contexts/UiControlContext';
+import type { JarvisHubPort } from '../lib/jarvis/execute';
+import type { TabInfo as JTabInfo, TabRef as JTabRef } from '../lib/jarvis/types';
+import { hubKeyOf, nextBrowserId, type ParsedUiCommand, type UiPlace } from '../lib/uiCommands';
 
 type Tab = {
   path: string;
@@ -134,6 +136,8 @@ function extraIds(ids: Iterable<string> | undefined): string[] {
 const IDLE_ICON = 'text-zinc-500';
 // How often a visible VS Code tab tells the server it is still in use.
 const VSCODE_HEARTBEAT_MS = 60_000;
+// An agent command may not move or split a pane the human touched this recently.
+const HUMAN_ACTIVE_MS = 5_000;
 const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon, pi: PiIcon };
 const SHELL_HOST_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
 
@@ -529,8 +533,8 @@ export function TerminalView({
   onOpenUsage,
   openSeq = 0,
   modalOpen = false,
-  onOpenIntercom,
-  onForked,
+  logsSeq = 0,
+  onDevState,
 }: {
   worktree: Worktree;
   onClose: () => void;
@@ -554,12 +558,10 @@ export function TerminalView({
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
-  /** Open the intercom panel focused on one escalation — the hub's banner
-   *  answers questions through the same panel the board's badge opens. */
-  onOpenIntercom?: (escalationId: string) => void;
-  /** A fork was just created from a tab in this hub — the board opens the
-   *  intercom drawer on its Forks tab, focused on the new row. */
-  onForked?: (forkId: string) => void;
+  /** Bumped by the Dock's "logs": each bump opens the log drawer. */
+  logsSeq?: number;
+  /** The dev server for the Dock's ▶ dev (null when this hub goes away). */
+  onDevState?: (s: DevState | null) => void;
 }) {
   const { workspace } = useWorkspace();
   const { showTime, showStatus } = useHubDisplayPreferences();
@@ -655,13 +657,7 @@ export function TerminalView({
   );
   const activeRef = useRef(active);
   activeRef.current = active;
-  // The open question (if any) belonging to the focused tab's session. Intercom
-  // is a LOCAL registry: a runner's agents never register here, so a remote hub
-  // would only ever match by coincidence — skip it entirely.
   const intercom = useIntercom();
-  const banner = remote || active.remote
-    ? undefined
-    : escalationForTab(intercom, { path: active.path, mode: active.mode, id: active.id });
   // Remember the selection so the next mount of this worktree's hub (every
   // sidebar switch remounts it) lands on the same tab.
   useEffect(() => {
@@ -763,10 +759,6 @@ export function TerminalView({
       exitCode: worktree.process?.exitCode,
     },
   }));
-  // Why the last Run/Stop click did nothing — the request failed (no start
-  // command, say). Per worktree; cleared by the next click or by the server
-  // reporting a start.
-  const [runError, setRunError] = useState<{ path: string; message: string } | null>(null);
 
   // Repo configs (env profiles) and the user's in-panel profile switches.
   const [reposById, setReposById] = useState<Record<string, RepoConfig>>({});
@@ -786,6 +778,49 @@ export function TerminalView({
     : null;
   const remoteForward = useRemoteForward(remote?.runnerId ?? null, remotePreviewPort);
   const [envSel, setEnvSel] = useState<Record<string, string>>({});
+  // The Dock's ▶ dev reads the dev server from here (the one place that tracks
+  // it live, local or on a runner): status, where it serves, the env profiles.
+  const onDevStateRef = useRef(onDevState);
+  onDevStateRef.current = onDevState;
+  useEffect(() => {
+    const report = onDevStateRef.current;
+    if (!report) return;
+    const path = active.path;
+    const p = procs[path] ?? { status: 'idle' as const };
+    const row = rowsRef.current.get(path) ?? (path === worktree.path ? worktree : undefined);
+    const repo = row?.repoId ? reposById[row.repoId] : undefined;
+    const names = (repo?.envProfiles ?? []).map((pr) => pr.name);
+    // On a runner the port belongs to the runner's loopback, so name both
+    // ends: the local port is the one that actually opens in a browser.
+    const detail = remote
+      ? remoteForward.forward
+        ? `localhost:${remoteForward.forward.localPort} → ${remote.runnerId}:${remoteForward.forward.remotePort}`
+        : remoteForward.error
+          ? `port ${remotePreviewPort} not forwarded — ${remoteForward.error}`
+          : remoteForward.pending ? `forwarding port ${remotePreviewPort}…` : ''
+      : p.status === 'crashed'
+        ? `exit code ${p.exitCode ?? '?'}`
+        : p.proxyUrl ?? p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
+    report({
+      path,
+      status: p.status as DevState['status'],
+      port: p.port ?? null,
+      detail,
+      remote: !!remote,
+      profiles: names.length > 0
+        ? { names, current: envSel[path] ?? row?.meta?.activeEnvProfile ?? repo?.defaultEnvProfile ?? names[0]! }
+        : null,
+      setProfile: (profile) => {
+        setEnvSel((prev) => ({ ...prev, [path]: profile }));
+        api.worktrees.setEnvProfile(localWsId, path, profile).catch(() => undefined);
+      },
+      // The local server proxies a runner's worktree, so these hold for both.
+      start: () => api.worktrees.start(localWsId, path),
+      stop: () => api.worktrees.stop(localWsId, path),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active.path, procs[active.path], reposById, envSel, remoteForward.forward, remoteForward.error, remoteForward.pending, remotePreviewPort]);
+  useEffect(() => () => onDevStateRef.current?.(null), []);
   // Workflow-status changes made from this panel (optimistic, per worktree).
   const [statusSel, setStatusSel] = useState<Record<string, WorkflowStatus | null>>({});
 
@@ -1022,6 +1057,11 @@ export function TerminalView({
   const [showLogs, setShowLogs] = useState(false);
   const showLogsRef = useRef(false);
   showLogsRef.current = showLogs;
+  // The Dock's "logs" bumps logsSeq; each bump opens the drawer.
+  useEffect(() => {
+    if (logsSeq > 0 && !remote) setShowLogs(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logsSeq]);
   // Custom shell-tab names (double-click a shell tab to rename; shell only —
   // agent/vscode/browser tabs keep their fixed labels). `renaming` holds the
   // tab being edited plus the draft text for the inline input.
@@ -1030,13 +1070,6 @@ export function TerminalView({
   // finds the sessions still running on the runner.
   const [remoteShells, setRemoteShells] = useState<Record<string, RemoteShell[]>>(() => readRemoteShells());
   const [renaming, setRenaming] = useState<{ path: string; mode: NamedSessionMode; id: string; value: string } | null>(null);
-  // A fork asks the source agent for a summary server-side, so the dialog only
-  // needs the source peer's identity — never a target session of its own.
-  const [forkDialog, setForkDialog] = useState<{
-    source: { agentId: string; mode: AgentMode; worktreePath: string; alias: string | null };
-    busy: boolean;
-    error: string | null;
-  } | null>(null);
   // "+" on the session-tab row: pick which session type to open.
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   // The agent-usage popover lives in the toolbar; like the menus it must
@@ -1244,10 +1277,6 @@ export function TerminalView({
           ...prev,
           [path]: { status: 'idle', ...prev[path], ...proc },
         }));
-        // The server took the start: whatever the last click complained about is moot.
-        if (proc.status === 'starting' || proc.status === 'running') {
-          setRunError((cur) => (cur?.path === path ? null : cur));
-        }
       }
       const shellSessions = Array.isArray(evt.data.shellSessions) ? evt.data.shellSessions : null;
       const claudeSessions = Array.isArray(evt.data.claudeSessions) ? (evt.data.claudeSessions as string[]) : null;
@@ -2357,21 +2386,6 @@ export function TerminalView({
     });
   };
 
-  // The hub allocates nothing here: the server summarises, delivers and (for
-  // a new tab) opens the target. All we do is report the id
-  // so the board can open the drawer on the row that just appeared.
-  const submitFork = async (input: ForkCreateInput) => {
-    const dialog = forkDialog;
-    if (!dialog) return;
-    setForkDialog({ ...dialog, busy: true, error: null });
-    try {
-      const fork = await intercom.createFork(input);
-      setForkDialog(null);
-      onForked?.(fork.id);
-    } catch (err) {
-      setForkDialog((current) => current ? { ...current, busy: false, error: (err as Error).message } : current);
-    }
-  };
 
   // Apply an explicit open request from the parent (such as a notification)
   // that lands while THIS worktree's hub is already open — the
@@ -2391,6 +2405,214 @@ export function TerminalView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSeq]);
+
+  // ---------- app control: agents placing tabs (UiControlContext) ----------
+  // Commands arrive async and may wait for a just-spawned session to reach the
+  // strip, so everything they read goes through refs, not this render's values.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const hasTab = (key: string) => tabsRef.current.some((entry) => tabKeyOf(entry.tab) === key);
+  // A just-spawned session reaches the strip on worktree.updated; wait for it
+  // up to the command's deadline (UiControlContext's per-command budget).
+  const waitForTab = async (key: string, deadline: number): Promise<boolean> => {
+    while (!hasTab(key)) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
+  };
+  // A session the server spawned for an agent may not be in the strip yet (or
+  // the user closed that agent earlier): an explicit request brings it in.
+  const adoptSession = (mode: PtyTab['mode'], id: string) => {
+    const path = worktree.path;
+    if (mode !== 'shell' && id === '1') {
+      closedAgentsRef.current![mode].delete(path);
+      rememberClosedAgent(mode, path, false);
+      const flag = `${mode}Open` as const;
+      setGroups((prev) => prev.map((g) => (g.path === path ? { ...g, [flag]: true } : g)));
+      return;
+    }
+    if (mode === 'shell' && id === '1') return;
+    const localKey = ({ shell: 'localShellIds', claude: 'localClaudeIds', codex: 'localCodexIds', opencode: 'localOpencodeIds', pi: 'localPiIds' } as const)[mode];
+    setGroups((prev) => prev.map((g) => (g.path === path && !g[localKey].includes(id) ? { ...g, [localKey]: sortIds([...g[localKey], id]) } : g)));
+  };
+  // Beside the anchor when it is one of this worktree's tabs, else beside the
+  // focused pane (`anchor_not_visible`). `tab` leaves the layout alone: a pane
+  // shows one tab, so "same pane" is just a new tab in the strip.
+  const resolveAnchor = (key: string, place: UiPlace): { anchorKey: string | null; anchorOk: boolean } => {
+    const anchor = place.anchor && place.anchor.worktreePath === worktree.path ? hubKeyOf(place.anchor) : null;
+    const anchorOk = !!anchor && anchor !== key && hasTab(anchor);
+    const current = activeRef.current;
+    const fallback = current.path === worktree.path && tabKeyOf(current) !== key ? tabKeyOf(current) : null;
+    return { anchorKey: anchorOk ? anchor : fallback, anchorOk };
+  };
+  const placeTab = (tab: Tab, place: UiPlace): UiCommandAck => {
+    const key = tabKeyOf(tab);
+    const { anchorKey, anchorOk } = resolveAnchor(key, place);
+    if (place.split !== 'tab' && anchorKey) {
+      setLayouts(worktree.path, placeLeaf(paneLayoutsRef.current[worktree.path] ?? [], key, anchorKey, place.split));
+    }
+    if (place.focus) setActive(tab);
+    return anchorOk || !place.anchor ? { applied: true } : { applied: true, reason: 'anchor_not_visible' };
+  };
+  // A new Browser tab in this worktree at `url`; null if it never reached the strip.
+  const openBrowserTab = async (url: string, deadline: number): Promise<Tab | null> => {
+    if (!browserEmbeds) return null;
+    const g = groupsRef.current.find((x) => x.path === worktree.path);
+    if (!g) return null;
+    const id = nextBrowserId(g.browserOpen, g.browserIds);
+    const pk = previewKey(g.path, id);
+    rememberBrowserUrl(pk, url);
+    setBrowserUrl((prev) => ({ ...prev, [pk]: url }));
+    if (id === '1') {
+      rememberBrowserTab(g.path, true);
+      setGroups((prev) => prev.map((x) => (x.path === g.path ? { ...x, browserOpen: true } : x)));
+    } else {
+      const nextIds = sortIds([...g.browserIds, id]);
+      rememberBrowserTabIds(g.path, nextIds);
+      setGroups((prev) => prev.map((x) => (x.path === g.path ? { ...x, browserIds: nextIds } : x)));
+    }
+    const tab: Tab = { path: g.path, mode: 'browser', id };
+    return (await waitForTab(tabKeyOf(tab), deadline)) ? tab : null;
+  };
+
+  // Human always wins: panes (or strip tabs) the user clicked lately are off
+  // limits to agent commands for a few seconds. Typing doesn't count — typing
+  // into an agent's terminal is usually what asked it to open a tab beside
+  // itself. (Jarvis, the human's own box, is not subject to this.)
+  const humanAtRef = useRef(new Map<string, number>());
+  // Typing does count for Jarvis, the human's own box: a model plan acting on
+  // the tab you're typing in asks first.
+  const typedAtRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    const noteIn = (map: Map<string, number>) => (event: Event) => {
+      const el = (event.target as Element | null)?.closest?.('[data-pane-key],[data-tab-key]');
+      const key = el?.getAttribute('data-pane-key') ?? el?.getAttribute('data-tab-key');
+      if (key) map.set(key, Date.now());
+    };
+    const onPointer = noteIn(humanAtRef.current);
+    const onKey = noteIn(typedAtRef.current);
+    window.addEventListener('pointerdown', onPointer, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
+  const recent = (map: Map<string, number>, k: string | null) => k !== null && Date.now() - (map.get(k) ?? -Infinity) < HUMAN_ACTIVE_MS;
+  const humanActive = (...keys: (string | null)[]) => keys.some((k) => recent(humanAtRef.current, k));
+  const inUse = (key: string) => recent(humanAtRef.current, key) || recent(typedAtRef.current, key);
+
+  const applyUiCommand = async (cmd: ParsedUiCommand, deadline: number): Promise<UiCommandAck> => {
+    if (cmd.op === 'place') {
+      const key = hubKeyOf(cmd.tab);
+      if (humanActive(key, cmd.split === 'tab' && !cmd.focus ? null : resolveAnchor(key, cmd).anchorKey)) {
+        return { applied: false, reason: 'human_active' };
+      }
+      adoptSession(cmd.tab.mode, cmd.tab.sessionId);
+      if (!(await waitForTab(hubKeyOf(cmd.tab), deadline))) return { applied: false, reason: 'tab_not_found' };
+      return placeTab({ path: worktree.path, mode: cmd.tab.mode, id: cmd.tab.sessionId, remote: null }, cmd);
+    }
+    if (!browserEmbeds) return { applied: false, reason: 'no_browser' };
+    if (cmd.place && cmd.place.split !== 'tab' && humanActive(resolveAnchor('', cmd.place).anchorKey)) {
+      return { applied: false, reason: 'human_active' };
+    }
+    const tab = await openBrowserTab(cmd.url, deadline);
+    if (!tab) return { applied: false, reason: 'tab_not_found' };
+    // No placement asked (the agent passed place:null): just add the tab to
+    // the strip — never steal the user's focus unasked.
+    const ack = placeTab(tab, cmd.place ?? { split: 'tab', anchor: null, focus: false });
+    return { ...ack, result: { tabId: tab.id } };
+  };
+  // A runner's worktree isn't addressable by this server: no bridge.
+  // ---------- Jarvis (⌘K box): the human's own layout ops ----------
+  // Same primitives as agent commands, minus the human_active guard, plus a
+  // snapshot for Undo and the strip as parse context.
+  // Each tab's hub instance: new when a slot (session number) reappears after
+  // closing, so a confirm left open can't land on the tab that replaced it.
+  const instancesRef = useRef(new Map<string, string>());
+  const nextInstanceRef = useRef(0);
+  const instanceOf = (key: string) => {
+    let id = instancesRef.current.get(key);
+    if (!id) { id = `h${++nextInstanceRef.current}`; instancesRef.current.set(key, id); }
+    return id;
+  };
+  useEffect(() => {
+    const live = new Set(tabKeysJoined.split(',').filter(Boolean));
+    for (const key of [...instancesRef.current.keys()]) if (!live.has(key)) instancesRef.current.delete(key);
+    for (const key of live) instanceOf(key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabKeysJoined]);
+  const toTab = (ref: JTabRef): Tab => ({ path: ref.worktreePath, mode: ref.mode, id: ref.sessionId, remote: ref.mode === 'browser' ? undefined : null });
+  const refOfTab = (tab: Tab): JTabRef | null =>
+    tab.remote || (!isPtyMode(tab.mode) && tab.mode !== 'browser') ? null : { worktreePath: tab.path, mode: tab.mode as JTabRef['mode'], sessionId: tab.id };
+  type HubSnapshot = { panes: PaneNode[]; active: Tab };
+  const jarvisHub: JarvisHubPort & { context(): JarvisHubContext } = {
+    path: worktree.path,
+    // Layout only: tabs a plan opened are undone by their own ops (closeLocal).
+    snapshot: (): HubSnapshot => ({ panes: paneLayoutsRef.current[worktree.path] ?? [], active: activeRef.current }),
+    restore: (raw) => {
+      const snap = raw as HubSnapshot;
+      setLayouts(worktree.path, snap.panes);
+      if (hasTab(tabKeyOf(snap.active))) setActive(snap.active);
+    },
+    place: async (ref, place, deadline) => {
+      if (ref.worktreePath !== worktree.path) return { ok: false, reason: 'That tab is in another worktree' };
+      if (ref.mode !== 'browser') adoptSession(ref.mode, ref.sessionId);
+      const tab = toTab(ref);
+      if (!(await waitForTab(tabKeyOf(tab), deadline))) return { ok: false, reason: 'The new tab did not show up' };
+      placeTab(tab, { split: place.split, anchor: place.anchor as UiTabRef | null, focus: place.focus });
+      return { ok: true };
+    },
+    focus: (ref) => {
+      const tab = toTab(ref);
+      if (ref.worktreePath !== worktree.path || !hasTab(tabKeyOf(tab))) return false;
+      setActive(tab);
+      return true;
+    },
+    openBrowser: async (url, place, deadline) => {
+      const tab = await openBrowserTab(url, deadline);
+      if (!tab) return null;
+      // The human asked to open it: show it unless a placement says otherwise.
+      placeTab(tab, place ? { split: place.split, anchor: place.anchor as UiTabRef | null, focus: place.focus } : { split: 'tab', anchor: null, focus: true });
+      return { worktreePath: tab.path, mode: 'browser', sessionId: tab.id };
+    },
+    closeLocal: (ref) => {
+      const tab = toTab(ref);
+      if (ref.worktreePath === worktree.path && hasTab(tabKeyOf(tab))) closeTab(tab);
+    },
+    context: () => {
+      const g = groupsRef.current.find((x) => x.path === worktree.path);
+      // Working, or waiting on the user (a permission prompt, a question): closing loses either.
+      const isLiveWork = (st: string | undefined) => st === 'working' || st === 'waiting';
+      const statusOf = (mode: string, id: string) => {
+        const byId = g?.[`${mode}StatusById` as 'claudeStatusById'];
+        return byId?.[id] ?? (id === '1' ? g?.[`${mode}Status` as 'claudeStatus'] : undefined);
+      };
+      const infos: JTabInfo[] = [];
+      for (const entry of tabsRef.current) {
+        const ref = refOfTab(entry.tab);
+        // humanActive: the box itself isn't held off (it IS the human), but a
+        // model plan touching a tab the user just clicked asks first.
+        if (ref) infos.push({ ...ref, label: entry.label, busy: ref.mode !== 'shell' && ref.mode !== 'browser' && isLiveWork(statusOf(ref.mode, ref.sessionId)), instance: instanceOf(tabKeyOf(entry.tab)), ...(inUse(tabKeyOf(entry.tab)) ? { humanActive: true } : {}) });
+      }
+      return { tabs: infos, focused: refOfTab(activeRef.current) };
+    },
+  };
+
+  const notifyUi = useUiHubBridge(remote ? null : {
+    jarvis: jarvisHub,
+    path: worktree.path,
+    visible: () => leafKeys(paneTree)
+      .map((key) => keyToTab(worktree.path, key))
+      .filter((tab): tab is Tab & { mode: PtyTab['mode'] } => !!tab && !tab.remote && isPtyMode(tab.mode))
+      .map((tab): UiTabRef => ({ worktreePath: tab.path, mode: tab.mode, sessionId: tab.id })),
+    layout: () => ({ activeTab: tabKeyOf(active), tabs: tabs.map((entry) => tabKeyOf(entry.tab)), panes: layouts }),
+    apply: applyUiCommand,
+  });
+  useEffect(() => { notifyUi(); }, [notifyUi, activePaneKey, layouts]);
 
   // Warn before closing a tab with work in progress: a shell with a running
   // command, or an agent that's actively working. Confirmed close falls
@@ -2661,7 +2883,6 @@ export function TerminalView({
         );
       })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {banner && <EscalationBanner escalation={banner} onAnswer={(id) => onOpenIntercom?.(id)} />}
         <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
           {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
           {/* tabs scroll inside this container; the status/action controls sit
@@ -2786,58 +3007,9 @@ export function TerminalView({
             <PlusIcon />
           </button>
           </div>
-          {!remote && (active.mode === 'claude' || active.mode === 'codex' || active.mode === 'opencode' || active.mode === 'pi') && (() => {
-            // Only a tab that has registered with the intercom has an agent id
-            // to fork FROM, so the button waits for the peer to show up.
-            const peer = peerForTab(intercom, { path: active.path, mode: active.mode, id: active.id });
-            return (
-              <button
-                type="button"
-                disabled={!peer}
-                onClick={() => peer && setForkDialog({
-                  source: { agentId: peer.agentId, mode: active.mode as AgentMode, worktreePath: active.path, alias: peer.alias },
-                  busy: false,
-                  error: null,
-                })}
-                title={peer ? 'Fork this thread to another agent or a new tab' : 'This tab has not registered with the intercom yet'}
-                className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Fork
-              </button>
-            );
-          })()}
           {(() => {
-            const p = procs[active.path] ?? { status: 'idle' as const };
-            // starting counts as busy so a start that hangs can still be cancelled;
-            // stopping does not — a second Stop has nothing to add.
-            const busy = p.status === 'running' || p.status === 'starting';
-            const stopping = p.status === 'stopping';
-            const crashed = p.status === 'crashed';
-            const runLabel = p.status === 'starting' ? 'Starting…'
-              : p.status === 'running' ? (p.port ? `Stop :${p.port}` : 'Stop')
-                : stopping ? 'Stopping…'
-                  : crashed ? 'Crashed'
-                    : 'Run';
-            const runNote = runError?.path === active.path
-              ? runError.message
-              : crashed
-                ? `exit code ${p.exitCode ?? '?'}`
-                : null;
-            // On a runner the port belongs to the runner's loopback, so name both
-            // ends: the local port is the one that actually opens in a browser,
-            // and it usually differs (3000 is normally taken here already).
-            const detail = remote
-              ? remoteForward.forward
-                ? `localhost:${remoteForward.forward.localPort} → ${remote.runnerId}:${remoteForward.forward.remotePort}`
-                : remoteForward.error
-                  ? `port ${remotePreviewPort} not forwarded — ${remoteForward.error}`
-                  : remoteForward.pending
-                    ? `forwarding port ${remotePreviewPort}…`
-                    : ''
-              : p.proxyUrl ?? p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
+            // The dev server (start/stop, logs, env profile) lives in the Dock's ▶ dev.
             const row = rowsRef.current.get(active.path) ?? (active.path === worktree.path ? worktree : undefined);
-            const repo = row?.repoId ? reposById[row.repoId] : undefined;
-            const profiles = repo?.envProfiles ?? [];
             const jiraIssue = row?.meta?.ticketId ? tickets.issues[ticketRef(row.meta.ticketProvider, row.meta.ticketId)] : undefined;
             const spent = formatActiveTime(row?.activitySeconds);
             const origEstimate = jiraIssue?.estimate && !/^0[mhd]$/.test(jiraIssue.estimate) ? jiraIssue.estimate : null;
@@ -2873,106 +3045,16 @@ export function TerminalView({
                     )}
                   </span>
                 )}
-                {profiles.length > 0 && (
-                  <select
-                    value={
-                      envSel[active.path] ??
-                      row?.meta?.activeEnvProfile ??
-                      repo?.defaultEnvProfile ??
-                      profiles[0]?.name ??
-                      ''
-                    }
-                    onChange={(e) => {
-                      const profile = e.target.value;
-                      if (busy && !confirm(`Switch env to "${profile}"? This will restart the running process.`)) {
-                        return;
-                      }
-                      setEnvSel((prev) => ({ ...prev, [active.path]: profile }));
-                      api.worktrees.setEnvProfile(localWsId, active.path, profile).catch(() => undefined);
-                    }}
-                    title="Env profile (switching restarts the running process)"
-                    aria-label="Env profile"
-                    className="h-[26px] shrink-0 self-start rounded border border-zinc-800 bg-zinc-950 px-1.5 text-[11px] uppercase tracking-wide text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
-                  >
-                    {profiles.map((pr) => (
-                      <option key={pr.name} value={pr.name}>
-                        {pr.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
                 <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
-                <button
-                  className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
-                    p.status === 'running'
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                      : p.status === 'starting'
-                        ? 'animate-pulse border-amber-500/30 bg-amber-500/10 text-amber-300'
-                        : stopping
-                          ? 'animate-pulse border-zinc-700 bg-zinc-900 text-zinc-400'
-                          : crashed
-                            ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
-                            : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
-                  }`}
-                  disabled={stopping}
-                  onClick={() => {
-                    if (stopping) return;
-                    const path = active.path;
-                    setRunError((cur) => (cur?.path === path ? null : cur));
-                    const call = busy
-                      ? api.worktrees.stop(localWsId, path)
-                      : api.worktrees.start(localWsId, path);
-                    // SSE carries the process states; a refused request has no
-                    // SSE and would otherwise be a click that did nothing.
-                    call.catch((err: unknown) => {
-                      setRunError({ path, message: (err as Error).message || 'request failed' });
-                    });
-                  }}
-                  title={`${busy || stopping ? 'Stop' : 'Start'} dev server — ${p.status}${detail ? ` (${detail})` : ''}`}
-                  aria-label={busy || stopping ? 'Stop dev server' : 'Start dev server'}
-                >
-                  {busy || stopping ? <StopIcon /> : <PlayIcon />}
-                  <span>{runLabel}</span>
-                </button>
-                {runNote && (
-                  <span
-                    role="alert"
-                    title={runNote}
-                    className="flex max-w-[260px] shrink-0 items-center gap-1.5 self-start py-1 text-[11px] text-red-300"
-                  >
-                    <span className="truncate">{runNote}</span>
-                    {crashed && !remote && (
-                      <button
-                        type="button"
-                        onClick={() => setShowLogs(true)}
-                        className="shrink-0 rounded border border-red-500/30 px-1 text-[10px] text-red-200 hover:bg-red-500/10"
-                      >Logs</button>
-                    )}
-                  </span>
-                )}
               </>
             );
           })()}
-          {/* Logs, diff and the changes rail all read LOCAL git and process
-              state. For a worktree on a runner they would silently show
-              nothing, so they are absent rather than inert — the same rule the
-              capability flag applies to VS Code and Browser. */}
+          {/* Diff and the changes rail read LOCAL git state. For a worktree on
+              a runner they would silently show nothing, so they are absent
+              rather than inert — the same rule the capability flag applies to
+              VS Code and Browser. */}
           {!remote && (
             <>
-              <button
-                className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
-                  showLogs
-                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-200'
-                    : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
-                }`}
-                onClick={() => setShowLogs((v) => !v)}
-                title="Logs"
-                aria-label="Logs"
-                aria-pressed={showLogs}
-              >
-                <LogsIcon />
-                <span>Logs</span>
-              </button>
               <button
                 className={`flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900 ${
                   showDiff ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
@@ -3337,7 +3419,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff || forkDialog);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3599,19 +3681,6 @@ export function TerminalView({
               (active.path === worktree.path ? worktree : ({ path: active.path } as Worktree))
             }
             onClose={() => setShowDiff(false)}
-          />
-        </div>
-      )}
-      {forkDialog && (
-        <div onClick={(event) => event.stopPropagation()}>
-          <ForkDialog
-            source={forkDialog.source}
-            peers={intercom.peers}
-            tasks={intercom.tasks}
-            busy={forkDialog.busy}
-            error={forkDialog.error}
-            onSubmit={(input) => void submitFork(input)}
-            onCancel={() => { if (!forkDialog.busy) setForkDialog(null); }}
           />
         </div>
       )}

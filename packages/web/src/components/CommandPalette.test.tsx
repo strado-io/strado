@@ -1,8 +1,18 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { CommandPalette } from './CommandPalette';
+import { act, render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CommandPalette, releaseKeyboard } from './CommandPalette';
 import { api, type RemoteWorktree } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
+
+afterEach(() => releaseKeyboard());
+
+/** The bar is inert until focused (click or ⌘K): every test starts with it focused. */
+const render = (ui: Parameters<typeof rtlRender>[0]) => {
+  const r = rtlRender(ui);
+  act(() => { (screen.getByLabelText('Global search') as HTMLInputElement).focus(); });
+  return r;
+};
+
 
 const repos = [{ id: 'r1', name: 'React App', path: '/repos/react-app' }] as RepoConfig[];
 const workspaces = [
@@ -133,6 +143,7 @@ describe('CommandPalette runner worktrees', () => {
     expect(screen.getByText('0 worktrees')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Billing'));
     expect(onSwitchFocus).not.toHaveBeenCalled(); // already there
+    act(() => { (screen.getByLabelText('Global search') as HTMLInputElement).focus(); }); // the pick handed focus back
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'per' } });
     fireEvent.click(screen.getByText('Perf'));
     expect(onSwitchFocus).toHaveBeenCalledWith('f2');

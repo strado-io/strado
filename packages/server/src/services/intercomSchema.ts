@@ -208,40 +208,6 @@ export const EscalationListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(ESCALATION_LIST_MAX).optional(),
 });
 
-// Step 9a: cross-agent fork. A source agent hands its working context to a
-// peer (or to a freshly spawned tab) as one packaged `request`; `strado` is the
-// synthetic sender the server uses for the summary ask and the hand-over.
+// `strado` is a reserved name: no tab may take it as an alias and no route
+// resolves it to an agent (stores from older builds may hold messages from it).
 export const STRADO_SENDER_ID = 'strado';
-export const FORK_SUMMARY_TIMEOUT_MS = 60_000;
-export const FORK_SUMMARY_MAX = 4096;
-export const FORK_NOTES_MAX = 4096;
-export const FORK_PACKAGE_MAX = 32 * 1024;
-export const FORK_TURNS = 6;
-export const FORK_TURN_PROMPT_MAX = 2048;
-export const FORK_TURN_REPLY_MAX = 4096;
-export const FORK_DIARY_TURNS = 12;
-export const FORK_LIST_DEFAULT = 50;
-export const FORK_LIST_MAX = 200;
-export const FORK_NUDGE = 'A fork hand-over is waiting in your Strado inbox: call intercom_inbox, then continue the work.';
-
-export const ForkStatus = z.enum(['summarising', 'queued', 'delivered', 'accepted', 'failed', 'cancelled']);
-export type ForkStatus = z.infer<typeof ForkStatus>;
-export const AgentModeEnum = z.enum(['claude', 'codex', 'opencode', 'pi']);
-export const ForkCreateBody = z
-  .object({
-    to: z.string().min(1).max(256).optional(),
-    newTab: z.object({ mode: AgentModeEnum, worktreePath: z.string().min(1).max(4096).optional() }).optional(),
-    notes: z.string().superRefine(utf8Max(FORK_NOTES_MAX, 'notes')).default(''),
-    taskId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
-    source: z.string().min(1).max(256).optional(),
-  })
-  .superRefine((v, ctx) => {
-    if ((v.to === undefined) === (v.newTab === undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'exactly one of to / newTab is required' });
-    }
-  });
-export type ForkCreateBody = z.infer<typeof ForkCreateBody>;
-export const ForkListQuery = z.object({
-  status: ForkStatus.optional(),
-  limit: z.coerce.number().int().min(1).max(FORK_LIST_MAX).optional(),
-});

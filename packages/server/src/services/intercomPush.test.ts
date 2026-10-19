@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createEventBus, type BusEvent } from '../events/bus.js';
 import type { AgentSummary } from './agentRegistry.js';
-import { FORK_NUDGE, PUSH_ENTER_DELAY_MS, PUSH_INPUT_QUIET_MS, PUSH_OUTPUT_QUIET_MS, PUSH_OUTPUT_RETRY_MS, PUSH_RETRY_MAX, PUSH_RETRY_MS } from './intercomSchema.js';
+import { PUSH_ENTER_DELAY_MS, PUSH_INPUT_QUIET_MS, PUSH_OUTPUT_QUIET_MS, PUSH_OUTPUT_RETRY_MS, PUSH_RETRY_MAX, PUSH_RETRY_MS } from './intercomSchema.js';
 import { INTERCOM_CHANNEL, type IntercomStore } from './intercomStore.js';
-import { MCP_NUDGE, NUDGE, createIntercomPush, type IntercomPush, type SkipReason } from './intercomPush.js';
+import { MCP_NUDGE, NUDGE, PUSHED_MARKER_TTL_MS, createIntercomPush, type IntercomPush, type SkipReason } from './intercomPush.js';
 import { claudeKey, codexKey, piKey } from './terminalManager.js';
 
 type State = {
@@ -382,25 +382,25 @@ describe('intercomPush forget', () => {
   });
 });
 
-describe('intercomPush nudge (fork force path)', () => {
-  const FORK_KEY = codexKey('/wt', '2');
-  const LINE = FORK_NUDGE;
+describe('intercomPush nudge (force path)', () => {
+  const FORCE_KEY = codexKey('/wt', '2');
+  const LINE = 'continue the task in your inbox';
 
   it('writes into a non-claude tab — the mode gate and the inbox check do not apply', async () => {
     state.mode = 'codex';
     state.queued = 0;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('sent');
-    expect(writes).toEqual([[FORK_KEY, LINE]]);
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('sent');
+    expect(writes).toEqual([[FORCE_KEY, LINE]]);
     expect(events.map((e) => e.type)).toEqual(['push.sent']);
-    expect(events[0]!.data).toEqual({ key: FORK_KEY, forced: true });
+    expect(events[0]!.data).toEqual({ key: FORCE_KEY, forced: true });
     const enter = scheduled.find((s) => s.ms === PUSH_ENTER_DELAY_MS)!;
     enter.fn();
-    expect(writes).toEqual([[FORK_KEY, LINE], [FORK_KEY, '\r']]);
+    expect(writes).toEqual([[FORCE_KEY, LINE], [FORCE_KEY, '\r']]);
   });
 
   it('honours the push kill switch — a disabled pusher types nothing', async () => {
     state.enabled = false;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('skipped');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('skipped');
     expect(writes).toEqual([]);
     expect(events).toEqual([]);
     expect(scheduled).toEqual([]);
@@ -408,40 +408,102 @@ describe('intercomPush nudge (fork force path)', () => {
 
   it('skips while the tab is not running', async () => {
     state.running = false;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('skipped');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('skipped');
     expect(writes).toEqual([]);
   });
 
   it('skips while the user is typing', async () => {
     state.input = PUSH_INPUT_QUIET_MS - 1;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('skipped');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('skipped');
     expect(writes).toEqual([]);
     state.input = PUSH_INPUT_QUIET_MS;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('sent');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('sent');
   });
 
   it('leaves retries to the caller when the tab is still painting', async () => {
     state.output = PUSH_OUTPUT_QUIET_MS - 1;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('skipped');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('skipped');
     expect(scheduled).toEqual([]);
     state.output = PUSH_OUTPUT_QUIET_MS;
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('sent');
-    expect(writes).toEqual([[FORK_KEY, LINE]]);
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('sent');
+    expect(writes).toEqual([[FORCE_KEY, LINE]]);
   });
 
   it('has no once-per-idle-period dedupe and leaves the inbox marker alone', async () => {
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('sent');
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('sent');
-    expect(writes).toEqual([[FORK_KEY, LINE], [FORK_KEY, LINE]]);
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('sent');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('sent');
+    expect(writes).toEqual([[FORCE_KEY, LINE], [FORCE_KEY, LINE]]);
     // The forced line is not an inbox push: the ordinary gate is untouched.
     expect(await push.consider('ws', AGENT, 'stop')).toBe('sent');
   });
 
   it('forget cancels a pending nudge Enter', async () => {
-    expect(await push.nudge(FORK_KEY, LINE)).toBe('sent');
+    expect(await push.nudge(FORCE_KEY, LINE)).toBe('sent');
     const enter = scheduled.find((s) => s.ms === PUSH_ENTER_DELAY_MS)!;
-    push.forget(FORK_KEY);
+    push.forget(FORCE_KEY);
     expect(enter.cancelled).toBe(true);
-    expect(writes).toEqual([[FORK_KEY, LINE]]);
+    expect(writes).toEqual([[FORCE_KEY, LINE]]);
+  });
+});
+
+describe('intercomPush review fixes', () => {
+  const OTHER_KEY = claudeKey('/wt', '9');
+  const make = (over: Partial<Parameters<typeof createIntercomPush>[0]> = {}) => createIntercomPush({
+    agents: {
+      list: async (scopeId) => (scopeId === 'ws' && state.agents
+        ? [{ agentId: AGENT, alias: null, scopeId: 'ws', mode: state.mode, worktreePath: '/wt', sessionId: '2', lifecycle: state.lifecycle, executionId: 'ex', live: true }]
+        : []),
+    },
+    intercom: { peek: () => Array.from({ length: state.queued }, (_, i) => ({ id: `g${state.gen}-m${i}` })) as unknown as ReturnType<IntercomStore['peek']> },
+    terminal: () => ({
+      write: (key, data) => { writes.push([key, data]); },
+      status: () => ({ status: state.running ? 'running' : 'exited', pid: state.running ? 1 : null, exitCode: null }),
+    }),
+    activity: { quiet: () => ({ input: state.input, output: state.output }) },
+    bus,
+    enabled: () => state.enabled,
+    schedule: (fn, ms) => { const e = { fn, ms, cancelled: false }; scheduled.push(e); return { cancel: () => { e.cancelled = true; } }; },
+    ...over,
+  });
+
+  it('a turn starting in ANOTHER tab during the agent lookup does not cancel this tab\'s push', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const gated = make({
+      agents: {
+        list: async (scopeId) => {
+          await gate;
+          return [{ agentId: AGENT, alias: null, scopeId, mode: state.mode, worktreePath: '/wt', sessionId: '2', lifecycle: state.lifecycle, executionId: 'ex', live: true }];
+        },
+      },
+    });
+    const pending = gated.consider('ws', AGENT, 'stop');
+    gated.turnStarted(OTHER_KEY);
+    release();
+    expect(await pending).toBe('sent');
+  });
+
+  it('the deferred Enter is withheld when the user started typing after the nudge was written', async () => {
+    expect(await push.consider('ws', AGENT, 'stop')).toBe('sent');
+    state.input = 0;
+    scheduled.find((s) => s.ms === PUSH_ENTER_DELAY_MS)!.fn();
+    expect(writes).toEqual([[KEY, NUDGE(2)]]);
+  });
+
+  it('a second write on the same tab cancels the first pending Enter, so only one Enter fires', async () => {
+    expect(await push.nudge(KEY, 'one')).toBe('sent');
+    expect(await push.nudge(KEY, 'two')).toBe('sent');
+    const enters = scheduled.filter((s) => s.ms === PUSH_ENTER_DELAY_MS);
+    expect(enters.map((e) => e.cancelled)).toEqual([true, false]);
+  });
+
+  it('the once-per-idle marker lapses after PUSHED_MARKER_TTL_MS when no turn ever started', async () => {
+    const clock = { now: 0 };
+    const p = make({ now: () => clock.now });
+    expect(await p.consider('ws', AGENT, 'stop')).toBe('sent');
+    state.gen += 1;                                     // a newer message lands; the Enter was lost, no turn began
+    expect(await p.consider('ws', AGENT, 'arrival')).toBe('skipped');
+    clock.now += PUSHED_MARKER_TTL_MS;
+    expect(await p.consider('ws', AGENT, 'arrival')).toBe('sent');
   });
 });

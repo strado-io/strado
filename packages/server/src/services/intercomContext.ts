@@ -24,6 +24,12 @@ export function cutUtf8(s: string, maxBytes: number): string {
   return buf.subarray(0, end).toString('utf8');
 }
 
+/** Peer-supplied text is rendered inside the block, so it must not be able to
+ * open or close it: a body ending the block early would put the rest of its
+ * text outside, where it reads as the user's own prompt. Only the tag's `<`
+ * changes; the words survive. */
+const defuse = (s: string): string => s.replace(/<(\s*\/?\s*strado-intercom)/gi, '‹$1');
+
 function stamp(ms: number): string {
   const d = new Date(ms);
   const p = (n: number): string => String(n).padStart(2, '0');
@@ -32,7 +38,9 @@ function stamp(ms: number): string {
 
 export function renderMessage(m: MessageWithAlias, index: number): string {
   const head = [
-    `[${index}] from ${m.from.agentId}${m.from.alias ? ` (${m.from.alias})` : ''}`,
+    m.from.agentId === HUMAN_ID
+      ? `[${index}] from the person using Strado (human)`
+      : `[${index}] from ${defuse(m.from.agentId)}${m.from.alias ? ` (${defuse(m.from.alias)})` : ''}`,
     m.kind,
     stamp(m.createdAt),
   ];
@@ -40,11 +48,11 @@ export function renderMessage(m: MessageWithAlias, index: number): string {
   const line = head.join(' · ') + (m.redelivery ? ' (redelivered)' : '');
   const total = bytes(m.body);
   const body = total > HOOK_BODY_EXCERPT_MAX
-    ? `${cutUtf8(m.body, HOOK_BODY_EXCERPT_MAX)} [truncated, ${total} bytes total]`
-    : m.body;
+    ? `${defuse(cutUtf8(m.body, HOOK_BODY_EXCERPT_MAX))} [truncated, ${total} bytes total]`
+    : defuse(m.body);
   const items = m.context.slice(0, HOOK_CONTEXT_ITEMS_SHOWN).map((c) => {
     const value = bytes(c.value) > HOOK_CONTEXT_VALUE_MAX ? `${cutUtf8(c.value, HOOK_CONTEXT_VALUE_MAX)}…` : c.value;
-    return `  context: ${c.kind} ${value}${c.label ? ` (${c.label})` : ''}`;
+    return `  context: ${c.kind} ${defuse(value)}${c.label ? ` (${defuse(c.label)})` : ''}`;
   });
   const more = m.context.length - HOOK_CONTEXT_ITEMS_SHOWN;
   if (more > 0) items.push(`  … ${more} more context items`);
@@ -54,32 +62,53 @@ export function renderMessage(m: MessageWithAlias, index: number): string {
 export function renderHint(messages: MessageWithAlias[], transport: Transport): string {
   const lastRequest = [...messages].reverse().find((x) => x.kind === 'request');
   const last = messages[messages.length - 1];
+  const to = lastRequest?.from.agentId ?? last?.from.agentId ?? '<agentId>';
+  const tool = lastRequest
+    ? `To reply, use the intercom_send tool (to=${to} kind=reply replyTo=${lastRequest.id}) if you have it. Otherwise:`
+    : `To reply, use the intercom_send tool (to=${to}) if you have it. Otherwise:`;
   const payload = lastRequest
-    ? `{"to":"${lastRequest.from.agentId}","kind":"reply","replyTo":"${lastRequest.id}","body":"..."}`
-    : `{"to":"${last?.from.agentId ?? '<agentId>'}","body":"..."}`;
+    ? `{"to":"${to}","kind":"reply","replyTo":"${lastRequest.id}","body":"..."}`
+    : `{"to":"${to}","body":"..."}`;
   const curl = transport === 'socket'
     ? 'curl -s --unix-socket $STRADO_SERVER_SOCKET -X POST http://localhost/api/intercom/messages'
     : 'curl -s -X POST http://127.0.0.1:$STRADO_STATUS_PORT/api/intercom/messages';
   const tail = lastRequest
     ? 'For a plain message drop "kind" and "replyTo". Never paste the token into a message.'
     : 'To answer a request add "kind":"reply" and "replyTo":"<its id>". Never paste the token into a message.';
+  // A quoted heredoc rather than -d '...': a body with an apostrophe in it
+  // would otherwise end the shell string early.
   return [
-    `To reply: ${curl} \\`,
-    `  -H "Authorization: Bearer $STRADO_AGENT_TOKEN" -H 'content-type: application/json' \\`,
-    `  -d '${payload}'`,
+    tool,
+    `${curl} \\`,
+    `  -H "Authorization: Bearer $STRADO_AGENT_TOKEN" -H 'content-type: application/json' --data-binary @- <<'JSON'`,
+    payload,
+    'JSON',
     tail,
   ].join('\n');
 }
 
-function header(n: number): string {
-  return `${n} new message${n === 1 ? '' : 's'} from agents in this workspace. Read them before acting on the prompt, and mention them in your reply so the person at this tab sees they arrived.`;
+const HUMAN_ID = 'human';
+
+function header(messages: MessageWithAlias[]): string {
+  const n = messages.length;
+  const human = messages.filter((x) => x.from.agentId === HUMAN_ID).length;
+  const from = human === 0 ? 'from agents in this workspace' : `in this workspace, from the person using Strado${human < n ? ' and agents' : ''}`;
+  return `${n} new message${n === 1 ? '' : 's'} ${from}. Read them before acting on the prompt, and mention them in your reply so the person at this tab sees they arrived.`;
+}
+
+/** Only the person's latest question, asked from the command box: its answer
+ * must come back through the intercom to be seen there. */
+function humanAsk(messages: MessageWithAlias[]): string[] {
+  const last = [...messages].reverse().find((x) => x.kind === 'request');
+  if (!last || last.from.agentId !== HUMAN_ID) return [];
+  return [`Answer it with an intercom reply (to=${HUMAN_ID} kind=reply replyTo=${last.id}): they read it in the command box, not in this terminal.`];
 }
 
 /** Render the given messages in full. The caller has already chosen what fits. */
 export function formatInboxContext(messages: MessageWithAlias[], opts: { transport: Transport }): string | null {
   if (messages.length === 0) return null;
   const rendered = messages.flatMap((x, i) => [renderMessage(x, i + 1), '']);
-  return [OPEN, header(messages.length), '', ...rendered, renderHint(messages, opts.transport), CLOSE].join('\n');
+  return [OPEN, header(messages), '', ...rendered, ...humanAsk(messages), renderHint(messages, opts.transport), CLOSE].join('\n');
 }
 
 /** The longest prefix of `candidates` whose full render fits the budget. A single message renders well under 32 KiB, so a non-empty input always yields at least one. */

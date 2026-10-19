@@ -96,6 +96,19 @@ export type JiraTransitionDto = {
   toCategory: JiraIssueDto['category'];
 };
 
+/** How app control names a PTY tab: structured, never a server session key.
+ * An agent running inside a Shell tab is that shell (mode 'shell'). */
+export type UiTabRef = { worktreePath: string; mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell'; sessionId: string };
+/** `visible`: the PTY panes on screen (≤ 200, runner tabs excluded). */
+export type UiClientState = { focused: boolean; worktreePath: string | null; visible: UiTabRef[]; layout?: unknown };
+export type JarvisScripts = { packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun'; scripts: string[] };
+export type JarvisRunResult = { settled: boolean; output: string; durationMs: number } | { error: string };
+export type JarvisSpawnResult = {
+  agent: { agentId: string; alias: string | null; mode: UiTabRef['mode']; worktreePath: string; sessionId: string; executionId?: string };
+  command?: JarvisRunResult;
+  prompt?: { status: 'queued' };
+};
+export type UiCommandAck = { applied: boolean; reason?: string; result?: Record<string, unknown> };
 export type EscalationDto = {
   id: string;
   scopeId: string;
@@ -108,9 +121,37 @@ export type EscalationDto = {
   status: 'open' | 'resolved' | 'dismissed';
   resolution: string | null;
   resolvedBy: string | null;
+  /** The `request` delivered to a peer target; set on a peer ask (also after it is retargeted to the human). */
+  askMessageId?: string | null;
   createdAt: number;
   resolvedAt: number | null;
   expiresAt: number | null;
+};
+/** One intercom station: an agent or shell tab (the Dock's lights). `calls`
+ * are its open escalations addressed to the human; `needsYou` is a call or a
+ * permission prompt (lifecycle 'needs_input'). */
+export type StationDto = {
+  agentId: string;
+  alias: string | null;
+  name: string;
+  mode: string;
+  worktreePath: string;
+  worktreeName: string;
+  sessionId: string;
+  lifecycle: string;
+  live: boolean;
+  needsYou?: boolean;
+  calls: { id: string; title: string; body: string; createdAt: number }[];
+  lastActivityAt: number | null;
+};
+/** One intercom message on the line (agent↔agent or with the human, "human"). */
+export type FeedMessageDto = {
+  id: string;
+  from: { agentId: string; alias?: string | null; executionId?: string | null };
+  to: string;
+  kind: string;
+  body: string;
+  createdAt: number;
 };
 export type IntercomTaskDto = {
   id: string;
@@ -134,35 +175,11 @@ export type PeerDto = {
   mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
   worktreePath: string;
   sessionId: string;
+  /** The live execution behind the tab; null when it isn't running. */
+  executionId?: string | null;
   lifecycle: string;
   live: boolean;
 };
-
-export type ForkStatusDto = 'summarising' | 'queued' | 'delivered' | 'accepted' | 'failed' | 'cancelled';
-export type ForkTargetDto =
-  | { kind: 'peer'; agentId: string }
-  | { kind: 'new'; mode: AgentMode; worktreePath: string; agentId: string | null };
-export type ForkDto = {
-  id: string;
-  scopeId: string;
-  from: { agentId: string; executionId: string };
-  source: { agentId: string; worktreePath: string; mode: string; sessionId: string };
-  target: ForkTargetDto;
-  notes: string;
-  taskId: string | null;
-  summarySource: 'agent' | 'diary' | 'none' | null;
-  summary: string | null;
-  status: ForkStatusDto;
-  summaryMessageId: string | null;
-  messageId: string | null;
-  packageBytes: number | null;
-  error: string | null;
-  createdAt: number;
-  summaryDeadline: number | null;
-  deliveredAt: number | null;
-  acceptedAt: number | null;
-};
-export type ForkCreateInput = { source: string; to?: string; newTab?: { mode: AgentMode }; notes: string; taskId?: string };
 
 export type TicketProviderId = 'jira' | 'linear';
 export type TicketIssueDto = JiraIssueDto & { provider: TicketProviderId; url: string };
@@ -180,7 +197,8 @@ export type ToolStatus = {
   installCommand: string | null;
 };
 
-export type Profile = { fullName: string; callMe: string; telemetryOptOut: boolean };
+/** `jarvisLocalOnly`: the ⌘K box never sends text to a model (the server refuses /jarvis/plan). */
+export type Profile = { fullName: string; callMe: string; telemetryOptOut: boolean; jarvisLocalOnly?: boolean };
 export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
@@ -295,8 +313,23 @@ export const api = {
       }),
     testConfig: () => request<{ ok: boolean; accountName: string }>('/api/jira/config/test', { method: 'POST' }),
   },
+  // Server→window layout commands (agents driving the app). The window reports
+  // what it shows; the server picks one window per command and waits for its ack.
+  ui: {
+    reportState: (wsId: string, clientId: string, state: UiClientState) =>
+      request<void>(`${wsBase(wsId)}/ui/clients/${encodeURIComponent(clientId)}/state`, { method: 'POST', body: JSON.stringify(state) }),
+    ack: (wsId: string, clientId: string, commandId: string, ack: UiCommandAck) =>
+      request<void>(`${wsBase(wsId)}/ui/commands/${encodeURIComponent(commandId)}/ack`, { method: 'POST', headers: { 'x-strado-ui-client': clientId }, body: JSON.stringify(ack) }),
+  },
   intercom: {
     peers: (wsId: string) => request<{ peers: PeerDto[] }>(`${wsBase(wsId)}/intercom/peers`).then((b) => b.peers),
+    stations: (wsId: string) => request<{ stations: StationDto[] }>(`${wsBase(wsId)}/intercom/stations`).then((b) => b.stations),
+    /** The line's messages, newest first; `agent` = one station's (sent or received). */
+    feed: (wsId: string, opts: { agent?: string | null; limit?: number } = {}) => {
+      const q = new URLSearchParams({ limit: String(opts.limit ?? 50) });
+      if (opts.agent) q.set('agent', opts.agent);
+      return request<{ messages: FeedMessageDto[] }>(`${wsBase(wsId)}/intercom/messages?${q}`).then((b) => b.messages);
+    },
     escalations: {
       list: (wsId: string, status?: EscalationDto['status']) =>
         request<{ escalations: EscalationDto[] }>(`${wsBase(wsId)}/intercom/escalations${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.escalations),
@@ -315,14 +348,6 @@ export const api = {
       release: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/release`, { method: 'POST', body: '{}' }).then((b) => b.task),
       done: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' }).then((b) => b.task),
       cancel: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.task),
-    },
-    forks: {
-      list: (wsId: string, status?: ForkStatusDto) =>
-        request<{ forks: ForkDto[] }>(`${wsBase(wsId)}/intercom/forks${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.forks),
-      create: (wsId: string, input: ForkCreateInput) =>
-        request<{ fork: ForkDto }>(`${wsBase(wsId)}/intercom/forks`, { method: 'POST', body: JSON.stringify(input) }).then((b) => b.fork),
-      cancel: (wsId: string, id: string) =>
-        request<{ fork: ForkDto }>(`${wsBase(wsId)}/intercom/forks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.fork),
     },
   },
   tickets: {
@@ -799,6 +824,13 @@ export const api = {
     get: () => request<ModelCredentialSummary>('/api/model-credential'),
     save: (key: string | null) =>
       request<ModelCredentialSummary>('/api/model-credential', { method: 'POST', body: JSON.stringify({ key }) }),
+  },
+  // The optional OpenRouter key for Jev, the fast path for navigation commands.
+  // Same contract: the GET discloses presence and the last four only.
+  routerCredential: {
+    get: () => request<ModelCredentialSummary>('/api/router-credential'),
+    save: (key: string | null) =>
+      request<ModelCredentialSummary>('/api/router-credential', { method: 'POST', body: JSON.stringify({ key }) }),
   },
   // Self-hosted runners. Every call goes through the LOCAL server, which holds
   // the account token — the renderer never sees it.
