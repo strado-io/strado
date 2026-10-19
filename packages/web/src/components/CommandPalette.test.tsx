@@ -1,4 +1,4 @@
-import { act, render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render as rtlRender, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CommandPalette, releaseKeyboard } from './CommandPalette';
 import { api, type RemoteWorktree } from '../api';
@@ -76,9 +76,11 @@ describe('CommandPalette', () => {
     vi.spyOn(api.worktrees, 'list').mockResolvedValue([wt('/other/FD-9', 'FD-9', 'ads work')]);
     const h = setup();
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
-    await waitFor(() => expect(screen.getByText('FD-9')).toBeInTheDocument());
+    // The box (a textarea) holds "FD-9" too: look in the popover.
+    const pop = () => within(screen.getByTestId('command-bar-popover'));
+    await waitFor(() => expect(pop().getByText('FD-9')).toBeInTheDocument());
     expect(screen.getByText(/Client X · switch & open/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText('FD-9'));
+    fireEvent.click(pop().getByText('FD-9'));
     expect(h.onOpenWorktree).toHaveBeenCalledWith(expect.objectContaining({ path: '/other/FD-9' }), 'other');
     vi.restoreAllMocks();
   });
@@ -165,6 +167,6 @@ describe('CommandPalette runner worktrees', () => {
     expect(screen.queryByText('Worktrees')).toBeNull();
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-1' } });
     expect(screen.getByText('Worktrees')).toBeInTheDocument();
-    expect(screen.getByText('FD-1')).toBeInTheDocument();
+    expect(within(screen.getByTestId('command-bar-popover')).getByText('FD-1')).toBeInTheDocument();
   });
 });

@@ -61,20 +61,55 @@ const MODE_WORD: Record<string, TabMode> = { claude: 'claude', codex: 'codex', o
 
 const AGENT_KIND: Record<string, TabMode | 'agent'> = { claude: 'claude', codex: 'codex', opencode: 'opencode', pi: 'pi', agent: 'agent' };
 
-const worktreeByName = (ctx: ParseContext, name: string) => {
-  const n = name.toLowerCase();
-  return ctx.worktrees.find((x) => [x.name, x.branch, x.ticketKey].some((v) => v?.toLowerCase() === n))
-    ?? ctx.worktrees.find((x) => (x.path.split('/').pop() ?? '').toLowerCase() === n);
-};
+const baseName = (path: string) => path.split('/').filter(Boolean).pop() ?? path;
+const namesCache = new WeakMap<ParseContext['worktrees'], Map<string, string>>();
+
+/** Every worktree's unique context name: its plain name (ticket, branch or
+ * directory) when no other worktree shares it, else "<repo>/<name>" for each
+ * one that does (the parent directory when the repo is unknown). */
+/** Context names arrive unique from the app (jarvisContext): the plain name,
+ * or "<repo>/<name>" where several worktrees share it. Taken as given. */
+export function worktreeNames(ctx: ParseContext): Map<string, string> {
+  const hit = namesCache.get(ctx.worktrees);
+  if (hit) return hit;
+  const out = new Map(ctx.worktrees.map((w) => [w.path, w.name || baseName(w.path)] as const));
+  namesCache.set(ctx.worktrees, out);
+  return out;
+}
+export const worktreeLabel = (ctx: ParseContext, path: string): string => worktreeNames(ctx).get(path) ?? baseName(path);
+
+export type WorktreeFound = { kind: 'ok'; path: string } | { kind: 'ambiguous'; paths: string[] } | { kind: 'none' };
+/** A worktree by name: its unique context name; else its plain name, branch,
+ * ticket or directory when only one worktree has it; else a repo name when
+ * that repo has exactly one worktree. Several matches are never guessed. */
+export function findWorktree(ctx: ParseContext, name: string): WorktreeFound {
+  const n = name.trim().replace(/^#/, '').toLowerCase();
+  if (!n) return { kind: 'none' };
+  const names = worktreeNames(ctx);
+  const exact = ctx.worktrees.find((w) => names.get(w.path)?.toLowerCase() === n);
+  if (exact) return { kind: 'ok', path: exact.path };
+  const pick = (list: ParseContext['worktrees']): WorktreeFound | null =>
+    list.length === 1 ? { kind: 'ok', path: list[0]!.path } : list.length > 1 ? { kind: 'ambiguous', paths: list.map((w) => w.path) } : null;
+  return pick(ctx.worktrees.filter((w) => [w.name, w.branch, w.ticketKey, baseName(w.path)].some((v) => v?.toLowerCase() === n)))
+    ?? pick(ctx.worktrees.filter((w) => w.repoName?.toLowerCase() === n))
+    ?? { kind: 'none' };
+}
 
 /** "wt/name": the context seen from that worktree (its focus and "it" only
  * if they are there), or null when `phrase` has no known worktree prefix. */
 function scoped(phrase: string, ctx: ParseContext): { ctx: ParseContext; rest: string; path: string } | null {
-  const m = /^([^/\s]+)\/(\S.*)$/.exec(phrase.trim());
-  const wt = m ? worktreeByName(ctx, m[1]!) : undefined;
-  if (!m || !wt) return null;
-  const inside = (r: TabRef | null) => (r && r.worktreePath === wt.path ? r : null);
-  return { ctx: { ...ctx, currentWorktree: wt.path, focused: inside(ctx.focused), lastActedOn: inside(ctx.lastActedOn) }, rest: m[2]!, path: wt.path };
+  // The longest prefix that names one worktree: names may hold spaces and a
+  // slash of their own ("Strado Website/main/claude-1").
+  const p = phrase.trim();
+  for (let i = p.lastIndexOf('/'); i > 0; i = p.lastIndexOf('/', i - 1)) {
+    const rest = p.slice(i + 1).trim();
+    const found = rest ? findWorktree(ctx, p.slice(0, i)) : null;
+    if (found?.kind !== 'ok') continue;
+    const path = found.path;
+    const inside = (r: TabRef | null) => (r && r.worktreePath === path ? r : null);
+    return { ctx: { ...ctx, currentWorktree: path, focused: inside(ctx.focused), lastActedOn: inside(ctx.lastActedOn) }, rest, path };
+  }
+  return null;
 }
 
 /** A bare kind ("claude", "the agent", "shell") picks among this worktree's
@@ -243,7 +278,7 @@ function summarize(ctx: ParseContext, s: Step): string {
     case 'shell.run': return `Run ${s.args.command} in ${name}`;
     case 'browser.open': return `Open ${s.args.url}${s.args.place && s.args.place.split !== 'tab' ? ` ${placeLabel(ctx, s.args.place)}` : ''}`;
     case 'agent.message': return `Ask ${agentName(ctx, s.args.agentId)}: ${s.args.text}`;
-    case 'nav.worktree': return `Go to ${ctx.worktrees.find((w) => w.path === s.args.path)?.name ?? s.args.path}`;
+    case 'nav.worktree': return `Go to ${worktreeLabel(ctx, s.args.path)}`;
     case 'nav.focus': return `Go to Focus ${ctx.focuses.find((f) => f.id === s.args.focusId)?.name ?? s.args.focusId}`;
     case 'nav.workspace': return `Switch to workspace ${ctx.workspaces?.find((w) => w.id === s.args.wsId)?.name ?? s.args.wsId}`;
     case 'nav.repo': return `Go to repo ${ctx.repos?.find((r) => r.path === s.args.repoPath)?.name ?? s.args.repoPath}`;
@@ -260,12 +295,12 @@ function summarize(ctx: ParseContext, s: Step): string {
     case 'nav.page': return `Open ${PAGE_LABEL[s.args.page]}`;
     case 'settings.open': return `Open Settings → ${s.args.section}`;
     case 'agent.ask': return `Ask ${agentName(ctx, s.args.agentId)}: ${s.args.question}`;
-    case 'agent.recap': return s.args.agentIds === 'all' ? 'Recap all agents' : `Recap ${s.args.agentIds.map((id) => agentName(ctx, id)).join(', ')}`;
+    case 'agent.recap': return s.args.focus ? `Recap the agents in ${s.args.focus}` : s.args.agentIds === 'all' ? 'Recap all agents' : `Recap ${s.args.agentIds.map((id) => agentName(ctx, id)).join(', ')}`;
     case 'ui.sidebar': return `${s.args.show === null ? 'Toggle' : s.args.show ? 'Show' : 'Hide'} the sidebar`;
     case 'focus.edit': {
       const a = s.args;
       const focus = ctx.focuses.find((f) => f.id === a.focusId)?.name ?? a.focusId ?? '';
-      const names = a.worktreePaths.map((p) => ctx.worktrees.find((w) => w.path === p)?.name ?? p.split('/').pop() ?? p).join(', ');
+      const names = a.worktreePaths.map((p) => worktreeLabel(ctx, p)).join(', ');
       if (a.op === 'create') return `Create Focus ${a.name}${names ? ` (${names})` : ''}`;
       if (a.op === 'rename') return `Rename Focus ${focus} to ${a.name}`;
       if (a.op === 'delete') return `Delete Focus ${focus}`;

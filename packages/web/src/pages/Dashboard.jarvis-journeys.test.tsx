@@ -17,9 +17,10 @@ vi.mock('../hooks/useWorkspace', () => ({
 }));
 // Dashboard now reads intercom state for the escalation badge/notification;
 // these tests don't exercise Intercom, so stub a quiet, "loaded" context.
+const intercomPeers = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: [], tasks: [], peers: [], loaded: true, error: null,
+    escalations: [], tasks: [], peers: intercomPeers.list, loaded: true, error: null,
     refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
     assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
   }),
@@ -61,7 +62,8 @@ vi.mock('../api', () => ({
         hasClaudeSession: true, claudeSessions: ['1', '2'] },
       { path: '/wt/master', repoId: 'r1', branch: 'master', meta: {}, process: { status: 'idle' }, tracked: true },
       { path: '/wt/main', repoId: 'r1', branch: 'main', meta: {}, process: { status: 'idle' }, tracked: true },
-    ]), start: vi.fn().mockResolvedValue({ status: 'starting' }), stop: vi.fn().mockResolvedValue({ status: 'stopping' }) },
+    ]), start: vi.fn().mockResolvedValue({ status: 'starting' }), stop: vi.fn().mockResolvedValue({ status: 'stopping' }),
+    sessionBusy: vi.fn().mockResolvedValue({ busy: false }) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     intercom: {
       stations: vi.fn().mockResolvedValue([
@@ -101,9 +103,10 @@ vi.mock('../lib/jarvis/modelClient', async () => ({
 // The server side of a plan: spawning a tab answers with the new tab.
 const spawn = vi.hoisted(() => vi.fn());
 const message = vi.hoisted(() => vi.fn());
+const closeTab = vi.hoisted(() => vi.fn());
 vi.mock('../lib/jarvis/serverPort', async () => {
   const actual = await vi.importActual<typeof import('../lib/jarvis/serverPort')>('../lib/jarvis/serverPort');
-  return { ...actual, jarvisServerPort: (ws: string) => ({ ...actual.jarvisServerPort(ws), spawn: (...a: unknown[]) => spawn(...a), message: (...a: unknown[]) => message(...a) }) };
+  return { ...actual, jarvisServerPort: (ws: string) => ({ ...actual.jarvisServerPort(ws), spawn: (...a: unknown[]) => spawn(...a), message: (...a: unknown[]) => message(...a), close: (...a: unknown[]) => closeTab(...a) }) };
 });
 // The hub registers itself for the box, as the real one does once it is up.
 const hubPlace = vi.hoisted(() => vi.fn());
@@ -293,7 +296,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     expect(screen.getByTestId('settings-page')).toBeInTheDocument();
   });
 
-  it('voice: hold ⌥Space on home, speak, release → the request runs as if typed', async () => {
+  it('voice: hold ⌥Space on home, speak, release → the words wait in the box; ⏎ runs them as if typed', async () => {
     let listener: ((e: StradoVoiceEvent) => void) | null = null;
     const voice = {
       available: true, start: vi.fn(), stop: vi.fn(), cancel: vi.fn(),
@@ -313,7 +316,13 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       fireEvent.keyUp(window, { key: ' ', code: 'Space' });
       expect(voice.stop).toHaveBeenCalled();
       act(() => { listener?.({ type: 'final', text: 'open FD-9' }); });
+      expect(box()).toHaveValue('open FD-9');
+      // The model may be asked ahead (so ⏎ is quick), but nothing runs until ⏎.
+      await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+      expect(screen.queryByTestId('inline-hub')).toBeNull();
+      fireEvent.keyDown(box(), { key: 'Enter' });
       expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
+      expect(askModel).toHaveBeenCalledTimes(1); // ⏎ reused the early answer
       expect(askModel).toHaveBeenCalledWith('default', expect.objectContaining({ text: 'open FD-9' }), expect.anything());
     } finally {
       delete (window as unknown as { strado?: unknown }).strado;
@@ -371,6 +380,50 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     await waitFor(() => expect(fakeFocuses.api.update).toHaveBeenCalledWith('default', 'f1', { removeMembers: ['local:/wt/main'] }));
     await waitFor(() => expect(focusSection().queryAllByText('main')).toHaveLength(0));
     expect(focusSection().getAllByText('master')).not.toHaveLength(0);
+  });
+
+  it('home, nothing open: "close the shell in master" closes that worktree\'s shell (off screen, from the registry): verified, then the server closes that exact tab', async () => {
+    intercomPeers.list = [{ agentId: 'shell-1@app', alias: null, mode: 'shell', worktreePath: '/wt/master', sessionId: '1', executionId: 'X1', lifecycle: 'idle', live: true }];
+    closeTab.mockReset().mockResolvedValue({ ok: true });
+    askModel.mockResolvedValueOnce(plan({ action: 'tab.close', args: { tab: 'master/shell-1' } }));
+    try {
+      renderDashboard();
+      await home();
+      await say('close the shell in master');
+      await waitFor(() => expect(closeTab).toHaveBeenCalledWith(expect.objectContaining({ worktreePath: '/wt/master', mode: 'shell', sessionId: '1' })));
+      expect(screen.queryByRole('alert')).toBeNull(); // no "that tab moved" verify failure
+      expect(screen.queryByTestId('inline-hub')).toBeNull(); // nothing had to open
+    } finally {
+      intercomPeers.list = [];
+    }
+  });
+
+  describe('the sidebar stays as the user left it', () => {
+    const sidebar = () => screen.queryByRole('region', { name: 'Focus' });
+
+    it('open in a worktree whose last session goes away (the hub closes itself): still open on home', async () => {
+      localStorage.setItem('strado:sidebar-collapsed:v2', '0');
+      renderDashboard();
+      await openFd9FromHome();
+      await waitFor(() => expect(sidebar()).not.toBeNull());
+      // TerminalView calls onClose when no session remains (an empty worktree).
+      fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
+      await home();
+      expect(sidebar()).not.toBeNull();
+    });
+
+    it('hidden stays hidden too; only the user\'s toggle (⌘B) changes it, and it is remembered', async () => {
+      localStorage.setItem('strado:sidebar-collapsed:v2', '1');
+      renderDashboard();
+      await openFd9FromHome();
+      expect(sidebar()).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
+      await home();
+      expect(sidebar()).toBeNull();
+      fireEvent.keyDown(window, { key: 'b', metaKey: true });
+      expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+      expect(localStorage.getItem('strado:sidebar-collapsed:v2')).toBe('0');
+    });
   });
 
   describe('home has one command area (no Dock strip)', () => {
@@ -440,6 +493,36 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       if (!screen.queryByRole('navigation', { name: 'Pages' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
       return within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Worktrees' });
     };
+
+    const worktreesNav = () => within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Worktrees' });
+    it('the highlight and the page agree: home highlights no page; the Worktrees list highlights Worktrees', async () => {
+      localStorage.setItem('strado:sidebar-collapsed:v2', '0');
+      renderDashboard();
+      await home();
+      expect(worktreesNav()).not.toHaveAttribute('aria-current');
+      fireEvent.click(worktreesNav());
+      await waitFor(() => expect(hero()).toBeNull());
+      expect(worktreesNav()).toHaveAttribute('aria-current', 'page');
+    });
+
+    it('a worktree whose last tab closes lands where you came from, with the highlight to match', async () => {
+      localStorage.setItem('strado:sidebar-collapsed:v2', '0');
+      renderDashboard();
+      // From home: back on home, nothing highlighted.
+      await openFd9FromHome();
+      fireEvent.click(screen.getByRole('button', { name: '‹ Back' })); // TerminalView's onClose (no session left)
+      await home();
+      expect(worktreesNav()).not.toHaveAttribute('aria-current');
+      // From the Worktrees list: back on the list, Worktrees highlighted.
+      fireEvent.click(worktreesNav());
+      await waitFor(() => expect(hero()).toBeNull());
+      fireEvent.click(within(screen.getByRole('main')).getAllByText('FD-9')[0]!);
+      await screen.findByTestId('inline-hub');
+      fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
+      await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
+      expect(hero()).toBeNull();
+      expect(worktreesNav()).toHaveAttribute('aria-current', 'page');
+    });
 
     it('app start with nothing open: home', async () => {
       renderDashboard();
@@ -550,6 +633,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
         act(() => { listener?.({ type: 'partial', text: 'Can you open the sidebar' }); });
         fireEvent.keyUp(window, { key: ' ', code: 'Space' });
         act(() => { listener?.({ type: 'final', text: 'Can you open the sidebar' }); });
+        fireEvent.keyDown(box(), { key: 'Enter' });
         expect(await screen.findByText('The sidebar is the list on the left.')).toBeInTheDocument();
       } finally {
         delete (window as unknown as { strado?: unknown }).strado;

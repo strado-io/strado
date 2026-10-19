@@ -121,7 +121,8 @@ export type ActionArgs = {
   'agent.ask': { agentId: string; question: string };
   /** What an agent is doing / has done (or every agent), read from saved turns. */
   /** `question`: the user's own words, so the answer fits what they asked. */
-  'agent.recap': { agentIds: string[] | 'all'; question?: string | null };
+  /** `focus`: the Focus the agents were gathered from ("what are the agents in this focus doing"). */
+  'agent.recap': { agentIds: string[] | 'all'; question?: string | null; focus?: string };
 };
 
 export type Risk = 'read' | 'layout' | 'spawn' | 'exec' | 'destructive';
@@ -192,6 +193,8 @@ export type TabInfo = TabRef & {
   /** Hub-local identity of what occupies the slot; changes when the tab is
    * closed and its number reused. Covers tabs without a registry executionId. */
   instance?: string;
+  /** In the hub strip on screen; false for a live tab in another worktree (from the registry). */
+  onScreen?: boolean;
 };
 
 export type ParseContext = {
@@ -203,8 +206,11 @@ export type ParseContext = {
   /** The worktree the hub shows, if any. */
   currentWorktree: string | null;
   /** `lastUsedAt` (ms) orders them most recent first for the model (home's Recent). */
-  worktrees: { path: string; name: string; branch?: string | null; ticketKey?: string | null; lastUsedAt?: number }[];
-  focuses: { id: string; name: string }[];
+  worktrees: { path: string; name: string; branch?: string | null; ticketKey?: string | null; lastUsedAt?: number; /** The owning repo's display name. */ repoName?: string | null }[];
+  /** `worktreePaths`: the Focus's member worktrees. */
+  focuses: { id: string; name: string; worktreePaths?: string[] }[];
+  /** The Focus open in this window ("this focus"), else null. */
+  currentFocus?: { id: string; name: string } | null;
   workspaces?: { id: string; name: string }[];
   repos?: { path: string; name: string }[];
   /** package.json scripts of the current worktree (name → command). */

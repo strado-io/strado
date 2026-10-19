@@ -241,15 +241,15 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
   });
 
-  it('home always shows without the sidebar, even when it is stored open; ⌘B opens it there, without storing it', async () => {
+  it('home shows the sidebar as the user left it (stored open stays open); ⌘B toggles it there and remembers', async () => {
     renderDashboard(); // beforeEach stored the sidebar open
     await home();
+    expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'b', metaKey: true });
     expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    expect(localStorage.getItem('strado:sidebar-collapsed:v2')).toBe('1');
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
-    expect(localStorage.getItem('strado:sidebar-collapsed:v2')).toBe('0');
-    fireEvent.keyDown(window, { key: 'b', metaKey: true });
-    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
   });
 
   it('landing on home by a sidebar action (a Focus switch) keeps the sidebar; landing any other way (Back) hides it', async () => {
@@ -270,14 +270,14 @@ describe('Dashboard inline hub', () => {
     expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 
-  it('Back from the hub lands on home with the sidebar hidden', async () => {
+  it('Back from the hub lands on home with the sidebar as it was (open stays open)', async () => {
     renderDashboard();
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
     fireEvent.pointerDown(screen.getByRole('button', { name: '‹ Back' }));
     fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
     await home();
-    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 
   it('the sidebar starts hidden on the first run of this build, even with a stored "open" from before', async () => {

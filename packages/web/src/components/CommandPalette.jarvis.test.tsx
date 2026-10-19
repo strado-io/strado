@@ -50,6 +50,10 @@ function stubParse({ text, pasted }: { text: string; pasted?: boolean }): Plan {
   ], { summary: 'Run ls, then focus claude' });
   if (t === '@claude-1 how are you') return plan([step('agent.message', { agentId: 'claude-1@a', text: 'how are you' }, { where: 'server', risk: 'exec', undoable: false })], { source: 'prefix', summary: 'Ask claude-1: how are you' });
   if (t === 'ask claude-1 if the tests pass') return plan([step('agent.ask', { agentId: 'claude-1@a', question: 'do the tests pass?' }, { where: 'server', risk: 'exec', undoable: false })], { source: 'model', summary: 'Ask claude-1: do the tests pass?' });
+  if (t === 'ask the claudes in this focus if their tests pass') return plan([
+    step('agent.ask', { agentId: 'claude-1@a', question: 'do your tests pass?' }, { where: 'server', risk: 'exec', undoable: false }),
+    step('agent.ask', { agentId: 'claude-2@b', question: 'do your tests pass?' }, { where: 'server', risk: 'exec', undoable: false }),
+  ], { source: 'model', summary: 'Ask 2 agents' });
   if (t === 'what is claude-1 doing') return plan([step('agent.recap', { agentIds: ['claude-1@a'] }, { where: 'server', risk: 'read', undoable: false })], { source: 'model', summary: 'Recap claude-1' });
   if (t === 'make it pop') return plan([step('agent.message', { agentId: 'claude-1@a', text: 'make it pop' }, { where: 'server', risk: 'exec', undoable: false, chips: [{ arg: 'agentId', label: 'Ask claude-1', candidates: [] }] })], { source: 'fallback', summary: 'Ask claude-1: make it pop' });
   if (t === 'close tab') {
@@ -377,6 +381,29 @@ describe('CommandPalette — asking agents, and recaps', () => {
     s.key('Enter');
     expect(await screen.findByRole('alert')).toHaveTextContent('No agent claude-9 here');
     expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
+  it('asking several (a Focus): one line per agent; each answer replaces its own line as it arrives', async () => {
+    const s = setup();
+    s.server.message
+      .mockResolvedValueOnce({ delivered: 'sent', id: 'q1', ask: true, to: { agentId: 'claude-1@a', alias: null } })
+      .mockResolvedValueOnce({ delivered: 'queued', id: 'q2', ask: true, to: { agentId: 'claude-2@b', alias: null } });
+    feed.mockImplementation(async (_ws: string, o: { agent: string }) => o.agent === 'claude-1@a'
+      ? [{ id: 'r1', from: { agentId: 'claude-1@a' }, to: 'human', kind: 'reply', body: 'Yes, all 40 pass.', createdAt: 2 }]
+      : [{ id: 'r2', from: { agentId: 'claude-2@b' }, to: 'human', kind: 'reply', body: '2 fail in auth.', createdAt: 3 }]);
+    s.type('ask the claudes in this focus if their tests pass');
+    s.key('Enter');
+    expect(await screen.findByText(/Asked claude-1, the answer will show here/)).toHaveTextContent('claude-2 is busy, it’ll answer after this turn');
+    await answerArrives();
+    const box = await screen.findByText(/claude-1: Yes, all 40 pass\./);
+    expect(box).toHaveTextContent('claude-2 is busy, it’ll answer after this turn');
+    await act(async () => {
+      sse.handler?.({ type: 'message.queued', data: { scopeId: 's', id: 'r2', from: 'claude-2@b', to: 'human', kind: 'reply', replyTo: 'q2' } });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const both = await screen.findByText(/claude-2: 2 fail in auth\./);
+    expect(both).toHaveTextContent('claude-1: Yes, all 40 pass.');
+    expect(both).not.toHaveTextContent('Asked');
   });
 
   it('an ask to a busy agent says it will answer after this turn', async () => {

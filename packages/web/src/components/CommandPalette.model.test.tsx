@@ -141,7 +141,7 @@ describe('CommandPalette — natural language', () => {
     expect(s.asks[1]!.text).toBe('yes');
   });
 
-  it('voice: a pause while still holding asks early; a final with the same words reuses that answer (no second ask)', async () => {
+  it('voice: a pause while still holding asks early; ⏎ on a final with the same words reuses that answer (no second ask)', async () => {
     const v = fakeVoice();
     const s = setup({}, v.bridge);
     fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
@@ -151,13 +151,15 @@ describe('CommandPalette — natural language', () => {
     expect(s.asks[0]!.text).toBe('put the dev server under claude');
     fireEvent.keyUp(window, { key: ' ', code: 'Space' });
     v.emit({ type: 'final', text: 'Put the dev server under Claude.' }); // same words once normalised
+    expect(s.asks).toHaveLength(1);
+    s.key('Enter'); // a voice request waits for ⏎
     await answer(s.asks[0]!, { kind: 'plan', steps: [{ action: 'tab.open', args: {} }], model: 'typesafe/jev-1.14', ms: 400 });
     await waitFor(() => expect(s.server.spawn).toHaveBeenCalledTimes(1));
     expect(s.asks).toHaveLength(1);
     expect(s.asks[0]!.signal.aborted).toBe(false);
   });
 
-  it('voice: a final that differs from the early ask drops it and asks with the final text', async () => {
+  it('voice: a final that differs from the early ask drops it and asks ahead with the final text; ⏎ uses that (no third ask)', async () => {
     const v = fakeVoice();
     const s = setup({}, v.bridge);
     fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
@@ -170,6 +172,10 @@ describe('CommandPalette — natural language', () => {
     await waitFor(() => expect(s.asks).toHaveLength(2));
     expect(s.asks[0]!.signal.aborted).toBe(true);
     expect(s.asks[1]!.text).toBe('put the dev server under claude');
+    s.key('Enter');
+    await answer(s.asks[1]!, { kind: 'plan', steps: [{ action: 'tab.open', args: {} }], model: 'typesafe/jev-1.14', ms: 400 });
+    await waitFor(() => expect(s.server.spawn).toHaveBeenCalledTimes(1));
+    expect(s.asks).toHaveLength(2);
   });
 
   it('voice: an error mid-talk (the mic went away) drops the early ask too', async () => {

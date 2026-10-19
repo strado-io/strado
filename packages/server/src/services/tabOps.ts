@@ -89,12 +89,16 @@ export function createTabOps(app: FastifyInstance) {
     spawnedAt.delete(key);
   }
 
-  /** Wait until a fresh shell has stopped printing (profile, banner), bounded. */
+  /** Wait until a fresh shell has printed (its prompt) and then stopped
+   * printing (profile, banner), bounded. Nothing printed yet is not quiet: a
+   * slow profile that prints nothing would otherwise get the command typed
+   * before its prompt, where it can be lost. */
   async function shellSettled(key: string): Promise<void> {
     const start = Date.now();
     await sleep(SHELL_SETTLE_QUIET_MS);
     while (Date.now() - start < SHELL_SETTLE_MAX_MS) {
-      if (app.deps.ptyActivity.quiet(key).output >= SHELL_SETTLE_QUIET_MS) return;
+      const { output } = app.deps.ptyActivity.quiet(key);
+      if (output !== Infinity && output >= SHELL_SETTLE_QUIET_MS) return;
       await sleep(100);
     }
   }

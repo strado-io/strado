@@ -508,29 +508,10 @@ export function Dashboard(props: {
   const [homeAll, setHomeAll] = useState(false);
   const onHome = !selectedRemote && !(selectedPath && state.worktrees.some((w) => w.path === selectedPath))
     && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0 && !homeAll;
-  // Home never shows the sidebar on its own (its Focus rows read as "a worktree
-  // is open"); ⌘B or the open button shows it there for this visit, unstored.
-  // Landing on home BY a sidebar action (a Focus switch…) keeps it: never hide
-  // what is under the user's hand.
-  const [homeSidebar, setHomeSidebar] = useState(false);
-  // Was the last pointer/key press in the sidebar (or a popover it opened)?
-  // The document clears it first; the sidebar's React capture handler (which
-  // portals bubble through) sets it after.
-  const lastInSidebarRef = useRef(false);
-  useEffect(() => {
-    const clear = () => { lastInSidebarRef.current = false; };
-    document.addEventListener('pointerdown', clear, true);
-    document.addEventListener('keydown', clear, true);
-    return () => { document.removeEventListener('pointerdown', clear, true); document.removeEventListener('keydown', clear, true); };
-  }, []);
-  const [prevOnHome, setPrevOnHome] = useState(onHome);
-  if (prevOnHome !== onHome) {
-    setPrevOnHome(onHome);
-    setHomeSidebar(onHome && !sidebarCollapsed && lastInSidebarRef.current);
-  }
-  const sidebarHidden = onHome ? !homeSidebar : sidebarCollapsed;
-  const onHomeRef = useRef(onHome);
-  onHomeRef.current = onHome;
+  // The sidebar is where the user left it, everywhere (home included): only
+  // their own toggle changes it (⌘B, its buttons, the box's "hide the
+  // sidebar"). A hub closing itself (its last session gone) must not hide it.
+  const sidebarHidden = sidebarCollapsed;
 
   // Collapsing the sidebar unmounts it, and with it the space chord's own
   // listener — while the shell keeps intercepting the chord inside embeds and
@@ -551,8 +532,7 @@ export function Dashboard(props: {
       // ⌘B: left sidebar
       if (e.key.toLowerCase() === 'b') {
         e.preventDefault();
-        if (onHomeRef.current) setHomeSidebar((v) => !v);
-        else setSidebarCollapsed((prev) => !prev);
+        setSidebarCollapsed((prev) => !prev);
       } else if (e.key.toLowerCase() === 'k') {
         e.preventDefault();
         focusCommandBar();
@@ -927,12 +907,8 @@ export function Dashboard(props: {
       // Settings open: show the new value there.
       if (settingsOpenRef.current) setSettingsNonce((n) => n + 1);
     },
-    // The same state ⌘B and the collapse/open buttons use (home's is per visit).
-    sidebar: (show) => {
-      const next = show ?? sidebarHidden;
-      if (onHome) setHomeSidebar(next);
-      else setSidebarCollapsed(!next);
-    },
+    // The same state ⌘B and the collapse/open buttons use.
+    sidebar: (show) => setSidebarCollapsed(!(show ?? sidebarHidden)),
     // Focus edits go through the sidebar's own calls: a new Focus becomes the
     // active one, and deleting the active one leaves none active.
     focus: async ({ op, focusId, name, worktreePaths }) => {
@@ -1022,7 +998,7 @@ export function Dashboard(props: {
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
       {!sidebarHidden && (
-        <div className="contents" onPointerDownCapture={() => { lastInSidebarRef.current = true; }} onKeyDownCapture={() => { lastInSidebarRef.current = true; }}>
+        <div className="contents">
         <Sidebar
           repos={state.repos}
           worktrees={state.worktrees}
@@ -1032,11 +1008,12 @@ export function Dashboard(props: {
           onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
           onRebuildSandbox={(w) => props.onRebuildSandbox?.(w)}
           onOpenRemoteWorktree={openRemoteWorktree}
-          selected={activeView}
+          // Home is no page: nothing in the page row is current there.
+          selected={onHome ? null : activeView}
           onSelect={(view) => { selectView(view); if (view.kind === 'worktrees') setHomeAll(true); }}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
-          onCollapse={() => (onHome ? setHomeSidebar(false) : setSidebarCollapsed(true))}
+          onCollapse={() => setSidebarCollapsed(true)}
           onAddRepo={(anchor) => {
             setAddRepoAnchor(anchor ?? null);
             setShowAddRepo(true);
@@ -1170,7 +1147,7 @@ export function Dashboard(props: {
                 onNewWorktree={() => props.onNewWorktree()}
                 onWaiting={() => setDockPanel({ kind: 'line' })}
                 sidebarCollapsed={sidebarHidden}
-                onExpandSidebar={() => setHomeSidebar(true)}
+                onExpandSidebar={() => setSidebarCollapsed(false)}
               />
               ) : (
               <WorktreesPage

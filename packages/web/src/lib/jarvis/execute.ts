@@ -221,7 +221,12 @@ export async function runPlan(plan: { steps: Step[] }, ports: JarvisPorts): Prom
           const h = hub();
           const tab = targetOf(s);
           beforeLayout(h);
-          if (!h.focus(tab)) fail('That tab is not open here');
+          // A worktree just brought up shows its tabs a moment later.
+          let ok = h.focus(tab);
+          for (const until = Date.now() + HUB_STEP_BUDGET_MS; !ok && broughtUp.has(h.path) && Date.now() < until; ok = h.focus(tab)) {
+            await new Promise((r) => setTimeout(r, SHELL_LIVE_POLL_MS));
+          }
+          if (!ok) fail('That tab is not open here');
           lastActedOn = tab;
           break;
         }
@@ -268,6 +273,11 @@ export async function runPlan(plan: { steps: Step[] }, ports: JarvisPorts): Prom
           break;
         }
         case 'agent.recap': {
+          // A Focus with no agents in it: that is the answer, no model call.
+          if (Array.isArray(s.args.agentIds) && s.args.agentIds.length === 0) {
+            answers.push(`No agents are running in ${s.args.focus ?? 'that Focus'}.`);
+            break;
+          }
           const r = await (ports.server.recap ?? fail('Recaps are not available here'))(s.args.agentIds, s.args.question);
           if (r && typeof r.text === 'string' && r.text.trim()) answers.push(r.text.trim());
           break;

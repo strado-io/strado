@@ -37,7 +37,7 @@ export function Dock({ worktree, worktreePath, onBrowse, stations, onOpenStation
   if (bare) return <div ref={ref} data-testid="dock-panel-anchor" className="relative h-0 shrink-0">{panel}</div>;
   const label = worktree ? [worktree.name, worktree.branch !== worktree.name ? worktree.branch : null].filter(Boolean).join(' · ') : null;
   return (
-    <div ref={ref} data-testid="dock" className="relative flex h-9 shrink-0 items-center gap-2 border-t border-zinc-900 bg-zinc-950 px-4">
+    <div ref={ref} data-testid="dock" className="relative flex min-h-9 shrink-0 items-center gap-2 border-t border-zinc-900 bg-zinc-950 px-4 py-0.5">
       {panel}
       <button
         type="button"
