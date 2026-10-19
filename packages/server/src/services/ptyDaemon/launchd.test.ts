@@ -36,6 +36,8 @@ describe('launchd job definition', () => {
     expect(text).toContain('<string>/opt/node</string>');
     expect(text).toContain('<string>/state/ptyd/bin/ptyd.cjs</string>');
     expect(text).toContain(`<string>--socket=${stateDir}/ptyd/ptyd.sock</string>`);
+    // launchd makes the daemon its own responsible process: it must not re-home.
+    expect(text).toContain('<string>--responsible</string>');
     expect(text).toContain(`<key>StandardErrorPath</key><string>${stateDir}/ptyd/ptyd.log</string>`);
     expect(text).toContain('<key>PATH</key><string>/usr/bin:/bin</string>');
     expect(text).not.toContain('hunter2');

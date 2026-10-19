@@ -122,7 +122,7 @@ describe('ACTION_IDS', () => {
   it('matches the server registry', () => {
     expect(ACTION_IDS).toEqual(['nav.worktree', 'nav.focus', 'nav.workspace', 'nav.repo', 'tab.open', 'tab.place', 'tab.focus', 'tab.close',
       'tab.interrupt', 'shell.run', 'browser.open', 'agent.message', 'agent.wait', 'ui.state', 'server.start', 'server.stop',
-      'call.answer', 'call.dismiss', 'nav.line', 'nav.addRepo', 'nav.newWorktree', 'nav.page', 'settings.open', 'settings.set', 'focus.edit', 'ui.sidebar', 'agent.ask', 'agent.recap']);
+      'call.answer', 'call.dismiss', 'nav.line', 'nav.addRepo', 'nav.newWorktree', 'nav.page', 'settings.open', 'settings.set', 'focus.edit', 'ui.sidebar', 'agent.ask', 'agent.recap', 'tab.rename']);
   });
 });
 

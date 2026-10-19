@@ -284,7 +284,16 @@ export function adoptFromFd(opts: AdoptOptions): Pty {
       if (exited) { cb(exitCode); return; }
       exitCbs.push(cb);
     },
-    pause() { if (!exited && !disposed) reader.pause(); },
+    // A paused stream alone keeps libuv reading into its buffer (up to the
+    // high-water mark): during a handoff those bytes would be read here and
+    // lost with this process. Stop the reads at the handle, as Node does for
+    // its own buffered sockets; resume() restarts them through _read.
+    pause() {
+      if (exited || disposed) return;
+      reader.pause();
+      const handle = (reader as unknown as { _handle?: { reading?: boolean; readStop?: () => number } })._handle;
+      if (handle?.reading && handle.readStop) { handle.reading = false; handle.readStop(); }
+    },
     resume() { if (!exited && !disposed) reader.resume(); },
     getMasterFd() {
       if (disposed || exited) throw new Error('adopted pty disposed');

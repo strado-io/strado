@@ -4,6 +4,7 @@
 // testable — the palette wires the real ones.
 import type { UiTabRef } from '../../api';
 import { applyStoredPlace } from '../uiCommands';
+import { readShellNames, renameSession, sessionNameKey, type NamedSessionMode } from '../../hooks/shellNames';
 import type { ActionArgs, AppPage, Place, SettingId, SettingsSectionId, Split, Step, TabRef, Target } from './types';
 
 /** A placement with its anchor resolved to a tab (null = the focused pane). */
@@ -88,7 +89,8 @@ export type JarvisPorts = {
 };
 
 /** `restore` belongs to one worktree's layout (`path`) and only ever goes back onto a hub showing it. */
-export type UndoOp = { kind: 'restore'; path: string; snapshot: unknown } | { kind: 'close'; tab: TabRef } | { kind: 'closeLocal'; tab: TabRef };
+export type UndoOp = { kind: 'restore'; path: string; snapshot: unknown } | { kind: 'close'; tab: TabRef } | { kind: 'closeLocal'; tab: TabRef }
+  | { kind: 'rename'; tab: TabRef & { mode: NamedSessionMode }; name: string };
 export type RunResult = {
   ok: boolean;
   /** Steps that completed. */
@@ -248,6 +250,15 @@ export async function runPlan(plan: { steps: Step[] }, ports: JarvisPorts): Prom
           lastActedOn = null;
           break;
         }
+        case 'tab.rename': {
+          const tab = targetOf(s);
+          if (tab.mode === 'browser') fail('Only terminal and agent tabs can be renamed');
+          const named = tab as TabRef & { mode: NamedSessionMode };
+          undo.push({ kind: 'rename', tab: named, name: readShellNames()[sessionNameKey(tab.worktreePath, named.mode, tab.sessionId)] ?? '' });
+          renameSession(tab.worktreePath, named.mode, tab.sessionId, s.args.name);
+          lastActedOn = tab;
+          break;
+        }
         case 'tab.interrupt': {
           const tab = targetOf(s);
           await ports.server.interrupt(tab);
@@ -343,6 +354,8 @@ export async function runUndo(ops: UndoOp[], ports: Pick<JarvisPorts, 'hub' | 's
       ports.hub?.closeLocal(op.tab);
     } else if (op.kind === 'closeLocal') {
       ports.hub?.closeLocal(op.tab);
+    } else if (op.kind === 'rename') {
+      renameSession(op.tab.worktreePath, op.tab.mode, op.tab.sessionId, op.name);
     } else if (opts.restoreLayout !== false && ports.hub?.path === op.path) {
       ports.hub.restore(op.snapshot);
     }

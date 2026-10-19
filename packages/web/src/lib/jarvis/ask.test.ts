@@ -28,8 +28,8 @@ const m = (action: string, args: unknown) => planFromModel([{ action, args }], c
 const first = (p: Plan) => p.steps[0] as unknown as { action: string; args: Record<string, unknown>; needsConfirm: boolean; risk: string; where: string; undoable: boolean } | undefined;
 
 describe('agent.ask / agent.recap from the model', () => {
-  it('are in the registry, at the end', () => {
-    expect(ACTION_IDS.slice(-2)).toEqual(['agent.ask', 'agent.recap']);
+  it('are in the registry, before tab.rename', () => {
+    expect(ACTION_IDS.slice(-3, -1)).toEqual(['agent.ask', 'agent.recap']);
   });
   it('agent.ask resolves the agent like agent.message', () => {
     const p = m('agent.ask', { to: 'reviewer', question: 'do the tests pass?' });

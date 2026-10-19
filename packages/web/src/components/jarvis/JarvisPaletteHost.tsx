@@ -10,6 +10,7 @@ import { buildModelContext, planFromModel } from '../../lib/jarvis/model';
 import { askModel } from '../../lib/jarvis/modelClient';
 import { openWorktreeAndWait } from '../../lib/jarvis/openWorktree';
 import { voiceBridge } from '../../hooks/voice';
+import { readShellNames } from '../../hooks/shellNames';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { runUndo, type JarvisAppPort, type JarvisNavPort, type UndoOp } from '../../lib/jarvis/execute';
 import type { ParseContext, TabRef } from '../../lib/jarvis/types';
@@ -80,6 +81,7 @@ export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCo
       lru: readWorktreeLru(),
       focuses: p.focuses ?? [],
       activeFocusId: p.activeFocusId ?? null,
+      shellNames: readShellNames(),
       workspaces: p.workspaces,
       repos: p.repos,
       scripts: h ? jarvisServerPort(wsId).cachedScripts(h.path) : null,

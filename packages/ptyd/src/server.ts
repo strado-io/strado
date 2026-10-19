@@ -21,6 +21,9 @@ export interface PtydServerOptions {
   socketPath: string;
   daemonVersion: string;
   bufferCap?: number;
+  /** macOS: strado-disclaim. Successors are started through it, so each is
+   * its own "responsible process" for privacy grants (see main.ts). */
+  launcher?: string | null;
 }
 
 // Flow control: past this outbound backlog, pause the producing PTYs; the
@@ -478,12 +481,15 @@ export class PtydServer {
       `[ptyd] prepare-upgrade: spawning successor ${scriptPath} (sessions=${sessions.length})\n`,
     );
     let child: childProcess.ChildProcess;
+    const args = [...process.execArgv, scriptPath, '--handoff', `--snapshot=${snapshotPath}`, `--socket=${this.opts.socketPath}`];
+    const launcher = this.opts.launcher ?? null;
     try {
-      child = childProcess.spawn(
-        process.execPath,
-        [...process.execArgv, scriptPath, '--handoff', `--snapshot=${snapshotPath}`, `--socket=${this.opts.socketPath}`],
-        { stdio, detached: false },
-      );
+      // Through the launcher: the successor runs the runtime's real path (an
+      // update may have swapped the file behind our execPath), as its own
+      // responsible process. Fds and the IPC channel pass through its spawn.
+      child = launcher
+        ? childProcess.spawn(launcher, [realRuntime(), ...args, '--responsible', `--launcher=${launcher}`], { stdio, detached: false })
+        : childProcess.spawn(process.execPath, args, { stdio, detached: false });
     } catch (err) {
       resumeAll();
       clearSnapshot(snapshotPath);
@@ -506,6 +512,10 @@ export class PtydServer {
     // untouched; net.Server.close only stops the accept loop.
     this.handedOff = true;
     this.server.close();
+    // Release our copies of masters we ourselves adopted: this process lives
+    // on (macOS linger), and a reader left open here would race the
+    // successor for every byte the shells print from now on.
+    for (const s of live) s.pty.closeLocal?.();
 
     // The listener (and its socket file, via libuv) is gone — tell the
     // successor it can bind NOW instead of waiting for our full exit.
@@ -645,6 +655,11 @@ export class PtydServer {
     }
     throw lastErr ?? new Error('listenWithRetry timed out');
   }
+}
+
+/** The Node runtime's current real path (bin/node may be a link the update re-pointed). */
+function realRuntime(): string {
+  try { return fs.realpathSync(process.execPath); } catch { return process.execPath; }
 }
 
 const HANDOFF_ACK_TIMEOUT_MS = 5_000;

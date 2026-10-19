@@ -274,6 +274,7 @@ function summarize(ctx: ParseContext, s: Step): string {
     case 'tab.close': return `Close ${name}`;
     case 'tab.focus': return `Focus ${name}`;
     case 'tab.interrupt': return `Interrupt ${name}`;
+    case 'tab.rename': return s.args.name ? `Rename ${name} to "${s.args.name}"` : `Reset the name of ${name}`;
     case 'tab.place': return `Move ${name} ${placeLabel(ctx, s.args.place)}`;
     case 'shell.run': return `Run ${s.args.command} in ${name}`;
     case 'browser.open': return `Open ${s.args.url}${s.args.place && s.args.place.split !== 'tab' ? ` ${placeLabel(ctx, s.args.place)}` : ''}`;
@@ -319,6 +320,7 @@ export function planKey(p: Plan): string {
       case 'tab.open': return `tab.open:${s.args.mode}:${s.args.place?.split ?? ''}:${s.args.command ?? s.args.prompt ?? ''}`;
       case 'tab.place': return `tab.place:${tab(s.target)}:${s.args.place.split}`;
       case 'tab.focus': case 'tab.close': case 'tab.interrupt': return `${s.action}:${tab(s.target)}`;
+      case 'tab.rename': return `tab.rename:${tab(s.target)}:${s.args.name}`;
       case 'shell.run': return `shell.run:${s.args.command}`;
       case 'browser.open': return `browser.open:${s.args.url}`;
       case 'agent.message': case 'agent.wait': return `${s.action}:${s.args.agentId}`;

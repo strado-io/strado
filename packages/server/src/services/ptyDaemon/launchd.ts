@@ -70,6 +70,9 @@ export function writeLaunchdPlist(opts: {
     `    <string>${xml(opts.execPath)}</string>`,
     `    <string>${xml(opts.script)}</string>`,
     `    <string>${xml(`--socket=${opts.socketPath}`)}</string>`,
+    // A launchd job is its own responsible process; this tells the daemon so
+    // (it re-homes through strado-disclaim otherwise — see ptyd main.ts).
+    '    <string>--responsible</string>',
     '  </array>',
     `  <key>WorkingDirectory</key><string>${xml(path.dirname(opts.socketPath))}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(opts.logPath)}</string>`,

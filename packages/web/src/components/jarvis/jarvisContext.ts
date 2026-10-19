@@ -7,6 +7,7 @@ import type { JarvisHubContext } from '../../contexts/UiControlContext';
 import type { ParseContext, TabRef } from '../../lib/jarvis/types';
 import { scriptsContext } from '../../lib/jarvis/serverPort';
 import { MODEL_CAPS } from '../../lib/jarvis/model';
+import { sessionNameKey } from '../../hooks/shellNames';
 import type { RepoConfig, Workspace, Worktree } from '../../types';
 
 export function buildParseContext(input: {
@@ -23,6 +24,8 @@ export function buildParseContext(input: {
   repos: RepoConfig[];
   scripts: JarvisScripts | null;
   remoteWorktrees?: RemoteWorktree[];
+  /** The strip's own tab names (hooks/shellNames): a renamed session is called by its name everywhere. */
+  shellNames?: Record<string, string>;
   /** The intercom stations feed: its open calls to the human ("answer claude-1 …"). */
   stations?: StationDto[];
 }): ParseContext {
@@ -47,7 +50,7 @@ export function buildParseContext(input: {
     .sort((a, b) => recency(b.p.worktreePath) - recency(a.p.worktreePath) || a.i - b.i)
     .map(({ p }) => ({
       worktreePath: p.worktreePath, mode: p.mode, sessionId: p.sessionId,
-      label: `${MODE_LABEL[p.mode]}${p.sessionId === '1' ? '' : ` ${p.sessionId}`}`,
+      label: input.shellNames?.[sessionNameKey(p.worktreePath, p.mode, p.sessionId)] || `${MODE_LABEL[p.mode]}${p.sessionId === '1' ? '' : ` ${p.sessionId}`}`,
       // An agent mid-turn is busy (closing it confirms); a shell's process is checked at run time.
       busy: p.mode !== 'shell' && p.lifecycle === 'working',
       agentId: p.agentId, alias: p.alias, ...(p.executionId ? { executionId: p.executionId } : {}),

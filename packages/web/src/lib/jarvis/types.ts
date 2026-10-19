@@ -14,7 +14,7 @@ export type ActionId =
   | 'nav.addRepo' | 'nav.newWorktree'
   | 'nav.page' | 'settings.open' | 'settings.set'
   | 'focus.edit' | 'ui.sidebar'
-  | 'agent.ask' | 'agent.recap';
+  | 'agent.ask' | 'agent.recap' | 'tab.rename';
 
 /** The same ids at runtime, in registry order. */
 export const ACTION_IDS = [
@@ -26,7 +26,7 @@ export const ACTION_IDS = [
   'nav.addRepo', 'nav.newWorktree',
   'nav.page', 'settings.open', 'settings.set',
   'focus.edit', 'ui.sidebar',
-  'agent.ask', 'agent.recap',
+  'agent.ask', 'agent.recap', 'tab.rename',
 ] as const satisfies readonly ActionId[];
 
 /** Pages of the app the box can open (nav.page). */
@@ -123,6 +123,8 @@ export type ActionArgs = {
   /** `question`: the user's own words, so the answer fits what they asked. */
   /** `focus`: the Focus the agents were gathered from ("what are the agents in this focus doing"). */
   'agent.recap': { agentIds: string[] | 'all'; question?: string | null; focus?: string };
+  /** The tab's label in the strip; '' puts the default back. */
+  'tab.rename': { name: string };
 };
 
 export type Risk = 'read' | 'layout' | 'spawn' | 'exec' | 'destructive';
