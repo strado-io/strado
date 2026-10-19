@@ -159,4 +159,11 @@ describe('buildParseContext', () => {
       expect(ctx.tabs[0]!.worktreePath).toBe('/w/a');
     });
   });
+  it('the workspace this window is in is currentWorkspace; unknown (or none given) is null', () => {
+    const base = { hub: null, peers: [], lastActedOn: null, worktrees: [], focuses: [], repos: [], scripts: null,
+      workspaces: [{ id: 'default', name: 'Personal' }, { id: 'fx', name: 'FleetX' }] as never };
+    expect(buildParseContext({ ...base, activeWorkspaceId: 'fx' }).currentWorkspace).toEqual({ id: 'fx', name: 'FleetX' });
+    expect(buildParseContext({ ...base, activeWorkspaceId: 'gone' }).currentWorkspace).toBeNull();
+    expect(buildParseContext(base).currentWorkspace).toBeNull();
+  });
 });

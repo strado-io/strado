@@ -21,6 +21,8 @@ export function buildParseContext(input: {
   /** The Focus open in this window ("this focus"), if any. */
   activeFocusId?: string | null;
   workspaces: Workspace[];
+  /** The workspace this window is in ("which workspace am I in?"). */
+  activeWorkspaceId?: string | null;
   repos: RepoConfig[];
   scripts: JarvisScripts | null;
   remoteWorktrees?: RemoteWorktree[];
@@ -76,6 +78,7 @@ export function buildParseContext(input: {
     focuses: input.focuses.map((f) => ({ id: f.id, name: f.name, worktreePaths: f.members.filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length)) })),
     currentFocus: (() => { const f = input.focuses.find((x) => x.id === input.activeFocusId); return f ? { id: f.id, name: f.name } : null; })(),
     workspaces: input.workspaces.map((w) => ({ id: w.id, name: w.name })),
+    currentWorkspace: (() => { const w = input.workspaces.find((x) => x.id === input.activeWorkspaceId); return w ? { id: w.id, name: w.name } : null; })(),
     repos: input.repos.map((r) => ({ path: r.path, name: r.name })),
     ...scriptsContext(input.scripts),
     peers: live.map((p) => ({ agentId: p.agentId, alias: p.alias, mode: p.mode, worktreePath: p.worktreePath })),

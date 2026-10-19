@@ -1,5 +1,6 @@
 import type { Plan } from '../../lib/jarvis/types';
 import type { StepStatus } from '../../lib/jarvis/execute';
+import { AnswerText } from './AnswerText';
 
 export type JarvisRowState = {
   /** 'paste': pasted input, ⏎ again to run. 'confirm': a step needs a second ⏎. */
@@ -114,7 +115,7 @@ export function JarvisModelRow({ view, selected, onPick, onHover, onSettings, mo
       onMouseEnter={onHover}
       className={`cursor-default rounded-md px-2.5 py-1.5 text-sm ${selected ? 'bg-zinc-800' : ''}`}
     >
-      <div className={`flex items-center gap-2 ${tone}`}>
+      <div className={`flex gap-2 ${view.kind === 'answer' ? 'items-start' : 'items-center'} ${tone}`}>
         <span aria-hidden className="text-violet-300">✦</span>
         {view.kind === 'confirm_paste' && <span>Send pasted text to Haiku? ⏎ to send</span>}
         {view.kind === 'unknown' && <span>{view.message}</span>}
@@ -126,7 +127,7 @@ export function JarvisModelRow({ view, selected, onPick, onHover, onSettings, mo
         )}
         {view.kind === 'not_sendable' && <span>{`Not sent to the model: ${view.why}`}</span>}
         {view.kind === 'thinking' && <span>Thinking…</span>}
-        {view.kind === 'answer' && <span className="whitespace-pre-wrap break-words">{view.text}</span>}
+        {view.kind === 'answer' && <AnswerText text={view.text} />}
         {(view.kind === 'error' || view.kind === 'unusable') && <span>{view.message}{view.kind === 'error' && view.settings ? ' → Settings' : ''}</span>}
       </div>
       {view.kind === 'thinking' && (

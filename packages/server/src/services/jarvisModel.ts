@@ -22,6 +22,8 @@ export type JarvisContext = {
   focused: string | null;
   tabs: { name: string; mode: string; label?: string; busy: boolean; worktree: string }[];
   worktrees: { name: string; branch?: string; repo?: string }[];
+  workspace?: { name: string } | null;
+  workspaces?: { name: string }[];
   focus?: { name: string } | null;
   focuses: { name: string; worktrees?: string[] }[];
   scripts: string[];
@@ -108,6 +110,7 @@ export const JARVIS_SYSTEM = [
   '- To give a running agent work, use agent_message. To start a new agent with a task, use tab_open with a prompt.',
   '- A question FOR an agent, to be answered by it ("ask claude-1 if the tests pass", "ask claude how it is doing", "codex, why did you change the router?"), is agent_ask. "Ask X to <do something>" is work: agent_message.',
   '- "What is X doing / working on", "what has X done", "did X finish Y", "what are the agents doing" is agent_recap (agent "all" for every agent): it reads saved turns and does not disturb the agent. Never agent_ask for these.',
+  '- Workspaces: context.workspace is the one this window is in; context.workspaces lists them all. "Which workspace am I in", "list my workspaces" is the answer tool from context. "Switch / go to / open the X workspace" is nav_workspace with X\'s exact context name (closest match by name; ask with the names in choices when unclear). Already in X: say so with the answer tool.',
   '- Focuses: context.focus is the Focus open now ("this focus", "the focus"); context.focuses lists each Focus with its worktrees. "What is in this focus" is the answer tool. A Focus-wide request becomes one step per member: tab_open with worktree set for each worktree ("open a shell in every worktree in this focus"); agent_ask or agent_message for each agent whose worktree is in it ("ask all the claudes in this focus …" means each claude agent there). Agents in other worktrees are named "worktree/name" in the context. More than 12 steps: ask first with the answer tool. Agents of the Focus doing what: agent_recap with agent "all" and focus set.',
   '- A repo name ("in Strado Website", "open claude in the website repo") means a worktree of that repo (context.worktrees[].repo): the one in context.focus first, else the only one, else the first listed (most recent). Pass that worktree\'s context name. Ask only when the repo has several and none is in the open Focus.',
   '- focus_edit names Focuses by their context name: "this focus" is context.focus.name. "Remove X from this focus" is focus_edit op remove; with no Focus open, ask which.',

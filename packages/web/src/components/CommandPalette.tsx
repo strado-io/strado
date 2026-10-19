@@ -27,6 +27,7 @@ import { runPlan, type JarvisPorts, type UndoOp } from '../lib/jarvis/execute';
 import { bindPlan, verifyPlan } from '../lib/jarvis/safety';
 import { planKey } from '../lib/jarvis/parse';
 import { clearHistory, frecencyScore, logFallthrough, readHistoryEntries, recordUse, rememberCommand, type HistoryEntry } from '../lib/jarvis/history';
+import { plainAnswer } from './jarvis/AnswerText';
 
 /** The ⌘K box as a command line (Jarvis). Nothing is suggested while typing;
  * ⏎ runs an exact rule hit at once, else asks Haiku and runs its plan. Rows
@@ -89,6 +90,7 @@ const HERO_BOX = { line: 24, pad: 24, text: 'py-3 text-base leading-6' };
 function speak(text: string) {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined') return;
+  text = plainAnswer(text);
   const cut = text.length <= SPEAK_MAX ? text : `${text.slice(0, SPEAK_MAX).replace(/\s+\S*$/, '')}…`;
   synth.cancel();
   synth.speak(new SpeechSynthesisUtterance(cut));

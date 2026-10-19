@@ -13,7 +13,7 @@ import { withSafety } from './safety';
 import type { AgentMode, ParseContext, Place, Plan, Split, Step, TabInfo, TabMode, TabRef, Target } from './types';
 import { APP_PAGES, FOCUS_OPS, SETTINGS, SETTINGS_SECTIONS, type AppPage, type FocusOp, type SettingsSectionId } from './types';
 
-export const MODEL_CAPS = { tabs: 60, worktrees: 50, focuses: 30, scripts: 50, agents: 30, calls: 20, repos: 50, thread: 6, text: 2000, name: 64, title: 200 } as const;
+export const MODEL_CAPS = { tabs: 60, worktrees: 50, focuses: 30, scripts: 50, agents: 30, calls: 20, repos: 50, workspaces: 30, thread: 6, text: 2000, name: 64, title: 200 } as const;
 const COMMAND_MAX = 4096;
 const TEXT_MAX = 8 * 1024;
 
@@ -35,6 +35,9 @@ export type ModelContext = {
   calls?: { from: string; title: string }[];
   /** Repo names, for "new worktree in <repo>". */
   repos: { name: string }[];
+  /** The workspace this window is in, and every workspace (≤ 30). */
+  workspace: { name: string } | null;
+  workspaces: { name: string }[];
 };
 
 /** One step as the server returns it: a registry action id and the model's args. */
@@ -177,6 +180,8 @@ export function buildModelContext(ctx: ParseContext): ModelContext {
     agents: agents.slice(0, MODEL_CAPS.agents),
     ...(calls.length > 0 ? { calls } : {}),
     repos: (ctx.repos ?? []).flatMap((r) => { const name = scrub(r.name); return name ? [{ name }] : []; }).slice(0, MODEL_CAPS.repos),
+    workspace: (() => { const n = scrub(ctx.currentWorkspace?.name); return n ? { name: n } : null; })(),
+    workspaces: (ctx.workspaces ?? []).flatMap((w) => { const name = scrub(w.name); return name ? [{ name }] : []; }).slice(0, MODEL_CAPS.workspaces),
   };
 }
 
@@ -218,7 +223,8 @@ export function createThread() {
 
 // ---------- the model's steps → a Plan ----------
 
-type Out = { kind: 'ok'; step: Step } | { kind: 'ambiguous'; options: Step[]; what: string } | { kind: 'error'; message: string };
+/** `said`: nothing to do, and the reason is the answer ("Already in X"). */
+type Out = { kind: 'ok'; step: Step } | { kind: 'ambiguous'; options: Step[]; what: string } | { kind: 'error'; message: string } | { kind: 'said'; text: string };
 class Refusal extends Error {}
 const refuse = (message: string): never => { throw new Refusal(message); };
 
@@ -460,7 +466,12 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
       }
       case 'nav.workspace': {
         const name = str(a, 'name', { required: true, max: 200 })!;
-        const w = (ctx.workspaces ?? []).find((x) => x.name.toLowerCase() === name.toLowerCase()) ?? refuse(`No workspace "${name}"`);
+        const all = ctx.workspaces ?? [];
+        const lower = name.toLowerCase();
+        const pick = (list: typeof all) => (list.length === 1 ? list[0]! : list.length > 1 ? refuse(`Which workspace: ${list.map((x) => x.name).join(', ')}?`) : null);
+        const w = all.find((x) => x.name === name) ?? pick(all.filter((x) => x.name.toLowerCase() === lower)) ?? pick(all.filter((x) => x.name.toLowerCase().startsWith(lower)))
+          ?? refuse(`No workspace "${name}"${all.length > 0 ? ` (workspaces: ${all.map((x) => x.name).join(', ')})` : ''}`);
+        if (w.id === ctx.currentWorkspace?.id) return { kind: 'said', text: `Already in ${w.name}` };
         return { kind: 'ok', step: mk('nav.workspace', { wsId: w.id }, { kind: 'none' }, { risk: 'read', where: 'hub', undoable: true }, [{ arg: 'wsId', label: `Workspace ${w.name}`, candidates: [] }], ctx) };
       }
       case 'nav.repo': {
@@ -585,6 +596,10 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
     }
     if (r.kind === 'ambiguous' && steps.length === 1) {
       return explain(`Which ${r.what}?`, 'model', r.options.map((o) => plan(ctx, [mark(o)], 'model', true)));
+    }
+    if (r.kind === 'said') {
+      if (steps.length === 1) return explain(r.text, 'model');
+      continue;
     }
     if (r.kind !== 'ok') {
       const why = r.kind === 'ambiguous' ? `which ${r.what}?` : r.message;
