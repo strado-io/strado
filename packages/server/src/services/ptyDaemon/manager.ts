@@ -19,7 +19,7 @@ import {
   type TerminalManager,
 } from '../terminalManager.js';
 import { createDaemonClient, type DaemonClient } from './client.js';
-import { ensurePtyDaemon, probeDaemon, readExpectedDaemonVersion, versionLess } from './supervisor.js';
+import { daemonBinaryReplaced, ensurePtyDaemon, probeDaemon, readExpectedDaemonVersion, readManifest, versionLess } from './supervisor.js';
 import { defaultShell } from '../platform.js';
 // CJS packages: named imports fail under Node ESM (the runtime lexer doesn't
 // see `Terminal`/`SerializeAddon` as named exports), so import the default.
@@ -81,6 +81,8 @@ export type DaemonTerminalManagerOptions = {
   extraEnv?: ExtraEnv;
   /** Test seam: observe or replace the per-session screen emulator. */
   makeEmulator?: EmulatorFactory;
+  /** Test seam: whether the running daemon's program file was replaced (default: daemonBinaryReplaced). */
+  daemonReplaced?: (pid: number) => boolean;
 };
 
 // Yield to the event loop this often while resubscribing at resync, so a
@@ -275,8 +277,8 @@ export async function createDaemonTerminalManager(
     })();
   });
 
-  async function upgradeDaemon(running: string, expected: string): Promise<void> {
-    process.stderr.write(`[ptyd-manager] daemon v${running} < bundled v${expected}; upgrading via fd handoff\n`);
+  async function upgradeDaemon(running: string, why: string): Promise<void> {
+    process.stderr.write(`[ptyd-manager] ${why}; upgrading via fd handoff\n`);
     upgrading = true;
     try {
       let result: UpgradeResult;
@@ -337,6 +339,28 @@ export async function createDaemonTerminalManager(
 
   const HANDOFF_FLOOR = '0.2.0'; // first daemon version that understands prepare-upgrade
   const expectedDaemonVersion = readExpectedDaemonVersion(opts.daemonScript);
+  const startUpgrade = async (why: string) => {
+    upgradePromise = upgradeDaemon(daemonVersion, why)
+      // Like reconnectPromise, this handle must never reject: ensure() awaits
+      // it to join a handoff, and a rejection there would fail a terminal open
+      // for a failure the upgrade path already handled.
+      .catch((err) => {
+        process.stderr.write(`[ptyd-manager] upgrade failed: ${(err as Error)?.message ?? err}\n`);
+      })
+      .finally(() => {
+        upgradePromise = null;
+      });
+    // A wedged handoff must not wedge server boot: give it 20s, then continue
+    // constructing. The daemon (predecessor or successor) keeps running either
+    // way, and the upgrade keeps going in the background — ensure() joins
+    // `upgradePromise` before re-arming so it can't race the handoff.
+    await Promise.race([upgradePromise, new Promise<void>((r) => setTimeout(r, 20_000).unref())]);
+  };
+  // Same version, but an app update replaced the file the daemon runs from:
+  // macOS then refuses the microphone and Desktop to every terminal under it.
+  // A daemon started from the new file (the handoff's successor) is trusted again.
+  const daemonPid = readManifest(opts.stateDir)?.pid ?? -1;
+  const replaced = !versionLess(daemonVersion, HANDOFF_FLOOR) && (opts.daemonReplaced ?? daemonBinaryReplaced)(daemonPid);
   if (expectedDaemonVersion && versionLess(daemonVersion, expectedDaemonVersion)) {
     if (versionLess(daemonVersion, HANDOFF_FLOOR)) {
       // A pre-handoff daemon answers prepare-upgrade with an EPROTO error frame
@@ -350,22 +374,10 @@ export async function createDaemonTerminalManager(
           `spawns v${expectedDaemonVersion}\n`,
       );
     } else {
-      upgradePromise = upgradeDaemon(daemonVersion, expectedDaemonVersion)
-        // Like reconnectPromise, this handle must never reject: ensure() awaits
-        // it to join a handoff, and a rejection there would fail a terminal open
-        // for a failure the upgrade path already handled.
-        .catch((err) => {
-          process.stderr.write(`[ptyd-manager] upgrade failed: ${(err as Error)?.message ?? err}\n`);
-        })
-        .finally(() => {
-          upgradePromise = null;
-        });
-      // A wedged handoff must not wedge server boot: give it 20s, then continue
-      // constructing. The daemon (predecessor or successor) keeps running either
-      // way, and the upgrade keeps going in the background — ensure() joins
-      // `upgradePromise` before re-arming so it can't race the handoff.
-      await Promise.race([upgradePromise, new Promise<void>((r) => setTimeout(r, 20_000).unref())]);
+      await startUpgrade(`daemon v${daemonVersion} < bundled v${expectedDaemonVersion}`);
     }
+  } else if (replaced) {
+    await startUpgrade(`daemon ${daemonPid}'s program file was replaced (an app update)`);
   }
 
   return {

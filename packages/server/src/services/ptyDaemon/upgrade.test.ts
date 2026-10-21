@@ -112,4 +112,54 @@ describe('daemon upgrade at boot', () => {
       m2.destroy();
     }
   }, 40000);
+
+  it('same version, but an app update replaced the daemon\'s program file: handoff, sessions intact', async () => {
+    // No drift this time: the bundle claims the version the daemon runs.
+    fs.writeFileSync(path.join(scriptDir, 'ptyd.version'), fs.readFileSync(path.join(path.dirname(realBundle), 'ptyd.version'), 'utf8'));
+    const exits: string[] = [];
+    const m1 = await createDaemonTerminalManager({ stateDir, daemonScript: daemonScript(), daemonReplaced: () => false });
+    const info = await m1.ensure('/tmp\0shell', '/tmp', shSpec);
+    await vwait(() => m1.snapshot('/tmp\0shell').includes('ready'));
+    const manifest1 = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8'));
+    m1.destroy();
+
+    const asked: number[] = [];
+    const m2 = await createDaemonTerminalManager({
+      stateDir,
+      daemonScript: daemonScript(),
+      onExit: (key) => exits.push(key),
+      daemonReplaced: (pid) => { asked.push(pid); return true; },
+    });
+    try {
+      expect(asked).toEqual([manifest1.pid]); // it asked about the daemon it adopted
+      await vwait(() => m2.status('/tmp\0shell').status === 'running');
+      expect(m2.status('/tmp\0shell').pid).toBe(info.pid);
+      const got: string[] = [];
+      m2.subscribe('/tmp\0shell', (d) => got.push(d));
+      m2.write('/tmp\0shell', 'after-update\n');
+      await vwait(() => got.join('').includes('after-update'));
+      expect(exits).toEqual([]);
+      const manifest2 = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8'));
+      expect(manifest2.pid).not.toBe(manifest1.pid);
+    } finally {
+      m2.kill('/tmp\0shell');
+      m2.destroy();
+    }
+  }, 40000);
+
+  it('same version and the file untouched: no handoff', async () => {
+    fs.writeFileSync(path.join(scriptDir, 'ptyd.version'), fs.readFileSync(path.join(path.dirname(realBundle), 'ptyd.version'), 'utf8'));
+    const m1 = await createDaemonTerminalManager({ stateDir, daemonScript: daemonScript(), daemonReplaced: () => false });
+    await m1.ensure('/tmp\0shell', '/tmp', shSpec);
+    const manifest1 = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8'));
+    m1.destroy();
+    const m2 = await createDaemonTerminalManager({ stateDir, daemonScript: daemonScript(), daemonReplaced: () => false });
+    try {
+      const manifest2 = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8'));
+      expect(manifest2.pid).toBe(manifest1.pid);
+    } finally {
+      m2.kill('/tmp\0shell');
+      m2.destroy();
+    }
+  }, 40000);
 });

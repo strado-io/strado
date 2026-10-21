@@ -5,6 +5,7 @@ import { assertHubRequest, VIA_RELAY_HEADER } from './appControl.js';
 import { AppError } from '../errors.js';
 import { readModelCredential, writeModelCredential, credentialSummary } from '../services/modelCredential.js';
 import { readRouterCredential, writeRouterCredential } from '../services/routerCredential.js';
+import { readVoiceCredential, writeVoiceCredential } from '../services/voiceCredential.js';
 
 const PatchBody = z.object({
   fullName: z.string().max(120).optional(),
@@ -45,6 +46,15 @@ export async function registerProfileRoutes(app: FastifyInstance) {
     const { key } = ModelCredentialBody.parse(req.body);
     await writeRouterCredential(key);
     return credentialSummary(await readRouterCredential());
+  });
+
+  // The ElevenLabs key for command-box voice. Same rules.
+  app.get('/api/voice-credential', async () => credentialSummary(await readVoiceCredential()));
+  app.post('/api/voice-credential', async (req) => {
+    assertLocalHub(req.headers);
+    const { key } = ModelCredentialBody.parse(req.body);
+    await writeVoiceCredential(key);
+    return credentialSummary(await readVoiceCredential());
   });
 
   app.post('/api/model-credential', async (req) => {

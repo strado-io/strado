@@ -18,6 +18,10 @@ const call = (fn: () => unknown, onError: (err: unknown) => void = () => {}) => 
   try { void Promise.resolve(fn()).catch(onError); } catch (err) { onError(err); }
 };
 
+/** Which speech engine to use may have changed (the ElevenLabs key, Local only): re-check. */
+export const VOICE_ENGINE_EVENT = 'strado:voice-engine';
+export const voiceEngineChanged = () => { window.dispatchEvent(new Event(VOICE_ENGINE_EVENT)); };
+
 /** The shell's speech bridge, when this window has one (desktop, macOS). */
 export const voiceBridge = (): VoiceBridge | null => (typeof window !== 'undefined' ? window.strado?.voice ?? null : null);
 
@@ -25,7 +29,8 @@ export function useVoice({ bridge, contextual, onPartial, onFinal, onCancel, onE
   bridge: VoiceBridge | null;
   /** Names to prime recognition with (tabs, agents, worktrees, Focuses, scripts). */
   contextual: () => string[];
-  onPartial: (text: string) => void;
+  /** `stable`: the committed prefix of `text` (ElevenLabs); absent from Apple's partials. */
+  onPartial: (text: string, stable?: string) => void;
   onFinal: (text: string) => void;
   onCancel: () => void;
   /** Released with nothing heard: no submit. */
@@ -65,7 +70,11 @@ export function useVoice({ bridge, contextual, onPartial, onFinal, onCancel, onE
     const off = bridge.onEvent((e) => {
       const p = phaseRef.current;
       if (p !== 'listening' && p !== 'finishing') return; // cancelled, or not ours
-      if (e.type === 'partial') { lastPartial.current = e.text; cb.current.onPartial(e.text); }
+      if (e.type === 'partial') {
+        lastPartial.current = e.text;
+        if (typeof e.stable === 'string') cb.current.onPartial(e.text, e.stable);
+        else cb.current.onPartial(e.text);
+      }
       else if (e.type === 'level') setLevel(e.rms);
       else if (e.type === 'final') finish(e.text);
       else if (e.type === 'error') {

@@ -712,6 +712,51 @@ describe('CommandPalette as the always-visible command bar', () => {
   });
 });
 
+describe('CommandPalette: dictation preview (committed words normal, in-flight words dimmed)', () => {
+  const said = () => screen.getByTestId('voice-said');
+  const inflight = () => screen.getByTestId('voice-inflight');
+
+  it('ElevenLabs: the committed prefix in the normal colour, the rest dimmed, the waveform after; the real text is hidden under it', () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: 'open master and run', stable: 'open master' });
+    expect(said()).toHaveTextContent('open master');
+    expect(said().className).toContain('text-zinc-100');
+    expect(inflight()).toHaveTextContent('and run');
+    expect(inflight().className).toContain('text-zinc-500');
+    expect(screen.getByTestId('voice-caret').previousSibling).toBe(inflight());
+    expect(s.input.className).toContain('text-transparent');
+    v.emit({ type: 'partial', text: 'open master and run dev', stable: 'open master and run dev' });
+    expect(said()).toHaveTextContent('open master and run dev');
+    expect(inflight()).toHaveTextContent('');
+  });
+
+  it('Apple (no committed prefix): all of this go is dimmed until the final; what was typed before stays normal', () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    act(() => s.input.focus());
+    s.type('run');
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: 'ls' });
+    expect(said()).toHaveTextContent('run');
+    expect(inflight()).toHaveTextContent('ls');
+  });
+
+  it('the final: everything normal again, the preview gone, and it waits for ⏎', () => {
+    const v = fakeVoice();
+    const s = setup({ voice: v.bridge });
+    fireEvent.keyDown(s.input, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'partial', text: 'run l', stable: 'run' });
+    fireEvent.keyUp(window, { key: ' ', code: 'Space', altKey: true });
+    v.emit({ type: 'final', text: 'run ls' });
+    expect(screen.queryByTestId('voice-inflight')).not.toBeInTheDocument();
+    expect(s.input.className).not.toContain('text-transparent');
+    expect(s.input).toHaveValue('run ls');
+    expect(s.server.run).not.toHaveBeenCalled();
+  });
+});
+
 describe('CommandPalette: a voice command is never sent by itself', () => {
   const talk = (v: ReturnType<typeof fakeVoice>, s: ReturnType<typeof setup>, words: string) => {
     fireEvent.keyDown(s.shellPane, { key: ' ', code: 'Space', altKey: true });

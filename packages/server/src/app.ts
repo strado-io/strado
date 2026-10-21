@@ -699,6 +699,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerUpdateCheckRoutes(app);
   const { registerProfileRoutes } = await import('./routes/profile.js');
   await registerProfileRoutes(app);
+  const { registerVoiceRoutes } = await import('./routes/voice.js');
+  await registerVoiceRoutes(app);
 
   // packaged desktop builds ship the web bundle outside the repo layout
   const staticRoot = process.env.STRADO_WEB_DIST

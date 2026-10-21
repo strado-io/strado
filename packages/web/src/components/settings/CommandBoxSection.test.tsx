@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mc = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
 const rc = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
 const profile = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
-vi.mock('../../api', () => ({ api: { modelCredential: mc, routerCredential: rc, profile } }));
+const vc = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
+vi.mock('../../api', () => ({ api: { modelCredential: mc, routerCredential: rc, voiceCredential: vc, profile } }));
 
 import { CommandBoxSection } from './CommandBoxSection';
 
@@ -14,6 +15,8 @@ beforeEach(() => {
   mc.save.mockReset();
   rc.get.mockReset().mockResolvedValue({ present: false, last4: null });
   rc.save.mockReset();
+  vc.get.mockReset().mockResolvedValue({ present: false, last4: null });
+  vc.save.mockReset();
   profile.get.mockReset().mockResolvedValue({ fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false });
   profile.save.mockReset().mockImplementation(async (p: object) => ({ fullName: '', callMe: '', telemetryOptOut: false, ...p }));
 });
@@ -97,5 +100,32 @@ describe('CommandBoxSection', () => {
     } finally {
       delete (window as { strado?: unknown }).strado;
     }
+  });
+
+  it('the ElevenLabs key (voice): saved through its own credential, only the last four shown; the voice engine is told to re-check', async () => {
+    vc.save.mockResolvedValue({ present: true, last4: 'k9Z2' });
+    const changed = vi.fn();
+    window.addEventListener('strado:voice-engine', changed);
+    render(<CommandBoxSection />);
+    const input = await screen.findByLabelText('ElevenLabs API key (voice)');
+    expect(input).toHaveAttribute('type', 'password');
+    expect(screen.getByText(/uses ElevenLabs Scribe v2 Realtime \(audio goes to ElevenLabs\)\. Without a key, Strado uses on-device Apple speech\./)).toBeInTheDocument();
+    expect(screen.getByText(/Local only keeps voice on this Mac/)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'sk_abc123k9Z2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save ElevenLabs key' }));
+    await waitFor(() => expect(vc.save).toHaveBeenCalledWith('sk_abc123k9Z2'));
+    expect(await screen.findByText(/••••k9Z2/)).toBeInTheDocument();
+    expect(changed).toHaveBeenCalled();
+    window.removeEventListener('strado:voice-engine', changed);
+  });
+
+  it('turning Local only on or off tells the voice engine to re-check too', async () => {
+    const changed = vi.fn();
+    window.addEventListener('strado:voice-engine', changed);
+    profile.save.mockResolvedValue({ jarvisLocalOnly: true });
+    render(<CommandBoxSection />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: /local only/i }));
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+    window.removeEventListener('strado:voice-engine', changed);
   });
 });

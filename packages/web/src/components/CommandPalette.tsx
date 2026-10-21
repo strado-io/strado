@@ -842,6 +842,8 @@ export function CommandPalette({
   // What was in the box before listening (Esc puts it back), and the final
   // transcript waiting to be submitted once it is the box's text.
   const beforeVoiceRef = useRef('');
+  /** While listening, how much of the box is committed (normal colour); the rest is in flight (dimmed). */
+  const [voiceSplit, setVoiceSplit] = useState(0);
   /** The last thing said (not typed): a request that is exactly it gets its answer read aloud. */
   const spokenRef = useRef<string | null>(null);
   const agentName = (agentId: string, alias?: string | null): string => {
@@ -884,8 +886,14 @@ export function CommandPalette({
     contextual: () => (jarvis ? contextualNames(jarvis.context()) : []),
     // What is said goes after what was already in the box, so a request can be
     // said in several goes. It is never sent by itself: ⏎ sends it.
-    onPartial: (t) => {
+    onPartial: (t, stable) => {
       const full = withSaid(beforeVoiceRef.current, t);
+      // Committed so far (normal colour): what was there before, plus the engine's
+      // stable prefix (ElevenLabs). Apple sends none: all of this go stays dimmed.
+      const before = beforeVoiceRef.current;
+      const lead = before.trim() ? `${before.replace(/\s+$/, '')} ` : '';
+      const committed = stable && full.startsWith(lead + stable) ? lead + stable : before.trim() ? lead : '';
+      setVoiceSplit(committed.length);
       setPasted(false); setChips([]); setQuery(full); setCaret(full.length);
       stopSpeculating();
       if (!jarvis || jarvis.model?.status !== 'ready' || !t.trim()) return;
@@ -918,6 +926,7 @@ export function CommandPalette({
   const beginVoice = (before?: string) => {
     hush(); // talking again: stop reading the last answer
     beforeVoiceRef.current = before ?? query;
+    setVoiceSplit((before ?? query).length);
     if (before !== undefined) { setQuery(before); setCaret(before.length); }
     inputRef.current?.focus();
     setKeepKeyboard(true);
@@ -1378,7 +1387,8 @@ export function CommandPalette({
           // The cursor while listening (as in Claude Code): a live waveform
           // right after the words, in place of the blinking caret.
           <div ref={voiceCaretRef} aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words pr-5 ${(hero ? HERO_BOX : BAR_BOX).text}`}>
-            <span className="invisible">{query}</span>
+            <span data-testid="voice-said" className="text-zinc-100">{query.slice(0, voiceSplit)}</span>
+            <span data-testid="voice-inflight" className="text-zinc-500">{query.slice(voiceSplit)}</span>
             <VoiceCaret level={v.level} />
           </div>
         )}
@@ -1432,7 +1442,7 @@ export function CommandPalette({
           // Listening: the waveform cursor stands where the words will go.
           placeholder={listening ? '' : hero ? 'Tell Strado…  e.g. open master and run dev   ⌘K' : jarvis ? 'Tell Strado what to do…  ⌘K' : 'Search focuses, worktrees, repos…  ⌘K'}
           aria-label="Global search"
-          className={`relative block w-full min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent outline-none ${(hero ? HERO_BOX : BAR_BOX).text} placeholder:text-zinc-600 ${chips.length > 0 ? 'text-transparent caret-zinc-100' : 'text-zinc-100'}${listening ? ' caret-transparent pr-5' : ''}`}
+          className={`relative block w-full min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent outline-none ${(hero ? HERO_BOX : BAR_BOX).text} placeholder:text-zinc-600 ${listening ? 'text-transparent caret-transparent pr-5' : chips.length > 0 ? 'text-transparent caret-zinc-100' : 'text-zinc-100'}`}
         />
         </div>
         {listening && (

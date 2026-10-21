@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { ensurePtyDaemon, readExpectedDaemonVersion, readManifest, releasePtyDaemon, versionLess } from './supervisor.js';
+import { daemonBinaryReplaced, ensurePtyDaemon, readExpectedDaemonVersion, readManifest, releasePtyDaemon, versionLess } from './supervisor.js';
 import { launchdEnabled } from './launchd.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -118,4 +118,47 @@ describe('ensurePtyDaemon', () => {
     const m = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8'));
     spawned.push(m.pid);
   }, 15000);
+});
+
+describe('daemonBinaryReplaced: an app update swapped the daemon\'s program file', () => {
+  const started = Date.parse('Wed Oct 21 18:20:09 2026');
+  const facts = { execPath: '/Applications/Strado.app/Contents/Helpers/Strado Terminals.app/Contents/MacOS/node', startedAt: started };
+  const at = (ms: number | null) => () => ms;
+  it('true when the file changed after the daemon started (macOS)', () => {
+    expect(daemonBinaryReplaced(94488, { platform: 'darwin', inspect: () => facts, changedAt: at(started + 5 * 3600_000) })).toBe(true);
+  });
+  it('false when the file is older than the daemon, or within lstart\'s one-second grain', () => {
+    expect(daemonBinaryReplaced(1, { platform: 'darwin', inspect: () => facts, changedAt: at(started - 60_000) })).toBe(false);
+    expect(daemonBinaryReplaced(1, { platform: 'darwin', inspect: () => facts, changedAt: at(started + 900) })).toBe(false);
+  });
+  it('false off macOS, for an unknown pid, or when the process or file cannot be read', () => {
+    expect(daemonBinaryReplaced(1, { platform: 'linux', inspect: () => facts, changedAt: at(started + 60_000) })).toBe(false);
+    expect(daemonBinaryReplaced(-1, { platform: 'darwin', inspect: () => facts, changedAt: at(started + 60_000) })).toBe(false);
+    expect(daemonBinaryReplaced(1, { platform: 'darwin', inspect: () => null, changedAt: at(started + 60_000) })).toBe(false);
+    expect(daemonBinaryReplaced(1, { platform: 'darwin', inspect: () => facts, changedAt: at(null) })).toBe(false);
+  });
+  it.runIf(process.platform === 'darwin')('reads a real process: this one\'s node is not newer than itself', () => {
+    expect(daemonBinaryReplaced(process.pid)).toBe(false);
+  });
+  it.runIf(process.platform === 'darwin')('reads a real process: a program replaced after it started is caught', async () => {
+    // A program of our own (a copied system binary is killed on launch).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ptyd-rep-'));
+    const bin = path.join(dir, 'nap');
+    fs.writeFileSync(path.join(dir, 'nap.c'), '#include <unistd.h>\nint main(void){sleep(30);return 0;}\n');
+    execFileSync('cc', ['-o', bin, path.join(dir, 'nap.c')]);
+    fs.copyFileSync(bin, `${bin}.new`);
+    const { spawn } = await import('node:child_process');
+    const child = spawn(bin, [], { stdio: 'ignore' });
+    try {
+      await new Promise((r) => setTimeout(r, 1_500));
+      expect(daemonBinaryReplaced(child.pid!)).toBe(false);
+      // An update: the new file is renamed over the old one while it runs.
+      await new Promise((r) => setTimeout(r, 1_100));
+      fs.renameSync(`${bin}.new`, bin);
+      expect(daemonBinaryReplaced(child.pid!)).toBe(true);
+    } finally {
+      child.kill();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
