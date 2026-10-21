@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
 import { api, type ModelCredentialSummary } from '../../api';
+import { voiceEngineChanged } from '../../hooks/voice';
 
 type CredentialApi = { get: () => Promise<ModelCredentialSummary>; save: (key: string | null) => Promise<ModelCredentialSummary> };
 
 /** One API key: a password field until saved, then only its last four and Remove. */
-function KeyField({ label, name, placeholder, help, cred: credApi }: {
+function KeyField({ label, name, placeholder, help, cred: credApi, onSaved }: {
   label: string;
   /** For the buttons: "Save <name> key" / "Remove <name> key". */
   name: string;
   placeholder: string;
   help: string;
   cred: CredentialApi;
+  /** After a save or removal lands. */
+  onSaved?: () => void;
 }) {
   const [cred, setCred] = useState<ModelCredentialSummary | null>(null);
   const [draft, setDraft] = useState('');
@@ -28,6 +31,7 @@ function KeyField({ label, name, placeholder, help, cred: credApi }: {
     try {
       setCred(await credApi.save(key));
       setDraft('');
+      onSaved?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -87,6 +91,7 @@ export function CommandBoxSection() {
     setLocalError(null);
     try {
       await api.profile.save({ jarvisLocalOnly: next });
+      voiceEngineChanged(); // Local only keeps voice on this Mac too
     } catch (e) {
       setLocal(!next);
       setLocalError((e as Error).message);
@@ -105,6 +110,9 @@ export function CommandBoxSection() {
         help="Stored on this machine only. It is also used by your runners for their model calls." cred={api.modelCredential} />
       <KeyField label="OpenRouter key (fast decisions, Jev)" name="OpenRouter" placeholder="sk-or-…"
         help="Optional. Instant navigation commands; everything else still uses Haiku." cred={api.routerCredential} />
+      <KeyField label="ElevenLabs API key (voice)" name="ElevenLabs" placeholder="sk_…  or  xi-…"
+        help="Optional. Voice in the command box uses ElevenLabs Scribe v2 Realtime (audio goes to ElevenLabs). Without a key, Strado uses on-device Apple speech. Local only keeps voice on this Mac."
+        cred={api.voiceCredential} onSaved={voiceEngineChanged} />
 
       <label className="flex items-start gap-3">
         <input

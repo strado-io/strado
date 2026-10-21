@@ -57,6 +57,16 @@ describe('useVoice (push-to-talk)', () => {
     expect(s.v().phase).toBe('idle');
   });
 
+  it('a partial\'s committed prefix (stable, from ElevenLabs) comes through with it; Apple\'s partials have none', () => {
+    const { bridge, emit } = fakeBridge();
+    const s = setup(bridge);
+    act(() => s.v().start());
+    emit({ type: 'partial', text: 'open master and', stable: 'open master' });
+    expect(s.partial).toHaveBeenLastCalledWith('open master and', 'open master');
+    emit({ type: 'partial', text: 'open master and run' });
+    expect(s.partial).toHaveBeenLastCalledWith('open master and run');
+  });
+
   it('no final within the wait: the last partial is used', () => {
     vi.useFakeTimers();
     const { bridge, emit } = fakeBridge();

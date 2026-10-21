@@ -105,6 +105,41 @@ export function readExpectedDaemonVersion(daemonScript: string): string | null {
   }
 }
 
+/** What macOS says about a running process: its program file and when it started. */
+export type ProcessFacts = { execPath: string; startedAt: number };
+
+function psField(pid: number, field: string): string | null {
+  const r = spawnSync('ps', ['-o', `${field}=`, '-p', String(pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, timeout: 2_000 });
+  const out = r.status === 0 ? r.stdout.trim() : '';
+  return out || null;
+}
+
+function inspectProcess(pid: number): ProcessFacts | null {
+  const execPath = psField(pid, 'comm');
+  const started = psField(pid, 'lstart');
+  const startedAt = started ? Date.parse(started) : NaN;
+  return execPath && path.isAbsolute(execPath) && Number.isFinite(startedAt) ? { execPath, startedAt } : null;
+}
+
+/**
+ * macOS: the running daemon's program file was replaced after it started, as
+ * an app update does when it swaps the bundle in place. macOS ties privacy
+ * grants (the microphone, Desktop) to the code a process runs; a replaced
+ * file no longer matches, so every terminal under that daemon is refused
+ * until its sessions move to a daemon started from the new file.
+ */
+export function daemonBinaryReplaced(
+  pid: number,
+  deps: { platform?: NodeJS.Platform; inspect?: (pid: number) => ProcessFacts | null; changedAt?: (file: string) => number | null } = {},
+): boolean {
+  if ((deps.platform ?? process.platform) !== 'darwin' || pid <= 0) return false;
+  const facts = (deps.inspect ?? inspectProcess)(pid);
+  if (!facts) return false;
+  const changedAt = (deps.changedAt ?? ((file) => { try { return fs.statSync(file).ctimeMs; } catch { return null; } }))(facts.execPath);
+  // lstart has whole seconds: allow for that before calling it newer.
+  return changedAt !== null && changedAt > facts.startedAt + 1_000;
+}
+
 /** Numeric x.y.z compare; any non-numeric input compares as NOT less (never upgrade on garbage). */
 export function versionLess(a: string, b: string): boolean {
   const pa = a.split('.').map(Number);

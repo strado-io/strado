@@ -16,7 +16,8 @@ type StradoPreviewEvent =
 // Talk to Strado: the native on-device speech helper's events (one session at a time).
 type StradoVoiceEvent =
   | { type: 'ready' }
-  | { type: 'partial'; text: string }
+  /** `text`: everything heard so far; `stable`: its committed prefix (ElevenLabs Scribe; Apple sends none). */
+  | { type: 'partial'; text: string; stable?: string }
   | { type: 'final'; text: string }
   | { type: 'level'; rms: number }
   | { type: 'error'; code: string; message?: string };

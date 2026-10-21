@@ -832,6 +832,18 @@ export const api = {
     save: (key: string | null) =>
       request<ModelCredentialSummary>('/api/router-credential', { method: 'POST', body: JSON.stringify({ key }) }),
   },
+  // The optional ElevenLabs key for voice (Scribe v2 Realtime). Same contract:
+  // presence and the last four only.
+  voiceCredential: {
+    get: () => request<ModelCredentialSummary>('/api/voice-credential'),
+    save: (key: string | null) =>
+      request<ModelCredentialSummary>('/api/voice-credential', { method: 'POST', body: JSON.stringify({ key }) }),
+  },
+  voice: {
+    /** A short-lived ElevenLabs token for one realtime session (the key stays on the server).
+     * Fails with code no_key (404), local_only (403), bad_key (401) or upstream (502). */
+    elevenlabsToken: () => request<{ token: string }>('/api/voice/elevenlabs-token', { method: 'POST' }),
+  },
   // Self-hosted runners. Every call goes through the LOCAL server, which holds
   // the account token — the renderer never sees it.
   runners: {

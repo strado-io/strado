@@ -10,6 +10,7 @@ import { buildModelContext, planFromModel } from '../../lib/jarvis/model';
 import { askModel } from '../../lib/jarvis/modelClient';
 import { openWorktreeAndWait } from '../../lib/jarvis/openWorktree';
 import { voiceBridge } from '../../hooks/voice';
+import { useVoiceEngine } from '../../hooks/voiceEngine';
 import { readShellNames } from '../../hooks/shellNames';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { runUndo, type JarvisAppPort, type JarvisNavPort, type UndoOp } from '../../lib/jarvis/execute';
@@ -112,8 +113,10 @@ export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCo
       onOpenSettings: onOpenCommandSettings,
     },
   };
-  // Push-to-talk where the desktop shell offers it (macOS); a browser has no mic.
-  return <CommandPalette {...palette} activeWorkspaceId={palette.activeWorkspaceId} jarvis={jarvis} onOpen={onOpen} voice={palette.voice ?? voiceBridge()} />;
+  // Push-to-talk: ElevenLabs when its key is saved (and Local only is off; any
+  // window with a microphone), else the desktop app's on-device engine (macOS).
+  const engine = useVoiceEngine(voiceBridge());
+  return <CommandPalette {...palette} activeWorkspaceId={palette.activeWorkspaceId} jarvis={jarvis} onOpen={onOpen} voice={palette.voice ?? engine} />;
 }
 
 const TOAST_MS = 8_000;
