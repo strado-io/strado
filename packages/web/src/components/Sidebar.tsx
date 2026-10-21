@@ -1,4 +1,4 @@
-import { DRAG, NO_DRAG, SidebarToggleButton, TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from './SidebarToggle';
+import { SidebarToggleButton, TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from './SidebarToggle';
 import { useEffect, useRef, useState } from 'react';
 import type { FocusTicket, RemoteWorktree, RunnerStatus } from '../api';
 import type { MergeRequest, RepoConfig, Workspace, Worktree } from '../types';
@@ -244,10 +244,11 @@ export function Sidebar({
       {insetTitleBar ? (
         // macOS: one row — the traffic lights (no native title bar), the space
         // switcher, then « at the far right. The row's blank parts drag the window.
-        <div className={`${DRAG} flex shrink-0 items-center gap-1 border-b border-zinc-900 pl-2 pr-3`}
+        // The switcher is only as wide as its name, so the rest of the row drags too.
+        <div className="app-drag flex shrink-0 items-center gap-1 border-b border-zinc-900 pl-2 pr-3"
           style={{ height: TITLE_BAR_HEIGHT }}>
           <TrafficLightsSpacer />
-          <div className={`${NO_DRAG} min-w-0 flex-1`}>
+          <div className="min-w-0 flex-1 [&>div>button]:w-auto [&>div>button]:max-w-full">
             <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
           </div>
           <SidebarToggleButton open onClick={onCollapse} />

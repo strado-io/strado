@@ -100,20 +100,13 @@ function HubBridge({ path }: { path: string }) {
   });
   return null;
 }
-// What the hub hands the Dock about its dev server (here: a runner's worktree).
-const hubDev = {
-  path: '/wt/FD-9', status: 'running', port: 3000, detail: 'localhost:3101 → runner-1:3000', remote: true,
-  profiles: { names: ['PROD', 'DEV'], current: 'PROD' }, setProfile: vi.fn(),
-  start: vi.fn().mockResolvedValue({}), stop: vi.fn().mockResolvedValue({}),
-};
 // Stand in for the hub so the test asserts selection, not terminal internals.
 vi.mock('./TerminalView', () => ({
-  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId, onDevState }: any) => (
+  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId }: any) => (
     <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}
       data-mode={mode ?? ''} data-session={sessionId ?? ''}>
       hub:{worktree.path}
       <button onClick={onClose}>‹ Back</button>
-      <button onClick={() => onDevState?.(hubDev)}>hub reports dev</button>
       <HubBridge path={worktree.path} />
     </div>
   ),
@@ -193,11 +186,12 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toHaveAttribute('placeholder', 'Tell Strado what to do…  ⌘K');
   });
 
-  it('home: "All worktrees →" shows the full list; "⚑ N waiting" opens the Line', async () => {
+  it('home: "All worktrees →" shows the full list; "⚑ N waiting" opens the intercom questions', async () => {
     renderDashboard();
     await screen.findByRole('heading', { name: 'What do you want to do?' });
     fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
-    expect(screen.getByRole('dialog', { name: 'Line' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Intercom' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
   });
@@ -298,59 +292,15 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 
-  it('"+N" opens the Line: stations grouped by worktree, a click there opens the card', async () => {
-    renderDashboard();
-    await home();
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' })); // the Dock (home has none)
-    fireEvent.click(await screen.findByRole('button', { name: '1 station in other worktrees, 1 calling you' }));
-    const line = screen.getByRole('dialog', { name: 'Line' });
-    expect(within(line).getByRole('group', { name: 'FD-9' })).toBeInTheDocument();
-    fireEvent.click(within(line).getByRole('button', { name: 'claude-1 — calling you' }));
-    expect(screen.getByRole('dialog', { name: 'claude-1' })).toHaveTextContent('Which database?');
-  });
-
-  it('a calling light opens its card; ⏎ on the reply line answers the call', async () => {
-    const { api } = await import('../api');
-    renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(await sidebarRow());
-    await screen.findByTestId('inline-hub');
-    fireEvent.click(await screen.findByRole('button', { name: 'claude-1 — calling you' }));
-    const card = screen.getByRole('dialog', { name: 'claude-1' });
-    expect(card).toHaveTextContent('Which database?');
-    const reply = within(card).getByLabelText('Answer claude-1');
-    fireEvent.change(reply, { target: { value: 'postgres' } });
-    fireEvent.keyDown(reply, { key: 'Enter' });
-    await waitFor(() => expect(api.intercom.escalations.resolve).toHaveBeenCalledWith('default', 'e1', 'postgres'));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'claude-1' })).not.toBeInTheDocument());
-  });
-
-  it('▶ dev runs what the hub reports: its port-forward detail, its env profiles, its own start/stop', async () => {
-    renderDashboard();
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    fireEvent.click(await sidebarRow());
-    await screen.findByTestId('inline-hub');
-    fireEvent.click(screen.getByRole('button', { name: 'hub reports dev' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Dev server menu' }));
-    const menu = screen.getByRole('menu', { name: 'Dev server' });
-    expect(menu).toHaveTextContent('localhost:3101 → runner-1:3000');
-    expect(within(menu).getByLabelText('Env profile')).toHaveValue('PROD');
-    fireEvent.click(screen.getByRole('button', { name: 'Stop dev server' }));
-    await waitFor(() => expect(hubDev.stop).toHaveBeenCalled());
-  });
-
-  it('the Dock follows the open worktree: its chip names it, ▶ dev starts its server, the chip lists worktrees', async () => {
-    const { api } = await import('../api');
+  it('the Dock follows the open worktree: its chip names it (with its project), the chip lists worktrees', async () => {
     renderDashboard();
     await home();
     fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' })); // the Dock (home has none)
     expect(await screen.findByRole('button', { name: 'No worktree open — switch' })).toBeInTheDocument();
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
-    expect(screen.getByRole('button', { name: 'Worktree: FD-9 · fd-9 — switch' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Start dev server' }));
-    await waitFor(() => expect(api.worktrees.start).toHaveBeenCalledWith('default', '/wt/FD-9'));
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree: FD-9 · fd-9 — switch' }));
+    expect(screen.getByRole('button', { name: 'Worktree: Repo One / FD-9 · fd-9 — switch' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree: Repo One / FD-9 · fd-9 — switch' }));
     expect(document.activeElement).toBe(screen.getByLabelText('Global search'));
     expect(within(screen.getByTestId('command-bar-popover')).getByText('FD-9')).toBeInTheDocument();
   });

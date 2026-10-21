@@ -1437,7 +1437,101 @@ describe('TerminalView', () => {
     }
   });
 
-  it('hands its dev server to the Dock: status, where it serves, and the env profiles (switching goes through the API)', async () => {
+  it('header run button starts the dev server and flips to stop when SSE reports it running', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
+
+    pushSse({ path: baseWorktree.path, process: { status: 'running', detectedUrl: 'http://localhost:8080' } });
+    const stopBtn = screen.getByLabelText('Stop dev server');
+    expect(stopBtn.title).toContain('running');
+    expect(stopBtn.title).toContain('http://localhost:8080');
+    fireEvent.click(stopBtn);
+    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
+  });
+
+  it('run button says what the server is doing: starting, serving on a port, stopping', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+
+    // Spawned, nothing listening yet — and still cancellable.
+    pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
+    const starting = screen.getByLabelText('Stop dev server');
+    expect(starting).toHaveTextContent('Starting…');
+    expect(starting).not.toBeDisabled();
+
+    pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
+    expect(screen.getByLabelText('Stop dev server')).toHaveTextContent('Stop :3000');
+
+    fireEvent.click(screen.getByLabelText('Stop dev server'));
+    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
+    // The kill can take seconds; the button must not pretend it is done.
+    pushSse({ path: baseWorktree.path, process: { status: 'stopping', port: 3000 } });
+    const stopping = screen.getByLabelText('Stop dev server');
+    expect(stopping).toHaveTextContent('Stopping…');
+    expect(stopping).toBeDisabled();
+
+    pushSse({ path: baseWorktree.path, process: { status: 'stopped', port: 3000, exitCode: 0 } });
+    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a start the server refuses is shown, not swallowed', async () => {
+    procStart.mockRejectedValue(new Error('empty startCommand'));
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('empty startCommand');
+    // The button itself is still a Run button — nothing started.
+    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
+
+    // A later successful start clears the complaint.
+    procStart.mockResolvedValue({});
+    fireEvent.click(screen.getByLabelText('Start dev server'));
+    pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a crash is named as one, with the exit code, and Run is offered again', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
+    pushSse({ path: baseWorktree.path, process: { status: 'crashed', port: 3000, exitCode: 137 } });
+
+    const btn = screen.getByLabelText('Start dev server');
+    expect(btn).toHaveTextContent('Crashed');
+    expect(screen.getByRole('alert')).toHaveTextContent('exit code 137');
+    fireEvent.click(btn);
+    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
+  });
+
+  it('shows the env-profile dropdown for repos that define profiles and switches via the API', async () => {
     reposList.mockResolvedValue([
       {
         id: 'r',
@@ -1446,30 +1540,20 @@ describe('TerminalView', () => {
         defaultEnvProfile: 'PROD',
       },
     ]);
-    const running = { status: 'running', pid: 1, startedAt: null, port: 5173, detectedUrl: null, exitCode: null };
-    worktreesList.mockResolvedValue([{ ...baseWorktree, process: running }]);
-    const onDevState = vi.fn();
+    worktreesList.mockResolvedValue([{ ...baseWorktree }]);
     render(
       <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'], process: running } as unknown as Worktree}
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
         mode="shell"
         sessionId="1"
         onClose={vi.fn()}
-        onDevState={onDevState}
       />,
     );
-    await waitFor(() => expect(onDevState).toHaveBeenLastCalledWith(expect.objectContaining({
-      path: baseWorktree.path, status: 'running', port: 5173, detail: 'port 5173', remote: false, profiles: { names: ['PROD', 'DEV'], current: 'PROD' },
-    })));
-    expect(screen.queryByLabelText('Env profile')).not.toBeInTheDocument(); // it lives in the Dock's ▶ dev menu now
-    act(() => { onDevState.mock.lastCall![0].setProfile('DEV'); });
+    const select = await screen.findByLabelText('Env profile'); // appears once the repos fetch lands
+    expect(select).toHaveValue('PROD');
+    fireEvent.change(select, { target: { value: 'DEV' } });
     expect(setEnvProfile).toHaveBeenCalledWith('default', baseWorktree.path, 'DEV');
-    await waitFor(() => expect(onDevState).toHaveBeenLastCalledWith(expect.objectContaining({ profiles: { names: ['PROD', 'DEV'], current: 'DEV' } })));
-    // Start/stop are the hub's own calls (the same ones the old Run button made, local or on a runner).
-    await act(async () => { await onDevState.mock.lastCall![0].stop(); });
-    expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
-    await act(async () => { await onDevState.mock.lastCall![0].start(); });
-    expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
+    expect(select).toHaveValue('DEV');
   });
 
   it('shows the workflow-status dropdown for tracked worktrees and patches via the API', () => {
@@ -1527,26 +1611,17 @@ describe('TerminalView', () => {
   // flow) no longer exists — the hub is scoped to a single worktree (see
   // "renders no cross-worktree super-tab picker" above).
 
-  it('the top keeps only the tab strip: no Run, Logs or escalation banner (they live in the Dock)', () => {
-    render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={vi.fn()} />);
-    expect(screen.queryByLabelText('Start dev server')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Logs')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Waiting on you/)).not.toBeInTheDocument();
-  });
-
-  it('the Dock\'s "logs" (logsSeq) opens the log drawer for the active worktree, and Esc closes only the drawer', async () => {
+  it('Logs button opens the log drawer for the active worktree and Esc closes only the drawer', async () => {
     const onClose = vi.fn();
-    const view = render(
+    render(
       <TerminalView
         worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
         mode="shell"
         sessionId="1"
         onClose={onClose}
-        logsSeq={0}
       />,
     );
-    expect(screen.queryByText('boot line')).not.toBeInTheDocument();
-    view.rerender(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={onClose} logsSeq={1} />);
+    fireEvent.click(screen.getByLabelText('Logs'));
     expect(await screen.findByText('boot line')).toBeInTheDocument();
     expect(procLogs).toHaveBeenCalledWith('default', baseWorktree.path, 500);
 

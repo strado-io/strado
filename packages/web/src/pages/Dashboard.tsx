@@ -8,16 +8,10 @@ import { UiControlProvider } from '../contexts/UiControlContext';
 import { JarvisPaletteHost, JarvisToast, type JarvisRun } from '../components/jarvis/JarvisPaletteHost';
 import type { CommandBarHandle } from '../components/CommandPalette';
 import { Dock } from '../components/dock/Dock';
-import { StationCard } from '../components/dock/StationCard';
 import { HomeScreen } from '../components/home/HomeScreen';
 import { recentWorktrees } from '../lib/home/recent';
 import { lightOf } from '../lib/dock/stations';
-import type { DevState } from '../components/dock/DevServerButton';
-import { LineView } from '../components/dock/LineView';
 import { useStations } from '../hooks/stations';
-import { useFeed } from '../hooks/feed';
-import { jarvisServerPort } from '../lib/jarvis/serverPort';
-import type { StationDto } from '../api';
 import type { TabRef as JarvisTabRef } from '../lib/jarvis/types';
 import { escalationsByWorktree, nextSeenIds, openEscalations } from '../hooks/intercom';
 import { playDoneBeep } from '../lib/beep';
@@ -736,86 +730,13 @@ export function Dashboard(props: {
 
   // ---------- the Dock ----------
   const { stations } = useStations(wsId);
-  // What sits above the Dock: a station's card or the Line view; only ever opened by the user.
-  const [dockPanel, setDockPanel] = useState<{ kind: 'station'; agentId: string } | { kind: 'line' } | null>(null);
-  // Listen: a station's recent messages on its card, the whole line in the Line view.
-  const cardFeed = useFeed(wsId, dockPanel?.kind === 'station' ? dockPanel.agentId : null, dockPanel?.kind === 'station');
-  const lineFeed = useFeed(wsId, null, dockPanel?.kind === 'line');
-  const [devError, setDevError] = useState<{ path: string; message: string } | null>(null);
-  // Bumped by the Dock's "logs": the hub opens its log drawer.
-  const [logsSeq, setLogsSeq] = useState(0);
-  // The hub's dev server (local or on a runner), as it reports it.
-  const [hubDev, setHubDev] = useState<DevState | null>(null);
+  // The chip names the project too: "master" alone doesn't say which repo.
+  const repoNameOf = (id: string | null | undefined) => (id ? state.repos.find((r) => r.id === id)?.name ?? null : null);
   const dockWorktree = selectedRemote
-    ? { name: selectedRemote.branch ?? selectedRemote.name, branch: null }
+    ? { repo: repoNameOf(selectedRemote.localRepoId) ?? selectedRemote.remoteRepoName ?? null, name: selectedRemote.branch ?? selectedRemote.name, branch: null }
     : selectedWorktree
-      ? { name: selectedWorktree.meta?.ticketId || selectedWorktree.branch || selectedWorktree.path.split('/').pop() || selectedWorktree.path, branch: selectedWorktree.branch ?? null }
+      ? { repo: repoNameOf(selectedWorktree.repoId), name: selectedWorktree.meta?.ticketId || selectedWorktree.branch || selectedWorktree.path.split('/').pop() || selectedWorktree.path, branch: selectedWorktree.branch ?? null }
       : null;
-  const devFor = (w: Worktree) => ({
-    status: w.process?.status ?? 'idle',
-    port: w.process?.port ?? null,
-    error: devError?.path === w.path ? devError.message : null,
-    onStart: () => {
-      setDevError(null);
-      api.worktrees.start(wsId, w.path).catch((err: unknown) => setDevError({ path: w.path, message: (err as Error).message }));
-    },
-    onStop: () => {
-      api.worktrees.stop(wsId, w.path).catch((err: unknown) => setDevError({ path: w.path, message: (err as Error).message }));
-    },
-    onLogs: () => setLogsSeq((n) => n + 1),
-  });
-  const devFromHub = (d: DevState) => ({
-    status: d.status,
-    port: d.port,
-    detail: d.detail,
-    remote: d.remote,
-    profiles: d.profiles,
-    onProfile: d.setProfile,
-    error: devError?.path === d.path ? devError.message : null,
-    onStart: () => {
-      setDevError(null);
-      d.start().catch((err: unknown) => setDevError({ path: d.path, message: (err as Error).message }));
-    },
-    onStop: () => {
-      d.stop().catch((err: unknown) => setDevError({ path: d.path, message: (err as Error).message }));
-    },
-    onLogs: () => setLogsSeq((n) => n + 1),
-  });
-  const dockDev = hubDev ? devFromHub(hubDev) : selectedWorktree && !selectedRemote ? devFor(selectedWorktree) : null;
-  const openStationTab = (s: StationDto) => {
-    setDockPanel(null);
-    const w = state.worktrees.find((x) => x.path === s.worktreePath);
-    if (w) openInlineHub(w, s.mode as typeof selectedMode, s.sessionId);
-  };
-  const cardStation = dockPanel?.kind === 'station' ? stations.find((s) => s.agentId === dockPanel.agentId) : undefined;
-  const dockPanelEl = cardStation ? (
-    <StationCard
-      key={cardStation.agentId}
-      station={cardStation}
-      recent={cardFeed}
-      onAnswer={(callId, text) => api.intercom.escalations.resolve(wsId, callId, text)}
-      onDismiss={(callId) => api.intercom.escalations.dismiss(wsId, callId)}
-      onTalk={async (text) => {
-        const d = (await jarvisServerPort(wsId).message(cardStation.agentId, text)) as { delivered?: string } | undefined;
-        const name = cardStation.alias ?? cardStation.name;
-        // How it landed, in the box's own words (always via the intercom).
-        if (d?.delivered === 'sent') setJarvisRun({ ok: true, notice: true, summary: `Sent to ${name} via intercom`, undo: [], undoable: false });
-        else if (d?.delivered === 'queued') setJarvisRun({ ok: true, notice: true, summary: `${name} is busy — it’ll read it after this turn`, undo: [], undoable: false });
-      }}
-      onOpenTab={() => openStationTab(cardStation)}
-      onClose={() => setDockPanel(null)}
-    />
-  ) : dockPanel?.kind === 'line' ? (
-    <LineView
-      stations={stations}
-      worktreePath={selectedRemote ? null : selectedPath}
-      feed={lineFeed}
-      tasks={intercom.tasks ?? []}
-      onOpenStation={(agentId) => setDockPanel({ kind: 'station', agentId })}
-      onOpenDetails={() => { setDockPanel(null); setIntercomPanel({ tab: 'escalations' }); }}
-      onClose={() => setDockPanel(null)}
-    />
-  ) : null;
 
   // The rail spans machines: local worktrees plus every runner's, mapped to the
   const handleStop = async (w: Worktree) => {
@@ -951,7 +872,7 @@ export function Dashboard(props: {
         focus: (id) => focusApi.activate(id),
         workspace: (id) => { props.onCloseOverlays(); void switchTo(id); },
         repo: (repoPath) => { const r = state.repos.find((x) => x.path === repoPath); if (r) { props.onCloseOverlays(); props.onNewWorktree(r.id); } },
-        line: () => setDockPanel({ kind: 'line' }),
+        line: () => setIntercomPanel({ tab: 'escalations' }),
         addRepo: (path) => { props.onCloseOverlays(); setAddRepoAnchor(null); setAddRepoPath(path); setShowAddRepo(true); },
         newWorktree: (repoPath) => {
           const r = repoPath ? state.repos.find((x) => x.path === repoPath) : undefined;
@@ -1053,8 +974,6 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
-              logsSeq={logsSeq}
-              onDevState={setHubDev}
             />
           </div>
         ) : selectedWorktree ? (
@@ -1071,8 +990,6 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
-              logsSeq={logsSeq}
-              onDevState={setHubDev}
             />
           </div>
         ) : activeView.kind === 'reviews' ? (
@@ -1145,7 +1062,7 @@ export function Dashboard(props: {
                 onAllWorktrees={() => setHomeAll(true)}
                 onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
                 onNewWorktree={() => props.onNewWorktree()}
-                onWaiting={() => setDockPanel({ kind: 'line' })}
+                onWaiting={() => setIntercomPanel({ tab: 'escalations' })}
                 sidebarCollapsed={sidebarHidden}
                 onExpandSidebar={() => setSidebarCollapsed(false)}
               />
@@ -1188,14 +1105,7 @@ export function Dashboard(props: {
         )}
         <Dock
           worktree={dockWorktree}
-          worktreePath={selectedRemote ? null : selectedPath}
           onBrowse={() => commandBarRef.current?.browse()}
-          stations={stations}
-          onOpenStation={(agentId) => setDockPanel({ kind: 'station', agentId })}
-          onOpenLine={() => setDockPanel({ kind: 'line' })}
-          dev={dockDev}
-          panel={dockPanelEl}
-          onClosePanel={() => setDockPanel(null)}
           bare={onHome}
         >
         {onHome || settingsSection ? null : commandBar(false)}

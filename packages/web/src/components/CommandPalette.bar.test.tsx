@@ -897,57 +897,59 @@ describe('CommandPalette: a spoken question gets a spoken answer', () => {
   });
 });
 
-describe('CommandPalette: the shell holds the keyboard for the box (a Browser preview must not take it)', () => {
-  let hold: ReturnType<typeof vi.fn>;
+describe('CommandPalette: the box holds the keyboard while you use it (the shell hands it back from a preview)', () => {
   let windowFocused = true;
   beforeEach(() => {
-    hold = vi.fn();
     windowFocused = true;
-    (window as unknown as { strado?: unknown }).strado = { holdKeyboard: hold };
     vi.spyOn(document, 'hasFocus').mockImplementation(() => windowFocused);
   });
-  afterEach(() => { delete (window as unknown as { strado?: unknown }).strado; vi.restoreAllMocks(); });
-  const last = () => hold.mock.calls.at(-1)?.[0];
+  afterEach(() => { vi.restoreAllMocks(); });
+  /** The page loses the keyboard to a preview, then the shell hands it back. */
+  const handBack = async () => {
+    windowFocused = false;
+    act(() => { (document.activeElement as HTMLElement | null)?.blur(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    windowFocused = true;
+    act(() => { window.dispatchEvent(new Event('focus')); });
+  };
 
-  it('tells the shell once on mount (not holding), then only when it changes', () => {
+  it('focus alone is not holding: the keyboard back leaves the box alone', async () => {
     const s = setup();
-    expect(hold.mock.calls).toEqual([[false]]);
     act(() => s.input.focus());
-    expect(hold).toHaveBeenCalledTimes(1); // focus alone is not holding
-    s.type('o');
-    expect(last()).toBe(true);
-    s.type('op');
-    expect(hold).toHaveBeenCalledTimes(2); // still holding: no repeat
+    await handBack();
+    expect(document.activeElement).not.toBe(s.input);
   });
 
-  it('typing holds it; Esc lets go', () => {
+  it('typing holds it; Esc lets go', async () => {
     const s = setup();
     act(() => s.input.focus());
     s.type('open');
-    expect(last()).toBe(true);
     s.key('Escape');
-    expect(last()).toBe(false);
+    await handBack();
+    expect(document.activeElement).not.toBe(s.input);
   });
 
-  it('a click away lets go; so does Tab', () => {
+  it('a click away lets go; so does Tab', async () => {
     const s = setup();
     act(() => s.input.focus());
     s.type('open');
     fireEvent.pointerDown(s.shellPane);
-    expect(last()).toBe(false);
+    await handBack();
+    expect(document.activeElement).not.toBe(s.input);
     act(() => s.input.focus());
     s.type('open it');
-    expect(last()).toBe(true);
     s.key('Tab');
-    expect(last()).toBe(false);
+    await handBack();
+    expect(document.activeElement).not.toBe(s.input);
   });
 
-  it('talking (hold ⌥Space, even from a terminal) holds it', () => {
+  it('talking (hold ⌥Space, even from a terminal) holds it', async () => {
     const v = fakeVoice();
     const s = setup({ voice: v.bridge });
     fireEvent.keyDown(s.shellPane, { key: ' ', code: 'Space', altKey: true });
     expect(v.bridge.start).toHaveBeenCalled();
-    expect(last()).toBe(true);
+    await handBack();
+    expect(document.activeElement).toBe(s.input);
   });
 
   it('the keyboard comes back to the window (the shell took it off a preview): it lands in the box', async () => {

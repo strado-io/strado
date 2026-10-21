@@ -35,9 +35,6 @@ contextBridge.exposeInMainWorld('strado', {
       return () => ipcRenderer.removeListener('strado:voice-event', handler);
     },
   },
-  // The command box holds the keyboard: a preview that grabs focus without a
-  // click hands it back.
-  holdKeyboard: (on) => ipcRenderer.send('strado:hold-keyboard', !!on),
   // Open a runner's dashboard in its own window (single-use attach URL).
   openRunner: (url) => ipcRenderer.invoke('strado:open-runner', url),
 
