@@ -114,12 +114,10 @@ const SPACE_HOLD_MS = 350;
  * so a bar that replaces another (home → Dock) keeps holding it. Starts
  * when you type or talk in the box, not when it merely has focus. */
 let keepKeyboard = false;
-/** Every change goes through here: the desktop shell holds the keyboard for
- * this page meanwhile (a Browser preview's page can't take it without a click). */
+/** Every change goes through here. (The desktop shell hands the keyboard back
+ * whenever a Browser preview takes it without a click.) */
 function setKeepKeyboard(on: boolean) {
-  if (keepKeyboard === on) return;
   keepKeyboard = on;
-  window.strado?.holdKeyboard?.(on);
 }
 /** Let go of the keyboard (tests start each case from a clean slate). */
 export function releaseKeyboard() { setKeepKeyboard(false); }
@@ -582,8 +580,6 @@ export function CommandPalette({
   useEffect(() => {
     // Taken by itself (home → Dock, a remount): quiet, so no empty popover covers a Browser preview.
     if (keepKeyboard && !voiceRef.current.dialogOpen && reclaimable(document.activeElement)) { setQuiet(true); inputRef.current?.focus(); }
-    // The shell learns where things stand (a reload, a new window).
-    window.strado?.holdKeyboard?.(keepKeyboard);
     const press = (e: PointerEvent) => { if (!barElRef.current?.contains(e.target as Node)) setKeepKeyboard(false); };
     // The keyboard comes back to this page (the shell took it off a preview):
     // into the box, if it is holding it.

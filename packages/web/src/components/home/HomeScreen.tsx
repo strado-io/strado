@@ -26,7 +26,7 @@ export function HomeScreen({ bar, recent, waiting, onOpenRecent, onAllWorktrees,
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div className="flex h-11 shrink-0 items-center gap-2 px-3">
+      <div className="app-drag flex h-11 shrink-0 items-center gap-2 px-3">
         {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
         {waiting > 0 && (
           <button type="button" onClick={onWaiting}

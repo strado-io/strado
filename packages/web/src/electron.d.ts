@@ -78,7 +78,6 @@ interface Window {
     // While on, a Browser preview taking focus without a click in it hands the
     // keyboard straight back to this page (the command box is holding it);
     // absent on older shells
-    holdKeyboard?: (on: boolean) => void;
     // push-to-talk speech (macOS, on device); absent elsewhere — hide the mic
     voice?: {
       available: boolean | (() => boolean | Promise<boolean>);

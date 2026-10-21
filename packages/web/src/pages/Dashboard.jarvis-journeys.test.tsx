@@ -136,20 +136,13 @@ function HubBridge({ path }: { path: string }) {
     </>
   );
 }
-// What the hub hands the Dock about its dev server (here: a runner's worktree).
-const hubDev = {
-  path: '/wt/FD-9', status: 'running', port: 3000, detail: 'localhost:3101 → runner-1:3000', remote: true,
-  profiles: { names: ['PROD', 'DEV'], current: 'PROD' }, setProfile: vi.fn(),
-  start: vi.fn().mockResolvedValue({}), stop: vi.fn().mockResolvedValue({}),
-};
 // Stand in for the hub so the test asserts selection, not terminal internals.
 vi.mock('./TerminalView', () => ({
-  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId, onDevState }: any) => (
+  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId }: any) => (
     <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}
       data-mode={mode ?? ''} data-session={sessionId ?? ''}>
       hub:{worktree.path}
       <button onClick={onClose}>‹ Back</button>
-      <button onClick={() => onDevState?.(hubDev)}>hub reports dev</button>
       <HubBridge path={worktree.path} />
     </div>
   ),
@@ -439,51 +432,27 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       expect(screen.queryByTestId('dock')).toBeNull();
     });
 
-    it('home: "⚑ 1 waiting" still opens the Line; a click away closes it', async () => {
+    it('home: "⚑ 1 waiting" opens the intercom questions (no strip comes with it)', async () => {
       renderDashboard();
       await home();
       fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
-      expect(await screen.findByRole('dialog', { name: 'Line' })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /No worktree open/ })).toBeNull(); // no strip came with it
-      fireEvent.mouseDown(screen.getByRole('heading', { name: 'What do you want to do?' }));
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Line' })).toBeNull());
+      expect(await screen.findByRole('dialog', { name: 'Intercom' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /No worktree open/ })).toBeNull();
     });
 
-    it('home: the box\'s "show the line" opens it too', async () => {
+    it('home: the box\'s "show the line" opens the intercom questions too', async () => {
       askModel.mockResolvedValueOnce(plan({ action: 'nav.line', args: {} }));
       renderDashboard();
       await home();
       await say('show me the line');
-      expect(await screen.findByRole('dialog', { name: 'Line' })).toBeInTheDocument();
+      expect(await screen.findByRole('dialog', { name: 'Intercom' })).toBeInTheDocument();
     });
   });
 
-  describe('talking from a station card (always via the intercom)', () => {
-    const idle = { agentId: 'claude-1@app', alias: null, name: 'claude-1', mode: 'claude', worktreePath: '/wt/FD-9', worktreeName: 'FD-9', sessionId: '1',
-      lifecycle: 'idle', live: true, needsYou: false, calls: [], lastActivityAt: 1 };
-    for (const [delivered, toast] of [['sent', 'Sent to claude-1 via intercom'], ['queued', 'claude-1 is busy — it’ll read it after this turn']] as const) {
-      it(`${delivered}: the toast says "${toast}"`, async () => {
-        const { api } = await import('../api');
-        const stations = api.intercom.stations as unknown as ReturnType<typeof vi.fn>;
-        stations.mockResolvedValue([idle]);
-        message.mockReset().mockResolvedValue({ delivered, to: { agentId: 'claude-1@app', alias: null } });
-        try {
-          renderDashboard();
-          await openFd9FromHome();
-          fireEvent.click(await within(screen.getByTestId('dock')).findByRole('button', { name: /^claude-1 — / }));
-          const talk = screen.getByLabelText('Talk to claude-1');
-          fireEvent.change(talk, { target: { value: 'how is it going' } });
-          fireEvent.keyDown(talk, { key: 'Enter' });
-          await waitFor(() => expect(message).toHaveBeenCalledWith('claude-1@app', 'how is it going'));
-          expect(await screen.findByText(toast)).toBeInTheDocument();
-        } finally {
-          stations.mockResolvedValue([
-            { agentId: 'claude-1@app', alias: null, name: 'claude-1', mode: 'claude', worktreePath: '/wt/FD-9', worktreeName: 'FD-9', sessionId: '1',
-              lifecycle: 'idle', live: true, needsYou: true, calls: [{ id: 'e1', title: 'Which database?', body: '', createdAt: 1 }], lastActivityAt: 1 },
-          ]);
-        }
-      });
-    }
+  it('the Dock has no station lights: just the worktree chip and the box', async () => {
+    renderDashboard();
+    await openFd9FromHome();
+    expect(within(screen.getByTestId('dock')).queryByRole('button', { name: /^claude-1 — / })).not.toBeInTheDocument();
   });
 
   describe('home vs the Worktrees list', () => {

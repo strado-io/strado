@@ -839,7 +839,6 @@ if (!gotLock) {
     return true;
   });
 
-  const keyboardHeld = new Set(); // renderer webContents ids whose command box holds the keyboard
   const PREVIEW_CLICK_MS = 800;
   ipcMain.handle('strado:preview', (e, action, key, payload) => {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -887,8 +886,10 @@ if (!gotLock) {
           if (input.type === 'mouseDown' || input.type === 'gestureTapDown' || input.type === 'touchStart') pressedAt = Date.now();
         });
         wc.on('focus', () => {
-          // Not chosen, and the box holds the keyboard: hand it straight back.
-          if (keyboardHeld.has(win.webContents.id) && Date.now() - pressedAt > PREVIEW_CLICK_MS) {
+          // Not chosen: the page took focus by itself (a reload after a dev
+          // server restart, autofocus, HMR). Hand the keyboard straight back
+          // and stay on the tab the user is on (VS Code, a terminal, …).
+          if (Date.now() - pressedAt > PREVIEW_CLICK_MS) {
             if (!win.isDestroyed()) win.webContents.focus();
             return;
           }
@@ -1230,11 +1231,6 @@ if (!gotLock) {
     : process.platform === 'linux' ? 'link'
     : 'none';
   ipcMain.on('strado:update-mode', (e) => { e.returnValue = updateMode; });
-  // The command box holds the keyboard (you are talking to Strado): a preview
-  // that takes focus without a click (a page's autofocus, a load) gives it back.
-  ipcMain.on('strado:hold-keyboard', (e, on) => {
-    if (on) keyboardHeld.add(e.sender.id); else keyboardHeld.delete(e.sender.id);
-  });
 
   ipcMain.on('strado:is-fullscreen', (e) => {
     e.returnValue = BrowserWindow.fromWebContents(e.sender)?.isFullScreen() ?? false;

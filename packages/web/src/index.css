@@ -397,3 +397,11 @@ body {
 }
 .voice-bar { animation: voice-bar 900ms ease-in-out infinite; transform-origin: center; }
 @media (prefers-reduced-motion: reduce) { .voice-bar { animation: none; } }
+
+/* Electron: a top bar that moves the window (like a native title bar). Its
+   controls must stay clickable, so everything you can press inside is carved
+   out; the empty space between them is what you grab. */
+.app-drag { -webkit-app-region: drag; }
+.app-drag :is(button, a, input, select, textarea, label, summary, [role="button"], [role="tab"], [role="menu"], [role="dialog"], [role="listbox"], [data-tab-key], [contenteditable="true"], [draggable="true"], .no-drag) {
+  -webkit-app-region: no-drag;
+}

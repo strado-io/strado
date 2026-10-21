@@ -29,7 +29,7 @@ import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
   CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, OpencodeIcon, PiIcon,
-  PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, TrashIcon, VsCodeIcon,
+  LogsIcon, PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { useTickets, ticketRef } from '../hooks/tickets';
@@ -40,7 +40,6 @@ import {
   removeLeaf, splitLeaf, withRatio, type PaneDockSide, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
-import type { DevState } from '../components/dock/DevServerButton';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
@@ -533,8 +532,6 @@ export function TerminalView({
   onOpenUsage,
   openSeq = 0,
   modalOpen = false,
-  logsSeq = 0,
-  onDevState,
 }: {
   worktree: Worktree;
   onClose: () => void;
@@ -558,10 +555,6 @@ export function TerminalView({
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
-  /** Bumped by the Dock's "logs": each bump opens the log drawer. */
-  logsSeq?: number;
-  /** The dev server for the Dock's ▶ dev (null when this hub goes away). */
-  onDevState?: (s: DevState | null) => void;
 }) {
   const { workspace } = useWorkspace();
   const { showTime, showStatus } = useHubDisplayPreferences();
@@ -778,49 +771,10 @@ export function TerminalView({
     : null;
   const remoteForward = useRemoteForward(remote?.runnerId ?? null, remotePreviewPort);
   const [envSel, setEnvSel] = useState<Record<string, string>>({});
-  // The Dock's ▶ dev reads the dev server from here (the one place that tracks
-  // it live, local or on a runner): status, where it serves, the env profiles.
-  const onDevStateRef = useRef(onDevState);
-  onDevStateRef.current = onDevState;
-  useEffect(() => {
-    const report = onDevStateRef.current;
-    if (!report) return;
-    const path = active.path;
-    const p = procs[path] ?? { status: 'idle' as const };
-    const row = rowsRef.current.get(path) ?? (path === worktree.path ? worktree : undefined);
-    const repo = row?.repoId ? reposById[row.repoId] : undefined;
-    const names = (repo?.envProfiles ?? []).map((pr) => pr.name);
-    // On a runner the port belongs to the runner's loopback, so name both
-    // ends: the local port is the one that actually opens in a browser.
-    const detail = remote
-      ? remoteForward.forward
-        ? `localhost:${remoteForward.forward.localPort} → ${remote.runnerId}:${remoteForward.forward.remotePort}`
-        : remoteForward.error
-          ? `port ${remotePreviewPort} not forwarded — ${remoteForward.error}`
-          : remoteForward.pending ? `forwarding port ${remotePreviewPort}…` : ''
-      : p.status === 'crashed'
-        ? `exit code ${p.exitCode ?? '?'}`
-        : p.proxyUrl ?? p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
-    report({
-      path,
-      status: p.status as DevState['status'],
-      port: p.port ?? null,
-      detail,
-      remote: !!remote,
-      profiles: names.length > 0
-        ? { names, current: envSel[path] ?? row?.meta?.activeEnvProfile ?? repo?.defaultEnvProfile ?? names[0]! }
-        : null,
-      setProfile: (profile) => {
-        setEnvSel((prev) => ({ ...prev, [path]: profile }));
-        api.worktrees.setEnvProfile(localWsId, path, profile).catch(() => undefined);
-      },
-      // The local server proxies a runner's worktree, so these hold for both.
-      start: () => api.worktrees.start(localWsId, path),
-      stop: () => api.worktrees.stop(localWsId, path),
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active.path, procs[active.path], reposById, envSel, remoteForward.forward, remoteForward.error, remoteForward.pending, remotePreviewPort]);
-  useEffect(() => () => onDevStateRef.current?.(null), []);
+  // Why the last Run/Stop click did nothing — the request failed (no start
+  // command, say). Per worktree; cleared by the next click or by the server
+  // reporting a start.
+  const [runError, setRunError] = useState<{ path: string; message: string } | null>(null);
   // Workflow-status changes made from this panel (optimistic, per worktree).
   const [statusSel, setStatusSel] = useState<Record<string, WorkflowStatus | null>>({});
 
@@ -1057,11 +1011,6 @@ export function TerminalView({
   const [showLogs, setShowLogs] = useState(false);
   const showLogsRef = useRef(false);
   showLogsRef.current = showLogs;
-  // The Dock's "logs" bumps logsSeq; each bump opens the drawer.
-  useEffect(() => {
-    if (logsSeq > 0 && !remote) setShowLogs(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logsSeq]);
   // Custom shell-tab names (double-click a shell tab to rename; shell only —
   // agent/vscode/browser tabs keep their fixed labels). `renaming` holds the
   // tab being edited plus the draft text for the inline input.
@@ -1277,6 +1226,10 @@ export function TerminalView({
           ...prev,
           [path]: { status: 'idle', ...prev[path], ...proc },
         }));
+        // The server took the start: whatever the last click complained about is moot.
+        if (proc.status === 'starting' || proc.status === 'running') {
+          setRunError((cur) => (cur?.path === path ? null : cur));
+        }
       }
       const shellSessions = Array.isArray(evt.data.shellSessions) ? evt.data.shellSessions : null;
       const claudeSessions = Array.isArray(evt.data.claudeSessions) ? (evt.data.claudeSessions as string[]) : null;
@@ -2883,7 +2836,7 @@ export function TerminalView({
         );
       })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
+        <div className="app-drag flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
           {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
@@ -3008,8 +2961,37 @@ export function TerminalView({
           </button>
           </div>
           {(() => {
-            // The dev server (start/stop, logs, env profile) lives in the Dock's ▶ dev.
+            const p = procs[active.path] ?? { status: 'idle' as const };
+            // starting counts as busy so a start that hangs can still be cancelled;
+            // stopping does not — a second Stop has nothing to add.
+            const busy = p.status === 'running' || p.status === 'starting';
+            const stopping = p.status === 'stopping';
+            const crashed = p.status === 'crashed';
+            const runLabel = p.status === 'starting' ? 'Starting…'
+              : p.status === 'running' ? (p.port ? `Stop :${p.port}` : 'Stop')
+                : stopping ? 'Stopping…'
+                  : crashed ? 'Crashed'
+                    : 'Run';
+            const runNote = runError?.path === active.path
+              ? runError.message
+              : crashed
+                ? `exit code ${p.exitCode ?? '?'}`
+                : null;
+            // On a runner the port belongs to the runner's loopback, so name both
+            // ends: the local port is the one that actually opens in a browser,
+            // and it usually differs (3000 is normally taken here already).
+            const detail = remote
+              ? remoteForward.forward
+                ? `localhost:${remoteForward.forward.localPort} → ${remote.runnerId}:${remoteForward.forward.remotePort}`
+                : remoteForward.error
+                  ? `port ${remotePreviewPort} not forwarded — ${remoteForward.error}`
+                  : remoteForward.pending
+                    ? `forwarding port ${remotePreviewPort}…`
+                    : ''
+              : p.proxyUrl ?? p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
             const row = rowsRef.current.get(active.path) ?? (active.path === worktree.path ? worktree : undefined);
+            const repo = row?.repoId ? reposById[row.repoId] : undefined;
+            const profiles = repo?.envProfiles ?? [];
             const jiraIssue = row?.meta?.ticketId ? tickets.issues[ticketRef(row.meta.ticketProvider, row.meta.ticketId)] : undefined;
             const spent = formatActiveTime(row?.activitySeconds);
             const origEstimate = jiraIssue?.estimate && !/^0[mhd]$/.test(jiraIssue.estimate) ? jiraIssue.estimate : null;
@@ -3045,16 +3027,106 @@ export function TerminalView({
                     )}
                   </span>
                 )}
+                {profiles.length > 0 && (
+                  <select
+                    value={
+                      envSel[active.path] ??
+                      row?.meta?.activeEnvProfile ??
+                      repo?.defaultEnvProfile ??
+                      profiles[0]?.name ??
+                      ''
+                    }
+                    onChange={(e) => {
+                      const profile = e.target.value;
+                      if (busy && !confirm(`Switch env to "${profile}"? This will restart the running process.`)) {
+                        return;
+                      }
+                      setEnvSel((prev) => ({ ...prev, [active.path]: profile }));
+                      api.worktrees.setEnvProfile(localWsId, active.path, profile).catch(() => undefined);
+                    }}
+                    title="Env profile (switching restarts the running process)"
+                    aria-label="Env profile"
+                    className="h-[26px] shrink-0 self-start rounded border border-zinc-800 bg-zinc-950 px-1.5 text-[11px] uppercase tracking-wide text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+                  >
+                    {profiles.map((pr) => (
+                      <option key={pr.name} value={pr.name}>
+                        {pr.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
+                <button
+                  className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
+                    p.status === 'running'
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                      : p.status === 'starting'
+                        ? 'animate-pulse border-amber-500/30 bg-amber-500/10 text-amber-300'
+                        : stopping
+                          ? 'animate-pulse border-zinc-700 bg-zinc-900 text-zinc-400'
+                          : crashed
+                            ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
+                            : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
+                  }`}
+                  disabled={stopping}
+                  onClick={() => {
+                    if (stopping) return;
+                    const path = active.path;
+                    setRunError((cur) => (cur?.path === path ? null : cur));
+                    const call = busy
+                      ? api.worktrees.stop(localWsId, path)
+                      : api.worktrees.start(localWsId, path);
+                    // SSE carries the process states; a refused request has no
+                    // SSE and would otherwise be a click that did nothing.
+                    call.catch((err: unknown) => {
+                      setRunError({ path, message: (err as Error).message || 'request failed' });
+                    });
+                  }}
+                  title={`${busy || stopping ? 'Stop' : 'Start'} dev server — ${p.status}${detail ? ` (${detail})` : ''}`}
+                  aria-label={busy || stopping ? 'Stop dev server' : 'Start dev server'}
+                >
+                  {busy || stopping ? <StopIcon /> : <PlayIcon />}
+                  <span>{runLabel}</span>
+                </button>
+                {runNote && (
+                  <span
+                    role="alert"
+                    title={runNote}
+                    className="flex max-w-[260px] shrink-0 items-center gap-1.5 self-start py-1 text-[11px] text-red-300"
+                  >
+                    <span className="truncate">{runNote}</span>
+                    {crashed && !remote && (
+                      <button
+                        type="button"
+                        onClick={() => setShowLogs(true)}
+                        className="shrink-0 rounded border border-red-500/30 px-1 text-[10px] text-red-200 hover:bg-red-500/10"
+                      >Logs</button>
+                    )}
+                  </span>
+                )}
               </>
             );
           })()}
-          {/* Diff and the changes rail read LOCAL git state. For a worktree on
-              a runner they would silently show nothing, so they are absent
-              rather than inert — the same rule the capability flag applies to
-              VS Code and Browser. */}
+          {/* Logs, diff and the changes rail all read LOCAL git and process
+              state. For a worktree on a runner they would silently show
+              nothing, so they are absent rather than inert — the same rule the
+              capability flag applies to VS Code and Browser. */}
           {!remote && (
             <>
+              <button
+                className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
+                  showLogs
+                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-200'
+                    : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
+                }`}
+                onClick={() => setShowLogs((v) => !v)}
+                title="Logs"
+                aria-label="Logs"
+                aria-pressed={showLogs}
+              >
+                <LogsIcon />
+                <span>Logs</span>
+              </button>
               <button
                 className={`flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900 ${
                   showDiff ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
