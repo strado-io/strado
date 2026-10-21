@@ -13,7 +13,7 @@ import { PtydServer } from './server.js';
 import { readSnapshot, clearSnapshot, type HandoffSnapshot } from './snapshot.js';
 import { type HandoffMessage } from './protocol.js';
 
-const DAEMON_VERSION = '0.2.3'; // bump alongside package.json
+const DAEMON_VERSION = '0.2.4'; // bump alongside package.json
 
 function arg(name: string): string | undefined {
   const prefix = `--${name}=`;

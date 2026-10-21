@@ -11,6 +11,7 @@ import {
   type ServerMessage,
   type SessionInfo,
   type UpgradeResult,
+  type UpgradeRuntime,
   type HandoffMessage,
 } from './protocol.js';
 import { spawnPty, adoptFromFd, type Pty } from './pty.js';
@@ -321,7 +322,7 @@ export class PtydServer {
         // success the reply must reach the supervisor BEFORE this process
         // exits — finalizeHandoff drains THIS conn before closing.
         this.pendingUpgradeConn = conn;
-        void this.prepareUpgrade()
+        void this.prepareUpgrade(msg.runtime)
           .then((result) => this.send(conn, { type: 'upgrade-prepared', result }))
           .catch((err) =>
             this.send(conn, {
@@ -391,10 +392,10 @@ export class PtydServer {
    * is killed, the snapshot removed, and we keep serving — sessions are
    * never at risk from a failed handoff.
    */
-  async prepareUpgrade(): Promise<UpgradeResult> {
+  async prepareUpgrade(runtime?: UpgradeRuntime): Promise<UpgradeResult> {
     // Two successors adopting the same masters is split-brain — latch.
     if (this.upgradeInFlight) return this.upgradeInFlight;
-    const attempt = this.doPrepareUpgrade();
+    const attempt = this.doPrepareUpgrade(runtime);
     this.upgradeInFlight = attempt;
     let result: UpgradeResult;
     try {
@@ -411,7 +412,7 @@ export class PtydServer {
     return result;
   }
 
-  private async doPrepareUpgrade(): Promise<UpgradeResult> {
+  private async doPrepareUpgrade(runtime?: UpgradeRuntime): Promise<UpgradeResult> {
     const live = [...this.store.all()].filter((s) => !s.exited) as LiveSession[];
 
     // stdio: [0]=ignore [1]=inherit [2]=inherit [3]=ipc [4..]=master fds
@@ -482,13 +483,17 @@ export class PtydServer {
     );
     let child: childProcess.ChildProcess;
     const args = [...process.execArgv, scriptPath, '--handoff', `--snapshot=${snapshotPath}`, `--socket=${this.opts.socketPath}`];
-    const launcher = this.opts.launcher ?? null;
+    // A runtime the supervisor named (both files present) wins over our own:
+    // it is where the successor must live from now on.
+    const target = runtime && fs.existsSync(runtime.node) && fs.existsSync(runtime.launcher) ? runtime : null;
+    const launcher = target?.launcher ?? this.opts.launcher ?? null;
+    const node = target?.node ?? realRuntime();
     try {
       // Through the launcher: the successor runs the runtime's real path (an
       // update may have swapped the file behind our execPath), as its own
       // responsible process. Fds and the IPC channel pass through its spawn.
       child = launcher
-        ? childProcess.spawn(launcher, [realRuntime(), ...args, '--responsible', `--launcher=${launcher}`], { stdio, detached: false })
+        ? childProcess.spawn(launcher, [node, ...args, '--responsible', `--launcher=${launcher}`], { stdio, detached: false })
         : childProcess.spawn(process.execPath, args, { stdio, detached: false });
     } catch (err) {
       resumeAll();

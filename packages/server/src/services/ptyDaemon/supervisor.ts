@@ -5,6 +5,7 @@
 // Manifest file records pid+socket for adoption on the next server boot.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -14,7 +15,12 @@ import { bootoutLaunchdJob, bootstrapLaunchdJob, launchdEnabled, writeLaunchdPli
 export interface PtyDaemonHandle {
   socketPath: string;
   daemonVersion: string;
+  /** macOS: the stable helper copy daemons should run from (stableHelperRuntime). */
+  runtime?: HelperRuntime | null;
 }
+
+/** A node binary and the launcher that starts it as its own responsible process. */
+export type HelperRuntime = { node: string; launcher: string };
 
 interface Manifest {
   pid: number;
@@ -114,6 +120,13 @@ function psField(pid: number, field: string): string | null {
   return out || null;
 }
 
+/** The program file a running process was started from (as `ps` names it), or null. */
+export function daemonExecPath(pid: number): string | null {
+  if (pid <= 0) return null;
+  const p = psField(pid, 'comm');
+  return p && path.isAbsolute(p) ? p : null;
+}
+
 function inspectProcess(pid: number): ProcessFacts | null {
   const execPath = psField(pid, 'comm');
   const started = psField(pid, 'lstart');
@@ -138,6 +151,101 @@ export function daemonBinaryReplaced(
   const changedAt = (deps.changedAt ?? ((file) => { try { return fs.statSync(file).ctimeMs; } catch { return null; } }))(facts.execPath);
   // lstart has whole seconds: allow for that before calling it newer.
   return changedAt !== null && changedAt > facts.startedAt + 1_000;
+}
+
+const HELPER_NODE = /^(.*\/[^/]+\.app)\/Contents\/MacOS\/node$/;
+
+/**
+ * macOS: run daemons from a copy of the signed helper app, one per build, under
+ * <stateDir>/ptyd/helpers. An app update rewrites the bundle inside the app,
+ * and macOS refuses the microphone and Desktop to every process whose
+ * responsible daemon's bundle no longer matches its signature: tabs that were
+ * already open lose dictation. A copy nothing rewrites keeps them working; the
+ * grant follows the signing identity, so the copy needs no new prompt.
+ * Null off macOS, or when node is not inside such a helper (dev): run it as is.
+ */
+export function stableHelperRuntime(nodeSource: string, stateDir: string): HelperRuntime | null {
+  if (process.platform !== 'darwin') return null;
+  let real: string;
+  try { real = fs.realpathSync(nodeSource); } catch { return null; }
+  const m = HELPER_NODE.exec(real);
+  if (!m) return null;
+  const bundle = m[1]!;
+  const name = path.basename(bundle);
+  if (!fs.existsSync(path.join(bundle, 'Contents', 'MacOS', 'strado-disclaim'))) return null;
+  let key: string;
+  try {
+    const plist = fs.readFileSync(path.join(bundle, 'Contents', 'Info.plist'), 'utf8');
+    const version = /<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1] ?? '0';
+    // The seal changes with any byte of the bundle: two builds of one version get two copies.
+    const seal = createHash('sha256').update(fs.readFileSync(path.join(bundle, 'Contents', '_CodeSignature', 'CodeResources'))).digest('hex').slice(0, 10);
+    key = `${version.replace(/[^\w.-]/g, '_')}-${seal}`;
+  } catch {
+    return null;
+  }
+  const root = path.join(stateDir, 'ptyd', 'helpers');
+  const dir = path.join(root, key);
+  const at = (d: string): HelperRuntime => ({ node: path.join(d, name, 'Contents', 'MacOS', 'node'), launcher: path.join(d, name, 'Contents', 'MacOS', 'strado-disclaim') });
+  if (!fs.existsSync(at(dir).node) || !fs.existsSync(at(dir).launcher)) {
+    const tmp = `${dir}.tmp-${process.pid}`;
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.mkdirSync(tmp, { recursive: true });
+      // ditto keeps the bundle exactly as signed (symlinks, modes, resource forks).
+      const r = spawnSync('ditto', [bundle, path.join(tmp, name)], { timeout: 60_000 });
+      if (r.status !== 0) throw new Error(`ditto exited ${r.status}`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.renameSync(tmp, dir);
+    } catch (err) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      process.stderr.write(`[ptyd-supervisor] could not copy the helper (${(err as Error).message}); running it in place\n`);
+      return null;
+    }
+    // The copies before this one are retired from now: what started under
+    // them may still be running, so they stay until pruneHelperCopies says so.
+    for (const entry of fs.readdirSync(root)) {
+      const d = path.join(root, entry);
+      if (d !== dir && !entry.includes('.tmp-') && !fs.existsSync(path.join(d, RETIRED))) {
+        try { fs.writeFileSync(path.join(d, RETIRED), String(Date.now())); } catch { /* next copy retries */ }
+      }
+    }
+  }
+  return at(dir);
+}
+
+const RETIRED = '.retired';
+
+/**
+ * Remove retired helper copies nothing depends on any more. Deleting a copy
+ * cuts the microphone off from every process that started under a daemon
+ * running from it (macOS can no longer check its signature), so a copy goes
+ * only when nothing runs from it and every live terminal session started after
+ * it was retired: `oldestSession` is the earliest session start (ms), null for none.
+ */
+export function pruneHelperCopies(stateDir: string, oldestSession: number | null): void {
+  const root = path.join(stateDir, 'ptyd', 'helpers');
+  let entries: string[];
+  try { entries = fs.readdirSync(root); } catch { return; }
+  const r = spawnSync('ps', ['-axo', 'comm='], { encoding: 'utf8', timeout: 2_000 });
+  if (r.status !== 0) return; // can't tell what's in use: keep everything
+  const running = r.stdout.split('\n');
+  for (const entry of entries) {
+    const d = path.join(root, entry);
+    let retiredAt: number;
+    try { retiredAt = Number(fs.readFileSync(path.join(d, RETIRED), 'utf8')); } catch { continue; } // current, or not retired
+    if (!Number.isFinite(retiredAt)) continue;
+    if (oldestSession !== null && oldestSession <= retiredAt + 1_000) continue;
+    if (running.some((c) => c.startsWith(`${d}/`))) continue;
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+}
+
+/** When a process started (ms), or null. */
+export function processStartedAt(pid: number): number | null {
+  if (pid <= 0) return null;
+  const s = psField(pid, 'lstart');
+  const t = s ? Date.parse(s) : NaN;
+  return Number.isFinite(t) ? t : null;
 }
 
 /** Numeric x.y.z compare; any non-numeric input compares as NOT less (never upgrade on garbage). */
@@ -403,6 +511,8 @@ export async function ensurePtyDaemon(opts: {
     fs.existsSync(path.join(binDir, 'node_modules', 'node-pty', 'package.json'));
   const installed = cachedIsComplete && cached ? cached : installPtydRuntime(opts);
   installedOnce.set(memoKey, installed);
+  const runtime = stableHelperRuntime(installed.execPath, opts.stateDir);
+  const execPath = runtime?.node ?? installed.execPath;
 
   // Adopt: manifest + answering socket = live daemon, reuse it.
   const manifest = readManifest(opts.stateDir);
@@ -419,7 +529,7 @@ export async function ensurePtyDaemon(opts: {
         fs.writeFileSync(tmp, JSON.stringify(m, null, 2));
         fs.renameSync(tmp, manifestPath(opts.stateDir));
       }
-      return { socketPath, daemonVersion };
+      return { socketPath, daemonVersion, runtime };
     } catch {
       // Dead or unresponsive — clean and respawn below.
     }
@@ -437,7 +547,7 @@ export async function ensurePtyDaemon(opts: {
   let launchdLabel: string | undefined;
   if (launchdEnabled()) {
     const job = writeLaunchdPlist({
-      stateDir: opts.stateDir, execPath: installed.execPath, script: installed.script, socketPath, logPath,
+      stateDir: opts.stateDir, execPath, script: installed.script, socketPath, logPath,
     });
     const res = bootstrapLaunchdJob(job.label, job.plistPath);
     if (res.ok) launchdLabel = job.label;
@@ -457,7 +567,7 @@ export async function ensurePtyDaemon(opts: {
   const spawnErrBox: { err: Error | null } = { err: null };
   if (!launchdLabel) {
     const logFd = fs.openSync(logPath, 'a');
-    child = spawn(installed.execPath, [installed.script, `--socket=${socketPath}`], {
+    child = spawn(execPath, [installed.script, `--socket=${socketPath}`], {
       detached: true,
       stdio: ['ignore', 'ignore', logFd],
     });
@@ -480,7 +590,7 @@ export async function ensurePtyDaemon(opts: {
       const tmp = `${manifestPath(opts.stateDir)}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(m, null, 2));
       fs.renameSync(tmp, manifestPath(opts.stateDir));
-      return { socketPath, daemonVersion };
+      return { socketPath, daemonVersion, runtime };
     } catch (err) {
       lastErr = err as Error;
       await new Promise((r) => setTimeout(r, 100));

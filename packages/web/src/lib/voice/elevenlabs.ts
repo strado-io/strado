@@ -23,7 +23,8 @@ const RATE = 16_000;
 const CHUNK = RATE / 10;
 const LEVEL = RATE / 20;
 const KEYTERMS_MAX = 50;
-const KEYTERM_LEN_MAX = 50;
+/** ElevenLabs refuses the whole session over one longer keyterm ("Each keyterm must be at most 20 characters"). */
+const KEYTERM_LEN_MAX = 20;
 /** After stop, how long to wait for the last commit before the last partial is used. */
 export const ELEVENLABS_FINAL_WAIT_MS = 1_500;
 

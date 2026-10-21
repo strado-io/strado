@@ -4,6 +4,7 @@
 // buffer is the source of truth; the mirror refills from replay on (re)connect.
 
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { SessionMeta, UpgradeResult } from '@strado/ptyd/protocol';
@@ -19,7 +20,7 @@ import {
   type TerminalManager,
 } from '../terminalManager.js';
 import { createDaemonClient, type DaemonClient } from './client.js';
-import { daemonBinaryReplaced, ensurePtyDaemon, probeDaemon, readExpectedDaemonVersion, readManifest, versionLess } from './supervisor.js';
+import { daemonBinaryReplaced, daemonExecPath, processStartedAt, pruneHelperCopies, type HelperRuntime, ensurePtyDaemon, probeDaemon, readExpectedDaemonVersion, readManifest, versionLess } from './supervisor.js';
 import { defaultShell } from '../platform.js';
 // CJS packages: named imports fail under Node ESM (the runtime lexer doesn't
 // see `Terminal`/`SerializeAddon` as named exports), so import the default.
@@ -83,6 +84,10 @@ export type DaemonTerminalManagerOptions = {
   makeEmulator?: EmulatorFactory;
   /** Test seam: whether the running daemon's program file was replaced (default: daemonBinaryReplaced). */
   daemonReplaced?: (pid: number) => boolean;
+  /** Test seam: the file a daemon runs from (default: daemonExecPath). */
+  daemonRunsFrom?: (pid: number) => string | null;
+  /** Test seam: the stable helper copy (default: what ensurePtyDaemon found). */
+  runtime?: HelperRuntime | null;
 };
 
 // Yield to the event loop this often while resubscribing at resync, so a
@@ -123,7 +128,9 @@ export async function createDaemonTerminalManager(
     if (m.buffer) m.emu.write(m.buffer);
   };
 
-  const { socketPath, daemonVersion } = await ensurePtyDaemon({ stateDir: opts.stateDir, daemonScript: opts.daemonScript });
+  const ensured = await ensurePtyDaemon({ stateDir: opts.stateDir, daemonScript: opts.daemonScript });
+  const { socketPath, daemonVersion } = ensured;
+  const runtime = opts.runtime !== undefined ? opts.runtime : ensured.runtime ?? null;
   const client: DaemonClient = createDaemonClient(socketPath);
   await client.connect();
 
@@ -283,7 +290,7 @@ export async function createDaemonTerminalManager(
     try {
       let result: UpgradeResult;
       try {
-        result = await client.prepareUpgrade();
+        result = await client.prepareUpgrade(runtime);
       } catch (err) {
         // Reply lost in the disconnect race — the handoff may still have
         // succeeded. Fall through to reconnect; resync tells the truth.
@@ -339,8 +346,24 @@ export async function createDaemonTerminalManager(
 
   const HANDOFF_FLOOR = '0.2.0'; // first daemon version that understands prepare-upgrade
   const expectedDaemonVersion = readExpectedDaemonVersion(opts.daemonScript);
-  const startUpgrade = async (why: string) => {
-    upgradePromise = upgradeDaemon(daemonVersion, why)
+  const RUNTIME_FLOOR = '0.2.4'; // first daemon that starts its successor where it is told
+  const samePath = (a: string, b: string) => { try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return a === b; } };
+  // The daemon in the manifest runs from somewhere other than the stable helper
+  // copy (ptyd 0.2.3 started its successors from the app's own bundle).
+  const misplaced = (): { pid: number; version: string; at: string } | null => {
+    if (!runtime) return null;
+    const m = readManifest(opts.stateDir);
+    if (!m || versionLess(m.daemonVersion, RUNTIME_FLOOR)) return null;
+    const at = (opts.daemonRunsFrom ?? daemonExecPath)(m.pid);
+    return at && !samePath(at, runtime.node) ? { pid: m.pid, version: m.daemonVersion, at } : null;
+  };
+  /** `why`: hand off first (drift, a replaced file); then, either way, onto the stable copy if needed. */
+  const startUpgrade = async (why: string | null) => {
+    upgradePromise = (async () => {
+      if (why) await upgradeDaemon(daemonVersion, why);
+      const off = misplaced();
+      if (off) await upgradeDaemon(off.version, `daemon ${off.pid} runs from ${off.at}; moving it onto the stable helper copy`);
+    })()
       // Like reconnectPromise, this handle must never reject: ensure() awaits
       // it to join a handoff, and a rejection there would fail a terminal open
       // for a failure the upgrade path already handled.
@@ -378,7 +401,22 @@ export async function createDaemonTerminalManager(
     }
   } else if (replaced) {
     await startUpgrade(`daemon ${daemonPid}'s program file was replaced (an app update)`);
+  } else if (misplaced()) {
+    await startUpgrade(null);
   }
+
+  // Retired helper copies go once no open terminal started under them
+  // (supervisor.pruneHelperCopies). After boot settles; once is enough —
+  // what is still in use now is cleaned up by a later boot.
+  const pruneTimer = setTimeout(() => {
+    if (destroyed || !runtime) return;
+    const starts = [...mirrors.values()]
+      .filter((m) => m.info.status === 'running' && m.info.pid)
+      .map((m) => processStartedAt(m.info.pid!))
+      .filter((t): t is number => t !== null);
+    try { pruneHelperCopies(opts.stateDir, starts.length ? Math.min(...starts) : null); } catch { /* best-effort */ }
+  }, 30_000);
+  pruneTimer.unref();
 
   return {
     async ensure(key, cwd, spec, size) {
@@ -527,6 +565,7 @@ export async function createDaemonTerminalManager(
     },
     destroy() {
       destroyed = true;
+      clearTimeout(pruneTimer);
       for (const m of mirrors.values()) {
         try { m.emu.dispose(); } catch { /* ignore */ }
       }

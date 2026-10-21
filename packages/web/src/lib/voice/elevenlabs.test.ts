@@ -103,6 +103,13 @@ describe('the ElevenLabs realtime bridge', () => {
     expect(terms).not.toContain(long);
   });
 
+  it('keyterms over 20 characters are left out (ElevenLabs refuses the session over one)', async () => {
+    await started({}, ['runner-version-presence', 'a'.repeat(20), 'a'.repeat(21), 'Strado_Mcp_and_intercom_bus_imporovements', 'claude-2']);
+    const terms = new URL(FakeWS.last!.url).searchParams.getAll('keyterms');
+    expect(terms).toEqual(['a'.repeat(20), 'claude-2']);
+    expect(terms.every((t) => t.length <= 20)).toBe(true);
+  });
+
   it('"ready" on session_started; audio waits for it, then goes as ~100 ms PCM16 chunks', async () => {
     await started();
     const ws = FakeWS.last!; ws.open();

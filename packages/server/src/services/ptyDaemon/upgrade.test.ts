@@ -162,4 +162,43 @@ describe('daemon upgrade at boot', () => {
       m2.destroy();
     }
   }, 40000);
+
+  it('a daemon running from the app\'s own bundle moves onto the stable helper copy, sessions intact', async () => {
+    fs.writeFileSync(path.join(scriptDir, 'ptyd.version'), fs.readFileSync(path.join(path.dirname(realBundle), 'ptyd.version'), 'utf8'));
+    const m1 = await createDaemonTerminalManager({ stateDir, daemonScript: daemonScript(), daemonReplaced: () => false, runtime: null });
+    const info = await m1.ensure('/tmp\0shell', '/tmp', shSpec);
+    await vwait(() => m1.snapshot('/tmp\0shell').includes('ready'));
+    const first = JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8')).pid;
+    m1.destroy();
+
+    // The stable copy: node (the test's own) and a launcher that records its argv.
+    const log = path.join(scriptDir, 'launcher.log');
+    const launcher = path.join(scriptDir, 'fake-disclaim');
+    fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s\\n' "$1" >> '${log}'\nexec "$@"\n`, { mode: 0o755 });
+    const exits: string[] = [];
+    const m2 = await createDaemonTerminalManager({
+      stateDir,
+      daemonScript: daemonScript(),
+      onExit: (key) => exits.push(key),
+      daemonReplaced: () => false,
+      runtime: { node: process.execPath, launcher },
+      // The first daemon runs from the app bundle; its successor from the copy.
+      daemonRunsFrom: (pid) => (pid === first ? '/Applications/Strado.app/Contents/Helpers/Strado Terminals.app/Contents/MacOS/node' : process.execPath),
+    });
+    try {
+      await vwait(() => fs.existsSync(log));
+      expect(fs.readFileSync(log, 'utf8').trim().split('\n')).toEqual([process.execPath]); // one hop, onto the copy's node
+      await vwait(() => m2.status('/tmp\0shell').status === 'running');
+      expect(m2.status('/tmp\0shell').pid).toBe(info.pid);
+      const got: string[] = [];
+      m2.subscribe('/tmp\0shell', (d) => got.push(d));
+      m2.write('/tmp\0shell', 'on-the-copy\n');
+      await vwait(() => got.join('').includes('on-the-copy'));
+      expect(exits).toEqual([]);
+      expect(JSON.parse(fs.readFileSync(path.join(stateDir, 'ptyd', 'manifest.json'), 'utf8')).pid).not.toBe(first);
+    } finally {
+      m2.kill('/tmp\0shell');
+      m2.destroy();
+    }
+  }, 40000);
 });

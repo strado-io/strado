@@ -45,7 +45,12 @@ export type ClientMessage =
   | { type: 'list' }
   | { type: 'subscribe'; id: string; replay: boolean }
   | { type: 'unsubscribe'; id: string }
-  | { type: 'prepare-upgrade' };
+  // `runtime`: run the successor from this node through this launcher (a
+  // stable copy of the helper an app update never rewrites). Older daemons ignore it.
+  | { type: 'prepare-upgrade'; runtime?: UpgradeRuntime };
+
+/** Where a handoff's successor runs: the node binary and the launcher that spawns it. */
+export type UpgradeRuntime = { node: string; launcher: string };
 
 // ---- daemon → client ----
 export type ServerMessage =
