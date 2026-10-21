@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { daemonBinaryReplaced, ensurePtyDaemon, readExpectedDaemonVersion, readManifest, releasePtyDaemon, versionLess } from './supervisor.js';
+import { daemonBinaryReplaced, pruneHelperCopies, stableHelperRuntime, ensurePtyDaemon, readExpectedDaemonVersion, readManifest, releasePtyDaemon, versionLess } from './supervisor.js';
 import { launchdEnabled } from './launchd.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -160,5 +160,111 @@ describe('daemonBinaryReplaced: an app update swapped the daemon\'s program file
       child.kill();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe.runIf(process.platform === 'darwin')('stableHelperRuntime: daemons run from a copy of the helper an update never rewrites', () => {
+  let root: string;
+  beforeEach(() => { root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ptyd-helper-'))); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+  /** A helper-shaped bundle: Contents/MacOS/{node,strado-disclaim}, Info.plist, a seal. */
+  const bundle = (version: string, seal: string, node = '#!/bin/sh\n') => {
+    const app = path.join(root, 'Strado.app', 'Contents', 'Helpers', 'Strado Terminals.app');
+    fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true });
+    fs.mkdirSync(path.join(app, 'Contents', '_CodeSignature'), { recursive: true });
+    fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'node'), node, { mode: 0o755 });
+    fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'strado-disclaim'), '#!/bin/sh\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<plist><dict><key>CFBundleVersion</key><string>${version}</string></dict></plist>`);
+    fs.writeFileSync(path.join(app, 'Contents', '_CodeSignature', 'CodeResources'), seal);
+    return path.join(app, 'Contents', 'MacOS', 'node');
+  };
+  const state = () => path.join(root, 'state');
+  const helpers = () => path.join(state(), 'ptyd', 'helpers');
+
+  it('copies the helper once per build and runs node and the launcher from the copy', () => {
+    const node = bundle('0.1.69', 'seal-a');
+    const rt = stableHelperRuntime(node, state())!;
+    expect(rt.node.startsWith(helpers() + path.sep)).toBe(true);
+    expect(rt.node.endsWith('/Strado Terminals.app/Contents/MacOS/node')).toBe(true);
+    expect(rt.launcher.endsWith('/Strado Terminals.app/Contents/MacOS/strado-disclaim')).toBe(true);
+    expect(fs.readFileSync(rt.node, 'utf8')).toBe('#!/bin/sh\n');
+    expect(fs.readdirSync(helpers())).toHaveLength(1);
+    // Same build again: the same copy.
+    expect(stableHelperRuntime(node, state())).toEqual(rt);
+    expect(fs.readdirSync(helpers())).toHaveLength(1);
+  });
+
+  it('an update (a new seal) gets its own copy; the old one is retired, not deleted', () => {
+    const node = bundle('0.1.69', 'seal-a');
+    const a = stableHelperRuntime(node, state())!;
+    bundle('0.1.70', 'seal-b');
+    const b = stableHelperRuntime(node, state())!;
+    expect(b.node).not.toBe(a.node);
+    expect(fs.existsSync(a.node)).toBe(true); // tabs started under it may still be open
+    const oldDir = path.dirname(path.dirname(path.dirname(path.dirname(a.node))));
+    expect(fs.existsSync(path.join(oldDir, '.retired'))).toBe(true);
+    expect(fs.existsSync(path.join(path.dirname(path.dirname(path.dirname(path.dirname(b.node)))), '.retired'))).toBe(false);
+  });
+
+  it('pruneHelperCopies: a retired copy goes only once every open session started after it was retired', () => {
+    const node = bundle('0.1.69', 'seal-a');
+    const a = stableHelperRuntime(node, state())!;
+    bundle('0.1.70', 'seal-b');
+    const b = stableHelperRuntime(node, state())!;
+    const oldDir = path.dirname(path.dirname(path.dirname(path.dirname(a.node))));
+    const retiredAt = Number(fs.readFileSync(path.join(oldDir, '.retired'), 'utf8'));
+    pruneHelperCopies(state(), retiredAt - 60_000); // a session from before the update is still open
+    expect(fs.existsSync(a.node)).toBe(true);
+    pruneHelperCopies(state(), retiredAt + 60_000); // every session is newer
+    expect(fs.existsSync(a.node)).toBe(false);
+    expect(fs.existsSync(b.node)).toBe(true); // the current copy is never pruned
+    pruneHelperCopies(state(), null);
+    expect(fs.existsSync(b.node)).toBe(true);
+  });
+
+  it('pruneHelperCopies: no sessions at all removes retired copies', () => {
+    const node = bundle('0.1.69', 'seal-a');
+    const a = stableHelperRuntime(node, state())!;
+    bundle('0.1.70', 'seal-b');
+    stableHelperRuntime(node, state());
+    pruneHelperCopies(state(), null);
+    expect(fs.existsSync(a.node)).toBe(false);
+    expect(fs.readdirSync(helpers())).toHaveLength(1);
+  });
+
+  it('a retired copy something still runs from is kept even with no sessions', async () => {
+    // A real program as the helper's node, so a process can run from the copy.
+    const src = path.join(root, 'nap.c');
+    fs.writeFileSync(src, '#include <unistd.h>\nint main(void){sleep(30);return 0;}\n');
+    const nap = path.join(root, 'nap');
+    execFileSync('cc', ['-o', nap, src]);
+    const node = bundle('0.1.69', 'seal-a', fs.readFileSync(nap) as unknown as string);
+    const a = stableHelperRuntime(node, state())!;
+    const { spawn } = await import('node:child_process');
+    const child = spawn(a.node, [], { stdio: 'ignore' });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      bundle('0.1.70', 'seal-b');
+      stableHelperRuntime(node, state());
+      pruneHelperCopies(state(), null);
+      expect(fs.existsSync(a.node)).toBe(true); // in use: kept
+    } finally {
+      child.kill();
+    }
+  });
+
+  it('null when node is not inside a helper app (dev), or the helper has no launcher', () => {
+    expect(stableHelperRuntime(process.execPath, state())).toBeNull();
+    const node = bundle('0.1.69', 'seal-a');
+    fs.rmSync(path.join(path.dirname(node), 'strado-disclaim'));
+    expect(stableHelperRuntime(node, state())).toBeNull();
+  });
+
+  it('follows the bin/node symlink the app ships into the helper', () => {
+    const node = bundle('0.1.69', 'seal-a');
+    const link = path.join(root, 'Strado.app', 'Contents', 'Resources', 'bin', 'node');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(node, link);
+    expect(stableHelperRuntime(link, state())?.node.startsWith(helpers())).toBe(true);
   });
 });

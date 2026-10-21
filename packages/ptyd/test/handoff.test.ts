@@ -268,6 +268,49 @@ describe('handoff through the launcher (macOS privacy identity)', () => {
     b.close();
   }, 30000);
 
+  it('prepare-upgrade with a runtime: the successor runs that node through that launcher', async () => {
+    const own = fakeLauncher();
+    // A second launcher and a node path standing in for the stable helper copy.
+    const target = path.join(dir, 'target-disclaim');
+    const targetLog = path.join(dir, 'target.log');
+    fs.writeFileSync(target, `#!/bin/sh\nprintf '%s\\0' "$@" >> '${targetLog}'\nprintf '\\n' >> '${targetLog}'\nexec "$@"\n`, { mode: 0o755 });
+    const node = path.join(dir, 'copy-node');
+    fs.symlinkSync(process.execPath, node);
+    await startDaemon([`--launcher=${own.path}`, '--responsible']);
+    const a = await connect(sock);
+    const { shellPid } = await openShell(a, 'runtime-marker');
+    a.send({ type: 'prepare-upgrade', runtime: { node, launcher: target } });
+    const prepared = await a.waitFor((f) => (f.message as { type: string }).type === 'upgrade-prepared', 10000);
+    const result = (prepared.message as { result: { ok: boolean; successorPid?: number } }).result;
+    if (result.successorPid) successorPids.push(result.successorPid);
+    expect(result.ok).toBe(true);
+    a.close();
+    expect(own.calls()).toHaveLength(0);
+    const calls = fs.readFileSync(targetLog, 'utf8').split('\n').filter(Boolean).map((l) => l.split('\0').filter(Boolean));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe(node);
+    expect(calls[0]).toEqual(expect.arrayContaining(['--handoff', '--responsible', `--launcher=${target}`]));
+    const { client: b } = await reconnectWithHello(sock);
+    b.send({ type: 'list' });
+    const reply = await b.waitFor((f) => (f.message as { type: string }).type === 'list-reply');
+    expect((reply.message as { sessions: Array<{ pid: number }> }).sessions.map((x) => x.pid)).toEqual([shellPid]);
+    b.close();
+  }, 30000);
+
+  it('a runtime whose files are missing is ignored: the daemon\'s own launcher is used', async () => {
+    const own = fakeLauncher();
+    await startDaemon([`--launcher=${own.path}`, '--responsible']);
+    const a = await connect(sock);
+    await openShell(a, 'missing-marker');
+    a.send({ type: 'prepare-upgrade', runtime: { node: path.join(dir, 'nope-node'), launcher: path.join(dir, 'nope-disclaim') } });
+    const prepared = await a.waitFor((f) => (f.message as { type: string }).type === 'upgrade-prepared', 10000);
+    const result = (prepared.message as { result: { ok: boolean; successorPid?: number } }).result;
+    if (result.successorPid) successorPids.push(result.successorPid);
+    expect(result.ok).toBe(true);
+    a.close();
+    expect(own.calls()).toHaveLength(1);
+  }, 30000);
+
   it('a successor that is not its own responsible process re-homes itself through the launcher, sessions intact', async () => {
     const launcher = fakeLauncher();
     // The old daemon knows no launcher (as a 0.1.64 daemon would): its successor

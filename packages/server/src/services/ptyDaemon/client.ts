@@ -13,6 +13,7 @@ import {
   type SessionMeta,
   type UpgradeResult,
 } from '@strado/ptyd/protocol';
+import type { HelperRuntime } from './supervisor.js';
 
 export interface DaemonClient {
   connect(): Promise<void>;
@@ -21,7 +22,8 @@ export interface DaemonClient {
   resize(id: string, cols: number, rows: number): void;
   close(id: string): void;
   list(): Promise<SessionInfo[]>;
-  prepareUpgrade(): Promise<UpgradeResult>;
+  /** `runtime`: where the successor should run (older daemons ignore it). */
+  prepareUpgrade(runtime?: HelperRuntime | null): Promise<UpgradeResult>;
   subscribe(id: string, replay: boolean): void;
   onOutput(cb: (id: string, chunk: Buffer) => void): void;
   onSessionExit(cb: (id: string, code: number | null) => void): void;
@@ -161,7 +163,7 @@ export function createDaemonClient(socketPath: string): DaemonClient {
         send({ type: 'list' });
       });
     },
-    prepareUpgrade() {
+    prepareUpgrade(runtime) {
       return new Promise<UpgradeResult>((resolve, reject) => {
         if (!socket || socket.destroyed) return reject(new Error('daemon not connected'));
         const timer = setTimeout(() => {
@@ -174,7 +176,8 @@ export function createDaemonClient(socketPath: string): DaemonClient {
           reject: (e: Error) => { clearTimeout(timer); reject(e); },
         };
         pendingUpgrades.push(wrapped);
-        send({ type: 'prepare-upgrade' });
+        // ptyd 0.2.4+ reads `runtime`; older daemons ignore the extra field.
+        send(runtime ? { type: 'prepare-upgrade', runtime } : { type: 'prepare-upgrade' });
       });
     },
     subscribe: (id, replay) => send({ type: 'subscribe', id, replay }),
