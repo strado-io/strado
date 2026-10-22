@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
@@ -10,6 +10,9 @@ import '@xterm/xterm/css/xterm.css';
 import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
+import { runIdOfTab } from '../lib/runTab';
+import { SearchAddon } from '@xterm/addon-search';
+import { TerminalSearchBar, searchKey, type SearchPort } from './TerminalSearchBar';
 import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, ShellIcon } from './hub/icons';
 
 const TRUE_BLACK_TERMINAL_THEME: ITheme = {
@@ -183,6 +186,9 @@ function answerCapabilityProbes(data: string, ws: WebSocket | null) {
 // reconnect, fit, drop-to-attach and the "Starting…" overlay. Extracted from
 // TerminalView so a split layout can mount several at once — each pane owns
 // its session for the pane's lifetime.
+/** ⌘ is the shortcut modifier: the desktop app on macOS, or a Mac browser. */
+const isMac = () => window.strado?.platform === 'darwin' || /Mac/i.test(navigator.platform);
+
 export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
   wsId: string;
   tab: PtyTab;
@@ -197,6 +203,21 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Find in the terminal: the addon (per built terminal), the bar, and ⌘F again refocusing an open bar.
+  const searchRef = useRef<SearchAddon | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchFocus, setSearchFocus] = useState(0);
+  const openSearchRef = useRef(() => {});
+  openSearchRef.current = () => { setSearchOpen(true); setSearchFocus((n) => n + 1); };
+  const searchPort = useMemo<SearchPort>(() => ({
+    findNext: (t, o) => { searchRef.current?.findNext(t, o); },
+    findPrevious: (t, o) => { searchRef.current?.findPrevious(t, o); },
+    clear: () => searchRef.current?.clearDecorations(),
+    onResults: (cb) => {
+      const sub = searchRef.current?.onDidChangeResults((r) => cb({ index: r.resultIndex, count: r.resultCount }));
+      return () => sub?.dispose();
+    },
+  }), []);
   const [dragOver, setDragOver] = useState(false);
   // "Starting zsh…" while the pty comes up — only when it takes longer than
   // a blink, so switching between live tabs doesn't flash it.
@@ -226,6 +247,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
     // The pty process ended (server sent "[process exited]" then closed): a
     // deliberate end, so we do NOT reconnect — reconnecting would respawn it.
     let processExited = false;
+    const runTab = !tab.remote && tab.mode === 'shell' && runIdOfTab(tab.id) !== null;
     // The server parked this idle Claude tab (no process; see the server's
     // claudePark.ts). Not an end and not a drop: stay put, and the next
     // keystroke reattaches with resume=1, which reopens the conversation.
@@ -266,6 +288,14 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
       fit = new FitAddon();
       fitRef.current = fit;
       term.loadAddon(fit);
+      // Find in the terminal (⌘F / Ctrl+F): the scrollback and the screen.
+      try {
+        const search = new SearchAddon();
+        term.loadAddon(search);
+        searchRef.current = search;
+      } catch (err) {
+        console.warn('[terminal] search unavailable', err);
+      }
       // Grapheme clustering (Unicode 15) so Devanagari spacing matras stay in one
       // cell. Guarded: experimental upstream, and a throw here runs inside render.
       try {
@@ -306,6 +336,14 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
       term.parser.registerCsiHandler({ prefix: '?', intermediates: '$', final: 'p' }, (p) => answerDecrqm(p, false));
       // Ctrl+Shift+C copies the selection (plain Ctrl+C stays SIGINT).
       term.attachCustomKeyEventHandler((e) => {
+        // ⌘F (Ctrl+F off a Mac): this terminal's find bar. The key never
+        // reaches the pty, and stops here so no other ⌘F handler sees it.
+        if (searchKey(e, isMac())) {
+          e.preventDefault();
+          e.stopPropagation();
+          openSearchRef.current();
+          return false;
+        }
         if (
           e.type === 'keydown' && e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey &&
           e.key.toLowerCase() === 'c' && term.hasSelection()
@@ -373,6 +411,13 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         `ws=${encodeURIComponent(target.wsId)}&path=${encodeURIComponent(target.path)}` +
         `&mode=${tab.mode}${session}&cols=${term.cols}&rows=${term.rows}` +
         (resumeNext ? '&resume=1' : '');
+      // A run tab: a run command's own pty (header Run). Its socket only
+      // attaches, never spawns, and takes no mode or session (`run` names a non-default command).
+      const runId = !remote && tab.mode === 'shell' ? runIdOfTab(tab.id) : null;
+      if (runId !== null) {
+        return `${proto}://${location.host}/ws/run?ws=${encodeURIComponent(wsId)}&path=${encodeURIComponent(tab.path)}&cols=${term.cols}&rows=${term.rows}` +
+          (runId ? `&run=${encodeURIComponent(runId)}` : '');
+      }
       return remote
         ? `${remote.wsBase}/ws/terminal?${query}&ticket=${encodeURIComponent(ticket ?? '')}`
         : `${proto}://${location.host}/ws/terminal?${query}`;
@@ -453,7 +498,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
           }
           // Server prints exactly this right before closing on pty exit; it's
           // our signal that the close is a real end, not a transport drop.
-          if (ev.data.includes('[process exited')) processExited = true;
+          // A run tab's command exiting is not the end: the same pty goes on as a shell.
+          if (!runTab && ev.data.includes('[process exited')) processExited = true;
           if (ev.data) settled(); // first real output: pty is up
         }
         if (!announced) {
@@ -474,6 +520,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         if (disposed) return;
         if (processExited) { term.write('\r\n[disconnected]\r\n'); return; }
         if (parked) return;
+        // 4404: the run socket has nothing to show (nothing ran here). Final.
+        if (ev?.code === 4404) { term.write('\r\n[nothing has run here yet — press Run]\r\n'); return; }
         // 1008 from the relay means the ticket was rejected — a credential
         // problem, which backing off cannot fix. Re-mint once; a second refusal
         // is real (revoked runner, clock skew) and looping would only hammer
@@ -630,6 +678,13 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
             : 'Starting zsh…'}
           </span>
         </div>
+      )}
+      {searchOpen && (
+        <TerminalSearchBar
+          port={searchPort}
+          focusSignal={searchFocus}
+          onClose={() => { setSearchOpen(false); termRef.current?.focus(); }}
+        />
       )}
       {dragOver && (
         <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded border-2 border-dashed border-sky-500 bg-sky-950/40 text-sm text-sky-200">

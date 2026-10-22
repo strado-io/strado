@@ -284,18 +284,19 @@ function summarize(ctx: ParseContext, s: Step): string {
     case 'nav.workspace': return `Switch to workspace ${ctx.workspaces?.find((w) => w.id === s.args.wsId)?.name ?? s.args.wsId}`;
     case 'nav.repo': return `Go to repo ${ctx.repos?.find((r) => r.path === s.args.repoPath)?.name ?? s.args.repoPath}`;
     // It runs the worktree's configured dev command, not necessarily this one.
-    case 'server.start': return 'Start dev server';
-    case 'server.stop': return 'Stop dev server';
+    case 'server.start': { const r = runLabel(ctx, s.args.worktreePath, s.args.run); return r ? `Start ${r}` : 'Start dev server'; }
+    case 'server.stop': { const r = runLabel(ctx, s.args.worktreePath, s.args.run); return r ? `Stop ${r}` : 'Stop dev server'; }
     case 'agent.wait': return `Wait for ${agentName(ctx, s.args.agentId)}`;
     case 'ui.state': return 'Show window state';
     case 'call.answer': return `Answer ${agentName(ctx, s.args.agentId)}: ${s.args.text}`;
     case 'call.dismiss': return `Dismiss ${agentName(ctx, s.args.agentId)}'s call`;
-    case 'nav.line': return 'Open the Line';
     case 'nav.addRepo': return s.args.path ? `Add repo ${s.args.path}` : 'Add a repo';
     case 'nav.newWorktree': return s.args.repoPath ? `New worktree in ${ctx.repos?.find((r) => r.path === s.args.repoPath)?.name ?? s.args.repoPath}` : 'New worktree';
     case 'nav.page': return `Open ${PAGE_LABEL[s.args.page]}`;
     case 'settings.open': return `Open Settings → ${s.args.section}`;
     case 'agent.ask': return `Ask ${agentName(ctx, s.args.agentId)}: ${s.args.question}`;
+    case 'agent.interrupt': return `Stop ${agentName(ctx, s.args.agentId)}`;
+    case 'agent.steer': return `Stop ${agentName(ctx, s.args.agentId)} and tell it: ${s.args.text}`;
     case 'agent.recap': return s.args.focus ? `Recap the agents in ${s.args.focus}` : s.args.agentIds === 'all' ? 'Recap all agents' : `Recap ${s.args.agentIds.map((id) => agentName(ctx, id)).join(', ')}`;
     case 'ui.sidebar': return `${s.args.show === null ? 'Toggle' : s.args.show ? 'Show' : 'Hide'} the sidebar`;
     case 'focus.edit': {
@@ -323,10 +324,9 @@ export function planKey(p: Plan): string {
       case 'tab.rename': return `tab.rename:${tab(s.target)}:${s.args.name}`;
       case 'shell.run': return `shell.run:${s.args.command}`;
       case 'browser.open': return `browser.open:${s.args.url}`;
-      case 'agent.message': case 'agent.wait': return `${s.action}:${s.args.agentId}`;
+      case 'agent.message': case 'agent.wait': case 'agent.interrupt': case 'agent.steer': return `${s.action}:${s.args.agentId}`;
       // Call ids are one-off; the caller is what repeats.
       case 'call.answer': case 'call.dismiss': return `${s.action}:${s.args.agentId}`;
-      case 'nav.line': return 'nav.line';
       case 'nav.addRepo': return 'nav.addRepo';
       case 'nav.newWorktree': return `nav.newWorktree:${s.args.repoPath ?? ''}`;
       case 'nav.page': return `nav.page:${s.args.page}`;
@@ -340,8 +340,9 @@ export function planKey(p: Plan): string {
       case 'nav.focus': return `nav.focus:${s.args.focusId}`;
       case 'nav.workspace': return `nav.workspace:${s.args.wsId}`;
       case 'nav.repo': return `nav.repo:${s.args.repoPath}`;
-      case 'server.start': return `server.start:${s.args.script ?? s.args.command}`;
-      case 'server.stop': case 'ui.state': return s.action;
+      case 'server.start': return s.args.run ? `server.start:run:${s.args.run}` : `server.start:${s.args.script ?? s.args.command}`;
+      case 'server.stop': return s.args.run ? `server.stop:run:${s.args.run}` : s.action;
+      case 'ui.state': return s.action;
     }
   }).join('|');
 }
@@ -395,6 +396,25 @@ export function messageStep(ctx: ParseContext, agentId: string, text: string): S
     { arg: 'agentId', label: `Ask ${agentName(ctx, agentId)}`, candidates: [agentId, ...others.map((p) => p.agentId)].map((id) => ({ label: `Ask ${agentName(ctx, id)}`, value: id })) },
     { arg: 'text', label: text, candidates: [] },
   ], ctx);
+}
+
+/** A run command's name for the row (the current worktree's are known by id); null = the default. */
+export function runLabel(ctx: ParseContext, worktreePath: string, run: string | null | undefined): string | null {
+  if (!run) return null;
+  const known = worktreePath === ctx.currentWorktree ? ctx.runCommands?.find((r) => r.id === run) : undefined;
+  return known?.name ?? run;
+}
+
+/** Stop an agent's turn (the card's ⌃C, or the model's agent.interrupt). */
+export function interruptStep(ctx: ParseContext, agentId: string): Step {
+  return mk('agent.interrupt', { agentId }, { kind: 'none' }, { risk: 'exec', where: 'server', undoable: false },
+    [{ arg: 'agentId', label: `Stop ${agentName(ctx, agentId)}`, candidates: [] }], ctx);
+}
+
+/** Stop its turn, then tell it `text` (the card's ⌘↵ Steer, or the model's agent.steer). */
+export function steerStep(ctx: ParseContext, agentId: string, text: string): Step {
+  return mk('agent.steer', { agentId, text }, { kind: 'none' }, { risk: 'exec', where: 'server', undoable: false },
+    [{ arg: 'agentId', label: `Stop ${agentName(ctx, agentId)}`, candidates: [] }, { arg: 'text', label: text, candidates: [] }], ctx);
 }
 
 const tabMeta = (ctx: ParseContext, target: Target, action: 'close' | 'focus' | 'interrupt'): Meta => {

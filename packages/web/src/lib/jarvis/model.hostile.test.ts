@@ -43,7 +43,7 @@ describe('planFromModel: hostile and malformed model output is refused', () => {
     ['#N out of range', [{ action: 'tab.focus', args: { tab: '#5' } }]],
     ['#N pointing at itself', [{ action: 'tab.open', args: { mode: 'shell', command: null, prompt: null, split: 'right', anchor: '#1', worktree: null } }]],
     ['#N pointing at a later step', [{ action: 'tab.focus', args: { tab: '#2' } }, { action: 'tab.open', args: { mode: 'shell', command: null, prompt: null, split: null, anchor: null, worktree: null } }]],
-    ['#N at a step that opens nothing', [{ action: 'nav.line', args: {} }, { action: 'tab.focus', args: { tab: '#1' } }]],
+    ['#N at a step that opens nothing', [{ action: 'ui.state', args: {} }, { action: 'tab.focus', args: { tab: '#1' } }]],
     ['a huge command', [{ action: 'shell.run', args: { tab: null, command: big } }]],
     ['a huge message', [{ action: 'agent.message', args: { to: 'claude-1', text: big } }]],
     ['a huge tab name', [{ action: 'tab.focus', args: { tab: big } }]],

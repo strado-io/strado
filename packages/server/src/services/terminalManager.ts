@@ -52,6 +52,15 @@ export function piKey(path: string, id: string): string {
   return id === '1' ? `${path}\0pi` : `${path}\0pi:${id}`;
 }
 
+/** A worktree's Run terminal: one per run command (Run in the header starts
+ * the default; `id` names another). Not a tab of the strip and never an
+ * agent, so it is left out of liveSessions(); the process manager owns it. */
+export function runKey(path: string, id?: string | null): string {
+  return id ? `${path}\0run:${id}` : `${path}\0run`;
+}
+
+export const isRunKey = (key: string): boolean => /\0run(:[^\0]*)?$/.test(key);
+
 /** The session key for a (mode, path, id) triple. An agent launched inside a
  * Shell tab reports `shell:N` as its session id and lives under that Shell
  * tab's key — never under a per-mode key — so the prefix wins over the mode. */
@@ -194,8 +203,12 @@ const defaultBuildSpec: BuildSpec = () => ({
   args: ['-l', '-c', 'claude'],
 });
 
+/** `env` is set on the spawn itself, over the session env (never typed into
+ * the terminal, so secrets stay out of scrollback and shell history). */
+export type EnsureOptions = { env?: Record<string, string> };
+
 export type TerminalManager = {
-  ensure(key: string, cwd: string, spec?: SpawnSpec, size?: { cols: number; rows: number }): Promise<TerminalInfo>;
+  ensure(key: string, cwd: string, spec?: SpawnSpec, size?: { cols: number; rows: number }, opts?: EnsureOptions): Promise<TerminalInfo>;
   write(key: string, data: string): void;
   resize(key: string, cols: number, rows: number): void;
   snapshot(key: string): string;
@@ -225,13 +238,13 @@ export function createTerminalManager(
 
   // One place where a spec is settled, so the wrapper cannot be bypassed by
   // the override path. Mirrored in ptyDaemon/manager.ts.
-  const resolveSpec = (cwd: string, override?: SpawnSpec): SpawnSpec => {
+  const resolveSpec = (cwd: string, override?: SpawnSpec, extraEnvKeys?: string[]): SpawnSpec => {
     const spec = override ?? buildSpec(cwd);
-    return wrapSpec ? wrapSpec(cwd, spec) : spec;
+    return wrapSpec ? wrapSpec(cwd, spec, extraEnvKeys) : spec;
   };
 
-  function spawn(key: string, cwd: string, override?: SpawnSpec, size?: { cols: number; rows: number }): Session {
-    const spec = resolveSpec(cwd, override);
+  function spawn(key: string, cwd: string, override?: SpawnSpec, size?: { cols: number; rows: number }, opts?: EnsureOptions): Session {
+    const spec = resolveSpec(cwd, override, opts?.env ? Object.keys(opts.env) : undefined);
     const term = pty.spawn(spec.file, spec.args, {
       name: 'xterm-256color',
       // spawn at the requesting client's real size when known: resize
@@ -242,7 +255,7 @@ export function createTerminalManager(
       cwd,
       // Identity the agent registry minted for this key (agent id, scope,
       // token) rides on top of the shared session env. sessionEnv stays pure.
-      env: { ...sessionEnv(key, cwd), ...(extraEnv?.(key, cwd) ?? {}) },
+      env: { ...sessionEnv(key, cwd), ...(extraEnv?.(key, cwd) ?? {}), ...(opts?.env ?? {}) },
     });
     const session: Session = {
       pty: term,
@@ -271,9 +284,9 @@ export function createTerminalManager(
   }
 
   return {
-    async ensure(key, cwd, spec, size) {
+    async ensure(key, cwd, spec, size, opts) {
       let s = sessions.get(key);
-      if (!s || s.info.status === 'exited') s = spawn(key, cwd, spec, size);
+      if (!s || s.info.status === 'exited') s = spawn(key, cwd, spec, size, opts);
       return { ...s.info };
     },
     write(key, data) {
@@ -338,7 +351,7 @@ export function createTerminalManager(
     liveSessions() {
       const out: LiveSession[] = [];
       for (const [key, s] of sessions) {
-        if (s.info.status !== 'running') continue;
+        if (s.info.status !== 'running' || isRunKey(key)) continue;
         out.push(parseSessionKey(key));
       }
       return out;

@@ -44,6 +44,10 @@ const each = (action: string, n: number, check: (s: Step) => string | null = () 
 };
 /** Two workspaces, this window in FleetX. */
 const withWorkspaces: JarvisContext = { ...ctx, calls: [], workspace: { name: 'FleetX' }, workspaces: [{ name: 'FleetX' }, { name: 'Personal' }, { name: 'Strado IO' }] };
+/** The repo has named run commands: dev (the default), api, storybook. */
+const withRuns: JarvisContext = { ...ctx, calls: [], runCommands: [{ name: 'dev' }, { name: 'api' }, { name: 'storybook' }] };
+/** The agents' task board: one open, one claimed. */
+const withTasks: JarvisContext = { ...ctx, tasks: [{ title: 'Fix the login test', status: 'claimed', by: 'codex-1' }, { title: 'Bump dependencies', status: 'open' }] };
 /** A codex agent running beside claude-1 (and no call open). */
 const withCodex: JarvisContext = { ...ctx, calls: [], agents: [...ctx.agents, { name: 'codex-1', mode: 'codex', lifecycle: 'working' }], tabs: [...ctx.tabs, { name: 'codex-1', mode: 'codex', busy: true, worktree: 'master' }] };
 
@@ -82,6 +86,10 @@ const CASES: Case[] = [
   { text: 'switch to claude', expect: plan('tab.focus', { tab: 'claude-1' }), jev: true },
   { text: 'rename this shell to test', context: { ...ctx, focused: 'shell-1' }, expect: plan('tab.rename', { tab: 'shell-1', name: /^test$/i }) },
   { text: 'call claude 1 reviewer', expect: plan('tab.rename', { tab: 'claude-1', name: /reviewer/i }) },
+  // Mission control: stop, or stop and redirect, vs a message that waits for the turn.
+  { text: 'stop claude-1', expect: plan('agent.interrupt', { agent: 'claude-1' }) },
+  { text: 'tell claude-1 to stop and use pnpm instead', expect: plan('agent.steer', { agent: 'claude-1', text: /pnpm/i }) },
+  { text: 'tell claude-1 to also run lint when it is done', expect: plan('agent.message', { to: 'claude-1', text: /lint/i }) },
   { text: 'close shell 1', expect: plan('tab.close', { tab: 'shell-1' }), jev: true },
   { text: 'stop what is running in shell 2', expect: plan('tab.interrupt', { tab: 'shell-2' }) },
   { text: 'move shell 1 below claude', expect: plan('tab.place', { tab: 'shell-1', split: 'down', anchor: 'claude-1' }), jev: true },
@@ -92,12 +100,25 @@ const CASES: Case[] = [
   { text: 'open a shell and run the dev script', expect: plan('tab.open', { mode: 'shell', command: 'npm run dev' }) },
   { text: 'start the dev server', expect: plan('server.start'), jev: true },
   { text: 'stop the dev server', expect: plan('server.stop'), jev: true },
+  // named run commands
+  { text: 'run api', context: withRuns, expect: plan('server.start', { run: 'api' }), jev: true },
+  { text: 'stop storybook', context: withRuns, expect: plan('server.stop', { run: 'storybook' }), jev: true },
+  { text: 'start the api server', context: withRuns, expect: plan('server.start', { run: 'api' }) },
+  // The default: "" from Haiku (no nullable params, an API cap), null from Jev.
+  { text: 'start the dev server', context: withRuns, expect: all(plan('server.start'), (r) => (['', null, undefined].includes(first(r)?.args.run as string) ? null : `run = ${JSON.stringify(first(r)?.args.run)}, wanted the default`)), jev: true },
+  // dev is the default run: naming it or leaving it out ("") both start it.
+  { text: 'run dev', context: withRuns, expect: all(plan('server.start'), (r) => (['dev', '', null].includes(first(r)?.args.run as string) ? null : `run = ${JSON.stringify(first(r)?.args.run)}, wanted dev or the default`)) },
+  { text: 'run the build script', context: withRuns, expect: all(not('server.start'), (r) => (JSON.stringify(steps(r)).includes('npm run build') ? null : 'wanted npm run build')) },
   // navigation
   { text: 'go to the hotfix worktree', expect: plan('nav.worktree', { name: 'FD-00029_hotfix' }), jev: true },
   { text: 'open main', expect: plan('nav.worktree', { name: 'main' }) },
   { text: 'switch to the test focus', expect: plan('nav.focus', { name: 'test' }), jev: true },
   { text: 'can you change the focus to test', expect: plan('nav.focus', { name: 'test' }) },
-  { text: 'show me the line', expect: plan('nav.line'), jev: true },
+  // Calls and the task board are answered in words (the intercom drawer is gone).
+  { text: 'what does codex-1 want', context: { ...ctx, calls: [{ from: 'codex-1', title: 'Should I delete the old migration?', body: 'The 2023 users migration is unused. Delete it?' }] }, expect: all(answers, not('call.answer')) },
+  { text: 'who needs me', expect: answers },
+  { text: 'what tasks are open', context: withTasks, expect: answers },
+  { text: 'who is working on the login test', context: withTasks, expect: answers },
   { text: 'add a repo', expect: plan('nav.addRepo') },
   { text: 'create a new worktree in Strado', expect: plan('nav.newWorktree', { repo: 'Strado' }) },
   // Focus editing
@@ -170,7 +191,7 @@ async function main() {
   const repeat = process.argv.includes('--repeat') ? Math.max(1, Number(process.argv[process.argv.indexOf('--repeat') + 1]) || 1) : 1;
   // --repeat N: each sentence N times — Haiku is not deterministic, a single pass proves little.
   const cases = CASES.filter((c) => !only || c.text.includes(only)).flatMap((c) => Array.from({ length: repeat }, () => c));
-  const haiku = createJarvisModel({});
+  const haiku = createJarvisModel({ log: (m) => console.error(m) });
   const jev = createJevRouter({});
   const rows: Record<string, unknown>[] = [];
   let haikuPass = 0; let jevHit = 0; let jevWrong = 0; let jevExpected = 0; let racePass = 0;

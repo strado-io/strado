@@ -93,6 +93,9 @@ export function isDestructive(step: Step, ctx: ParseContext): string | null {
     const who = (id: string) => id.split('@')[0];
     if (step.action === 'call.answer') return `Answer ${who(step.args.agentId)}'s call: "${step.args.text}"`;
     if (step.action === 'call.dismiss') return `Dismiss ${who(step.args.agentId)}'s call`;
+    // Stopping a turn loses its work in flight: the user says yes first.
+    if (step.action === 'agent.interrupt') return `Stop ${who(step.args.agentId)}? Its turn ends where it is`;
+    if (step.action === 'agent.steer') return `Stop ${who(step.args.agentId)} and tell it: "${step.args.text}"`;
     // Sharing usage data is the user's own decision, not a model's guess.
     if (step.action === 'settings.set' && step.args.setting === 'privacy.telemetry' && step.args.value === 'on') return 'Turn telemetry on (shares usage data)?';
     const anchor = 'place' in step.args ? step.args.place?.anchor : undefined;

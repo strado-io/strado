@@ -37,7 +37,7 @@ export function WorktreePickerMenu({
   return (
     <div className="fixed inset-0 z-30" onClick={onClose}>
       <div
-        className="absolute flex max-h-80 w-80 flex-col rounded-md border border-zinc-800 bg-zinc-900 py-1 text-xs shadow-2xl"
+        className="surface-pop absolute flex max-h-80 w-80 flex-col rounded-md py-1 text-xs"
         style={{ left: anchor.x, top: anchor.y }}
         onClick={(e) => e.stopPropagation()}
         role="menu"

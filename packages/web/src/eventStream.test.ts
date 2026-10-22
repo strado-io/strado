@@ -70,7 +70,7 @@ describe('subscribeIntercom', () => {
     expect(INTERCOM_EVENT_TYPES).toEqual([
       'task.created', 'task.claimed', 'task.released', 'task.done', 'task.cancelled', 'task.assigned',
       'escalation.opened', 'escalation.resolved', 'escalation.dismissed', 'escalation.retargeted',
-      'peer.registered', 'peer.dropped', 'feed.changed', 'message.queued',
+      'peer.registered', 'peer.dropped', 'feed.changed', 'message.queued', 'station.changed',
     ]);
     expect(Object.keys(es.listeners).sort()).toEqual([...INTERCOM_EVENT_TYPES].sort());
     for (const type of INTERCOM_EVENT_TYPES) expect(es.listeners[type]).toHaveLength(1);

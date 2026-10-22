@@ -6,7 +6,7 @@ const INPUT =
 
 /**
  * First-run flow shown when a workspace has no repos: paste a folder path,
- * the server detects the git root / start command / port / env profiles,
+ * the server detects the git root / run commands / port,
  * and one click saves the prefilled repo config.
  */
 export function OnboardingCard({
@@ -68,7 +68,7 @@ export function OnboardingCard({
         {canPickFolder
           ? 'Choose the folder of a git repo (or an app folder inside a monorepo). Everything else —'
           : 'Paste the folder of a git repo (or an app folder inside a monorepo). Everything else —'}
-        {' '}worktrees dir, start command, port, env profiles — is detected for you.
+        {' '}worktrees dir, run commands, port — is detected for you.
       </p>
 
       <div className="mt-4 flex gap-2">
@@ -118,18 +118,22 @@ export function OnboardingCard({
                 <dd className="text-zinc-300">{detected.projectSubdir}</dd>
               </>
             )}
-            <dt>start</dt>
-            <dd className="text-zinc-300">
-              {detected.startCommand
-                ? <>{detected.startCommand} <span className="text-zinc-500">→ port {detected.defaultPort}</span></>
-                : <span className="text-zinc-500">Not detected (optional)</span>}
+            <dt>run</dt>
+            <dd className="flex flex-col text-zinc-300">
+              {(() => {
+                // The run commands (the first is the default and gets the port); an older server: its start command.
+                const cmds = detected.runCommands?.length
+                  ? detected.runCommands
+                  : detected.startCommand ? [{ id: 'dev', name: 'dev', command: detected.startCommand }] : [];
+                if (cmds.length === 0) return <span className="text-zinc-500">Not detected (optional)</span>;
+                return cmds.map((c, i) => (
+                  <span key={c.id}>
+                    <span className="text-zinc-500">{c.name}: </span>{c.command}
+                    {i === 0 && <span className="text-zinc-500"> → port {detected.defaultPort}</span>}
+                  </span>
+                ));
+              })()}
             </dd>
-            {(detected.envProfiles?.length ?? 0) > 0 && (
-              <>
-                <dt>env</dt>
-                <dd className="text-zinc-300">{detected.envProfiles!.map((p) => p.name).join(', ')}</dd>
-              </>
-            )}
           </dl>
           {detected.warnings.length > 0 && (
             <ul className="mt-2 flex flex-col gap-1">

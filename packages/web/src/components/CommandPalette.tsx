@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { agentCardKey, type CardKey } from './mission/AgentCard';
+import { leadingAgent, setLeadingAgent, type AgentChip } from './mission/agentChip';
 import { useRendererOverlay } from '../contexts/RendererOverlay';
 import type { StationDto } from '../api';
 import { chipEndingAt, chipKey, chipLabel, chipSegments, insertChip, mentionAt, pruneChips, sigilOf, toRankStation, toWire, type Chip } from '../lib/mention/chips';
@@ -74,9 +76,10 @@ const DISCLOSED_KEY = 'strado:jarvis-model-disclosed';
 // A conversation left this long is over: the next ask starts a new thread.
 const THREAD_IDLE_MS = 120_000;
 
-/** What ⌘K (and the sidebar's search button) holds to put the cursor in the
- * bar; `browse` (the Dock's worktree chip) also lists every worktree. */
-export type CommandBarHandle = { focus: () => void; browse: () => void };
+/** What ⌘K holds to put the cursor in the bar. */
+export type CommandBarHandle = { focus: () => void;
+  /** Mission Control: put that agent's @chip at the start of the box (null removes it), and focus. */
+  selectAgent: (agent: AgentChip | null) => void };
 // ⏎ is ignored this long after a model plan arrives (a stray ⏎ meant for the ask).
 const PLAN_ENTER_GUARD_MS = 500;
 /** How much of an answer is read aloud (a spoken question gets a spoken answer). */
@@ -158,6 +161,11 @@ const VERIFY_TEXT: Record<string, string> = {
 };
 const IDLE_ROW: JarvisRowState = { arm: null, status: {}, error: null, busy: false };
 
+/** A chip's colour, in the box and in Recent: sky for an @agent, emerald for a #worktree. */
+const chipTone = (c: Chip) => (sigilOf(c) === '#' ? 'bg-emerald-900/60 text-emerald-100' : 'bg-sky-900/70 text-sky-100');
+/** The popover's footer under a list. */
+const FOOTER_KEYS = [['↑↓', 'select'], ['↵', 'run'], ['@', 'mention'], ['esc', 'close']] as const;
+
 type Item =
   | { type: 'model' }
   // A follow-up the model offered with its answer; picking it asks it.
@@ -166,7 +174,7 @@ type Item =
   | { type: 'submit' }
   | { type: 'nav'; r: Result }
   | { type: 'jarvis'; plan: Plan; index: number }
-  | { type: 'history'; text: string; pasted: boolean };
+  | { type: 'history'; text: string; pasted: boolean; chips: Chip[]; n: number };
 
 type Result =
   | { kind: 'worktree'; id: string; label: string; detail: string; worktree: Worktree; wsId?: string; remote?: undefined }
@@ -219,6 +227,10 @@ export function CommandPalette({
   stations,
   voice = null,
   dialogOpen = false,
+  agentKey,
+  onAgentChip,
+  onPopover,
+  popoverLift = 0,
 }: {
   repos: RepoConfig[];
   worktrees: Worktree[];
@@ -255,11 +267,18 @@ export function CommandPalette({
   voice?: VoiceBridge | null;
   /** A dialog the app has open (Add repo, New worktree, …): push-to-talk keys belong to it. */
   dialogOpen?: boolean;
+  /** With a leading @agent chip only: that agent's keys (↵ send, ⌘↵ steer, ⌃C, ⌘O) with the text after the chip; true = handled. */
+  agentKey?: (key: CardKey, text: string) => boolean;
+  /** The agent whose chip leads the box (Mission Control's selection), or null. */
+  onAgentChip?: (agentId: string | null) => void;
+  /** The bar's popover opened or closed (Mission Control's stack yields while it is open). */
+  onPopover?: (open: boolean) => void;
+  /** The bar only: how far above the bar its popover opens (Mission Control's stack height), so it never covers the strip. */
+  popoverLift?: number;
 }) {
   // Focused = open: the popover shows and keys are ours. Blurred, the bar is inert.
   const [open, setOpen] = useState(false);
   // Opened from the worktree chip: the empty box lists every worktree, not just the Focuses.
-  const [browse, setBrowse] = useState(false);
   // `@` mentions picked from the picker: shown as @label, submitted as @{agentId}.
   const [chips, setChips] = useState<Chip[]>([]);
   const [caret, setCaret] = useState(0);
@@ -282,6 +301,14 @@ export function CommandPalette({
     return () => document.removeEventListener('focusin', note, true);
   }, []);
   const [query, setQuery] = useState('');
+  // Read by the bar handle (selectAgent), which outlives renders.
+  const textRef = useRef({ query, chips });
+  textRef.current = { query, chips };
+  // Mission Control's selection is the leading @agent chip: tell the host when it changes.
+  const leadAgentId = leadingAgent(query, chips)?.agentId ?? null;
+  const onAgentChipRef = useRef(onAgentChip);
+  onAgentChipRef.current = onAgentChip;
+  useEffect(() => { onAgentChipRef.current?.(leadAgentId); }, [leadAgentId]);
   const [sel, setSel] = useState(0);
   // Pasted input never runs on the first ⏎ (it opens the preview).
   const [pasted, setPasted] = useState(false);
@@ -370,7 +397,7 @@ export function CommandPalette({
       const current = f.id === activeFocusId;
       out.push({ kind: 'focus', id: f.id, label: f.name, detail: current ? `current · ${n}` : n, focusId: f.id });
     }
-    if (!q && out.length > 0 && !browse) return out;
+    if (!q && out.length > 0) return out;
 
     // Collect every matching worktree (local + remote) into one list, then rank
     // by activity + recency so the ones the user is working in float to the top.
@@ -445,7 +472,7 @@ export function CommandPalette({
       out.push({ kind: 'workspace', id: ws.id, label: ws.name, detail: 'switch workspace', wsId: ws.id });
     }
     return out.slice(0, 15);
-  }, [query, worktrees, remote, remoteWorktrees, repos, focuses, activeFocusId, workspaces, activeWorkspaceId, repoName, browse]);
+  }, [query, worktrees, remote, remoteWorktrees, repos, focuses, activeFocusId, workspaces, activeWorkspaceId, repoName]);
 
   const parsed = useMemo(() => {
     const text = query.trim();
@@ -485,7 +512,7 @@ export function CommandPalette({
   const items = useMemo<Item[]>(() => {
     const nav: Item[] = results.map((r) => ({ type: 'nav', r }));
     const text = query.trim();
-    if (!text) return [...nav, ...history.slice(0, 5).map((h): Item => ({ type: 'history', text: h.text, pasted: h.pasted }))];
+    if (!text) return [...nav, ...history.slice(0, 5).map((h, n): Item => ({ type: 'history', text: h.text, pasted: h.pasted, chips: h.chips ?? [], n }))];
     if (!jarvis) return nav;
     // Only what ⏎ brought up: the model's plans, local readings it revealed,
     // or a reply. Before that, one quiet "⏎ to run" line.
@@ -594,7 +621,14 @@ export function CommandPalette({
     if (!barRef) return;
     barRef.current = {
       focus: () => { setQuiet(false); inputRef.current?.focus(); },
-      browse: () => { setQuiet(false); setBrowse(true); inputRef.current?.focus(); },
+      selectAgent: (agent) => {
+        const n = setLeadingAgent(textRef.current.query, textRef.current.chips, agent);
+        setQuery(n.text);
+        setChips(n.chips);
+        setQuiet(false);
+        inputRef.current?.focus();
+        requestAnimationFrame(() => inputRef.current?.setSelectionRange(n.text.length, n.text.length));
+      },
     };
     return () => { barRef.current = null; };
   }, [barRef]);
@@ -622,7 +656,6 @@ export function CommandPalette({
     const hadFocus = document.activeElement === inputRef.current;
     inputRef.current?.blur();
     setOpen(false);
-    setBrowse(false);
     const target = (): HTMLElement | null => {
       if (moved) {
         const pane = document.querySelector<HTMLElement>(`[data-pane-key="${now.mode}:${now.sessionId}"]`);
@@ -645,7 +678,6 @@ export function CommandPalette({
     setChips([]);
     setPasted(false);
     setRecall(null);
-    setBrowse(false);
   };
   useEffect(() => {
     listRef.current
@@ -714,7 +746,7 @@ export function CommandPalette({
       return;
     }
     const text = query;
-    rememberCommand(jarvis.wsId, text, { pasted });
+    rememberCommand(jarvis.wsId, text, { pasted, chips });
     setHistory(readHistoryEntries(jarvis.wsId));
     patchRow(key, { arm: null, error: null, busy: true, status: {} });
     const result = await runPlan(plan, {
@@ -1026,7 +1058,7 @@ export function CommandPalette({
     if (item.type === 'choice') return askChoice(item.text);
     if (item.type === 'model' || item.type === 'submit') submit(keepOpen);
     else if (item.type === 'nav') pick(item.r);
-    else if (item.type === 'history') { setQuery(item.text); setPasted(item.pasted); }
+    else if (item.type === 'history') { setQuery(item.text); setChips(item.chips); setPasted(item.pasted); }
     else void runRow(item.index, keepOpen);
   };
 
@@ -1111,6 +1143,27 @@ export function CommandPalette({
     // Tab, or an app shortcut (⌘1, ⌘], …): you are leaving the box.
     if (e.key === 'Tab' || ((e.metaKey || e.ctrlKey) && !BOX_COMBOS.has(e.key))) setKeepKeyboard(false);
     if (pickerKey(e)) return;
+    // A leading @agent chip: the text goes to that agent (and only then).
+    const lead = agentKey ? leadingAgent(query, chips) : null;
+    if (lead) {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        const n = setLeadingAgent(query, chips, null);
+        setQuery(n.text); setChips(n.chips);
+        return;
+      }
+      const card = agentCardKey(e);
+      if (card === 'send' || card === 'steer') {
+        e.preventDefault();
+        if (lead.rest && agentKey!(card, lead.rest)) {
+          // Keep talking to it: the chip stays, the message goes.
+          setQuery(`@${lead.label} `);
+          setChips([{ label: lead.label, agentId: lead.agentId }]);
+        }
+        return;
+      }
+      if (card && agentKey!(card, lead.rest)) { e.preventDefault(); return; }
+    }
     // Backspace right after a chip removes it whole.
     const at = e.currentTarget.selectionStart ?? query.length;
     if (e.key === 'Backspace' && at === (e.currentTarget.selectionEnd ?? at)) {
@@ -1136,12 +1189,14 @@ export function CommandPalette({
       const next = recall === null ? 0 : Math.min(recall + 1, history.length - 1);
       setRecall(next);
       setQuery(history[next]!.text);
+      setChips(history[next]!.chips ?? []);
       setPasted(history[next]!.pasted);
     } else if (e.key === 'ArrowDown' && recall !== null && sel === 0) {
       e.preventDefault();
       const next = recall - 1;
       setRecall(next < 0 ? null : next);
       setQuery(next < 0 ? '' : history[next]!.text);
+      setChips(next < 0 ? [] : history[next]!.chips ?? []);
       setPasted(next < 0 ? false : history[next]!.pasted);
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -1161,8 +1216,12 @@ export function CommandPalette({
 
   // Quiet (after a run, or a focus the box took back by itself): no empty-state
   // panel. It would cover — and so hide — a native Browser preview.
-  const popover = open && ((!hero && !quiet) || query.trim() !== '' || browse || modelState !== null);
+  // A leading @agent chip: the text is for that agent, not a command; its card is the UI.
+  const popover = open && !(agentKey && leadAgentId) && ((!hero && !quiet) || query.trim() !== '' || modelState !== null);
   useRendererOverlay(popover);
+  const onPopoverRef = useRef(onPopover);
+  onPopoverRef.current = onPopover;
+  useEffect(() => { onPopoverRef.current?.(popover); }, [popover]);
   // On home the box is the page: it starts focused.
   useEffect(() => { if (hero) inputRef.current?.focus(); }, [hero]);
 
@@ -1174,9 +1233,10 @@ export function CommandPalette({
           data-placement={hero ? 'below' : 'above'}
           // Keep focus in the bar: a click on a row must not blur it first.
           onMouseDown={(e) => e.preventDefault()}
+          style={hero ? undefined : { marginBottom: `${4 + popoverLift}px` }}
           className={hero
-            ? 'absolute left-0 right-0 top-full z-[60] mt-2 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl'
-            : `absolute bottom-full left-0 right-0 z-[60] mb-1 overflow-hidden border border-zinc-800 bg-zinc-950 shadow-2xl sm:right-auto sm:w-[36rem] sm:max-w-[calc(100vw-2rem)] sm:rounded-lg ${embedded ? 'sm:left-0' : 'sm:left-4'}`}
+            ?'surface-pop absolute left-0 right-0 top-full z-[60] mt-2 overflow-hidden rounded-lg'
+            :`surface-pop absolute bottom-full left-0 right-0 z-[60] overflow-hidden sm:right-auto sm:w-[36rem] sm:max-w-[calc(100vw-2rem)] sm:rounded-lg ${embedded ?'sm:left-0' :'sm:left-4'}`}
         >
         <div ref={listRef} className="max-h-80 overflow-y-auto p-1">
           {picker?.kind === 'worktrees' && (
@@ -1303,11 +1363,18 @@ export function CommandPalette({
                   {headerEl}
                   <button
                     data-idx={i}
+                    data-testid={`history-row-${item.n}`}
+                    title={item.text}
                     onClick={() => activate(item)}
                     onMouseEnter={() => setSel(i)}
                     className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left font-mono text-xs ${i === sel ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400'}`}
                   >
-                    {item.text}
+                    {/* One line, the chips it was typed with drawn as in the box. */}
+                    <span data-testid="history-text" className="min-w-0 truncate whitespace-nowrap">
+                      {chipSegments(item.text, item.chips).map((seg, k) => (seg.chip
+                        ? <span key={k} data-testid={`history-chip-${chipKey(seg.chip)}`} className={`rounded-sm ${chipTone(seg.chip)}`}>{seg.text}</span>
+                        : <span key={k}>{seg.text}</span>))}
+                    </span>
                   </button>
                 </div>
               );
@@ -1355,10 +1422,17 @@ export function CommandPalette({
             );
           })}
         </div>
+        {!picker && items.some((it) => it.type === 'nav' || it.type === 'history' || it.type === 'jarvis' || it.type === 'choice') && (
+          <div data-testid="command-bar-footer" className="flex items-center gap-1 border-t border-zinc-800/70 px-3 py-1 text-[10px] text-zinc-600">
+            {FOOTER_KEYS.map(([k, what], n) => (
+              <span key={k}>{n > 0 && ' · '}<kbd className="rounded border border-zinc-700/80 px-1 font-sans text-[10px] text-zinc-500">{k}</kbd> {what}</span>
+            ))}
+          </div>
+        )}
         </div>
       )}
       {v.phase === 'error' && v.error && (
-        <div role="alert" className={`absolute left-0 right-0 z-[60] rounded-lg border border-amber-900/60 bg-zinc-950 px-3 py-2 text-xs text-amber-300 shadow-2xl ${hero ? 'top-full mt-2' : 'bottom-full mb-1 sm:w-[36rem]'}`}>
+        <div role="alert" className={`surface-pop absolute left-0 right-0 z-[60] rounded-lg border-amber-900/60 px-3 py-2 text-xs text-amber-300 ${hero ?'top-full mt-2' :'bottom-full mb-1 sm:w-[36rem]'}`}>
           {VOICE_PERMISSION[v.error.code] ? (
             <>
               {`Strado needs ${VOICE_PERMISSION[v.error.code]!.what} permission — `}
@@ -1369,7 +1443,9 @@ export function CommandPalette({
           ) : `Voice didn’t work: ${v.error.message ?? v.error.code}`}
         </div>
       )}
-      <div className={hero ? 'flex min-h-12 items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 focus-within:border-zinc-500' : 'flex min-h-8 items-center gap-2'}>
+      <div className={hero ? 'flex min-h-12 items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 focus-within:border-zinc-500'
+        // The bar: a field on the dock's panel, so it reads as the place to type.
+        : 'flex min-h-8 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 transition-colors focus-within:border-white/20 focus-within:bg-white/[0.05]'}>
         <svg aria-hidden width={hero ? 16 : 13} height={hero ? 16 : 13} viewBox="0 0 16 16" className="shrink-0 text-zinc-500">
           <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
           <path d="M10.5 10.5l3 3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -1379,7 +1455,7 @@ export function CommandPalette({
           // The same text under a transparent input, with chips marked; the caret stays the input's.
           <div ref={mirrorRef} aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-zinc-100 ${(hero ? HERO_BOX : BAR_BOX).text}`}>
             {chipSegments(query, chips).map((seg, i) => (seg.chip
-              ? <span key={i} data-testid={`chip-${chipKey(seg.chip)}`} className={`rounded-sm ${sigilOf(seg.chip) === '#' ? 'bg-emerald-900/60 text-emerald-100' : 'bg-sky-900/70 text-sky-100'}`}>{seg.text}</span>
+              ? <span key={i} data-testid={`chip-${chipKey(seg.chip)}`} className={`rounded-sm ${chipTone(seg.chip)}`}>{seg.text}</span>
               : <span key={i}>{seg.text}</span>))}
           </div>
         )}
@@ -1412,7 +1488,6 @@ export function CommandPalette({
               }, 0);
             }
             setOpen(false);
-            setBrowse(false);
             // A confirm is for the state the user just saw; coming back later, ⏎ re-checks.
             setRowState(null);
           }}

@@ -268,3 +268,33 @@ describe('api client request timeout', () => {
     }
   });
 });
+
+describe('api.intercom: Mission Control', () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  beforeEach(() => {
+    calls.length = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.includes('/approvals/gone')) {
+        return new Response(JSON.stringify({ error: { code: 'GONE', message: 'already answered', details: { reason: 'gone' } } }), { status: 409 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }));
+  });
+
+  it('answerApproval posts the decision to the workspace route', async () => {
+    await expect(api.intercom.answerApproval('w 1', 'ap/1', 'allow')).resolves.toEqual({ ok: true });
+    expect(calls[0]!.url).toBe('/api/w/w%201/intercom/approvals/ap%2F1');
+    expect(calls[0]!.init).toMatchObject({ method: 'POST', body: JSON.stringify({ decision: 'allow' }) });
+  });
+
+  it('an approval already answered in the tab rejects with reason gone (the UI drops the card)', async () => {
+    await expect(api.intercom.answerApproval('w1', 'gone', 'deny')).rejects.toMatchObject({ details: { reason: 'gone' } });
+  });
+
+  it('interrupt posts to the agent route', async () => {
+    await expect(api.intercom.interrupt('w1', 'claude-1@app')).resolves.toEqual({ ok: true });
+    expect(calls[0]!.url).toBe('/api/w/w1/intercom/agents/claude-1%40app/interrupt');
+    expect(calls[0]!.init).toMatchObject({ method: 'POST' });
+  });
+});

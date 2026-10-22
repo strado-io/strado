@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { api, type FocusTicket, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
 import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } from '../hooks/claudeNotifications';
-import { useIntercom } from '../contexts/IntercomContext';
 import { UiControlProvider } from '../contexts/UiControlContext';
 import { JarvisPaletteHost, JarvisToast, type JarvisRun } from '../components/jarvis/JarvisPaletteHost';
 import type { CommandBarHandle } from '../components/CommandPalette';
@@ -11,9 +10,17 @@ import { Dock } from '../components/dock/Dock';
 import { HomeScreen } from '../components/home/HomeScreen';
 import { recentWorktrees } from '../lib/home/recent';
 import { lightOf } from '../lib/dock/stations';
+import { AgentStrip } from '../components/mission/AgentStrip';
+import { focusWorktreesOf, missionStations, placeNamer, projectNamer, stripAgents } from '../components/mission/mission';
+import { OrphanCalls } from '../components/mission/OrphanCalls';
+import { MissionStack } from '../components/mission/MissionStack';
+import { RunCommandsDialog, runCommandsError } from '../components/runCommands/RunCommandsDialog';
+import { useMissionBox, type MissionBoxDeps } from '../components/mission/useMissionBox';
+import { chipLabel } from '../lib/mention/chips';
+import { jarvisServerPort } from '../lib/jarvis/serverPort';
 import { useStations } from '../hooks/stations';
 import type { TabRef as JarvisTabRef } from '../lib/jarvis/types';
-import { escalationsByWorktree, nextSeenIds, openEscalations } from '../hooks/intercom';
+import { nextSeenCalls } from '../hooks/callNotifications';
 import { playDoneBeep } from '../lib/beep';
 import type { MergeRequest, RepoConfig, Worktree, WorkflowStatus } from '../types';
 import { OnboardingCard } from '../components/OnboardingCard';
@@ -28,7 +35,6 @@ import { SettingsPage, type SettingsSection } from '../components/settings/Setti
 import { setAppearance } from '../hooks/useAppearance';
 import type { JarvisAppPort } from '../lib/jarvis/execute';
 import { FeedbackDialog } from '../components/FeedbackDialog';
-import { IntercomPanel } from '../components/IntercomPanel';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useSpaceShortcut } from '../hooks/spaceShortcut';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from '../hooks/useFocuses';
@@ -418,14 +424,8 @@ export function Dashboard(props: {
   }, [ticketsOn, JSON.stringify(ticketRefs)]);
 
   const prevClaude = useRef<ClaudeStatusMap>({});
-  const intercom = useIntercom();
-  // Questions waiting on the human, workspace-wide — the header count.
-  const openCount = useMemo(() => openEscalations(intercom).length, [intercom.escalations]);
-  // The intercom panel lives here, above every surface that opens it (the row
-  // badge, a notification, the header count, the hub's banner), so there is
-  // only ever one panel and one piece of state describing what it shows.
-  const [intercomPanel, setIntercomPanel] = useState<{ tab: 'escalations' | 'tasks'; worktreePath?: string; focusId?: string } | null>(null);
-
+  // Every agent/shell tab with its calls to you: the Dock, Mission Control and the call notifier.
+  const { stations, orphanCalls, loaded: stationsLoaded } = useStations(wsId);
   useEffect(() => {
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       Notification.requestPermission().catch(() => undefined);
@@ -462,34 +462,34 @@ export function Dashboard(props: {
   }, [state.worktrees]);
 
   // null = not yet initialized (first loaded snapshot for this workspace);
-  // distinguishes "no escalations were open before" from "we haven't seen a
-  // snapshot yet", so the first load never fires a notification for
-  // escalations already open. Reset on every workspace switch — declared
-  // ahead of the notification effect below — so the new workspace's first
-  // snapshot also seeds silently instead of firing for everything already
-  // open there.
-  const prevOpenEscalations = useRef<Set<string> | null>(null);
+  // distinguishes "no calls were open before" from "we haven't seen a
+  // snapshot yet", so the first load never fires a notification for calls
+  // already open. Reset on every workspace switch — declared ahead of the
+  // notification effect below — so the new workspace's first snapshot also
+  // seeds silently instead of firing for everything already open there.
+  const prevOpenCalls = useRef<Set<string> | null>(null);
   useEffect(() => {
-    prevOpenEscalations.current = null;
+    prevOpenCalls.current = null;
   }, [wsId]);
   useEffect(() => {
-    if (!intercom.loaded) return;
+    if (!stationsLoaded) return;
     const label = (p: string) => state.worktrees.find((w) => w.path === p)?.meta?.ticketId ?? p.split('/').pop() ?? p;
-    const { seen, fire } = nextSeenIds(prevOpenEscalations.current, intercom, label);
-    prevOpenEscalations.current = seen;
+    const { seen, fire } = nextSeenCalls(prevOpenCalls.current, stations, label, orphanCalls);
+    prevOpenCalls.current = seen;
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     for (const n of fire) {
       const worktree = state.worktrees.find((w) => w.path === n.path);
       const notification = new Notification(n.title, n.body ? { body: n.body } : undefined);
       notification.onclick = () => {
         window.focus();
-        // A retargeted ask from an exited asker has no tab: the drawer only.
-        if (worktree && n.mode && n.sessionId) openInlineHub(worktree, n.mode, n.sessionId);
-        setIntercomPanel({ tab: 'escalations', focusId: n.id });
+        // Its tab, as before, and its pill in the strip: the box is ready for the reply.
+        // An orphan call (its asker's tab closed) has neither: its line sits above the strip.
+        if (worktree && n.mode && n.sessionId) openInlineHub(worktree, n.mode as typeof selectedMode, n.sessionId);
+        if (n.agentId) selectAgentRef.current(n.agentId);
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intercom.escalations, intercom.peers, intercom.loaded]);
+  }, [stations, orphanCalls, stationsLoaded]);
 
   useEffect(() => {
     localStorage.setItem(STORE_SIDEBAR, sidebarCollapsed ? '1' : '0');
@@ -729,7 +729,66 @@ export function Dashboard(props: {
   const selectedWorktree = selectedPath ? state.worktrees.find((w) => w.path === selectedPath) ?? null : null;
 
   // ---------- the Dock ----------
-  const { stations } = useStations(wsId);
+  // ---------- Mission Control: the agent strip and the box's selected agent ----------
+  // The strip shows the open Focus's agents (plus any outside one that needs you); no Focus: the workspace's.
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  useEffect(() => { setSelectedAgent(null); }, [wsId]);
+  const openAgentRef = useRef<((agentId: string) => void) | null>(null);
+  const missionShellRef = useRef<MissionBoxDeps['shell'] | null>(null);
+  // The bar's mission stack height: its popover opens above all of it (the strip stays visible).
+  const [stackHeight, setStackHeight] = useState(0);
+  // A repo's run-command editor (from the Worktrees page's repo menu).
+  const [runCommandsRepo, setRunCommandsRepo] = useState<string | null>(null);
+  const missionScoped = useMemo(
+    () => missionStations(stations, 'focus', focusWorktreesOf(focusApi.active ?? null)),
+    [stations, focusApi.active],
+  );
+  // Selecting = the agent's @chip at the start of the box (the box reports it back).
+  const selectAgent = (id: string | null) => {
+    const s = id ? stations.find((x) => x.agentId === id) : null;
+    commandBarRef.current?.selectAgent(s ? { agentId: s.agentId, label: chipLabel({ name: s.name, alias: s.alias, worktreeName: s.worktreeName, inThisWorktree: s.worktreePath === selectedPath }) } : null);
+  };
+  // A notification fires from an effect: it reads the latest selectAgent, not its render's.
+  const selectAgentRef = useRef(selectAgent);
+  selectAgentRef.current = selectAgent;
+  // "Who needs me?" (home's waiting count): the first agent calling you, in the strip's order.
+  // Only orphan calls (no pill to select): their lines are already above the strip.
+  const selectFirstNeedsYou = () => {
+    const first = [...missionScoped, ...stations].find((st) => lightOf(st) === 'calling');
+    if (first) selectAgent(first.agentId);
+    focusCommandBar();
+  };
+  const missionServer = jarvisServerPort(wsId);
+  const missionBox = useMissionBox({
+    wsId,
+    stations: missionScoped,
+    selectedAgentId: selectedAgent,
+    onSelect: selectAgent,
+    openAgent: (id) => openAgentRef.current?.(id),
+    message: (id, text) => missionServer.message(id, text),
+    interrupt: (id) => api.intercom.interrupt(wsId, id),
+    recap: missionServer.recap ? (ids) => missionServer.recap!(ids) : undefined,
+    answerApproval: (ws, id, decision) => api.intercom.answerApproval(ws, id, decision),
+    dismissCall: (ws, id) => api.intercom.escalations.dismiss(ws, id),
+    answerCall: (ws, id, text) => api.intercom.escalations.resolve(ws, id, text),
+    shell: {
+      risk: (id, c) => missionShellRef.current?.risk(id, c) ?? null,
+      run: (id, c) => missionShellRef.current?.run(id, c) ?? Promise.reject(new Error('The box is not ready')),
+      interrupt: (id) => missionShellRef.current?.interrupt(id) ?? Promise.reject(new Error('The box is not ready')),
+    },
+  });
+  const agentStrip = (
+    <AgentStrip
+      agents={stripAgents(placeNamer(state.worktrees, state.repos), missionScoped, projectNamer(state.worktrees, state.repos))}
+      selectedId={selectedAgent}
+      onSelect={(id) => selectAgent(selectedAgent === id ? null : id)}
+      onOpen={(id) => openAgentRef.current?.(id)}
+      selectedLine={missionBox.line}
+    />
+  );
+  // In the bar it reports its height, so the popover opens above it (home's popover opens below the box).
+  const orphanLines = <OrphanCalls calls={orphanCalls} onDismiss={(id) => api.intercom.escalations.dismiss(wsId, id)} />;
+  const missionStack = (inBar: boolean) => <MissionStack onHeight={inBar ? setStackHeight : undefined} approvals={<>{missionBox.approvals}{orphanLines}</>} strip={agentStrip} />;
   // The chip names the project too: "master" alone doesn't say which repo.
   const repoNameOf = (id: string | null | undefined) => (id ? state.repos.find((r) => r.id === id)?.name ?? null : null);
   const dockWorktree = selectedRemote
@@ -758,22 +817,6 @@ export function Dashboard(props: {
   // — so the "what is serving right now" answer is the same wherever you are. Opening a
   // row lands on the preview tab in the desktop app; the web build has no
   // embedded browser, so it opens the hub's shell instead.
-  // Questions waiting on you, workspace-wide. Amber whenever the count is
-  // non-zero and a muted glyph otherwise, so the control never moves or vanishes.
-  const intercomButton = (
-    <button
-      aria-label={openCount > 0 ? `Open intercom, ${openCount} waiting on you` : 'Open intercom'}
-      title={openCount > 0 ? `${openCount} waiting on you` : 'Intercom'}
-      onClick={() => setIntercomPanel({ tab: 'escalations' })}
-      className={
-        openCount > 0
-          ? 'shrink-0 rounded-md border border-amber-800/60 bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-900/40'
-          : 'shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
-      }
-    >
-      {openCount > 0 ? `⚑ ${openCount}` : '⚑'}
-    </button>
-  );
   const runningServers = (
     <RunningServers
       worktrees={state.worktrees}
@@ -861,6 +904,10 @@ export function Dashboard(props: {
       embedded={!hero}
       hero={hero}
       stations={stations}
+      mission={{ stations: missionScoped, openRef: openAgentRef, shellRef: missionShellRef }}
+      agentKey={missionBox.agentKey}
+      onAgentChip={setSelectedAgent}
+      popoverLift={hero ? 0 : stackHeight + 4 /* the stack row's pt-1 */}
       barRef={commandBarRef}
       onOpen={() => track('palette_used')}
       wsId={wsId}
@@ -872,7 +919,6 @@ export function Dashboard(props: {
         focus: (id) => focusApi.activate(id),
         workspace: (id) => { props.onCloseOverlays(); void switchTo(id); },
         repo: (repoPath) => { const r = state.repos.find((x) => x.path === repoPath); if (r) { props.onCloseOverlays(); props.onNewWorktree(r.id); } },
-        line: () => setIntercomPanel({ tab: 'escalations' }),
         addRepo: (path) => { props.onCloseOverlays(); setAddRepoAnchor(null); setAddRepoPath(path); setShowAddRepo(true); },
         newWorktree: (repoPath) => {
           const r = repoPath ? state.repos.find((x) => x.path === repoPath) : undefined;
@@ -930,7 +976,8 @@ export function Dashboard(props: {
           onRebuildSandbox={(w) => props.onRebuildSandbox?.(w)}
           onOpenRemoteWorktree={openRemoteWorktree}
           // Home is no page: nothing in the page row is current there.
-          selected={onHome ? null : activeView}
+          // A worktree's tabs are open: no page is current (the rail shows which worktree).
+          selected={onHome || selectedRemote || selectedWorktree ? null : activeView}
           onSelect={(view) => { selectView(view); if (view.kind === 'worktrees') setHomeAll(true); }}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
@@ -939,7 +986,6 @@ export function Dashboard(props: {
             setAddRepoAnchor(anchor ?? null);
             setShowAddRepo(true);
           }}
-          onSearch={focusCommandBar}
           onOpenWorktree={(w, mode, sessionId) => openInlineHub(w, mode, sessionId)}
           onOpenMr={props.onOpenMr}
           onOpenDiff={props.onOpenDiff}
@@ -1056,13 +1102,14 @@ export function Dashboard(props: {
               {onHome ? (
               <HomeScreen
                 bar={settingsSection ? null : commandBar(true)}
+                strip={settingsSection ? null : missionStack(false)}
                 recent={recentWorktrees(state.worktrees, state.repos, readWorktreeLru())}
-                waiting={stations.filter((st) => lightOf(st) === 'calling').length}
+                waiting={stations.filter((st) => lightOf(st) === 'calling').length + orphanCalls.length}
                 onOpenRecent={(w) => openInlineHub(w)}
                 onAllWorktrees={() => setHomeAll(true)}
                 onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
                 onNewWorktree={() => props.onNewWorktree()}
-                onWaiting={() => setIntercomPanel({ tab: 'escalations' })}
+                onWaiting={selectFirstNeedsYou}
                 sidebarCollapsed={sidebarHidden}
                 onExpandSidebar={() => setSidebarCollapsed(false)}
               />
@@ -1077,9 +1124,10 @@ export function Dashboard(props: {
                 activeWorktreePath={null /* the page shows only while no hub is open */}
                 sidebarCollapsed={sidebarCollapsed}
                 onExpandSidebar={() => setSidebarCollapsed(false)}
-                runningServers={<>{intercomButton}{runningServers}</>}
+                runningServers={runningServers}
                 onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
                 onNewWorktree={(repoId) => props.onNewWorktree(repoId)}
+                onRunCommands={(repo) => setRunCommandsRepo(repo.id)}
                 onRemoveRepo={async (repo) => {
                   if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
                   try {
@@ -1103,9 +1151,10 @@ export function Dashboard(props: {
             )}
           </div>
         )}
+        {!onHome && !settingsSection && <div className="dock-panel shrink-0 border-t border-white/[0.07] pt-1">{missionStack(true)}</div>}
         <Dock
           worktree={dockWorktree}
-          onBrowse={() => commandBarRef.current?.browse()}
+          focus={focusApi.active?.name ?? null}
           bare={onHome}
         >
         {onHome || settingsSection ? null : commandBar(false)}
@@ -1114,6 +1163,24 @@ export function Dashboard(props: {
       </div>
 
 
+      {(() => {
+        const repo = runCommandsRepo ? state.repos.find((r) => r.id === runCommandsRepo) : undefined;
+        return repo ? (
+          <RunCommandsDialog
+            repoName={repo.name}
+            commands={repo.runCommands ?? []}
+            onClose={() => setRunCommandsRepo(null)}
+            onSave={async (list) => {
+              try {
+                await api.repos.setRunCommands(wsId, repo.id, list);
+                commitTree(await api.repos.list(wsId), state.worktrees);
+              } catch (err) {
+                throw new Error(runCommandsError(err));
+              }
+            }}
+          />
+        ) : null;
+      })()}
       {settingsSection && (
         <SettingsPage
           key={`${settingsSection}:${settingsNonce}`}
@@ -1131,25 +1198,6 @@ export function Dashboard(props: {
         <div className="fixed inset-x-0 bottom-0 z-[60] flex h-11 items-center border-t border-zinc-900 bg-zinc-950 px-4" data-testid="settings-command-bar">
           {commandBar(false)}
         </div>
-      )}
-
-      {intercomPanel && (
-        <IntercomPanel
-          // The panel reads its tab and worktree filter into state once, so a
-          // second open with a different tab or worktree has to remount to apply
-          // them. `focusId` is excluded — it's a plain prop the panel reacts to
-          // on every change, so clicking a second notification while the drawer
-          // is already open scrolls to the new row instead of remounting it.
-          key={`${intercomPanel.tab}:${intercomPanel.worktreePath ?? ''}`}
-          initialTab={intercomPanel.tab}
-          worktreePath={intercomPanel.worktreePath}
-          focusId={intercomPanel.focusId}
-          onClose={() => setIntercomPanel(null)}
-          onOpenTab={(path, mode, sessionId) => {
-            const w = state.worktrees.find((x) => x.path === path);
-            if (w) openInlineHub(w, mode, sessionId);
-          }}
-        />
       )}
 
       <FeedbackDialog

@@ -119,6 +119,21 @@ describe('intercom routes', () => {
     expect(byId['claude-1@repo'].lastActivityAt).toBeGreaterThan(Date.now() - 5000);
     expect(byId['claude-2@repo']).toMatchObject({ needsYou: true, calls: [] }); // permission prompt
     expect(byId['shell-1@repo']).toMatchObject({ needsYou: false, calls: [], lastActivityAt: null });
+    expect(res.json().orphanCalls).toEqual([]);
+  });
+
+  it('stations: a call whose asker has no tab any more is an orphan call, still answerable', async () => {
+    const call = await app.inject({ method: 'POST', url: '/api/intercom/escalations', headers: auth(tokA), payload: { title: 'Ship it?', body: 'all green' } });
+    const id = call.json().escalation.id as string;
+    const realList = deps.agents.list.bind(deps.agents);
+    deps.agents.list = async (scopeId: string) => (await realList(scopeId)).filter((a) => a.agentId !== 'claude-1@repo');
+
+    const res = (await app.inject({ method: 'GET', url: '/api/w/default/intercom/stations' })).json();
+    expect(res.stations.map((s: { agentId: string }) => s.agentId)).not.toContain('claude-1@repo');
+    expect(res.orphanCalls).toEqual([{ id, from: 'claude-1@repo', name: 'claude-1', title: 'Ship it?', body: 'all green', createdAt: expect.any(Number) }]);
+    const done = await app.inject({ method: 'POST', url: `/api/w/default/intercom/escalations/${id}/dismiss` });
+    expect(done.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/w/default/intercom/stations' })).json().orphanCalls).toEqual([]);
   });
 
   it('401 UNAUTHENTICATED on every route without a token', async () => {
@@ -880,7 +895,8 @@ describe('tasks and escalations routes', () => {
       const r = await app.inject({ method: 'POST', url: '/api/intercom/tasks', headers: H(tokA), payload: { title: 'x' } });
       expect(r.statusCode).toBe(503);
       expect(r.json().error.message).toBe('tasks and escalations are disabled');
-      const w = await app.inject({ method: 'GET', url: '/api/w/default/intercom/tasks' });
+      // The human's side too (answering a call).
+      const w = await app.inject({ method: 'POST', url: '/api/w/default/intercom/escalations/01ARZ3NDEKTSV4RRFFQ69G5FAV/dismiss', payload: {}, headers: { 'content-type': 'application/json' } });
       expect(w.statusCode).toBe(503);
     } finally { process.env.STRADO_INTERCOM_TASKS = ''; }
   });
@@ -906,27 +922,10 @@ describe('tasks and escalations routes', () => {
     expect(done.json().task.status).toBe('done');
   });
 
-  it('human routes: create, assign to a live agent (409 offline), cancel, release; 400 on a bad body', async () => {
-    const c = await app.inject({ method: 'POST', url: '/api/w/default/intercom/tasks', headers: { 'content-type': 'application/json' }, payload: { title: 'triage' } });
-    expect(c.statusCode).toBe(201);
-    expect(c.json().task.createdBy).toEqual({ agentId: 'human', executionId: 'human' });
-    const id = c.json().task.id as string;
-    const bad = await app.inject({ method: 'POST', url: '/api/w/default/intercom/tasks', headers: { 'content-type': 'application/json' }, payload: { title: '' } });
-    expect(bad.statusCode).toBe(400);
-    const off = await app.inject({ method: 'POST', url: `/api/w/default/intercom/tasks/${id}/assign`, headers: { 'content-type': 'application/json' }, payload: { agent: 'claude-2@repo' } });
-    expect(off.statusCode).toBe(409);
-    expect(off.json().error.details.reason).toBe('agent_offline');
-    await deps.terminal.ensure(claudeKey(repo, '2'), repo, { file: '/bin/sh', args: ['-i'] });
-    const on = await app.inject({ method: 'POST', url: `/api/w/default/intercom/tasks/${id}/assign`, headers: { 'content-type': 'application/json' }, payload: { agent: 'claude-2@repo' } });
-    expect(on.statusCode).toBe(200);
-    expect(on.json().task.claimedBy.agentId).toBe('claude-2@repo');
-    const rel = await app.inject({ method: 'POST', url: `/api/w/default/intercom/tasks/${id}/release`, payload: {} , headers: { 'content-type': 'application/json' } });
-    expect(rel.json().task.status).toBe('open');
-    const can = await app.inject({ method: 'POST', url: `/api/w/default/intercom/tasks/${id}/cancel`, payload: {}, headers: { 'content-type': 'application/json' } });
-    expect(can.json().task.status).toBe('cancelled');
-    const list = await app.inject({ method: 'GET', url: '/api/w/default/intercom/tasks' });
-    expect(list.json().tasks[0].status).toBe('cancelled');
-    deps.terminal.killUnder(repo);
+  it('the drawer\'s human task routes are gone: the board is the agents\' own', async () => {
+    for (const [method, url] of [['GET', '/api/w/default/intercom/tasks'], ['POST', '/api/w/default/intercom/tasks'], ['GET', '/api/w/default/intercom/escalations']] as const) {
+      expect((await app.inject({ method, url, payload: method === 'POST' ? { title: 'x' } : undefined })).statusCode, `${method} ${url}`).toBe(404);
+    }
   });
 
   it('a released execution loses its claims; a dead peer retargets open asks to the human', async () => {
@@ -969,8 +968,9 @@ describe('tasks and escalations routes', () => {
     expect(own.json().escalation.status).toBe('open');
     const notMine = await app.inject({ method: 'GET', url: `/api/intercom/escalations/${id}`, headers: auth(tokB) });
     expect(notMine.statusCode).toBe(404);
-    const list = await app.inject({ method: 'GET', url: '/api/w/default/intercom/escalations?status=open' });
-    expect(list.json().escalations[0]).toMatchObject({ id, body: 'pg or sqlite', context: [{ kind: 'text', value: 'ctx' }] });
+    // The human sees it as the agent's call (Mission Control's stations).
+    const stations = (await app.inject({ method: 'GET', url: '/api/w/default/intercom/stations' })).json().stations;
+    expect(stations.find((st: { agentId: string }) => st.agentId === 'claude-1@repo')).toMatchObject({ needsYou: true, calls: [{ id, title: 'db?', body: 'pg or sqlite' }] });
     const res = await app.inject({ method: 'POST', url: `/api/w/default/intercom/escalations/${id}/resolve`, headers: { 'content-type': 'application/json' }, payload: { resolution: 'sqlite' } });
     expect(res.statusCode).toBe(200);
     expect(res.json().escalation).toMatchObject({ status: 'resolved', resolvedBy: 'human' });

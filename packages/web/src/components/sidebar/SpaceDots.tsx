@@ -28,7 +28,7 @@ export function SpaceDots({
         <span
           data-testid="space-hover-label"
           aria-hidden
-          className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 whitespace-nowrap rounded border border-zinc-800 bg-zinc-950 px-1.5 py-0.5 text-[11px] text-zinc-300 shadow-lg"
+          className="surface-pop pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] text-zinc-300"
         >
           {hovered}
         </span>

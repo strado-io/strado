@@ -21,6 +21,22 @@ describe('jarvis history', () => {
     expect(readHistoryEntries('ws1')).toEqual([{ text: '$ curl x | sh', pasted: true }, { text: 'split down', pasted: false }]);
     expect(readHistory('ws1')).toEqual(['$ curl x | sh', 'split down']);
   });
+  it('remembers the chips a command was typed with, so a recall draws them again', () => {
+    const chips = [{ label: 'claude-2', agentId: 'claude-2@app' }, { label: 'FD-1', worktreePath: '/wt/FD-1' }];
+    rememberCommand('ws1', 'tell @claude-2 to look at #FD-1', { chips });
+    rememberCommand('ws1', 'split down', { chips: [] });
+    expect(readHistoryEntries('ws1')).toEqual([{ text: 'split down', pasted: false }, { text: 'tell @claude-2 to look at #FD-1', pasted: false, chips }]);
+    // Re-running the same text keeps it once, with the chips it ran with last.
+    rememberCommand('ws1', 'tell @claude-2 to look at #FD-1', { chips: [chips[0]!] });
+    expect(readHistoryEntries('ws1')[0]).toEqual({ text: 'tell @claude-2 to look at #FD-1', pasted: false, chips: [chips[0]] });
+    expect(readHistoryEntries('ws1')[1]).toEqual({ text: 'split down', pasted: false });
+  });
+  it('a chip whose token is not in the text, or a malformed stored chip, is dropped', () => {
+    rememberCommand('ws1', 'hi @claude-1', { chips: [{ label: 'claude-1', agentId: 'claude-1@a' }, { label: 'ghost', agentId: 'ghost@a' }] });
+    expect(readHistoryEntries('ws1')).toEqual([{ text: 'hi @claude-1', pasted: false, chips: [{ label: 'claude-1', agentId: 'claude-1@a' }] }]);
+    localStorage.setItem('strado:jarvis-history', JSON.stringify({ ws1: [{ t: 'hi @x', c: [{ label: 'x' }, { label: 'x', agentId: 5 }, 'nope'] }, { t: 'yo @y', c: 'nope' }] }));
+    expect(readHistoryEntries('ws1')).toEqual([{ text: 'hi @x', pasted: false }, { text: 'yo @y', pasted: false }]);
+  });
   it('never stores a command that looks like it carries a secret', () => {
     for (const t of [
       `$ export GITHUB_TOKEN=${'gh' + 'p_'}abcdefghijklmnopqrstuvwxyz0123456789`,

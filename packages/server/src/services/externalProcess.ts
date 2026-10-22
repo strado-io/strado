@@ -143,6 +143,52 @@ export async function listeningPortsOfGroup(pgid: number): Promise<number[]> {
   return [...new Set(parseListeners(out).map((l) => l.port))].sort((a, b) => a - b);
 }
 
+/** `root` and every process under it. A terminal's shell runs jobs in their
+ * own process groups (job control is on with a tty), so a group lookup misses
+ * a dev server started there; the parent chain does not. */
+export async function processTree(root: number): Promise<number[]> {
+  const out = await new Promise<string>((resolve) => {
+    const child = spawn('ps', ['-A', '-o', 'pid=,ppid='], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let buf = '';
+    child.stdout.on('data', (b) => (buf += b.toString()));
+    child.on('error', () => resolve(''));
+    child.on('close', () => resolve(buf));
+  });
+  const children = new Map<number, number[]>();
+  for (const line of out.split('\n')) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!pid || !ppid) continue;
+    const list = children.get(ppid) ?? [];
+    list.push(pid);
+    children.set(ppid, list);
+  }
+  const tree = [root];
+  for (let i = 0; i < tree.length; i++) tree.push(...(children.get(tree[i]!) ?? []));
+  return tree;
+}
+
+/** An interactive shell is running something: its terminal's foreground
+ * process group is not the shell's own (a job holds the terminal). Background
+ * helpers a prompt keeps (a git-status daemon) do not count. */
+export async function shellForegroundBusy(shellPid: number): Promise<boolean> {
+  const out = await new Promise<string>((resolve) => {
+    const child = spawn('ps', ['-o', 'tpgid=,pgid=', '-p', String(shellPid)], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let buf = '';
+    child.stdout.on('data', (b) => (buf += b.toString()));
+    child.on('error', () => resolve(''));
+    child.on('close', () => resolve(buf));
+  });
+  const [tpgid, pgid] = out.trim().split(/\s+/).map(Number);
+  return !!tpgid && tpgid > 0 && !!pgid && tpgid !== pgid;
+}
+
+/** Ports any process in `root`'s tree is listening on (see processTree). */
+export async function listeningPortsOfTree(root: number): Promise<number[]> {
+  const pids = await processTree(root);
+  const out = await runLsofTolerant(['-a', '-p', pids.join(','), '-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn']);
+  return [...new Set(parseListeners(out).map((l) => l.port))].sort((a, b) => a - b);
+}
+
 export type ExternalProbeTarget = {
   worktreePath: string;
   projectSubdir: string | null;

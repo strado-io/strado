@@ -20,9 +20,8 @@ vi.mock('../hooks/useWorkspace', () => ({
 const intercomPeers = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: [], tasks: [], peers: intercomPeers.list, loaded: true, error: null,
-    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
-    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+    peers: intercomPeers.list, loaded: true, error: null,
+    refresh: vi.fn(),
   }),
 }));
 // An in-memory Focus store standing in for the server's, so opens can be
@@ -66,10 +65,10 @@ vi.mock('../api', () => ({
     sessionBusy: vi.fn().mockResolvedValue({ busy: false }) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     intercom: {
-      stations: vi.fn().mockResolvedValue([
+      stations: vi.fn().mockResolvedValue({ stations: [
         { agentId: 'claude-1@app', alias: null, name: 'claude-1', mode: 'claude', worktreePath: '/wt/FD-9', worktreeName: 'FD-9', sessionId: '1',
           lifecycle: 'idle', live: true, needsYou: true, calls: [{ id: 'e1', title: 'Which database?', body: '', createdAt: 1 }], lastActivityAt: 1 },
-      ]),
+      ], orphanCalls: [] }),
       escalations: { resolve: vi.fn().mockResolvedValue({}), dismiss: vi.fn().mockResolvedValue({}) },
     },
     tickets: {
@@ -432,21 +431,27 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       expect(screen.queryByTestId('dock')).toBeNull();
     });
 
-    it('home: "⚑ 1 waiting" opens the intercom questions (no strip comes with it)', async () => {
+    it('home: "⚑ 1 waiting" selects the agent that needs you (no Dock strip comes with it)', async () => {
       renderDashboard();
       await home();
       fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
-      expect(await screen.findByRole('dialog', { name: 'Intercom' })).toBeInTheDocument();
+      expect(await screen.findByTestId('agent-line')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /No worktree open/ })).toBeNull();
     });
+  });
 
-    it('home: the box\'s "show the line" opens the intercom questions too', async () => {
-      askModel.mockResolvedValueOnce(plan({ action: 'nav.line', args: {} }));
-      renderDashboard();
-      await home();
-      await say('show me the line');
-      expect(await screen.findByRole('dialog', { name: 'Intercom' })).toBeInTheDocument();
-    });
+  it('home "⚑ 1 waiting" selects the agent that needs you; typing answers its call (no drawer)', async () => {
+    const { api } = await import('../api');
+    renderDashboard();
+    await home();
+    fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
+    expect(await screen.findByTestId('agent-line-note')).toHaveTextContent('asks: Which database? — type to reply');
+    await waitFor(() => expect(document.activeElement).toBe(box()));
+    expect(box().value).toMatch(/^@\S*claude-1 /);
+    fireEvent.change(box(), { target: { value: `${box().value.trimEnd()} postgres` } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(api.intercom.escalations.resolve).toHaveBeenCalledWith('default', 'e1', 'postgres'));
+    expect(screen.queryByRole('dialog', { name: /intercom/i })).not.toBeInTheDocument();
   });
 
   it('the Dock has no station lights: just the worktree chip and the box', async () => {

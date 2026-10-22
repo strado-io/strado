@@ -44,6 +44,33 @@ describe('jevRouter', () => {
     expect(Object.keys(body.questions.split!.criteria)).toContain('tab');
   });
 
+  describe('named run commands', () => {
+    const base = { free_text: { type: 'noul', noul: 0.05 }, several: { type: 'noul', noul: 0.05 }, worktree: choice('none') };
+    const withRuns = { ...ctx, runCommands: [{ name: 'dev' }, { name: 'api' }] };
+    const route = (answers: Record<string, unknown>, context: JarvisContext = withRuns) => {
+      const fetch = vi.fn(reply({ ...base, ...answers }));
+      return { fetch, result: createJevRouter({ fetch, readKey: async () => 'k' }).route({ text: 'stop api', context, thread: [] }) };
+    };
+    it('asks which run when there are several, and passes it on', async () => {
+      const { fetch, result } = route({ action: choice('server_stop'), run: choice('api') });
+      expect(await result).toMatchObject({ steps: [{ action: 'server.stop', args: { run: 'api', worktree: null } }] });
+      const body = (fetch.mock.calls[0] as unknown as [string, { questions: Record<string, { criteria: Record<string, unknown> }> }])[1];
+      expect(Object.keys(body.questions.run!.criteria)).toEqual(['dev', 'api', 'none']);
+    });
+    it('"none named" is the default run (run null)', async () => {
+      expect(await route({ action: choice('server_start'), run: choice('none') }).result).toMatchObject({ steps: [{ action: 'server.start', args: { run: null } }] });
+    });
+    it('unsure which run: Haiku decides, never the default', async () => {
+      expect(await route({ action: choice('server_stop'), run: choice('api', 0.3) }).result).toBeNull();
+    });
+    it('one run command (or none): not asked; run null', async () => {
+      const { fetch, result } = route({ action: choice('server_start') }, { ...ctx, runCommands: [{ name: 'dev' }] });
+      expect(await result).toMatchObject({ steps: [{ action: 'server.start', args: { run: null } }] });
+      const body = (fetch.mock.calls[0] as unknown as [string, { questions: Record<string, unknown> }])[1];
+      expect(body.questions).not.toHaveProperty('run');
+    });
+  });
+
   it('maps worktree navigation to nav.worktree {name}, and a server action to {worktree}', async () => {
     const go = await createJevRouter({ readKey: async () => 'k', fetch: reply({ free_text: { type: 'noul', noul: 0.05 }, several: { type: 'noul', noul: 0.05 }, action: choice('nav_worktree'), worktree: choice('FD-00029_hotfix') }) }).route(input('go to the hotfix'));
     expect(go).toMatchObject({ steps: [{ action: 'nav.worktree', args: { name: 'FD-00029_hotfix' } }] });

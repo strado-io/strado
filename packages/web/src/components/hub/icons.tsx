@@ -100,6 +100,14 @@ export function LogsIcon({ className = '' }: { className?: string }) {
   );
 }
 
+export function ChevronDownIcon({ className = '', size = 14 }: { className?: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M4 6l4 4 4-4" />
+    </svg>
+  );
+}
+
 export function PlayIcon({ className = '', size = 14 }: { className?: string; size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" className={`fill-current ${className}`}>
@@ -196,6 +204,15 @@ export function TrashIcon({ className = '', size = 14 }: { className?: string; s
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" className={className}>
       <path d="M2.8 4.5h10.4M6.5 2.5h3M4 4.5l.7 9h6.6l.7-9M6.5 7v4M9.5 7v4" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Lucide "folder": a repository.
+export function FolderIcon({ className = '', size = 12 }: { className?: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </svg>
   );
 }

@@ -41,6 +41,8 @@ export type WorktreesPageProps = {
   /** New worktree; with a repo id, in that repo. */
   onNewWorktree: (repoId?: string) => void;
   onRemoveRepo: (repo: RepoConfig) => void;
+  /** The repo's run-command editor (name, command, env file). */
+  onRunCommands?: (repo: RepoConfig) => void;
   onOpenWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
@@ -56,7 +58,7 @@ const rowClass = (active: boolean) =>
 export function WorktreesPage({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses, activeWorktreePath,
   sidebarCollapsed, onExpandSidebar, runningServers,
-  onAddRepo, onNewWorktree, onRemoveRepo, onOpenWorktree, onOpenRemoteWorktree, onOpenMr,
+  onAddRepo, onNewWorktree, onRemoveRepo, onRunCommands, onOpenWorktree, onOpenRemoteWorktree, onOpenMr,
   onWorktreeSettings, onDeleteWorktree, onDeleteRemoteWorktree, onError,
 }: WorktreesPageProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
@@ -219,6 +221,7 @@ export function WorktreesPage({
                     </button>
                     <Menu alwaysVisible label={`${repo.name} actions`} items={[
                       { text: 'New worktree', onClick: () => onNewWorktree(repo.id) },
+                      ...(onRunCommands ? [{ text: 'Run commands…', onClick: () => onRunCommands(repo) }] : []),
                       { text: 'Remove repo', danger: true, onClick: () => onRemoveRepo(repo) },
                     ]} />
                   </span>

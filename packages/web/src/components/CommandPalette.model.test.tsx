@@ -61,7 +61,7 @@ function setup(model: Partial<NonNullable<JarvisPaletteProps['model']>> = {}, vo
   const onOpenSettings = vi.fn();
   const jarvis: JarvisPaletteProps = {
     wsId: 'default', parse: stubParse, context: ctx,
-    ports: () => ({ hub, server, nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() } }),
+    ports: () => ({ hub, server, nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() } }),
     onRan: vi.fn(), onActed: vi.fn(),
     model: {
       status: 'ready',

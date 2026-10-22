@@ -21,8 +21,8 @@ const noPorts = { hub: null, server: {} as never, nav: {} as never, app: {} as n
 beforeEach(() => localStorage.clear());
 
 describe('tab.rename: the plan', () => {
-  it('is the last action id (same order as the server registry)', () => {
-    expect(ACTION_IDS[ACTION_IDS.length - 1]).toBe('tab.rename');
+  it('follows agent.recap in the registry (same order as the server registry)', () => {
+    expect(ACTION_IDS[ACTION_IDS.indexOf('agent.recap') + 1]).toBe('tab.rename');
   });
   it('"rename this shell to test": the focused tab, a layout step on the hub, undoable', () => {
     const p = rename('this', '  test ');

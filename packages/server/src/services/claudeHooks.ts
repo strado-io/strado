@@ -64,23 +64,45 @@ export function claudeHookCommand(status: 'working' | 'waiting' | 'idle'): strin
   return `[ -n "$STRADO_CLAUDE_HOOK" ] && [ -f "$STRADO_CLAUDE_HOOK" ] && node "$STRADO_CLAUDE_HOOK" ${status} "$STRADO_STATUS_PORT" || true`;
 }
 
+/** Mission control's hook (claude-agent-hook.mjs), found beside the status
+ * hook by the same env: the box's approvals and each agent's live tool line. */
+export function claudeAgentHookCommand(mode: 'permission' | 'tool' | 'stop'): string {
+  return `[ -n "$STRADO_CLAUDE_HOOK" ] && [ -f "\${STRADO_CLAUDE_HOOK%/*}/claude-agent-hook.mjs" ] && node "\${STRADO_CLAUDE_HOOK%/*}/claude-agent-hook.mjs" ${mode} "$STRADO_STATUS_PORT" || true`;
+}
+
 type HookEntry = { hooks?: unknown };
+type HookSpec = { type: 'command'; command: string; timeout?: number; async?: boolean };
+
+/** Every hook Strado writes, per event. PermissionRequest waits for the box
+ * (Claude's own dialog shows meanwhile); the activity hooks run in the
+ * background so they never slow a tool call. */
+function desiredHooks(): Record<string, HookSpec[]> {
+  const out: Record<string, HookSpec[]> = {};
+  for (const [event, status] of Object.entries(HOOK_EVENTS)) out[event] = [{ type: 'command', command: claudeHookCommand(status) }];
+  out.PermissionRequest = [{ type: 'command', command: claudeAgentHookCommand('permission'), timeout: 600 }];
+  out.PreToolUse = [{ type: 'command', command: claudeAgentHookCommand('tool'), async: true }];
+  out.Stop!.push({ type: 'command', command: claudeAgentHookCommand('stop'), async: true });
+  return out;
+}
 
 function isStradoStatusHook(h: unknown): boolean {
   return typeof (h as { command?: unknown })?.command === 'string'
     && ((h as { command: string }).command.includes(HOOK_SCRIPT_NAME)
+      || (h as { command: string }).command.includes('claude-agent-hook.mjs')
       || (h as { command: string }).command.includes('STRADO_CLAUDE_HOOK'));
 }
 
-/** Drops every Strado status hook group whose command is not byte-equal to
- * `current` — legacy path-baked entries from any install or worktree. Foreign
- * hooks are kept. Returns whether anything was removed. */
-function pruneStradoHooks(entries: unknown[], current: string | null): { kept: unknown[]; removed: boolean } {
+const sameSpec = (h: unknown, spec: HookSpec) => JSON.stringify(h) === JSON.stringify(spec);
+
+/** Drops every Strado hook group that is not exactly one of `current` —
+ * legacy path-baked entries, or an older form of ours. Foreign hooks are
+ * kept. Returns whether anything was removed. */
+function pruneStradoHooks(entries: unknown[], current: HookSpec[]): { kept: unknown[]; removed: boolean } {
   let removed = false;
   const kept = entries.filter((g) => {
     const hooks = (g as HookEntry)?.hooks;
     if (!Array.isArray(hooks)) return true;
-    const stale = hooks.some((h) => isStradoStatusHook(h) && (h as { command: string }).command !== current);
+    const stale = hooks.some((h) => isStradoStatusHook(h) && !current.some((spec) => sameSpec(h, spec)));
     if (stale) removed = true;
     return !stale;
   });
@@ -163,15 +185,15 @@ export async function installClaudeHooks(worktreePath: string): Promise<void> {
   const settings: Record<string, any> = (await readSettings(settingsPath)) ?? {};
   if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) settings.hooks = {};
 
-  for (const [event, status] of Object.entries(HOOK_EVENTS)) {
-    const command = claudeHookCommand(status);
+  for (const [event, specs] of Object.entries(desiredHooks())) {
     const existing = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];
-    const { kept } = pruneStradoHooks(existing, command);
-    const already = kept.some(
-      (g) => Array.isArray((g as HookEntry)?.hooks)
-        && ((g as HookEntry).hooks as unknown[]).some((h) => (h as { command?: unknown })?.command === command),
-    );
-    if (!already) kept.push({ hooks: [{ type: 'command', command }] });
+    const { kept } = pruneStradoHooks(existing, specs);
+    for (const spec of specs) {
+      const already = kept.some(
+        (g) => Array.isArray((g as HookEntry)?.hooks) && ((g as HookEntry).hooks as unknown[]).some((h) => sameSpec(h, spec)),
+      );
+      if (!already) kept.push({ hooks: [spec] });
+    }
     settings.hooks[event] = kept;
   }
 

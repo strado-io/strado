@@ -6,7 +6,7 @@ import { ACTION_IDS, type ParseContext } from './types';
 
 const ctx: ParseContext = { tabs: [], focused: null, lastActedOn: null, currentWorktree: null, worktrees: [], focuses: [], packageScripts: {}, peers: [] };
 const one = (args: unknown) => planFromModel([{ action: 'ui.sidebar', args }], ctx);
-const base = (): JarvisPorts => ({ hub: null, server: {} as JarvisPorts['server'], nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() } });
+const base = (): JarvisPorts => ({ hub: null, server: {} as JarvisPorts['server'], nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() } });
 const app = (sidebar?: (show: boolean | null) => void) => ({ page: vi.fn(), settings: vi.fn(), set: vi.fn(), ...(sidebar ? { sidebar } : {}) });
 
 describe('ui.sidebar', () => {

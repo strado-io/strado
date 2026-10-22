@@ -99,7 +99,7 @@ export function UsageChart({ series, metric }: { series: UsageDayPoint[]; metric
       {hovered && (
         <div
           data-testid="usage-chart-readout"
-          className="pointer-events-none absolute right-0 top-0 rounded-md border border-zinc-800 bg-zinc-950/95 px-2 py-1.5 text-[11px] shadow-lg"
+          className="surface-pop pointer-events-none absolute right-0 top-0 rounded-md px-2 py-1.5 text-[11px]"
         >
           <div className="mb-0.5 text-zinc-400">{shortDate(hovered.date)}</div>
           <div className="flex items-center gap-2 font-mono tabular-nums text-zinc-300">

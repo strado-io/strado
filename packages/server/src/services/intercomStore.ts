@@ -681,7 +681,7 @@ export async function createIntercomStore(opts: IntercomStoreOptions): Promise<I
     escExpired: db.prepare("SELECT * FROM escalations WHERE status = 'open' AND to_agent <> 'human' AND expires_at IS NOT NULL AND expires_at <= ?"),
     escOpenAsksTo: db.prepare("SELECT * FROM escalations WHERE scope_id = ? AND status = 'open' AND to_agent = ? AND to_agent <> 'human'"),
     escList: db.prepare(`SELECT * FROM escalations WHERE scope_id = ? AND (? IS NULL OR status = ?)
-      ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, created_at DESC, id DESC LIMIT ?`),
+      ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT ?`),
     escPurge: db.prepare("DELETE FROM escalations WHERE status IN ('resolved','dismissed') AND resolved_at <= ?"),
   } satisfies Record<string, StatementSync>;
 

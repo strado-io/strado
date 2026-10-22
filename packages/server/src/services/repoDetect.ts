@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { exec } from '../shell.js';
 import { AppError } from '../errors.js';
-import type { EnvProfile } from '../repoConfig.js';
+import { deriveRunCommands, type EnvProfile, type RepoConfig, type RunCommand } from '../repoConfig.js';
 
 export type DetectedRepo = {
   id: string;
@@ -16,8 +16,8 @@ export type DetectedRepo = {
   startCommand: string;
   defaultPort: number;
   editor: 'code';
-  envProfiles: EnvProfile[];
-  defaultEnvProfile?: string;
+  /** One per env file found (else one "dev"); the first is the default. */
+  runCommands: RunCommand[];
   warnings: string[];
 };
 
@@ -169,17 +169,17 @@ export async function detectRepo(inputPath: string): Promise<DetectedRepo> {
   // runner) surface its absence where it actually matters.
   const cloneUrl = await readOriginUrl(gitRoot);
 
+  const startCommand = nodeStart?.command ?? nonNodeStart ?? '';
   return {
     id: slugify(base),
     name: pkg?.name ? prettyName(pkg.name) : prettyName(base),
     path: gitRoot,
     cloneUrl,
     projectSubdir,
-    startCommand: nodeStart?.command ?? nonNodeStart ?? '',
+    startCommand,
     defaultPort: port ?? 8080,
     editor: 'code',
-    envProfiles,
-    ...(envProfiles.length > 0 ? { defaultEnvProfile: envProfiles[0]!.name } : {}),
+    runCommands: deriveRunCommands({ startCommand, envProfiles } as RepoConfig),
     warnings,
   };
 }

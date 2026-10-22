@@ -32,15 +32,38 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe('useStations', () => {
   it('loads the stations for the workspace', async () => {
-    h.stations.mockResolvedValue([st()]);
+    h.stations.mockResolvedValue({ stations: [st()], orphanCalls: [] });
     const { result } = renderHook(() => useStations('ws1'));
     await waitFor(() => expect(result.current.stations).toHaveLength(1));
     expect(h.stations).toHaveBeenCalledWith('ws1');
   });
 
+  it('loaded: false until this workspace\'s first fetch lands, and false again right after a switch', async () => {
+    let release!: (v: { stations: StationDto[]; orphanCalls: unknown[] }) => void;
+    h.stations.mockResolvedValueOnce({ stations: [st()], orphanCalls: [] }).mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    const { result, rerender } = renderHook(({ ws }) => useStations(ws), { initialProps: { ws: 'ws1' } });
+    expect(result.current.loaded).toBe(false);
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    rerender({ ws: 'ws2' });
+    expect(result.current.loaded).toBe(false);
+    await act(async () => { release({ stations: [], orphanCalls: [] }); });
+    expect(result.current.loaded).toBe(true);
+  });
+
+  it('orphan calls (asker gone) come with the stations; an older server without them reads as none', async () => {
+    const orphan = { id: 'O1', from: 'claude-9@app', name: 'claude-9', title: 'ship it?', body: '', createdAt: 1 };
+    h.stations.mockResolvedValueOnce({ stations: [st()], orphanCalls: [orphan] });
+    const { result, rerender } = renderHook(({ ws }) => useStations(ws), { initialProps: { ws: 'ws1' } });
+    await waitFor(() => expect(result.current.orphanCalls).toEqual([orphan]));
+    h.stations.mockResolvedValueOnce({ stations: [st()] });
+    rerender({ ws: 'ws2' });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.orphanCalls).toEqual([]);
+  });
+
   it('refetches on intercom and worktree events, at most once per throttle window', async () => {
     vi.useFakeTimers();
-    h.stations.mockResolvedValue([st()]);
+    h.stations.mockResolvedValue({ stations: [st()], orphanCalls: [] });
     renderHook(() => useStations('ws1'));
     await act(async () => { await Promise.resolve(); });
     expect(h.stations).toHaveBeenCalledTimes(1);
@@ -54,7 +77,7 @@ describe('useStations', () => {
   });
 
   it('a failed load keeps the last good list (the dock never flashes empty)', async () => {
-    h.stations.mockResolvedValueOnce([st()]).mockRejectedValueOnce(new Error('down'));
+    h.stations.mockResolvedValueOnce({ stations: [st()], orphanCalls: [] }).mockRejectedValueOnce(new Error('down'));
     const { result } = renderHook(() => useStations('ws1'));
     await waitFor(() => expect(result.current.stations).toHaveLength(1));
     await act(async () => { await result.current.refresh(); });

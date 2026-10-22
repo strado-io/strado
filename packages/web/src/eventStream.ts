@@ -136,7 +136,7 @@ export type EnvInstallEvent =
   | { type: 'output'; data: { id: string; line: string } }
   | { type: 'done'; data: { id: string; ok: boolean; message: string | null; tool: ToolStatus | null } };
 
-export const INTERCOM_EVENT_TYPES = ['task.created', 'task.claimed', 'task.released', 'task.done', 'task.cancelled', 'task.assigned', 'escalation.opened', 'escalation.resolved', 'escalation.dismissed', 'escalation.retargeted', 'peer.registered', 'peer.dropped', 'feed.changed', 'message.queued'] as const;
+export const INTERCOM_EVENT_TYPES = ['task.created', 'task.claimed', 'task.released', 'task.done', 'task.cancelled', 'task.assigned', 'escalation.opened', 'escalation.resolved', 'escalation.dismissed', 'escalation.retargeted', 'peer.registered', 'peer.dropped', 'feed.changed', 'message.queued', 'station.changed'] as const;
 export type IntercomEventType = (typeof INTERCOM_EVENT_TYPES)[number];
 export type IntercomEvent = { type: IntercomEventType; data: { scopeId: string; id: string } & Record<string, unknown> };
 

@@ -127,7 +127,7 @@ describe('jarvis: actions as the human', () => {
     await fs.writeFile(path.join(repo, 'package.json'), JSON.stringify({ scripts: { dev: 'vite', test: 'vitest' } }));
     await fs.writeFile(path.join(repo, 'pnpm-lock.yaml'), '');
     const res = await app.inject({ method: 'GET', url: `/api/w/default/jarvis/scripts?worktreePath=${encodeURIComponent(repo)}`, headers: hub() });
-    expect(res.json()).toEqual({ packageManager: 'pnpm', scripts: ['dev', 'test'] });
+    expect(res.json()).toEqual({ packageManager: 'pnpm', scripts: ['dev', 'test'], runCommands: [{ id: 'dev', name: 'dev' }] });
     expect((await app.inject({ method: 'GET', url: `/api/w/default/jarvis/scripts?worktreePath=${encodeURIComponent('/etc')}`, headers: hub() })).statusCode).toBe(400);
     expect((await app.inject({ method: 'GET', url: `/api/w/default/jarvis/scripts?worktreePath=${encodeURIComponent(repo)}` })).statusCode).toBe(401);
   });
@@ -290,14 +290,28 @@ describe('jarvis: actions as the human', () => {
 describe('jarvis: natural-language plan route', () => {
   const ctx = { worktree: null, focused: null, tabs: [], worktrees: [], focuses: [], scripts: [], packageManager: 'npm', agents: [] };
 
+  it('adds what the model needs to answer "what does X want" and "what tasks are open": call bodies and the task board', async () => {
+    const agent = { authorization: `Bearer ${tok}` };
+    await app.inject({ method: 'POST', url: '/api/intercom/escalations', headers: agent, payload: { title: 'Which DB', body: 'Postgres or SQLite for the cache?' } });
+    await app.inject({ method: 'POST', url: '/api/intercom/tasks', headers: agent, payload: { title: 'Fix the login test' } });
+    const claimed = (await app.inject({ method: 'POST', url: '/api/intercom/tasks', headers: agent, payload: { title: 'Bump deps' } })).json().task;
+    await app.inject({ method: 'POST', url: `/api/intercom/tasks/${claimed.id}/claim`, headers: agent });
+    const plan = vi.fn(async () => ({ kind: 'answer' as const, text: 'ok', model: 'm', ms: 1 }));
+    deps.jarvisModel = { plan };
+    await post('/jarvis/plan', { text: 'what does claude-1 want', context: { ...ctx, calls: [{ from: 'claude-1', title: 'Which DB' }] }, thread: [] });
+    const sent = (plan.mock.calls[0] as unknown as [{ context: { calls: unknown[]; tasks: unknown[] } }])[0].context;
+    expect(sent.calls).toEqual([{ from: 'claude-1', title: 'Which DB', body: 'Postgres or SQLite for the cache?' }]);
+    expect(sent.tasks).toEqual([{ title: 'Fix the login test', status: 'open' }, { title: 'Bump deps', status: 'claimed', by: 'claude-1' }]);
+  });
+
   it('passes text, context and thread to the model and returns its result', async () => {
     const plan = vi.fn(async () => ({ kind: 'plan' as const, steps: [{ action: 'tab.open', args: { mode: 'shell' } }], model: 'claude-haiku-5-5', ms: 12 }));
     deps.jarvisModel = { plan };
     const res = await post('/jarvis/plan', { text: 'shell please', context: ctx, thread: [{ role: 'user', text: 'hi' }] });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: 'plan', steps: [{ action: 'tab.open' }] });
-    // calls/repos default to [] for an older box that does not send them.
-    expect(plan.mock.calls[0]![0]).toEqual({ text: 'shell please', context: { ...ctx, focus: null, workspace: null, workspaces: [], calls: [], repos: [] }, thread: [{ role: 'user', text: 'hi' }] });
+    // calls/repos/runCommands default to [] for an older box that does not send them.
+    expect(plan.mock.calls[0]![0]).toEqual({ text: 'shell please', context: { ...ctx, focus: null, workspace: null, workspaces: [], calls: [], repos: [], runCommands: [], tasks: [] }, thread: [{ role: 'user', text: 'hi' }] });
   });
 
   it('the open Focus and each Focus\'s worktrees reach the model; an older box without them still works', async () => {
@@ -477,5 +491,52 @@ describe('action registry contract', () => {
     const ids = ACTIONS.map((a) => a.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(id).toMatch(/^[a-z]+\.[a-z][A-Za-z]*$/);
+  });
+});
+
+describe('jarvis: a message to an agent that is calling you answers the call', () => {
+  const agent = () => ({ authorization: `Bearer ${tok}` });
+  const escalate = async (title: string) =>
+    (await app.inject({ method: 'POST', url: '/api/intercom/escalations', headers: agent(), payload: { title, body: `${title}?` } })).json().escalation as { id: string };
+  const stationOf = async () => (await app.inject({ method: 'GET', url: '/api/w/default/intercom/stations' })).json().stations
+    .find((s: { mode: string }) => s.mode === 'claude') as { agentId: string; needsYou: boolean; calls: { id: string }[] };
+  const inbox = async () => (await app.inject({ method: 'POST', url: '/api/intercom/pull', headers: agent(), payload: {} })).json();
+
+  it('the oldest open call gets the box message as its answer; the call closes; the station stops needing you', async () => {
+    const first = await escalate('Which DB');
+    const second = await escalate('Ship it');
+    const st = await stationOf();
+    expect(st.needsYou).toBe(true);
+
+    const res = await post('/jarvis/message', { to: st.agentId, body: 'postgres' });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ answered: { callId: first.id, title: 'Which DB' }, to: { agentId: st.agentId } });
+    // The agent reads it as the answer to its call (its inbox first: polling
+    // the call itself also hands the answer over, and clears that copy).
+    const pulled = await inbox();
+    expect(pulled.messages.map((m: { body: string; escalationId?: string }) => [m.body, m.escalationId])).toEqual([['postgres', first.id]]);
+    const resolved = (await app.inject({ method: 'GET', url: `/api/intercom/escalations/${first.id}`, headers: agent() })).json().escalation;
+    expect(resolved).toMatchObject({ status: 'resolved', resolution: 'postgres' });
+
+    // The next message answers the next call; then plain messages again.
+    expect((await post('/jarvis/message', { to: st.agentId, body: 'yes' })).json()).toMatchObject({ answered: { callId: second.id } });
+    expect((await stationOf()).needsYou).toBe(false);
+    const plain = (await post('/jarvis/message', { to: st.agentId, body: 'thanks' })).json();
+    expect(plain).not.toHaveProperty('answered');
+  });
+
+  it('two calls in the same millisecond: still the first one asked', async () => {
+    const at = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    const ids: string[] = [];
+    try { for (const t of ['A', 'B', 'C', 'D', 'E']) ids.push((await escalate(t)).id); } finally { at.mockRestore(); }
+    const to = (await stationOf()).agentId;
+    for (const id of ids) expect((await post('/jarvis/message', { to, body: 'ok' })).json()).toMatchObject({ answered: { callId: id } });
+  });
+
+  it('an ask (ask: true) never answers a call: it is a new question', async () => {
+    await escalate('Which DB');
+    const res = (await post('/jarvis/message', { to: (await stationOf()).agentId, body: 'why?', ask: true })).json();
+    expect(res).not.toHaveProperty('answered');
+    expect((await stationOf()).needsYou).toBe(true);
   });
 });

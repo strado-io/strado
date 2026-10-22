@@ -9,9 +9,11 @@ const LINK = 'rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-900 hove
 /** Home with nothing open: one question, the command box (the Dock's own bar,
  * moved up here), and the few worktrees you were just in. The full list is a
  * click away. */
-export function HomeScreen({ bar, recent, waiting, onOpenRecent, onAllWorktrees, onAddRepo, onNewWorktree, onWaiting, sidebarCollapsed = false, onExpandSidebar }: {
+export function HomeScreen({ bar, strip = null, recent, waiting, onOpenRecent, onAllWorktrees, onAddRepo, onNewWorktree, onWaiting, sidebarCollapsed = false, onExpandSidebar }: {
   /** The command bar, rendered in its home (hero) form. */
   bar: ReactNode;
+  /** Mission Control's agent strip, above the box. */
+  strip?: ReactNode;
   recent: RecentWorktree[];
   /** Stations calling you. */
   waiting: number;
@@ -37,6 +39,7 @@ export function HomeScreen({ bar, recent, waiting, onOpenRecent, onAllWorktrees,
       </div>
       <div className="mx-auto flex w-full max-w-2xl flex-col px-4 pt-[14vh]">
         <h1 className="mb-5 text-center text-2xl font-medium text-zinc-200">What do you want to do?</h1>
+        {strip}
         {bar}
         {recent.length > 0 && (
           <div className="mt-8">

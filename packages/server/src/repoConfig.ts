@@ -15,6 +15,18 @@ export const EnvProfileSchema = z.object({
 });
 export type EnvProfile = z.infer<typeof EnvProfileSchema>;
 
+// A named way to run the worktree ("dev", "api", "storybook"). The FIRST is
+// the default: it gets the worktree's port (PORT), the dev proxy and the
+// readiness watch. `envFile` is read into the environment at start (for a
+// command that does not load the file itself). Replaced env profiles.
+export const RunCommandSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  command: z.string(),
+  envFile: z.string().min(1).nullable().optional(),
+});
+export type RunCommand = z.infer<typeof RunCommandSchema>;
+
 export const DevProxySchema = z.object({
   host: z.string().min(1).regex(/^[a-z0-9.-]+$/i, 'hostname only, no scheme or port'),
   port: z.number().int().positive().max(65535).default(443),
@@ -46,6 +58,9 @@ export const RepoConfigSchema = z.object({
   fixedPort: z.boolean().optional(),
   editor: z.enum(ALLOWED_EDITORS),
   openUrl: z.string().url().nullable().optional(),
+  // Run commands; derived from the fields below when absent (deriveRunCommands).
+  runCommands: z.array(RunCommandSchema).optional(),
+  // Retired (run commands replaced them): read only to migrate, never written.
   envProfiles: z.array(EnvProfileSchema).optional(),
   defaultEnvProfile: z.string().optional(),
   // Serve every worktree behind one fixed origin: Strado listens on `port`
@@ -55,6 +70,63 @@ export const RepoConfigSchema = z.object({
 });
 
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
+
+const slug = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'run';
+
+/** An id for `name` not in `taken` (which it joins). */
+export function mintRunId(name: string, taken: Set<string>): string {
+  const base = slug(name);
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  taken.add(id);
+  return id;
+}
+
+/** The repo's run commands: its own, or migrated from env profiles — one per
+ * profile (the default profile first), the file written into a command that
+ * names {ENV_FILE}, else injected at start; no profiles, one "dev". */
+export function deriveRunCommands(repo: RepoConfig): RunCommand[] {
+  if (repo.runCommands) return repo.runCommands;
+  const base = repo.startCommand.trim();
+  if (!base) return [];
+  const profiles = repo.envProfiles ?? [];
+  if (profiles.length === 0) return [{ id: 'dev', name: 'dev', command: base }];
+  const first = profiles.find((p) => p.name === repo.defaultEnvProfile);
+  const ordered = first ? [first, ...profiles.filter((p) => p !== first)] : profiles;
+  const taken = new Set<string>();
+  return ordered.map((p) => {
+    const named = /\{ENV_FILE\}/.test(base);
+    return {
+      id: mintRunId(p.name, taken),
+      name: p.name,
+      command: named ? base.replace(/\{ENV_FILE\}/g, p.envFile) : base,
+      ...(named ? {} : { envFile: p.envFile }),
+    };
+  });
+}
+
+const invalid = (message: string, reason: string, index: number) => new AppError('VALIDATION', message, { reason, index });
+
+/** Names present and unique (any case), commands present, ids unique. */
+export function validateRunCommands(list: RunCommand[]): void {
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  list.forEach((c, index) => {
+    const name = c.name.trim().toLowerCase();
+    if (!name) throw invalid('a run command needs a name', 'name_required', index);
+    if (names.has(name)) throw invalid(`two run commands are called "${c.name.trim()}"`, 'name_taken', index);
+    if (!c.command.trim()) throw invalid(`run command "${c.name.trim()}" has no command`, 'command_required', index);
+    if (ids.has(c.id)) throw invalid(`run command id "${c.id}" is used twice`, 'id_taken', index);
+    names.add(name);
+    ids.add(c.id);
+  });
+}
+
+/** What is stored and served: run commands always present, the retired profile fields gone. */
+function normalize(repo: RepoConfig): RepoConfig {
+  const { envProfiles: _p, defaultEnvProfile: _d, ...rest } = repo;
+  return { ...rest, runCommands: deriveRunCommands(repo) };
+}
 
 const FileSchema = z.object({
   repos: z.array(RepoConfigSchema),
@@ -90,7 +162,9 @@ export function createRepoConfigStore(filePath: string): RepoConfigStore {
     if (Array.isArray(entries) && entries.some((r) => r && typeof r === 'object' && 'worktreesDir' in r)) {
       await write(parsed.repos);
     }
-    return parsed;
+    // Run commands are served (and on the next write, stored) for every repo;
+    // env profiles become run commands here.
+    return { repos: parsed.repos.map(normalize) };
   }
 
   async function write(repos: RepoConfig[]): Promise<void> {
@@ -143,19 +217,36 @@ export function createRepoConfigStore(filePath: string): RepoConfigStore {
         // validated on read, so a stricter rule there would make an existing
         // nonconforming id fail the whole config load.
         assertPathSegment(parsed.data.id, 'repo id');
-        const next = [...repos, parsed.data];
-        return { state: next, result: parsed.data };
+        const added = normalize(parsed.data);
+        validateRunCommands(added.runCommands ?? []);
+        const next = [...repos, added];
+        return { state: next, result: added };
       }),
     patch: (id, patch) =>
       run(async (repos) => {
         const idx = repos.findIndex((r) => r.id === id);
         if (idx === -1) throw new AppError('NOT_FOUND', `repo ${id} not found`);
-        const merged = { ...repos[idx]!, ...patch };
+        const current = repos[idx]!;
+        const merged = { ...current, ...patch };
+        // The first run command and startCommand say the same thing: a client
+        // that edits one (older ones only know startCommand) moves the other.
+        if (patch.runCommands) {
+          merged.startCommand = patch.runCommands[0]?.command ?? '';
+        } else if (patch.startCommand !== undefined) {
+          const list = [...(current.runCommands ?? [])];
+          const command = patch.startCommand.trim();
+          // Cleared (a library with nothing to run): the default goes.
+          if (list[0]) { if (command) list[0] = { ...list[0], command: patch.startCommand }; else list.shift(); }
+          else if (command) list.push({ id: 'dev', name: 'dev', command: patch.startCommand });
+          merged.runCommands = list;
+        }
         const parsed = RepoConfigSchema.safeParse(merged);
         if (!parsed.success) throw new AppError('VALIDATION', parsed.error.message);
+        const updated = normalize(parsed.data);
+        validateRunCommands(updated.runCommands ?? []);
         const next = [...repos];
-        next[idx] = parsed.data;
-        return { state: next, result: parsed.data };
+        next[idx] = updated;
+        return { state: next, result: updated };
       }),
     remove: (id) =>
       run(async (repos) => {

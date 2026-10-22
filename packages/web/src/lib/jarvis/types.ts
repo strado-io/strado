@@ -10,11 +10,12 @@ export type ActionId =
   | 'tab.open' | 'tab.place' | 'tab.focus' | 'tab.close' | 'tab.interrupt'
   | 'shell.run' | 'browser.open' | 'agent.message' | 'agent.wait' | 'ui.state'
   | 'server.start' | 'server.stop'
-  | 'call.answer' | 'call.dismiss' | 'nav.line'
+  | 'call.answer' | 'call.dismiss'
   | 'nav.addRepo' | 'nav.newWorktree'
   | 'nav.page' | 'settings.open' | 'settings.set'
   | 'focus.edit' | 'ui.sidebar'
-  | 'agent.ask' | 'agent.recap' | 'tab.rename';
+  | 'agent.ask' | 'agent.recap' | 'tab.rename'
+  | 'agent.interrupt' | 'agent.steer';
 
 /** The same ids at runtime, in registry order. */
 export const ACTION_IDS = [
@@ -22,11 +23,12 @@ export const ACTION_IDS = [
   'tab.open', 'tab.place', 'tab.focus', 'tab.close', 'tab.interrupt',
   'shell.run', 'browser.open', 'agent.message', 'agent.wait', 'ui.state',
   'server.start', 'server.stop',
-  'call.answer', 'call.dismiss', 'nav.line',
+  'call.answer', 'call.dismiss',
   'nav.addRepo', 'nav.newWorktree',
   'nav.page', 'settings.open', 'settings.set',
   'focus.edit', 'ui.sidebar',
   'agent.ask', 'agent.recap', 'tab.rename',
+  'agent.interrupt', 'agent.steer',
 ] as const satisfies readonly ActionId[];
 
 /** Pages of the app the box can open (nav.page). */
@@ -94,14 +96,14 @@ export type ActionArgs = {
   'agent.wait': { agentId: string; timeoutMs?: number };
   'ui.state': Record<string, never>;
   /** A package.json script (or a literal command) as the worktree's dev server. */
-  'server.start': { worktreePath: string; script: string | null; command: string };
-  'server.stop': { worktreePath: string };
+  /** `run`: one of the repo's run commands (its id, or for another worktree the
+   * name as said, which the server resolves); null/absent = the default. */
+  'server.start': { worktreePath: string; script: string | null; command: string; run?: string | null };
+  'server.stop': { worktreePath: string; run?: string | null };
   /** Resolve an open call (an escalation to the human) with `text` as the answer. */
   'call.answer': { callId: string; agentId: string; text: string };
   /** Dismiss an open call without answering. */
   'call.dismiss': { callId: string; agentId: string };
-  /** Open the Line view (all stations, the live feed). */
-  'nav.line': Record<string, never>;
   /** Open the Add repo dialog, prefilled with `path` (as typed) when given. */
   'nav.addRepo': { path: string | null };
   /** Open the New worktree dialog, in `repoPath` when the text named a repo. */
@@ -125,6 +127,10 @@ export type ActionArgs = {
   'agent.recap': { agentIds: string[] | 'all'; question?: string | null; focus?: string };
   /** The tab's label in the strip; '' puts the default back. */
   'tab.rename': { name: string };
+  /** Stop an agent's turn (Esc in its tab), by agent id. */
+  'agent.interrupt': { agentId: string };
+  /** Stop its turn, then send `text` the way agent.message does. */
+  'agent.steer': { agentId: string; text: string };
 };
 
 export type Risk = 'read' | 'layout' | 'spawn' | 'exec' | 'destructive';
@@ -221,6 +227,8 @@ export type ParseContext = {
   packageScripts: Record<string, string>;
   /** Runs those scripts (`<pm> run <script>`); npm when unknown. */
   packageManager?: 'npm' | 'pnpm' | 'yarn' | 'bun';
+  /** The current worktree's run commands (the repo's); the first is the default. */
+  runCommands?: { id: string; name: string }[];
   peers: { agentId: string; alias: string | null; mode: TabMode; worktreePath: string }[];
   /** Open calls to the human (escalations), from the stations feed. */
   calls?: { id: string; agentId: string; title: string }[];

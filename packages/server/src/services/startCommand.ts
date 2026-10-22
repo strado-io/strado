@@ -1,53 +1,37 @@
-import type { RepoConfig } from '../repoConfig.js';
+import { AppError } from '../errors.js';
+import { deriveRunCommands, type RepoConfig } from '../repoConfig.js';
 
-export type ResolvedStartCommand = {
+export type ResolvedRun = {
+  id: string;
+  name: string;
   command: string;
-  profile: string | null;
+  /** Read into the environment at start (startEnv.ts); null when the command takes it itself. */
   envFile: string | null;
-  /**
-   * True when the command named the env file itself via {ENV_FILE}. False
-   * means the profile still applies, but by injecting the file's variables
-   * into the process environment at start (see startEnv.ts) — a command
-   * that never mentions the file must not make the profile picker a lie.
-   */
-  interpolated: boolean;
+  /** The repo's first run command: it owns the worktree's port, PORT and the dev proxy. */
+  isDefault: boolean;
 };
 
-export function resolveStartCommand(
-  repo: RepoConfig,
-  activeProfile: string | null,
-  overrideCommand?: string | null,
-): ResolvedStartCommand {
-  // A worktree-level override replaces the repo command wholesale; it may
-  // still use {ENV_FILE} to participate in env profiles.
-  const base = overrideCommand?.trim() ? overrideCommand.trim() : repo.startCommand;
-  const profiles = repo.envProfiles ?? [];
-  const placeholder = /\{ENV_FILE\}/g;
-
-  if (profiles.length === 0) {
-    return { command: base, profile: null, envFile: null, interpolated: false };
-  }
-
-  const preferred =
-    (activeProfile && profiles.find((p) => p.name === activeProfile)) ||
-    (repo.defaultEnvProfile && profiles.find((p) => p.name === repo.defaultEnvProfile)) ||
-    profiles[0];
-
-  if (!preferred) {
-    return { command: base, profile: null, envFile: null, interpolated: false };
-  }
-
-  // Repo detection turns a `.env` into a DEFAULT profile while leaving the
-  // package.json script as-is, so "profiles but no placeholder" is the
-  // common case, not a misconfiguration. Never refuse to start over it.
-  if (!placeholder.test(base)) {
-    return { command: base, profile: preferred.name, envFile: preferred.envFile, interpolated: false };
-  }
-
+/**
+ * Which command a Run starts: `runId` (an id or a name), or the default (the first). A
+ * worktree's own start command replaces the default's text there; it may
+ * still say {ENV_FILE} to take the default's env file.
+ */
+export function resolveRunCommand(repo: RepoConfig, runId: string | null, overrideCommand?: string | null): ResolvedRun {
+  const all = deriveRunCommands(repo);
+  const override = overrideCommand?.trim() || null;
+  const first = all[0] ?? (override ? { id: 'dev', name: 'dev', command: override } : null);
+  // An id, or (the command box) a name in any case.
+  const wanted = runId?.trim().toLowerCase();
+  const run = runId ? all.find((c) => c.id === runId) ?? all.find((c) => c.name.trim().toLowerCase() === wanted) : first;
+  if (runId && !run) throw new AppError('NOT_FOUND', `no run command ${runId}`);
+  if (!run || !run.command.trim()) throw new AppError('VALIDATION', 'empty startCommand');
+  const isDefault = run === first;
+  const envFile = ('envFile' in run ? run.envFile : null) ?? null;
+  if (!isDefault || !override) return { id: run.id, name: run.name, command: run.command, envFile, isDefault };
+  const named = /\{ENV_FILE\}/.test(override);
   return {
-    command: base.replace(placeholder, preferred.envFile),
-    profile: preferred.name,
-    envFile: preferred.envFile,
-    interpolated: true,
+    id: run.id, name: run.name, isDefault,
+    command: named && envFile ? override.replace(/\{ENV_FILE\}/g, envFile) : override,
+    envFile: named ? null : envFile,
   };
 }

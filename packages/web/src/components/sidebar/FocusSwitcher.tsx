@@ -10,12 +10,10 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Focus } from '../../api';
 import { MenuPopover, BrailleSpinner } from './rowBits';
-import { RepoAvatar } from './WorktreeCard';
 import { shortRelativeTime } from '../../lib/relativeTime';
 
 /** What the switcher says about a Focus beyond its name: computed by SidebarBody from its members. */
 export type FocusRowInfo = {
-  repos: { id: string; name: string }[];
   /** needs-you: an agent is waiting; working: one is busy; done: every PR merged or closed. */
   status: 'needs-you' | 'working' | 'done' | null;
 };
@@ -45,10 +43,9 @@ export function FocusPill({ focus, open, onClick, pillRef }: {
       aria-label={`Focus: ${focus?.name ?? 'none'}`} title={focus ? `Focus: ${focus.name}. Click to switch.` : 'No focus. Click to create one.'}
       className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] ${
         focus ? 'text-zinc-200 hover:bg-zinc-900' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'}`}>
-      <span className={`shrink-0 ${focus ? 'text-sky-400' : 'text-zinc-600'}`}><FocusIcon /></span>
-      {/* "Focus · name": a group of worktrees, not one that is open. */}
+      {/* Just the Focus's name; the title and the popover say what it is. */}
       <span className="min-w-0 flex-1 truncate">
-        {focus ? <><span className="text-zinc-500">Focus · </span><span className="font-medium">{focus.name}</span></> : 'No focus'}
+        {focus ? <span className="font-medium">{focus.name}</span> : 'No focus'}
       </span>
       <svg {...icon} width={12} height={12} className="shrink-0 text-zinc-600"><path d="m6 9 6 6 6-6" /></svg>
     </button>
@@ -119,7 +116,7 @@ export function FocusPopover({ anchor, focuses, activeId, rowInfo, onActivate, o
 
   return createPortal(
     <div ref={root} role="dialog" aria-label="Switch focus"
-      className="fixed z-50 flex flex-col rounded-lg border border-zinc-800 bg-zinc-950 p-1.5 shadow-xl"
+      className="surface-pop fixed z-50 flex flex-col rounded-lg p-1.5"
       style={{ left, top: anchor.bottom + 4, width }}>
       <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 focus-within:border-zinc-600">
         <span className="shrink-0 text-zinc-600"><FocusIcon size={13} /></span>
@@ -169,15 +166,9 @@ export function FocusPopover({ anchor, focuses, activeId, rowInfo, onActivate, o
                 className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${hl ? 'bg-zinc-800 text-zinc-100' : active ? 'text-zinc-100' : isDone(f) ? 'text-zinc-500' : 'text-zinc-300'}`}>
                 <span className={`flex w-4 shrink-0 justify-center ${active ? 'text-sky-400' : 'text-transparent'}`}><CheckIcon /></span>
                 <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                {info && info.repos.length > 0 && (
-                  <span className="flex shrink-0 -space-x-1" title={info.repos.map((r) => r.name).join(', ')}>
-                    {info.repos.slice(0, 3).map((r) => <RepoAvatar key={r.id} id={r.id} name={r.name} />)}
-                  </span>
-                )}
                 {info?.status === 'needs-you' && <span className="shrink-0 text-[11px] text-amber-400" title="An agent is waiting on you">⚑</span>}
                 {info?.status === 'working' && <span className="shrink-0" title="An agent is working"><BrailleSpinner small /></span>}
                 {info?.status === 'done' && <span className="shrink-0 text-[11px] text-emerald-500" title="Every PR merged">✔</span>}
-                {f.members.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{f.members.length}</span>}
                 <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                 {n <= 9 && <span className="shrink-0 font-mono text-[11px] text-zinc-600">⌘{n}</span>}
               </button>

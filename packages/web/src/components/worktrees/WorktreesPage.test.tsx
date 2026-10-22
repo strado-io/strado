@@ -100,6 +100,14 @@ describe('WorktreesPage', () => {
     expect(onRemoveRepo).toHaveBeenCalledWith(r2);
   });
 
+  it('a repo row\'s menu edits its run commands', () => {
+    const onRunCommands = vi.fn();
+    render(<WorktreesPage {...props({ onRunCommands })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'web actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run commands…' }));
+    expect(onRunCommands).toHaveBeenCalledWith(r2);
+  });
+
   it('puts a runner worktree under its local repo, or under its remote repo name, marked offline when its runner is', () => {
     const orphan = { ...remote, path: '/srv/wt/ZZ-1', name: 'ZZ-1', branch: 'zz-1', localRepoId: null, remoteRepoName: 'far-repo' } as RemoteWorktree;
     const onOpenRemoteWorktree = vi.fn();

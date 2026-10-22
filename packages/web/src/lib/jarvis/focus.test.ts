@@ -100,7 +100,7 @@ describe('focus.edit in runPlan', () => {
   const base = (): JarvisPorts => ({
     hub: null,
     server: {} as JarvisPorts['server'],
-    nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() },
+    nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() },
   });
   const plan = one({ op: 'add', focus: 'Release', worktrees: ['main'] });
 

@@ -91,7 +91,7 @@ export async function registerEventRoutes(app: FastifyInstance) {
         }
         return;
       }
-      if (!type.startsWith('task.') && !type.startsWith('escalation.') && !type.startsWith('peer.')) return;
+      if (!type.startsWith('task.') && !type.startsWith('escalation.') && !type.startsWith('peer.') && type !== 'station.changed') return;
       const data = evt.data as { scopeId?: unknown };
       if (ws !== null && data.scopeId !== ws) return;
       writeEvent(reply, type, evt.data);

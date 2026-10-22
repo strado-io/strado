@@ -37,8 +37,6 @@ export type Props = {
   activeWorktreePath: string | null;
   /** New worktree with the repo still to pick (toolbar button); the empty Focus passes its ticket. */
   onNewWorktree: (ticket?: FocusTicket) => void;
-  /** Toolbar Search → ⌘K. */
-  onSearch: () => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
   update: UpdateFooterProps;
@@ -107,7 +105,7 @@ function WorkspaceSwitcher({
         <div
           role="menu"
           aria-label="Workspaces"
-          className="absolute left-0 top-full z-40 mt-1 w-64 rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+          className="surface-pop absolute left-0 top-full z-40 mt-1 w-64 rounded-lg p-1"
         >
           {workspaces.map((workspace) => {
             const selected = workspace.id === active.id;
@@ -146,7 +144,7 @@ function WorkspaceSwitcher({
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
   onCollapse, onAddRepo, onOpenWorktree,
-  activeWorktreePath, onNewWorktree, onSearch, onWorktreeSettings, onDeleteWorktree, update,
+  activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   onOpenMr,
   onOpenDiff,
@@ -168,7 +166,6 @@ export function Sidebar({
   const bodyProps = {
     onAddRepo,
     onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
-    onSearch,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
   };

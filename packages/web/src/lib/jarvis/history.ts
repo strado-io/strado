@@ -3,6 +3,8 @@
 // user keeps choosing, and a log of inputs no rule understood — the dataset
 // for growing the parser's rules by hand.
 
+import { pruneChips, type Chip } from '../mention/chips';
+
 const HISTORY_KEY = 'strado:jarvis-history';
 const FRECENCY_KEY = 'strado:jarvis-frecency';
 const FALLTHROUGH_KEY = 'strado:jarvis-fallthrough';
@@ -50,9 +52,17 @@ const SECRET_PATTERNS: RegExp[] = [
 export const looksSecret = (text: string): boolean => SECRET_PATTERNS.some((re) => re.test(text));
 
 /** A remembered command; `pasted` keeps a pasted command from becoming a
- * one-key replay (it still needs the second ⏎ when recalled). */
-export type HistoryEntry = { text: string; pasted: boolean };
-type Stored = string | { t: string; p?: 1 };
+ * one-key replay (it still needs the second ⏎ when recalled). `chips` are the
+ * @/# mentions it was typed with, so a recall draws (and resolves) them again. */
+export type HistoryEntry = { text: string; pasted: boolean; chips?: Chip[] };
+type Stored = string | { t: string; p?: 1; c?: Chip[] };
+
+const isChip = (c: unknown): c is Chip => {
+  const x = c as { label?: unknown; agentId?: unknown; worktreePath?: unknown } | null;
+  return !!x && typeof x === 'object' && typeof x.label === 'string' && (typeof x.agentId === 'string' || typeof x.worktreePath === 'string');
+};
+const toStored = (e: HistoryEntry): Stored => (e.pasted || e.chips ? { t: e.text, ...(e.pasted ? { p: 1 as const } : {}), ...(e.chips ? { c: e.chips } : {}) } : e.text);
+const entry = (text: string, pasted: boolean, chips: Chip[]): HistoryEntry => (chips.length ? { text, pasted, chips } : { text, pasted });
 
 export function readHistoryEntries(wsId: string): HistoryEntry[] {
   const list = read<Record<string, unknown>>(HISTORY_KEY, {})[wsId];
@@ -60,18 +70,21 @@ export function readHistoryEntries(wsId: string): HistoryEntry[] {
   const out: HistoryEntry[] = [];
   for (const e of list as unknown[]) {
     if (typeof e === 'string') out.push({ text: e, pasted: false });
-    else if (e && typeof e === 'object' && typeof (e as { t?: unknown }).t === 'string') out.push({ text: (e as { t: string }).t, pasted: (e as { p?: unknown }).p === 1 });
+    else if (e && typeof e === 'object' && typeof (e as { t?: unknown }).t === 'string') {
+      const { t, p, c } = e as { t: string; p?: unknown; c?: unknown };
+      out.push(entry(t, p === 1, Array.isArray(c) ? c.filter(isChip) : []));
+    }
   }
   return out;
 }
 export const readHistory = (wsId: string): string[] => readHistoryEntries(wsId).map((e) => e.text);
 
-export function rememberCommand(wsId: string, text: string, opts: { pasted?: boolean } = {}): void {
+export function rememberCommand(wsId: string, text: string, opts: { pasted?: boolean; chips?: Chip[] } = {}): void {
   const t = text.trim();
   if (!t || looksSecret(t)) return;
   const all = read<Record<string, Stored[]>>(HISTORY_KEY, {});
-  const entry: Stored = opts.pasted ? { t, p: 1 } : t;
-  all[wsId] = [entry, ...readHistoryEntries(wsId).filter((e) => e.text !== t).map((e): Stored => (e.pasted ? { t: e.text, p: 1 } : e.text))].slice(0, HISTORY_MAX);
+  const first = entry(t, !!opts.pasted, pruneChips(t, opts.chips ?? []));
+  all[wsId] = [first, ...readHistoryEntries(wsId).filter((e) => e.text !== t)].map(toStored).slice(0, HISTORY_MAX);
   write(HISTORY_KEY, all);
 }
 

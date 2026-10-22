@@ -1,6 +1,9 @@
 export type Editor = 'code' | 'cursor' | 'subl' | 'webstorm';
 
-export type EnvProfile = { name: string; envFile: string };
+
+/** A named way to run a worktree of a repo (the header's Run menu): several can run at once, each in its own tab.
+ * A repo's list order is its tab order; the first is the default (the header's main Run). */
+export type RunCommand = { id: string; name: string; command: string; envFile?: string | null };
 
 export type RepoConfig = {
   id: string;
@@ -14,8 +17,8 @@ export type RepoConfig = {
   fixedPort?: boolean;
   editor: Editor;
   openUrl?: string | null;
-  envProfiles?: EnvProfile[];
-  defaultEnvProfile?: string;
+  /** Named run commands (startCommand mirrors the first). The first is the default. */
+  runCommands?: RunCommand[];
   // Serves every worktree behind one origin: `host` for the main checkout,
   // `<worktree>.<host>` for the rest, all on `port`.
   devProxy?: { host: string; port: number; certFile?: string | null; keyFile?: string | null; upstreamTls?: boolean; allowLan?: boolean } | null;
@@ -31,7 +34,6 @@ export type WorktreeMeta = {
   port: number | null;
   env: Record<string, string>;
   lastStartedAt: string | null;
-  activeEnvProfile?: string | null;
   workflowStatus?: WorkflowStatus | null;
   note?: string | null;
   order?: number | null;
@@ -51,6 +53,11 @@ export type ProcInfo = {
   // The dev-proxy URL for this worktree; preferred over detectedUrl, which
   // names the private port behind the proxy.
   proxyUrl?: string | null;
+  // 'run': a run terminal exists for this worktree (the header Run's tab, /ws/run), even after it exited.
+  tab?: 'run' | null;
+  /** Which run command this is (and its name); absent from older servers = the default. */
+  runId?: string;
+  name?: string;
 };
 
 export type NodeModulesStatus =
@@ -82,6 +89,8 @@ export type Worktree = {
   tracked: boolean;
   meta: WorktreeMeta | null;
   process: ProcInfo;
+  /** Every run started this server session (the default included), one per run command. */
+  runs?: ProcInfo[];
   nodeModules?: NodeModulesStatus;
   claudeStatus?: 'idle' | 'working' | 'waiting';
   /** per-session status, keyed by session id (multi-session worktrees) */

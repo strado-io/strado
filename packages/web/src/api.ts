@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { SessionMetrics } from './types';
+import type { RunCommand, SessionMetrics } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -101,7 +101,7 @@ export type JiraTransitionDto = {
 export type UiTabRef = { worktreePath: string; mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell'; sessionId: string };
 /** `visible`: the PTY panes on screen (≤ 200, runner tabs excluded). */
 export type UiClientState = { focused: boolean; worktreePath: string | null; visible: UiTabRef[]; layout?: unknown };
-export type JarvisScripts = { packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun'; scripts: string[] };
+export type JarvisScripts = { packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun'; scripts: string[]; /** The repo's run commands; absent from an older server. */ runCommands?: { id: string; name: string }[] };
 export type JarvisRunResult = { settled: boolean; output: string; durationMs: number } | { error: string };
 export type JarvisSpawnResult = {
   agent: { agentId: string; alias: string | null; mode: UiTabRef['mode']; worktreePath: string; sessionId: string; executionId?: string };
@@ -143,7 +143,16 @@ export type StationDto = {
   needsYou?: boolean;
   calls: { id: string; title: string; body: string; createdAt: number }[];
   lastActivityAt: number | null;
+  /** Mission Control; absent from an older server. The live tool line ("Bash: npm test"). */
+  activity?: { text: string; at: number } | null;
+  /** Up to 300 characters of the last assistant message (Stop hook). */
+  lastResult?: { text: string; at: number } | null;
+  /** Permission prompts the box can answer too; the tab's own dialog stays, and the first answer wins. */
+  approvals?: StationApprovalDto[];
 };
+/** An open call to the human whose asker has no station (its tab closed): answer or dismiss by id. */
+export type OrphanCallDto = { id: string; from: string; name: string; title: string; body: string; createdAt: number };
+export type StationApprovalDto = { id: string; kind: 'command' | 'file-change' | 'file-read' | 'web' | 'tool'; title: string; detail: string; createdAt: number };
 /** One intercom message on the line (agent↔agent or with the human, "human"). */
 export type FeedMessageDto = {
   id: string;
@@ -152,22 +161,6 @@ export type FeedMessageDto = {
   kind: string;
   body: string;
   createdAt: number;
-};
-export type IntercomTaskDto = {
-  id: string;
-  scopeId: string;
-  title: string;
-  body: string;
-  ticketKey: string | null;
-  worktreePath: string | null;
-  dependsOn: string[];
-  status: 'open' | 'claimed' | 'done' | 'cancelled';
-  createdBy: { agentId: string };
-  claimedBy: { agentId: string } | null;
-  createdAt: number;
-  updatedAt: number;
-  claimedAt: number | null;
-  doneAt: number | null;
 };
 export type PeerDto = {
   agentId: string;
@@ -323,7 +316,14 @@ export const api = {
   },
   intercom: {
     peers: (wsId: string) => request<{ peers: PeerDto[] }>(`${wsBase(wsId)}/intercom/peers`).then((b) => b.peers),
-    stations: (wsId: string) => request<{ stations: StationDto[] }>(`${wsBase(wsId)}/intercom/stations`).then((b) => b.stations),
+    /** orphanCalls: absent from an older server. */
+    stations: (wsId: string) => request<{ stations: StationDto[]; orphanCalls?: OrphanCallDto[] }>(`${wsBase(wsId)}/intercom/stations`),
+    /** Answer a permission prompt from the box. No longer waiting (answered in the tab, or expired): 409, rejects with details.reason 'gone'. */
+    answerApproval: (wsId: string, id: string, decision: 'allow' | 'deny') =>
+      request<{ ok: true }>(`${wsBase(wsId)}/intercom/approvals/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ decision }) }),
+    /** Esc to the agent's tab: it stops its turn. */
+    interrupt: (wsId: string, agentId: string) =>
+      request<{ ok: true }>(`${wsBase(wsId)}/intercom/agents/${encodeURIComponent(agentId)}/interrupt`, { method: 'POST', body: '{}' }),
     /** The line's messages, newest first; `agent` = one station's (sent or received). */
     feed: (wsId: string, opts: { agent?: string | null; limit?: number } = {}) => {
       const q = new URLSearchParams({ limit: String(opts.limit ?? 50) });
@@ -331,23 +331,10 @@ export const api = {
       return request<{ messages: FeedMessageDto[] }>(`${wsBase(wsId)}/intercom/messages?${q}`).then((b) => b.messages);
     },
     escalations: {
-      list: (wsId: string, status?: EscalationDto['status']) =>
-        request<{ escalations: EscalationDto[] }>(`${wsBase(wsId)}/intercom/escalations${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.escalations),
       resolve: (wsId: string, id: string, resolution: string) =>
         request<{ escalation: EscalationDto }>(`${wsBase(wsId)}/intercom/escalations/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) }).then((b) => b.escalation),
       dismiss: (wsId: string, id: string) =>
         request<{ escalation: EscalationDto }>(`${wsBase(wsId)}/intercom/escalations/${encodeURIComponent(id)}/dismiss`, { method: 'POST', body: '{}' }).then((b) => b.escalation),
-    },
-    tasks: {
-      list: (wsId: string, status?: IntercomTaskDto['status']) =>
-        request<{ tasks: IntercomTaskDto[] }>(`${wsBase(wsId)}/intercom/tasks${status ? `?status=${status}&limit=200` : '?limit=200'}`).then((b) => b.tasks),
-      create: (wsId: string, input: { title: string; body?: string; ticketKey?: string; worktreePath?: string }) =>
-        request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks`, { method: 'POST', body: JSON.stringify(input) }).then((b) => b.task),
-      assign: (wsId: string, id: string, agent: string) =>
-        request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/assign`, { method: 'POST', body: JSON.stringify({ agent }) }).then((b) => b.task),
-      release: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/release`, { method: 'POST', body: '{}' }).then((b) => b.task),
-      done: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' }).then((b) => b.task),
-      cancel: (wsId: string, id: string) => request<{ task: IntercomTaskDto }>(`${wsBase(wsId)}/intercom/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }).then((b) => b.task),
     },
   },
   tickets: {
@@ -440,6 +427,10 @@ export const api = {
       request<RepoConfig>(`${wsBase(wsId)}/repos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     remove: (wsId: string, id: string) =>
       request<void>(`${wsBase(wsId)}/repos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    /** Replaces the repo's run commands (order = tab order, first = default); a missing id is minted from the name. */
+    setRunCommands: (wsId: string, id: string, runCommands: { id?: string; name: string; command: string; envFile?: string | null }[]) =>
+      request<{ runCommands: RunCommand[] }>(`${wsBase(wsId)}/repos/${encodeURIComponent(id)}/run-commands`, { method: 'PUT', body: JSON.stringify({ runCommands }) })
+        .then((b) => b.runCommands),
   },
   reviews: {
     list: (wsId: string, state: MergeRequest['state'] = 'open', page = 1, search = '', repoId = '') => {
@@ -507,15 +498,17 @@ export const api = {
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/relink`,
         { method: 'POST', body: JSON.stringify({ sourceWorktree }) },
       ),
-    start: (wsId: string, p: string) =>
-      request<ProcInfo>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/start`, { method: 'POST' }),
-    stop: (wsId: string, p: string) =>
-      request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/stop`, { method: 'POST' }),
-    setEnvProfile: (wsId: string, p: string, profile: string) =>
-      request<{ activeEnvProfile: string; restarted: boolean; process: ProcInfo }>(
-        `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/env-profile`,
-        { method: 'POST', body: JSON.stringify({ profile }) },
-      ),
+    /** A run command (`runId`); without one, the repo's default (its first). `force`: start even though its
+     * run tab's shell is busy (the server refused with 409 reason 'run_tab_busy' and the user said yes). */
+    start: (wsId: string, p: string, runId?: string, opts?: { force?: boolean }) => {
+      const body = { ...(runId ? { runId } : {}), ...(opts?.force ? { force: true } : {}) };
+      return request<ProcInfo>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/start`, { method: 'POST', ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}) });
+    },
+    /** Closes a run tab: ends its idle post-run shell. While the run is live: 409 reason 'running' (just detach). */
+    closeRunTab: (wsId: string, p: string, runId?: string) =>
+      request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/run-tab${runId ? `?runId=${encodeURIComponent(runId)}` : ''}`, { method: 'DELETE' }),
+    stop: (wsId: string, p: string, runId?: string) =>
+      request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/stop`, { method: 'POST', ...(runId ? { body: JSON.stringify({ runId }) } : {}) }),
     killSession: (wsId: string, p: string, mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi', id?: string) =>
       request<void>(
         `${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/sessions/${mode}${id && id !== '1' ? `?id=${encodeURIComponent(id)}` : ''}`,
