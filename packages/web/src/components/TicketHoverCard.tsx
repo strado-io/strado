@@ -33,7 +33,7 @@ export function TicketHover({ issue, children }: { issue: TicketIssue; children:
       {pos && (
         <div
           role="tooltip"
-          className="pointer-events-none fixed z-40 w-72 rounded-md border border-zinc-800 bg-zinc-900 p-3 text-xs shadow-2xl"
+          className="surface-pop pointer-events-none fixed z-40 w-72 rounded-md p-3 text-xs"
           style={{ left: Math.min(pos.x, window.innerWidth - 300), top: pos.y }}
         >
           <div className="flex items-center justify-between gap-2">

@@ -1,13 +1,17 @@
 import path from 'node:path';
+import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { requireAgent } from '../hooks/requireAgent.js';
+import { describeTool } from '../services/agentControl.js';
+import { hideSecrets } from './jarvis.js';
+import { assertHubRequest } from './appControl.js';
 import { AppError } from '../errors.js';
 import { formatInboxContext, selectUnderBudget } from '../services/intercomContext.js';
 import {
-  BODY_MAX, CONTEXT_MAX, ConfirmBody, DiaryQuery, EscalationCreateBody, EscalationListQuery, EscalationResolveBody,
+  BODY_MAX, CONTEXT_MAX, ConfirmBody, DiaryQuery, EscalationCreateBody, EscalationResolveBody,
   ESCALATION_BODY_MAX, HOOK_PULL_LIMIT, HookBody, HUMAN_AGENT_ID, ListQuery, PullBody,
   READ_LINES_DEFAULT, READ_LINES_MAX, ReadQuery, RUN_TIMEOUT_MAX_MS, RUN_TIMEOUT_MIN_MS, RUN_TIMEOUT_MS, RunBody, SendBody, SHELL_RUN_ENV,
-  TaskAssignBody, TaskCreateBody, TaskListQuery, TASKS_ENV, UI_LIST_MAX,
+  TaskCreateBody, TaskListQuery, TASKS_ENV, UI_LIST_MAX,
 } from '../services/intercomSchema.js';
 import { ShellRunError } from '../services/shellRunner.js';
 import { parseSessionKey, sessionKeyFor } from '../services/terminalManager.js';
@@ -271,7 +275,48 @@ export async function registerIntercomRoutes(app: FastifyInstance): Promise<void
     return { confirmed: app.deps.intercom.confirm(ex.scopeId, ex.agentId, ex.executionId, batchId) };
   });
 
+  // Mission control. A Claude PermissionRequest hook holds this request open
+  // while the TUI shows its own dialog: the box's Approve/Deny answers it here,
+  // or the tab answers first and Claude cancels the hook, which closes the
+  // request (the approval is then gone). Null decision: the dialog decides.
+  app.post('/api/intercom/hook/permission', { bodyLimit: 256 * 1024 }, async (req, reply) => {
+    const ex = requireAgent(app, req);
+    const b = PermissionHookBody.parse(req.body);
+    const ask = describeTool(b.tool_name, b.tool_input, worktreeOf(ex.key), hideSecrets);
+    // The hook went away before we answered: Claude cancelled it (the tab's
+    // dialog was answered) or it timed out. The request body's own 'close'
+    // fires once it is read, so watch the response instead.
+    const closed = new AbortController();
+    reply.raw.on('close', () => { if (!reply.raw.writableFinished) closed.abort(); });
+    const decision = await app.deps.agentControl.request(ex.scopeId, ex.agentId, { kind: ask.kind, title: ask.title, detail: ask.detail }, closed.signal);
+    return { decision };
+  });
+
+  // The agent's live line: a tool started, or the turn ended with its final words.
+  app.post('/api/intercom/hook/activity', { bodyLimit: 256 * 1024 }, async (req) => {
+    const ex = requireAgent(app, req);
+    const b = ActivityHookBody.parse(req.body);
+    if (b.phase === 'tool') {
+      const { line } = describeTool(b.tool_name ?? 'tool', b.tool_input, worktreeOf(ex.key), hideSecrets);
+      app.deps.agentControl.toolStarted(ex.scopeId, ex.agentId, line);
+    } else {
+      const text = b.message?.trim() ? hideSecrets(b.message.trim()).slice(0, LAST_RESULT_MAX) : null;
+      app.deps.agentControl.turnEnded(ex.scopeId, ex.agentId, text);
+    }
+    return { ok: true };
+  });
 }
+
+const LAST_RESULT_MAX = 300;
+const PermissionHookBody = z.object({ tool_name: z.string().min(1).max(200), tool_input: z.unknown().optional() });
+const ActivityHookBody = z.discriminatedUnion('phase', [
+  z.object({ phase: z.literal('tool'), tool_name: z.string().min(1).max(200), tool_input: z.unknown().optional() }),
+  z.object({ phase: z.literal('stop'), message: z.string().max(64 * 1024).nullable().optional() }),
+]);
+/** The worktree a session key belongs to (paths in the box are shown relative to it). */
+const worktreeOf = (key: string): string | null => {
+  try { return parseSessionKey(key)?.path ?? null; } catch { return null; }
+};
 
 /** Workspace-scoped, read-only UI view. No token, like every other /api/w route. */
 export async function registerIntercomScopedRoutes(app: FastifyInstance): Promise<void> {
@@ -303,6 +348,7 @@ export async function registerIntercomScopedRoutes(app: FastifyInstance): Promis
       const calls = open
         .filter((e) => e.to === HUMAN_AGENT_ID && e.from.agentId === a.agentId)
         .map((e) => ({ id: e.id, title: e.title, body: e.body, createdAt: e.createdAt }));
+      const approvals = app.deps.agentControl.approvals(scopeId, a.agentId);
       const q = app.deps.ptyActivity.quiet(sessionKeyFor(a.mode, a.worktreePath, a.sessionId));
       const idleFor = Math.min(q.input, q.output);
       return {
@@ -315,47 +361,52 @@ export async function registerIntercomScopedRoutes(app: FastifyInstance): Promis
         sessionId: a.sessionId,
         lifecycle: a.lifecycle,
         live: a.live,
-        needsYou: calls.length > 0 || a.lifecycle === 'needs_input',
+        needsYou: calls.length > 0 || a.lifecycle === 'needs_input' || approvals.length > 0,
         calls,
+        ...app.deps.agentControl.activityOf(scopeId, a.agentId),
+        approvals,
         lastActivityAt: Number.isFinite(idleFor) ? now - idleFor : null,
       };
     });
-    return { stations };
+    // A call whose asker has no tab any more (it exited; a retargeted ask)
+    // still waits on the human: listed apart so it can be answered or dismissed.
+    const seen = new Set(agents.map((a) => a.agentId));
+    const orphanCalls = open
+      .filter((e) => e.to === HUMAN_AGENT_ID && !seen.has(e.from.agentId))
+      .map((e) => ({ id: e.id, from: e.from.agentId, name: e.from.agentId.split('@')[0]!, title: e.title, body: e.body, createdAt: e.createdAt }));
+    return { stations, orphanCalls };
   });
 
-  // Human-facing tasks + escalation (step 8): no token — the caller is the
+  // The human's side of an escalation (step 8): no token — the caller is the
   // human, identified by the `HUMAN` actor constant, never a bearer token.
-  app.get('/intercom/tasks', async (req) => {
-    assertTasksEnabled();
-    const q = TaskListQuery.parse(req.query ?? {});
-    return { tasks: app.deps.intercom.listTasks(req.workspace!.id, { status: q.status, limit: q.limit }) };
-  });
-  app.post('/intercom/tasks', { bodyLimit: 64 * 1024 }, async (req, reply) => {
-    assertTasksEnabled();
-    const b = TaskCreateBody.parse(req.body);
-    reply.code(201);
-    return { task: app.deps.intercom.createTask({ scopeId: req.workspace!.id, by: HUMAN, title: b.title, body: b.body, ticketKey: b.ticketKey ?? null, dependsOn: b.dependsOn, worktreePath: b.worktreePath ?? null }) };
-  });
-  app.post<{ Params: { id: string } }>('/intercom/tasks/:id/assign', async (req) => {
-    assertTasksEnabled();
-    const { agent } = TaskAssignBody.parse(req.body);
-    const scopeId = req.workspace!.id;
-    const target = await app.deps.agents.resolve(scopeId, agent);
-    if (!target.live || !target.executionId) throw new AppError('CONFLICT', `${target.agentId} has no live tab`, { reason: 'agent_offline' });
-    return { task: app.deps.intercom.assignTask(scopeId, req.params.id, { agentId: target.agentId, executionId: target.executionId }) };
-  });
-  app.post<{ Params: { id: string } }>('/intercom/tasks/:id/release', async (req) => { assertTasksEnabled(); return { task: app.deps.intercom.releaseTask(req.workspace!.id, req.params.id, HUMAN) }; });
-  app.post<{ Params: { id: string } }>('/intercom/tasks/:id/done', async (req) => { assertTasksEnabled(); return { task: app.deps.intercom.doneTask(req.workspace!.id, req.params.id, HUMAN) }; });
-  app.post<{ Params: { id: string } }>('/intercom/tasks/:id/cancel', async (req) => { assertTasksEnabled(); return { task: app.deps.intercom.cancelTask(req.workspace!.id, req.params.id) }; });
-  app.get('/intercom/escalations', async (req) => {
-    assertTasksEnabled();
-    const q = EscalationListQuery.parse(req.query ?? {});
-    return { escalations: app.deps.intercom.listEscalations(req.workspace!.id, { status: q.status, limit: q.limit }) };
-  });
+  // Answering and dismissing are all the human does here (the command box and
+  // Mission Control); the task board is the agents' own (their task_* tools).
   app.post<{ Params: { id: string } }>('/intercom/escalations/:id/resolve', { bodyLimit: ESCALATION_BODY_MAX + 16 * 1024 }, async (req) => {
     assertTasksEnabled();
     const b = EscalationResolveBody.parse(req.body);
     return { escalation: app.deps.intercom.resolveEscalation(req.workspace!.id, req.params.id, HUMAN, b.resolution) };
   });
   app.post<{ Params: { id: string } }>('/intercom/escalations/:id/dismiss', async (req) => { assertTasksEnabled(); return { escalation: app.deps.intercom.dismissEscalation(req.workspace!.id, req.params.id) }; });
+
+  // Mission control, the human's side: answer an agent's permission request
+  // from the box (a click — never the model), or stop an agent mid-turn.
+  app.post<{ Params: { id: string } }>('/intercom/approvals/:id', async (req) => {
+    assertHubRequest(req.headers);
+    const { decision } = ApprovalBody.parse(req.body);
+    if (app.deps.agentControl.decide(req.workspace!.id, req.params.id, decision) === 'gone') {
+      throw new AppError('CONFLICT', 'already answered in the tab, or no longer waiting', { reason: 'gone' });
+    }
+    return { ok: true };
+  });
+  app.post<{ Params: { agentId: string } }>('/intercom/agents/:agentId/interrupt', async (req) => {
+    assertHubRequest(req.headers);
+    const agents = await app.deps.agents.list(req.workspace!.id);
+    const a = agents.find((x) => x.agentId === req.params.agentId);
+    if (!a || !a.live) throw new AppError('NOT_FOUND', 'no such agent running');
+    // Esc is every harness's own "stop this turn" key: the TUI does what it always does.
+    app.deps.terminal.write(sessionKeyFor(a.mode, a.worktreePath, a.sessionId), '\x1b');
+    return { ok: true };
+  });
 }
+
+const ApprovalBody = z.object({ decision: z.enum(['allow', 'deny']) });

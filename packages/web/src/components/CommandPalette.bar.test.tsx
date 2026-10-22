@@ -5,6 +5,7 @@ import type { ActionId, ParseContext, Plan, Step, StepOf, TabRef } from '../lib/
 import type { ModelResult } from '../lib/jarvis/modelClient';
 import type { RepoConfig, Workspace, Worktree } from '../types';
 import type { StationDto } from '../api';
+import { readHistoryEntries, rememberCommand } from '../lib/jarvis/history';
 
 afterEach(() => releaseKeyboard());
 
@@ -21,7 +22,7 @@ function step<A extends ActionId>(action: A, args: StepOf<A>['args'], over: Part
 const plan = (steps: Step[], over: Partial<Plan> = {}): Plan => ({ steps, source: 'rule', summary: 's', executable: true, ...over });
 function stubParse({ text }: { text: string }): Plan {
   const t = text.trim();
-  if (t === 'focus claude') return plan([step('tab.focus', {}, { target: { kind: 'tab', ref: ref('claude', '1') } })], { summary: 'Focus Claude' });
+  if (t === 'focus claude' || t === 'focus claude for @{claude-2@app}') return plan([step('tab.focus', {}, { target: { kind: 'tab', ref: ref('claude', '1') } })], { summary: 'Focus Claude' });
   if (t === 'close shell') return plan([step('tab.close', {}, { where: 'server', risk: 'destructive', undoable: false, needsConfirm: true, confirmReason: 'a process is running in that tab', target: { kind: 'tab', ref: ref('shell', '1') } })], { summary: 'Close Shell' });
   if (t === 'what is claude-1 doing') return plan([step('agent.recap', { agentIds: ['claude-1@a'] }, { where: 'server', risk: 'read', undoable: false })], { summary: 'Recap claude-1' });
   if (t === 'run ls') return plan([step('shell.run', { command: 'ls' }, { where: 'server', risk: 'exec', undoable: false, target: { kind: 'tab', ref: ref('shell', '1') } })], { summary: 'Run ls' });
@@ -58,7 +59,7 @@ function setup(opts: { model?: boolean; toPlan?: () => Plan; stations?: StationD
   }));
   const jarvis: JarvisPaletteProps = {
     wsId: 'default', parse: vi.fn(stubParse), context: ctx,
-    ports: () => ({ hub, server, nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() } }),
+    ports: () => ({ hub, server, nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() } }),
     onRan: vi.fn(), onActed: vi.fn(),
     ...(opts.model ? { model: {
       status: 'ready' as const,
@@ -586,14 +587,9 @@ describe('CommandPalette as the always-visible command bar', () => {
     expect(s.asks[1]!.ctx.focused).toEqual(ref('shell', '4'));
   });
 
-  it('browse() (the worktree chip) opens the box with every worktree listed, not just the Focuses', () => {
+  it('no browse mode: the handle only focuses (the Dock\'s location is a label now)', () => {
     const s = setup();
-    expect(screen.queryByText('FD-1')).not.toBeInTheDocument();
-    act(() => s.barRef.current!.browse());
-    expect(document.activeElement).toBe(s.input);
-    expect(screen.getByText('FD-1')).toBeInTheDocument();
-    s.type('FD');
-    expect(screen.getByText('FD-1')).toBeInTheDocument();
+    expect(s.barRef.current).not.toHaveProperty('browse');
   });
 
   describe('the @ picker', () => {
@@ -618,6 +614,50 @@ describe('CommandPalette as the always-visible command bar', () => {
       expect(rows[1]).toHaveTextContent('working');
       expect(picker).toHaveTextContent('other worktrees');
       expect(screen.queryByTestId('jarvis-submit')).not.toBeInTheDocument();
+    });
+
+    describe('Recent rows', () => {
+      const chips = [{ label: 'claude-2', agentId: 'claude-2@app' }, { label: 'FD-1', worktreePath: P }];
+      const long = `tell @claude-2 to review #FD-1 ${'and then some more dictated words '.repeat(8)}`;
+
+      it('draw @/# mentions as the chips typed with them, one truncated line each', () => {
+        rememberCommand('default', long, { chips });
+        const s = setup({ stations });
+        act(() => s.input.focus());
+        const row = screen.getByTestId('history-row-0');
+        expect(within(row).getByTestId('history-chip-claude-2@app')).toHaveTextContent('@claude-2');
+        expect(within(row).getByTestId('history-chip-claude-2@app').className).toMatch(/\bbg-sky-/);
+        expect(within(row).getByTestId(`history-chip-#${P}`)).toHaveTextContent('#FD-1');
+        expect(within(row).getByTestId(`history-chip-#${P}`).className).toMatch(/\bbg-emerald-/);
+        const text = within(row).getByTestId('history-text');
+        expect(text.className).toMatch(/\btruncate\b/);
+        expect(text.className).toMatch(/\bwhitespace-nowrap\b/);
+        expect(row).toHaveAttribute('title', long.trim());
+      });
+
+      it('a click, or ↑ recall, restores the text with its chips', () => {
+        rememberCommand('default', 'tell @claude-2 hi', { chips: [chips[0]!] });
+        const s = setup({ stations });
+        act(() => s.input.focus());
+        fireEvent.click(screen.getByTestId('history-row-0'));
+        expect(s.input).toHaveValue('tell @claude-2 hi');
+        expect(screen.getByTestId('chip-claude-2@app')).toHaveTextContent('@claude-2');
+        s.type('');
+        s.key('ArrowUp');
+        expect(s.input).toHaveValue('tell @claude-2 hi');
+        expect(screen.getByTestId('chip-claude-2@app')).toBeInTheDocument();
+      });
+
+      it('running a command remembers its chips', async () => {
+        const s = setup({ stations });
+        act(() => s.input.focus());
+        s.type('focus claude for @cl');
+        s.key('ArrowDown');
+        s.key('Enter');
+        expect(s.input).toHaveValue('focus claude for @claude-2 ');
+        s.key('Enter');
+        await waitFor(() => expect(readHistoryEntries('default')[0]).toEqual({ text: 'focus claude for @claude-2', pasted: false, chips: [chips[0]] }));
+      });
     });
 
     it('⏎ picks a chip; what runs carries the exact agent (@{id}), whatever the name', async () => {
@@ -1017,5 +1057,34 @@ describe('CommandPalette: the box holds the keyboard while you use it (the shell
     act(() => s.shellPane.focus());
     act(() => { window.dispatchEvent(new Event('focus')); });
     expect(document.activeElement).toBe(s.shellPane);
+  });
+});
+
+describe('popover footer: the keys, under a list', () => {
+  it('a list (Recent, matches) shows ↑↓ select · ↵ run · @ mention · esc close, keys as kbd', () => {
+    rememberCommand('default', 'split down');
+    const s = setup();
+    act(() => s.input.focus());
+    const foot = within(screen.getByTestId('command-bar-popover')).getByTestId('command-bar-footer');
+    expect(foot).toHaveTextContent('↑↓ select · ↵ run · @ mention · esc close');
+    expect(Array.from(foot.querySelectorAll('kbd')).map((k) => k.textContent)).toEqual(['↑↓', '↵', '@', 'esc']);
+    s.type('FD');
+    expect(screen.getByTestId('command-bar-footer')).toBeInTheDocument();
+  });
+
+  it('the hero box has it too', () => {
+    const s = setup({ hero: true });
+    act(() => s.input.focus());
+    s.type('FD');
+    expect(screen.getByTestId('command-bar-popover')).toHaveAttribute('data-placement', 'below');
+    expect(screen.getByTestId('command-bar-footer')).toBeInTheDocument();
+  });
+
+  it('no list, no footer: the quiet "⏎ to run" line or a model card alone', () => {
+    const s = setup();
+    act(() => s.input.focus());
+    s.type('shell right');
+    expect(screen.getByTestId('jarvis-submit')).toBeInTheDocument();
+    expect(screen.queryByTestId('command-bar-footer')).not.toBeInTheDocument();
   });
 });

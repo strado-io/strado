@@ -29,7 +29,7 @@ const first = (p: Plan) => p.steps[0] as unknown as { action: string; args: Reco
 
 describe('agent.ask / agent.recap from the model', () => {
   it('are in the registry, before tab.rename', () => {
-    expect(ACTION_IDS.slice(-3, -1)).toEqual(['agent.ask', 'agent.recap']);
+    expect(ACTION_IDS.slice(ACTION_IDS.indexOf('tab.rename') - 2, ACTION_IDS.indexOf('tab.rename'))).toEqual(['agent.ask', 'agent.recap']);
   });
   it('agent.ask resolves the agent like agent.message', () => {
     const p = m('agent.ask', { to: 'reviewer', question: 'do the tests pass?' });
@@ -87,7 +87,7 @@ describe('the recap carries the user\'s own words', () => {
 describe('agent.ask / agent.recap in runPlan', () => {
   const ports = (over: Partial<JarvisPorts['server']> = {}): JarvisPorts => ({
     hub: null,
-    nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() },
+    nav: { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() },
     server: {
       spawn: vi.fn(), run: vi.fn(), interrupt: vi.fn(), close: vi.fn(), message: vi.fn(), startServer: vi.fn(), stopServer: vi.fn(),
       answerCall: vi.fn(), dismissCall: vi.fn(), recap: vi.fn(), ...over,

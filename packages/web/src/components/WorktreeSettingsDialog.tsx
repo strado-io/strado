@@ -22,7 +22,6 @@ export function WorktreeSettingsDialog({
   repo,
   worktrees,
   onSave,
-  onSetEnvProfile,
   onLink,
   onUnlink,
   onRelink,
@@ -35,7 +34,6 @@ export function WorktreeSettingsDialog({
   repo: RepoConfig | null;
   worktrees: Worktree[];
   onSave: (patch: WorktreeSettingsPatch) => Promise<void> | void;
-  onSetEnvProfile: (profile: string) => Promise<void> | void;
   onLink: (source: string) => void;
   onUnlink: () => void;
   onRelink: (source: string) => void;
@@ -50,9 +48,6 @@ export function WorktreeSettingsDialog({
   const [port, setPort] = useState(meta?.port ? String(meta.port) : '');
   const [startCommand, setStartCommand] = useState(meta?.startCommand ?? '');
   const [previewUrl, setPreviewUrl] = useState(meta?.previewUrl ?? '');
-  const profiles = repo?.envProfiles ?? [];
-  const initialProfile = meta?.activeEnvProfile ?? repo?.defaultEnvProfile ?? profiles[0]?.name ?? '';
-  const [envProfile, setEnvProfile] = useState(initialProfile);
   const [envRows, setEnvRows] = useState<{ key: string; value: string }[]>(() =>
     Object.entries(meta?.env ?? {}).map(([key, value]) => ({ key, value })),
   );
@@ -130,7 +125,6 @@ export function WorktreeSettingsDialog({
       if (JSON.stringify(env) !== JSON.stringify(meta?.env ?? {})) patch.env = env;
 
       if (Object.keys(patch).length > 0) await onSave(patch);
-      if (envProfile && envProfile !== initialProfile) await onSetEnvProfile(envProfile);
       onClose();
     } catch (saveError) {
       setError((saveError as Error).message);
@@ -284,22 +278,6 @@ export function WorktreeSettingsDialog({
                         className={`${inputCls} font-mono`}
                       />
                     </label>
-                    {profiles.length > 0 && (
-                      <label className="block">
-                        <span className={`mb-1.5 block ${labelCls}`}>Environment profile</span>
-                        <select
-                          aria-label="Env profile"
-                          value={envProfile}
-                          onChange={(event) => setEnvProfile(event.target.value)}
-                          title="Switching restarts a running dev server"
-                          className={`${inputCls} cursor-pointer uppercase`}
-                        >
-                          {profiles.map((profile) => (
-                            <option key={profile.name} value={profile.name}>{profile.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
                   </div>
 
                   <label className="block">
@@ -312,7 +290,7 @@ export function WorktreeSettingsDialog({
                       className={`${inputCls} font-mono`}
                     />
                     <span className="mt-1.5 block text-[11px] text-zinc-600">
-                      Leave empty to use the repository command{profiles.length > 0 ? ". The selected profile's variables are injected at start; write {ENV_FILE} where the command should receive the file itself" : ''}.
+                      Overrides the repository's default run command for this worktree; leave empty to use it.
                     </span>
                   </label>
 

@@ -12,9 +12,8 @@ vi.mock('../hooks/useWorkspace', () => ({
 // these tests don't exercise Intercom, so stub a quiet, "loaded" context.
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: [], tasks: [], peers: [], loaded: true, error: null,
-    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
-    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+    peers: [], loaded: true, error: null,
+    refresh: vi.fn(),
   }),
 }));
 vi.mock('../api', () => ({

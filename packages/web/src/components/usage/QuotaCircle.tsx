@@ -115,7 +115,7 @@ export function QuotaCircle({ wsId, onOpenUsage, onOpenChange }: {
         <div
           role="dialog"
           aria-label="Agent usage"
-          className="absolute right-0 top-full z-40 mt-1 w-[360px] rounded-lg border border-zinc-800 bg-zinc-950 p-2 shadow-2xl"
+          className="surface-pop absolute right-0 top-full z-40 mt-1 w-[360px] rounded-lg p-2"
         >
           <div className="mb-1.5 flex items-baseline justify-between px-1">
             <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">Agent usage</span>

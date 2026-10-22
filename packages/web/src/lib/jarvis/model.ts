@@ -6,14 +6,14 @@
 // Spec: docs/specs/2026-10-17-jarvis-natural-language-design.md (private repo).
 import { looksSecret } from './history';
 import {
-  agentName, callStep, explain, findWorktree, worktreeLabel, focusedTarget, here, isAgentMode, messageStep, mk, openStep, placeChip, plan, resolveAgent, resolveTarget, runScript, runStep,
+  agentName, callStep, explain, interruptStep, runLabel, steerStep, findWorktree, worktreeLabel, focusedTarget, here, isAgentMode, messageStep, mk, openStep, placeChip, plan, resolveAgent, resolveTarget, runScript, runStep,
   shellCommand, tabStep, targetChip, normaliseUrl, type Resolved,
 } from './parse';
 import { withSafety } from './safety';
 import type { AgentMode, ParseContext, Place, Plan, Split, Step, TabInfo, TabMode, TabRef, Target } from './types';
 import { APP_PAGES, FOCUS_OPS, SETTINGS, SETTINGS_SECTIONS, type AppPage, type FocusOp, type SettingsSectionId } from './types';
 
-export const MODEL_CAPS = { tabs: 60, worktrees: 50, focuses: 30, scripts: 50, agents: 30, calls: 20, repos: 50, workspaces: 30, thread: 6, text: 2000, name: 64, title: 200 } as const;
+export const MODEL_CAPS = { tabs: 60, worktrees: 50, focuses: 30, scripts: 50, runCommands: 30, agents: 30, calls: 20, repos: 50, workspaces: 30, thread: 6, text: 2000, name: 64, title: 200 } as const;
 const COMMAND_MAX = 4096;
 const TEXT_MAX = 8 * 1024;
 
@@ -30,6 +30,8 @@ export type ModelContext = {
   focus: { name: string } | null;
   scripts: string[];
   packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
+  /** The current worktree's run commands, by name; the first is the default. */
+  runCommands: { name: string }[];
   agents: { name: string; mode: TabMode; lifecycle: 'working' | 'idle' }[];
   /** Open calls to the human, by the calling agent's name (only when there are any). */
   calls?: { from: string; title: string }[];
@@ -177,6 +179,7 @@ export function buildModelContext(ctx: ParseContext): ModelContext {
     focus: (() => { const n = scrub(ctx.currentFocus?.name); return n ? { name: n } : null; })(),
     scripts: Object.keys(ctx.packageScripts).flatMap((s) => { const n = scrub(s); return n ? [n] : []; }).slice(0, MODEL_CAPS.scripts),
     packageManager: ctx.packageManager ?? 'npm',
+    runCommands: (ctx.runCommands ?? []).flatMap((r) => { const name = scrub(r.name); return name ? [{ name }] : []; }).slice(0, MODEL_CAPS.runCommands),
     agents: agents.slice(0, MODEL_CAPS.agents),
     ...(calls.length > 0 ? { calls } : {}),
     repos: (ctx.repos ?? []).flatMap((r) => { const name = scrub(r.name); return name ? [{ name }] : []; }).slice(0, MODEL_CAPS.repos),
@@ -352,6 +355,18 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
 
   /** An agent named by the model: an exact model-facing name first, then the
    * box's own rules (a bare kind is the focused one, other worktrees only as "wt/name"). */
+  /** A run command the model named, in worktree `wt`: here, one of ours (by
+   * name or id, any case) or a refusal listing them; elsewhere the name as
+   * said, for the server to resolve. null = the default. */
+  const runNamed = (wt: string, name: string | null | undefined): { id: string; name: string } | null => {
+    if (!name) return null;
+    const known = wt === here(ctx) ? ctx.runCommands : undefined;
+    if (!known?.length) return { id: name, name };
+    const want = name.trim().toLowerCase();
+    return known.find((r) => r.id === name || r.name.trim().toLowerCase() === want)
+      ?? refuse(`No run command "${name}" here (${known.map((r) => r.name).join(', ')})`);
+  };
+
   const toAgent = (name: string, build: (agentId: string) => Step): Out => {
     const bare = name.replace(/^@/, '').toLowerCase();
     const exact = index.find((e) => e.name.toLowerCase() === bare)?.info.agentId;
@@ -433,6 +448,15 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
         const text = str(a, 'text', { required: true, max: TEXT_MAX })!;
         return toAgent(name, (id) => messageStep(ctx, id, text));
       }
+      case 'agent.interrupt': {
+        const name = str(a, 'agent', { required: true, max: 200 })!;
+        return toAgent(name, (agentId) => interruptStep(ctx, agentId));
+      }
+      case 'agent.steer': {
+        const name = str(a, 'agent', { required: true, max: 200 })!;
+        const text = str(a, 'text', { required: true, max: TEXT_MAX })!;
+        return toAgent(name, (agentId) => steerStep(ctx, agentId, text));
+      }
       case 'agent.ask': {
         const name = str(a, 'to', { required: true, max: 200 })!;
         const question = str(a, 'question', { required: true, max: TEXT_MAX })!;
@@ -481,14 +505,16 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
       }
       case 'server.start': {
         const wt = worktree(str(a, 'worktree', { max: 200 }));
-        const script = wt === here(ctx) ? ['dev', 'start', 'serve'].find((k) => k in ctx.packageScripts) ?? null : null;
+        const run = runNamed(wt, str(a, 'run', { max: 80, line: true }));
+        const script = !run && wt === here(ctx) ? ['dev', 'start', 'serve'].find((k) => k in ctx.packageScripts) ?? null : null;
         const command = script ? runScript(ctx, script) : 'the configured dev command';
-        return { kind: 'ok', step: mk('server.start', { worktreePath: wt, script, command }, { kind: 'none' }, { risk: 'spawn', where: 'server', undoable: false },
-          [{ arg: 'command', label: 'Start dev server', candidates: [] }], ctx) };
+        return { kind: 'ok', step: mk('server.start', { worktreePath: wt, script, command, run: run?.id ?? null }, { kind: 'none' }, { risk: 'spawn', where: 'server', undoable: false },
+          [{ arg: 'command', label: run ? `Start ${run.name}` : 'Start dev server', candidates: [] }], ctx) };
       }
       case 'server.stop': {
         const wt = worktree(str(a, 'worktree', { max: 200 }));
-        return { kind: 'ok', step: mk('server.stop', { worktreePath: wt }, { kind: 'none' }, { risk: 'exec', where: 'server', undoable: false }, [{ arg: 'worktreePath', label: 'Stop dev server', candidates: [] }], ctx) };
+        const run = runNamed(wt, str(a, 'run', { max: 80, line: true }));
+        return { kind: 'ok', step: mk('server.stop', { worktreePath: wt, run: run?.id ?? null }, { kind: 'none' }, { risk: 'exec', where: 'server', undoable: false }, [{ arg: 'worktreePath', label: run ? `Stop ${run.name}` : 'Stop dev server', candidates: [] }], ctx) };
       }
       case 'call.answer': case 'call.dismiss': {
         // Always confirmed (safety.ts): the model words it, the user says yes.
@@ -522,8 +548,6 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
         }
         return { kind: 'ok', step: mk('nav.newWorktree', { repoPath }, { kind: 'none' }, { risk: 'read', where: 'hub', undoable: false }, [{ arg: 'repoPath', label: 'New worktree', candidates: [] }], ctx) };
       }
-      case 'nav.line':
-        return { kind: 'ok', step: mk('nav.line', {}, { kind: 'none' }, { risk: 'read', where: 'hub', undoable: true }, [{ arg: 'target', label: 'Open the Line', candidates: [] }], ctx) };
       case 'nav.page': {
         const page = str(a, 'page', { required: true, max: 20 })!;
         if (!(APP_PAGES as readonly string[]).includes(page)) refuse(`No page "${page}"`);
@@ -657,9 +681,11 @@ export function describeRun(plan: Plan, run: RunOutcome, ctx: ParseContext): str
       case 'tab.place': return [`moved ${target}${where(s.args.place)}`, `move ${target}${where(s.args.place)}`];
       case 'browser.open': return [`opened ${s.args.url}${where(s.args.place)}`, `open ${s.args.url}`];
       case 'agent.message': return [`messaged ${agentOf(s.args.agentId)}`, `message ${agentOf(s.args.agentId)}`];
+      case 'agent.interrupt': return [`stopped ${agentOf(s.args.agentId)}`, `stop ${agentOf(s.args.agentId)}`];
+      case 'agent.steer': return [`redirected ${agentOf(s.args.agentId)}`, `redirect ${agentOf(s.args.agentId)}`];
       case 'nav.worktree': return [`went to ${worktreeName(ctx, s.args.path)}`, `go to ${worktreeName(ctx, s.args.path)}`];
-      case 'server.start': return ['started the dev server', 'start the dev server'];
-      case 'server.stop': return ['stopped the dev server', 'stop the dev server'];
+      case 'server.start': { const r = runLabel(ctx, s.args.worktreePath, s.args.run); return r ? [`started ${r}`, `start ${r}`] : ['started the dev server', 'start the dev server']; }
+      case 'server.stop': { const r = runLabel(ctx, s.args.worktreePath, s.args.run); return r ? [`stopped ${r}`, `stop ${r}`] : ['stopped the dev server', 'stop the dev server']; }
       default: { const label = s.chips[0]?.label ?? s.action; return [label, label]; }
     }
   };

@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { ACTIONS } from './actions';
-import { ANSWER_TOOL, createJarvisModel, JARVIS_MODEL, JARVIS_SYSTEM, jarvisTools, MAX_STRICT_TOOLS, type JarvisContext } from './jarvisModel';
+import { ANSWER_TOOL, createJarvisModel, JARVIS_MODEL, JARVIS_SYSTEM, jarvisTools, MAX_STRICT_TOOLS, MAX_UNION_PARAMS, type JarvisContext } from './jarvisModel';
 
 const ctx: JarvisContext = {
   worktree: { name: 'app' }, focused: 'claude-1@app',
@@ -13,7 +13,28 @@ const msg = (content: unknown[], extra: Partial<Anthropic.Message> = {}): Anthro
   ({ id: 'm', type: 'message', role: 'assistant', model: JARVIS_MODEL, content, stop_reason: 'tool_use', stop_sequence: null, usage: {} as Anthropic.Usage, ...extra }) as Anthropic.Message;
 const use = (name: string, input: Record<string, unknown>, id = name) => ({ type: 'tool_use', id, name, input });
 
+/** Parameters typed as a union: a `type` array (["string","null"]) or an anyOf, at any depth. */
+function unionParams(schema: unknown): number {
+  if (!schema || typeof schema !== 'object') return 0;
+  const s = schema as { type?: unknown; anyOf?: unknown; properties?: Record<string, unknown>; items?: unknown };
+  let n = 0;
+  for (const p of Object.values(s.properties ?? {})) {
+    const q = p as { type?: unknown; anyOf?: unknown };
+    if (Array.isArray(q?.type) || Array.isArray(q?.anyOf)) n++;
+    n += unionParams(p);
+  }
+  if (s.items) n += unionParams(s.items);
+  return n;
+}
+
 describe('jarvisTools', () => {
+  it('stays within the API\'s union-parameter cap across the strict tools (live failure: 18 → every Haiku call 400)', () => {
+    const strict = jarvisTools().filter((t) => t.strict);
+    const total = strict.reduce((n, t) => n + unionParams(t.input_schema), 0);
+    expect(total).toBeLessThanOrEqual(MAX_UNION_PARAMS);
+    expect(MAX_UNION_PARAMS).toBe(16);
+  });
+
   it('one tool per model-capable action plus answer; strict for all but plain navigation, never over the API cap; all properties required; stable', () => {
     const tools = jarvisTools();
     const modelIds = ACTIONS.filter((a) => a.model).map((a) => a.id.replace('.', '_'));

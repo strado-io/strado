@@ -30,6 +30,8 @@ const PROBES: Record<string, string | undefined> = {
   '/api/pi/': '/api/pi/status',
   '/api/intercom/hook': '/api/intercom/hook',
   '/api/intercom/hook/confirm': '/api/intercom/hook/confirm',
+  '/api/intercom/hook/permission': '/api/intercom/hook/permission',
+  '/api/intercom/hook/activity': '/api/intercom/hook/activity',
   '/api/intercom/messages': '/api/intercom/messages',
   '/api/intercom/diary': '/api/intercom/diary?agent=nobody',
   '/api/intercom/pull': '/api/intercom/pull',

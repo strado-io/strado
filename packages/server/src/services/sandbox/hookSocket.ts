@@ -30,6 +30,9 @@ export const ALLOW: { method: string; path: string; prefix: boolean }[] = [
   // Intercom (step 4): hook delivery + confirm, and the reply hint's send.
   { method: 'POST', path: '/api/intercom/hook', prefix: false },
   { method: 'POST', path: '/api/intercom/hook/confirm', prefix: false },
+  // Mission control: a permission request held for the box, and the agent's live tool line.
+  { method: 'POST', path: '/api/intercom/hook/permission', prefix: false },
+  { method: 'POST', path: '/api/intercom/hook/activity', prefix: false },
   { method: 'POST', path: '/api/intercom/messages', prefix: false },
   // Intercom (step 4b): peers read another tab's turn diary. The only GET on
   // the wall until step 6 added two more below.
@@ -107,6 +110,9 @@ function withUmask(mask: number): number | undefined {
  * 127.0.0.1:`targetPort`. Resolves once the socket is listening and 0600;
  * the returned function closes the listener and removes the socket file.
  */
+/** How long a held permission request may sit idle (just over Claude's 600s hook timeout). */
+const PERMISSION_HOLD_MS = 610_000;
+
 export async function startHookSocket(opts: {
   socketPath: string;
   targetPort: number;
@@ -126,6 +132,10 @@ export async function startHookSocket(opts: {
       res.end('{"error":{"code":"FORBIDDEN","message":"route not reachable from a sandbox"}}');
       return;
     }
+    // A permission request is held open while the agent's own dialog waits
+    // for the person (up to Claude's 600s hook limit): it may sit idle longer
+    // than any other hook post, so only it gets the long deadline.
+    if (req.url === '/api/intercom/hook/permission') req.socket.setTimeout(PERMISSION_HOLD_MS);
     const headers: http.OutgoingHttpHeaders = { host: `127.0.0.1:${opts.targetPort}` };
     for (const [k, v] of Object.entries(req.headers)) {
       if (k !== 'host' && !STRIPPED.has(k)) headers[k] = v;
@@ -146,6 +156,9 @@ export async function startHookSocket(opts: {
       res.writeHead(502, { 'content-type': 'application/json' });
       res.end('{"error":{"code":"UPSTREAM","message":"server unreachable"}}');
     });
+    // The hook went away (Claude cancelled it): let the server see that too,
+    // or a held permission request would outlive the dialog that answered it.
+    res.on('close', () => { if (!res.writableFinished) proxied.destroy(); });
     req.pipe(proxied);
   });
   server.on('connection', (s) => {

@@ -6,15 +6,13 @@ import type { RepoConfig, Worktree } from '../types';
 const repo = {
   id: 'r', name: 'React App', path: '/repos/react-app', defaultPort: 3000,
   startCommand: 'npm run dev -- --env {ENV_FILE}',
-  envProfiles: [{ name: 'DEV', envFile: '.env.dev' }, { name: 'PROD', envFile: '.env.prod' }],
-  defaultEnvProfile: 'DEV',
 } as RepoConfig;
 
 const worktree = {
   path: '/wt/FD-1', repoId: 'r', branch: 'FD-1_fix', head: 'h', prunable: false, tracked: true,
   meta: {
     repoId: 'r', ticketId: 'FD-1', title: 'Fix login', linkedFrom: null, linkedAt: null,
-    port: 3101, env: { FLAG: 'on' }, lastStartedAt: null, activeEnvProfile: 'DEV',
+    port: 3101, env: { FLAG: 'on' }, lastStartedAt: null,
   },
   process: { status: 'idle', pid: null, startedAt: null, port: null, detectedUrl: null, exitCode: null },
   nodeModules: { status: 'symlink', source: '/src' },
@@ -33,7 +31,6 @@ const siblings = [
 function setup(overrides: Partial<Worktree> = {}, repoOverride: RepoConfig = repo) {
   const h = {
     onSave: vi.fn().mockResolvedValue(undefined),
-    onSetEnvProfile: vi.fn().mockResolvedValue(undefined),
     onLink: vi.fn(), onUnlink: vi.fn(), onRelink: vi.fn(), onAdopt: vi.fn(),
     onDelete: vi.fn(), onResetTime: vi.fn(), onClose: vi.fn(),
   };
@@ -55,7 +52,6 @@ describe('WorktreeSettingsDialog', () => {
     fireEvent.change(screen.getByLabelText('Start command override'), { target: { value: 'npm run dev:mock' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(h.onSave).toHaveBeenCalledWith({ ticketId: 'FD-2', startCommand: 'npm run dev:mock' }));
-    expect(h.onSetEnvProfile).not.toHaveBeenCalled();
     expect(h.onClose).toHaveBeenCalled();
   });
 
@@ -73,12 +69,9 @@ describe('WorktreeSettingsDialog', () => {
     await waitFor(() => expect(h.onSave).toHaveBeenCalledWith({ startCommand: null }));
   });
 
-  it('env profile changes go through the restart-aware route', async () => {
-    const h = setup();
-    fireEvent.change(screen.getByLabelText('Env profile'), { target: { value: 'PROD' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(h.onSetEnvProfile).toHaveBeenCalledWith('PROD'));
-    expect(h.onSave).not.toHaveBeenCalled();
+  it('no env profile select: run commands (with their env file) replace profiles', () => {
+    setup();
+    expect(screen.queryByLabelText('Env profile')).toBeNull();
   });
 
   it('edits the env map', async () => {

@@ -5,19 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // these tests mount it without the provider, so stub a quiet, "loaded" context.
 // `intercomStub` is mutable so the banner tests below can seed one escalation.
 const intercomStub = vi.hoisted(() => ({
-  escalations: [] as unknown[],
   peers: [] as unknown[],
 }));
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: intercomStub.escalations, tasks: [], peers: intercomStub.peers, loaded: true, error: null,
-    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
-    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+    peers: intercomStub.peers, loaded: true, error: null,
+    refresh: vi.fn(),
   }),
 }));
 
 // --- Mock xterm so jsdom (no canvas) can run ---
 const onDataHandlers: Array<(d: string) => void> = [];
+const keyHandlers: Array<(e: KeyboardEvent) => boolean> = [];
+const termFocus = vi.fn();
+const searchCalls = vi.hoisted(() => ({ next: [] as unknown[][], clear: 0 }));
 const termWrite = vi.fn();
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -25,8 +26,8 @@ vi.mock('@xterm/xterm', () => ({
     rows = 24;
     open = vi.fn();
     loadAddon = vi.fn();
-    attachCustomKeyEventHandler = vi.fn();
-    focus = vi.fn();
+    attachCustomKeyEventHandler = vi.fn((h: (e: KeyboardEvent) => boolean) => { keyHandlers.push(h); });
+    focus = termFocus;
     dispose = vi.fn();
     // XtermPane registers CSI handlers (2026 sync-output swallow + DECRQM answer)
     parser = { registerCsiHandler: vi.fn() };
@@ -47,6 +48,15 @@ vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class { onContextLoss = vi.fn(); dispose = vi.fn(); },
 }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
+vi.mock('@xterm/addon-search', () => ({
+  SearchAddon: class {
+    findNext = (...a: unknown[]) => { searchCalls.next.push(a); return true; };
+    findPrevious = vi.fn();
+    clearDecorations = () => { searchCalls.clear += 1; };
+    onDidChangeResults = () => ({ dispose: vi.fn() });
+    dispose = vi.fn();
+  },
+}));
 
 // --- Mock the workspace hook ---
 vi.mock('../hooks/useWorkspace', () => ({
@@ -76,7 +86,8 @@ const vscodeOpen = vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' });
 const vscodeClose = vi.fn().mockResolvedValue({ ok: true });
 const procStart = vi.fn().mockResolvedValue({});
 const procStop = vi.fn().mockResolvedValue(undefined);
-const setEnvProfile = vi.fn().mockResolvedValue({});
+const closeRunTab = vi.fn().mockResolvedValue({ ok: true });
+const setRunCommands = vi.fn(async (_ws: string, _id: string, list: { id?: string; name: string; command: string }[]) => list.map((c) => ({ id: c.id ?? c.name, ...c })));
 const procLogs = vi.fn().mockResolvedValue({ lines: ['boot line'] });
 const wtPatch = vi.fn().mockResolvedValue({});
 const envCheck = vi.fn().mockResolvedValue([]);
@@ -103,7 +114,7 @@ vi.mock('../api', () => ({
       sessionBusy: (...a: unknown[]) => sessionBusy(...a),
       start: (...a: unknown[]) => procStart(...a),
       stop: (...a: unknown[]) => procStop(...a),
-      setEnvProfile: (...a: unknown[]) => setEnvProfile(...a),
+      closeRunTab: (...a: unknown[]) => closeRunTab(...a),
       patch: (...a: unknown[]) => wtPatch(...a),
       logs: (...a: unknown[]) => procLogs(...a),
       upload: vi.fn(),
@@ -117,7 +128,7 @@ vi.mock('../api', () => ({
         remotes: vi.fn().mockResolvedValue({ remotes: [] }),
       },
     },
-    repos: { list: (...a: unknown[]) => reposList(...a) },
+    repos: { list: (...a: unknown[]) => reposList(...a), setRunCommands: (...a: unknown[]) => (setRunCommands as (...x: unknown[]) => unknown)(...a) },
     runners: {
       list: (...a: unknown[]) => runnersList(...a),
       socketTicket: (...a: unknown[]) => socketTicket(...a),
@@ -187,14 +198,14 @@ beforeEach(() => {
   vscodeOpen.mockReset().mockResolvedValue({ url: 'http://127.0.0.1:7788/' });
   vscodeClose.mockReset().mockResolvedValue({ ok: true });
   procStart.mockReset().mockResolvedValue({});
+  closeRunTab.mockReset().mockResolvedValue({ ok: true });
   procStop.mockReset().mockResolvedValue(undefined);
-  setEnvProfile.mockReset().mockResolvedValue({});
+  setRunCommands.mockClear();
   procLogs.mockReset().mockResolvedValue({ lines: ['boot line'] });
   wtPatch.mockReset().mockResolvedValue({});
   envCheck.mockReset().mockResolvedValue([]);
   kbFiles.mockReset().mockResolvedValue({ files: [], truncated: false });
   kbFile.mockReset().mockResolvedValue({ content: '', size: 0, mtimeMs: 0 });
-  intercomStub.escalations = [];
   intercomStub.peers = [];
   sseHandler = null;
   (globalThis as any).WebSocket = FakeWS;
@@ -1446,11 +1457,11 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByLabelText('Start dev server'));
+    fireEvent.click(screen.getByLabelText('Run'));
     expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
 
     pushSse({ path: baseWorktree.path, process: { status: 'running', detectedUrl: 'http://localhost:8080' } });
-    const stopBtn = screen.getByLabelText('Stop dev server');
+    const stopBtn = screen.getByLabelText('Stop');
     expect(stopBtn.title).toContain('running');
     expect(stopBtn.title).toContain('http://localhost:8080');
     fireEvent.click(stopBtn);
@@ -1466,27 +1477,27 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByLabelText('Start dev server'));
+    fireEvent.click(screen.getByLabelText('Run'));
 
     // Spawned, nothing listening yet — and still cancellable.
     pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
-    const starting = screen.getByLabelText('Stop dev server');
+    const starting = screen.getByLabelText('Stop');
     expect(starting).toHaveTextContent('Starting…');
     expect(starting).not.toBeDisabled();
 
     pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
-    expect(screen.getByLabelText('Stop dev server')).toHaveTextContent('Stop :3000');
+    expect(screen.getByLabelText('Stop')).toHaveTextContent('Stop :3000');
 
-    fireEvent.click(screen.getByLabelText('Stop dev server'));
+    fireEvent.click(screen.getByLabelText('Stop'));
     expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path);
     // The kill can take seconds; the button must not pretend it is done.
     pushSse({ path: baseWorktree.path, process: { status: 'stopping', port: 3000 } });
-    const stopping = screen.getByLabelText('Stop dev server');
+    const stopping = screen.getByLabelText('Stop');
     expect(stopping).toHaveTextContent('Stopping…');
     expect(stopping).toBeDisabled();
 
     pushSse({ path: baseWorktree.path, process: { status: 'stopped', port: 3000, exitCode: 0 } });
-    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
+    expect(screen.getByLabelText('Run')).toHaveTextContent('Run');
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -1500,14 +1511,14 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByLabelText('Start dev server'));
+    fireEvent.click(screen.getByLabelText('Run'));
     expect(await screen.findByRole('alert')).toHaveTextContent('empty startCommand');
     // The button itself is still a Run button — nothing started.
-    expect(screen.getByLabelText('Start dev server')).toHaveTextContent('Run');
+    expect(screen.getByLabelText('Run')).toHaveTextContent('Run');
 
     // A later successful start clears the complaint.
     procStart.mockResolvedValue({});
-    fireEvent.click(screen.getByLabelText('Start dev server'));
+    fireEvent.click(screen.getByLabelText('Run'));
     pushSse({ path: baseWorktree.path, process: { status: 'starting', port: 3000 } });
     expect(screen.queryByRole('alert')).toBeNull();
   });
@@ -1524,36 +1535,80 @@ describe('TerminalView', () => {
     pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
     pushSse({ path: baseWorktree.path, process: { status: 'crashed', port: 3000, exitCode: 137 } });
 
-    const btn = screen.getByLabelText('Start dev server');
+    const btn = screen.getByLabelText('Run');
     expect(btn).toHaveTextContent('Crashed');
     expect(screen.getByRole('alert')).toHaveTextContent('exit code 137');
     fireEvent.click(btn);
     expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
   });
 
-  it('shows the env-profile dropdown for repos that define profiles and switches via the API', async () => {
-    reposList.mockResolvedValue([
-      {
-        id: 'r',
-        name: 'Reporting',
-        envProfiles: [{ name: 'PROD', envFile: '.env.prod' }, { name: 'DEV', envFile: '.env.dev' }],
-        defaultEnvProfile: 'PROD',
-      },
-    ]);
-    worktreesList.mockResolvedValue([{ ...baseWorktree }]);
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="shell"
-        sessionId="1"
-        onClose={vi.fn()}
-      />,
-    );
-    const select = await screen.findByLabelText('Env profile'); // appears once the repos fetch lands
-    expect(select).toHaveValue('PROD');
-    fireEvent.change(select, { target: { value: 'DEV' } });
-    expect(setEnvProfile).toHaveBeenCalledWith('default', baseWorktree.path, 'DEV');
-    expect(select).toHaveValue('DEV');
+  describe('named run commands (they replace env profiles)', () => {
+    const RC = [{ id: 'dev', name: 'dev', command: 'pnpm dev' }, { id: 'api', name: 'api', command: 'pnpm api', envFile: '.env.api' }];
+    const hubWithRepo = async () => {
+      reposList.mockResolvedValue([{ id: 'r', name: 'Reporting', runCommands: RC }]);
+      worktreesList.mockResolvedValue([{ ...baseWorktree }]);
+      render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={vi.fn()} />);
+      return screen.findByLabelText('Run dev');
+    };
+    it('no ENV dropdown any more', async () => {
+      await hubWithRepo();
+      expect(screen.queryByLabelText('Env profile')).toBeNull();
+    });
+    it('the main Run runs the default (first) command, without a runId', async () => {
+      fireEvent.click(await hubWithRepo());
+      expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
+    });
+    it('the ▾ menu runs another command in its own tab "run: api", attached to /ws/run?run=api', async () => {
+      await hubWithRepo();
+      fireEvent.click(screen.getByLabelText('Run commands'));
+      fireEvent.click(screen.getByRole('menuitem', { name: /^api/ }));
+      expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path, 'api');
+      expect(await screen.findByText('run: api')).toBeInTheDocument();
+      await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
+      expect(new URL(lastWsUrl()).searchParams.get('run')).toBe('api');
+    });
+    it('another run\'s state comes from its own events; the default button is untouched', async () => {
+      await hubWithRepo();
+      pushSse({ path: baseWorktree.path, run: { runId: 'api', name: 'api', status: 'running', tab: 'run' } });
+      expect(screen.getByLabelText('Run dev')).toHaveTextContent('Run dev');
+      fireEvent.click(screen.getByLabelText('Run commands'));
+      expect(screen.getByRole('menuitem', { name: 'api · running' })).toBeInTheDocument();
+      fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Stop api' }));
+      expect(procStop).toHaveBeenCalledWith('default', baseWorktree.path, 'api');
+    });
+    it('several at once: the default and api each get their own tab', async () => {
+      await hubWithRepo();
+      fireEvent.click(screen.getByLabelText('Run dev'));
+      expect(await screen.findByText('run')).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Run commands'));
+      fireEvent.click(screen.getByRole('menuitem', { name: /^api/ }));
+      expect(await screen.findByText('run: api')).toBeInTheDocument();
+      expect(screen.getByText('run')).toBeInTheDocument();
+    });
+    it('after a reload a live run of another command comes back as its tab', async () => {
+      reposList.mockResolvedValue([{ id: 'r', name: 'Reporting', runCommands: RC }]);
+      worktreesList.mockResolvedValue([{ ...baseWorktree, runs: [{ runId: 'api', name: 'api', status: 'running', tab: 'run' }] }]);
+      render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={vi.fn()} />);
+      expect(await screen.findByText('run: api')).toBeInTheDocument();
+    });
+    it('"+ Add run command…" opens the repo\'s run-command editor; saving replaces the list', async () => {
+      await hubWithRepo();
+      fireEvent.click(screen.getByLabelText('Run commands'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '+ Add run command…' }));
+      const dialog = screen.getByRole('dialog', { name: 'Run commands — Reporting' });
+      const rows = within(dialog).getAllByRole('group', { name: /^Run command/ });
+      fireEvent.change(within(rows[2]!).getByLabelText('Name'), { target: { value: 'storybook' } });
+      fireEvent.change(within(rows[2]!).getByLabelText('Command'), { target: { value: 'pnpm sb' } });
+      await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Save' })); });
+      expect(setRunCommands).toHaveBeenCalledWith('default', 'r', [
+        { id: 'dev', name: 'dev', command: 'pnpm dev', envFile: null },
+        { id: 'api', name: 'api', command: 'pnpm api', envFile: '.env.api' },
+        { name: 'storybook', command: 'pnpm sb', envFile: null },
+      ]);
+      expect(screen.queryByRole('dialog', { name: /Run commands/ })).toBeNull();
+      fireEvent.click(screen.getByLabelText('Run commands'));
+      expect(screen.getByRole('menuitem', { name: /^storybook/ })).toBeInTheDocument();
+    });
   });
 
   it('shows the workflow-status dropdown for tracked worktrees and patches via the API', () => {
@@ -1611,23 +1666,214 @@ describe('TerminalView', () => {
   // flow) no longer exists — the hub is scoped to a single worktree (see
   // "renders no cross-worktree super-tab picker" above).
 
-  it('Logs button opens the log drawer for the active worktree and Esc closes only the drawer', async () => {
-    const onClose = vi.fn();
+  it('no Logs button or drawer: the run output lives in the run tab', () => {
     render(
       <TerminalView
         worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
         mode="shell"
         sessionId="1"
-        onClose={onClose}
+        onClose={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByLabelText('Logs'));
-    expect(await screen.findByText('boot line')).toBeInTheDocument();
-    expect(procLogs).toHaveBeenCalledWith('default', baseWorktree.path, 500);
+    expect(screen.queryByLabelText('Logs')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Logs' })).toBeNull();
+  });
 
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByText('boot line')).not.toBeInTheDocument();
-    expect(onClose).not.toHaveBeenCalled();
+  describe('after the run ends the run tab is a normal shell', () => {
+    const hub = () => render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={vi.fn()} />);
+    const openRun = async () => {
+      hub();
+      fireEvent.click(screen.getByLabelText('Run'));
+      await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
+      return FakeWS.instances[FakeWS.instances.length - 1]!;
+    };
+    it('"[process exited …]" is not the end: input still goes to the shell, and a new Run (4000) reconnects', async () => {
+      vi.useFakeTimers();
+      try {
+        const ws = await openRun();
+        act(() => { ws.onmessage?.({ data: '\x1b[2m[process exited with code 0]\x1b[0m\r\n$ ' }); });
+        act(() => { onDataHandlers[onDataHandlers.length - 1]!('ls\r'); });
+        expect(ws.sent.some((m) => m.includes('ls'))).toBe(true);
+        const before = FakeWS.instances.length;
+        act(() => { (ws.onclose as unknown as (e: { code: number }) => void)?.({ code: 4000 }); });
+        act(() => { vi.advanceTimersByTime(5_000); });
+        expect(FakeWS.instances.length).toBeGreaterThan(before);
+        expect(lastWsUrl()).toContain('/ws/run?');
+      } finally { vi.useRealTimers(); }
+    });
+    it('Run while the post-run shell is busy: asks first, then starts with force; declined, nothing more', async () => {
+      const busy = Object.assign(new Error('CONFLICT'), { details: { reason: 'run_tab_busy' } });
+      const confirmSpy = vi.spyOn(window, 'confirm');
+      hub();
+      procStart.mockRejectedValueOnce(busy);
+      confirmSpy.mockReturnValueOnce(true);
+      fireEvent.click(screen.getByLabelText('Run'));
+      await vi.waitFor(() => expect(procStart).toHaveBeenCalledTimes(2));
+      expect(confirmSpy).toHaveBeenCalledWith('The run tab is running something. Stop it and run?');
+      expect(procStart).toHaveBeenLastCalledWith('default', baseWorktree.path, undefined, { force: true });
+      expect(screen.queryByRole('alert')).toBeNull();
+      procStart.mockRejectedValueOnce(busy);
+      confirmSpy.mockReturnValueOnce(false);
+      fireEvent.click(screen.getByLabelText('Run'));
+      await vi.waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(2));
+      expect(procStart).toHaveBeenCalledTimes(3);
+      confirmSpy.mockRestore();
+    });
+    it('closing the run tab ends its idle shell (DELETE run-tab); while the run is live the server says so and it only detaches', async () => {
+      await openRun();
+      fireEvent.click(screen.getByLabelText('Close run session'));
+      await vi.waitFor(() => expect(screen.queryByText('run')).toBeNull());
+      expect(closeRunTab).toHaveBeenCalledWith('default', baseWorktree.path, undefined);
+      expect(procStop).not.toHaveBeenCalled();
+      closeRunTab.mockRejectedValueOnce(Object.assign(new Error('CONFLICT'), { details: { reason: 'running' } }));
+      fireEvent.click(screen.getByLabelText('Run'));
+      expect(await screen.findByText('run')).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Close run session'));
+      await vi.waitFor(() => expect(screen.queryByText('run')).toBeNull());
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(procStop).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('find in the terminal (Ctrl+F here; ⌘F on a Mac)', () => {
+    const key = (o: Partial<KeyboardEvent> = {}) => {
+      const e = { type: 'keydown', key: 'f', ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...o } as unknown as KeyboardEvent;
+      let r = true;
+      act(() => { r = keyHandlers[keyHandlers.length - 1]!(e); });
+      return { r, e };
+    };
+    const hub = () => render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" sessionId="1" onClose={vi.fn()} />);
+    it('opens the find bar on the focused terminal; the key never reaches the pty or another handler', async () => {
+      hub();
+      await vi.waitFor(() => expect(keyHandlers.length).toBeGreaterThan(0));
+      const { r, e } = key();
+      expect(r).toBe(false);
+      expect(e.preventDefault).toHaveBeenCalled();
+      expect(e.stopPropagation).toHaveBeenCalled();
+      const input = screen.getByLabelText('Find in terminal');
+      expect(input).toHaveFocus();
+      fireEvent.change(input, { target: { value: 'error' } });
+      expect(searchCalls.next.at(-1)?.[0]).toBe('error');
+    });
+    it('Esc closes it, clears the highlights, and gives the keyboard back to the terminal', async () => {
+      hub();
+      await vi.waitFor(() => expect(keyHandlers.length).toBeGreaterThan(0));
+      key();
+      termFocus.mockClear();
+      const before = searchCalls.clear;
+      fireEvent.keyDown(screen.getByLabelText('Find in terminal'), { key: 'Escape' });
+      expect(screen.queryByLabelText('Find in terminal')).toBeNull();
+      expect(searchCalls.clear).toBeGreaterThan(before);
+      expect(termFocus).toHaveBeenCalled();
+    });
+    it('other keys pass through to the terminal', async () => {
+      hub();
+      await vi.waitFor(() => expect(keyHandlers.length).toBeGreaterThan(0));
+      expect(key({ key: 'g' }).r).toBe(true);
+      expect(key({ ctrlKey: false }).r).toBe(true);
+      expect(screen.queryByLabelText('Find in terminal')).toBeNull();
+    });
+  });
+
+  describe('Run runs the start command in a terminal tab named "run"', () => {
+    const hub = () => render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        sessionId="1"
+        onClose={vi.fn()}
+      />,
+    );
+    it('Run starts the server, then opens and focuses the run tab, attached to /ws/run (never a shell spawn)', async () => {
+      hub();
+      fireEvent.click(screen.getByLabelText('Run'));
+      expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
+      expect(await screen.findByText('run')).toBeInTheDocument();
+      await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
+      const u = new URL(lastWsUrl());
+      expect(u.searchParams.get('ws')).toBe('default');
+      expect(u.searchParams.get('path')).toBe(baseWorktree.path);
+      expect(u.searchParams.get('cols')).toBeTruthy();
+      expect(u.searchParams.has('mode')).toBe(false);
+      expect(u.searchParams.has('session')).toBe(false);
+    });
+    it('closing the run tab detaches: no shell session is killed, the server keeps running', async () => {
+      hub();
+      fireEvent.click(screen.getByLabelText('Run'));
+      expect(await screen.findByText('run')).toBeInTheDocument();
+      pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
+      fireEvent.click(screen.getByLabelText('Close run session'));
+      await vi.waitFor(() => expect(screen.queryByText('run')).toBeNull());
+      expect(sessionBusy).not.toHaveBeenCalled();
+      expect(killSession).not.toHaveBeenCalled();
+      expect(procStop).not.toHaveBeenCalled();
+    });
+    it('Run again reuses the run tab (never a second one)', async () => {
+      hub();
+      fireEvent.click(screen.getByLabelText('Run'));
+      expect(await screen.findByText('run')).toBeInTheDocument();
+      pushSse({ path: baseWorktree.path, process: { status: 'stopped', exitCode: 0 } });
+      fireEvent.click(screen.getByText('Shell'));
+      fireEvent.click(screen.getByLabelText('Run'));
+      await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
+      expect(screen.getAllByText('run')).toHaveLength(1);
+    });
+    it('a refused start opens no tab', async () => {
+      procStart.mockRejectedValue(new Error('empty startCommand'));
+      hub();
+      fireEvent.click(screen.getByLabelText('Run'));
+      expect(await screen.findByRole('alert')).toHaveTextContent('empty startCommand');
+      expect(screen.queryByText('run')).toBeNull();
+    });
+    it('/ws/run closing with 4404 (nothing to show) is final: no reconnect loop', async () => {
+      vi.useFakeTimers();
+      try {
+        hub();
+        fireEvent.click(screen.getByLabelText('Run'));
+        await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
+        const ws = FakeWS.instances[FakeWS.instances.length - 1]!;
+        const before = FakeWS.instances.length;
+        act(() => { (ws.onclose as unknown as (e: { code: number }) => void)?.({ code: 4404 }); });
+        act(() => { vi.advanceTimersByTime(30_000); });
+        expect(FakeWS.instances.length).toBe(before);
+      } finally { vi.useRealTimers(); }
+    });
+    it('after a reload the run tab comes back while the server says there is one (live or crashed)', async () => {
+      for (const status of ['running', 'crashed'] as const) {
+        worktreesList.mockResolvedValue([{ ...baseWorktree, process: { status, tab: 'run' } }]);
+        const v = hub();
+        expect(await screen.findByText('run')).toBeInTheDocument();
+        // Restored, not forced to the front.
+        expect(lastWsUrl()).not.toContain('/ws/run?');
+        v.unmount();
+      }
+    });
+    it('no run tab when the server has none (idle, or tab null)', async () => {
+      worktreesList.mockResolvedValue([{ ...baseWorktree, process: { status: 'stopped', tab: null } }]);
+      hub();
+      await vi.waitFor(() => expect(worktreesList).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.queryByText('run')).toBeNull();
+    });
+    it('a restored run tab the user closes stays closed (until the next Run)', async () => {
+      worktreesList.mockResolvedValue([{ ...baseWorktree, process: { status: 'running', tab: 'run' } }]);
+      hub();
+      expect(await screen.findByText('run')).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Close run session'));
+      await vi.waitFor(() => expect(screen.queryByText('run')).toBeNull());
+      pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000, tab: 'run' } });
+      expect(screen.queryByText('run')).toBeNull();
+    });
+    it('a crash note links to the run tab ("Open run tab"), not a Logs drawer', async () => {
+      hub();
+      pushSse({ path: baseWorktree.path, process: { status: 'crashed', port: 3000, exitCode: 1 } });
+      expect(screen.getByRole('alert')).toHaveTextContent('exit code 1');
+      expect(within(screen.getByRole('alert')).queryByText('Logs')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Open run tab' }));
+      await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
+      expect(screen.getByText('run')).toBeInTheDocument();
+      expect(procStart).not.toHaveBeenCalled();
+    });
   });
 
   it('header quick-launch buttons open Claude/Codex/VS Code tabs for the active worktree', async () => {

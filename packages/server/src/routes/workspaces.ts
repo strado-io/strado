@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { isLive } from '../services/processManager.js';
 import { WorkspaceSchema } from '../workspaceConfig.js';
 import { AppError } from '../errors.js';
 import { findOwningRepo } from '../services/worktreeRoot.js';
@@ -67,7 +68,7 @@ export async function registerWorkspaceRoutes(app: FastifyInstance) {
       const allWorktrees = await stores.state.list();
       const runningPaths = allWorktrees
         .filter((wt) => !!findOwningRepo(repos, wt.path, app.deps.homeStateDir))
-        .filter((wt) => app.deps.proc.isRunning(wt.path))
+        .filter((wt) => app.deps.proc.runs(wt.path).some((r) => isLive(r.status)))
         .map((wt) => wt.path);
       if (runningPaths.length > 0) {
         throw new AppError('WORKSPACE_HAS_RUNNING_PROCESSES',

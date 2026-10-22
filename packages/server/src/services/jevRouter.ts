@@ -21,7 +21,7 @@ export const JEV_MAX_DOUBT = 0.5;
 
 const NONE = 'none';
 
-type Action = 'tab_open' | 'tab_focus' | 'tab_place' | 'tab_close' | 'tab_interrupt' | 'nav_worktree' | 'nav_focus' | 'nav_line' | 'nav_page' | 'settings_open' | 'ui_sidebar' | 'server_start' | 'server_stop';
+type Action = 'tab_open' | 'tab_focus' | 'tab_place' | 'tab_close' | 'tab_interrupt' | 'nav_worktree' | 'nav_focus' | 'nav_page' | 'settings_open' | 'ui_sidebar' | 'server_start' | 'server_stop';
 
 const ACTIONS: Record<Action, string> = {
   tab_open: 'open a NEW empty tab (a shell or a coding agent) next to or below a tab, with nothing to run or say in it',
@@ -31,7 +31,6 @@ const ACTIONS: Record<Action, string> = {
   tab_interrupt: 'press Ctrl-C in an existing tab (stop what runs in it) without closing it',
   nav_worktree: 'open / switch to a worktree',
   nav_focus: 'switch to a Focus (saved group of worktrees)',
-  nav_line: 'open the intercom Line view (all agents, who is talking)',
   nav_page: 'open one of these app pages by its page name: home, the all-worktrees list, code reviews, usage. NOT a worktree (a worktree name like main or master is nav_worktree)',
   settings_open: 'open Settings (or one section of it), without changing anything',
   ui_sidebar: 'show / open, or hide / close / collapse the left sidebar',
@@ -43,7 +42,7 @@ const ACTIONS: Record<Action, string> = {
 const NEEDS: Record<Action, ('tab' | 'anchor' | 'split' | 'worktree' | 'focus' | 'mode' | 'page' | 'section' | 'show')[]> = {
   tab_open: ['mode'],
   tab_focus: ['tab'], tab_place: ['tab', 'anchor', 'split'], tab_close: ['tab'], tab_interrupt: ['tab'],
-  nav_worktree: ['worktree'], nav_focus: ['focus'], nav_line: [], nav_page: ['page'], settings_open: ['section'], ui_sidebar: ['show'], server_start: [], server_stop: [],
+  nav_worktree: ['worktree'], nav_focus: ['focus'], nav_page: ['page'], settings_open: ['section'], ui_sidebar: ['show'], server_start: [], server_stop: [],
 };
 
 export type DecisionsFetch = (key: string, body: unknown, signal: AbortSignal) => Promise<unknown>;
@@ -111,6 +110,9 @@ export function createJevRouter(deps: { fetch?: DecisionsFetch; readKey?: () => 
         questions.anchor = { type: 'choice', instructions: 'For a move or a new tab: which tab should it go next to / below?', criteria: { ...choices(tabs), ...thisTab, [NONE]: 'not said' } };
       }
       if (worktrees.length > 0) questions.worktree = { type: 'choice', instructions: 'Which worktree (by name, branch or ticket)? For a dev server, the worktree it belongs to.', criteria: choices(worktrees, { [NONE]: 'none named (the current one)' }) };
+      // Which run command, when the worktree has more than one (the first is the default).
+      const runs = (context.runCommands ?? []).map((r) => r.name);
+      if (runs.length > 1) questions.run = { type: 'choice', instructions: 'For starting or stopping: which run command (by name)? None named = the default dev server.', criteria: choices(runs, { [NONE]: 'none named (the default)' }) };
       if (focuses.length > 0) questions.focus = { type: 'choice', instructions: 'Which Focus?', criteria: choices(focuses, { [NONE]: 'no Focus' }) };
 
       const state = {
@@ -183,6 +185,11 @@ export function createJevRouter(deps: { fetch?: DecisionsFetch; readKey?: () => 
           if (worktree === undefined) return decline(`${action}: worktree unsure`);
           if (worktree === null && !context.worktree) return decline(`${action}: no worktree on the home screen`);
           args.worktree = worktree;
+        }
+        if (action === 'server_start' || action === 'server_stop') {
+          const run = optional('run');
+          if (run === undefined) return decline(`${action}: run command unsure`);
+          args.run = run;
         }
         if (action === 'tab_open') {
           // Placement is optional for a new tab: unsaid = the default (right of the focus).

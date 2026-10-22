@@ -20,10 +20,19 @@ async function readSettings(): Promise<any> {
 }
 
 describe('installClaudeHooks', () => {
-  it('creates settings.local.json with the four status hooks', async () => {
+  it('creates settings.local.json with the four status hooks and mission control\'s', async () => {
     await installClaudeHooks(tmp);
     const s = await readSettings();
-    expect(Object.keys(s.hooks).sort()).toEqual(['Notification', 'SessionStart', 'Stop', 'UserPromptSubmit']);
+    expect(Object.keys(s.hooks).sort()).toEqual(['Notification', 'PermissionRequest', 'PreToolUse', 'SessionStart', 'Stop', 'UserPromptSubmit']);
+    // Mission control: approvals wait for the box (Claude's dialog shows meanwhile); the live line runs in the background.
+    expect(s.hooks.PermissionRequest).toEqual([{ hooks: [{ type: 'command', command: expect.stringContaining('claude-agent-hook.mjs" permission'), timeout: 600 }] }]);
+    expect(s.hooks.PreToolUse).toEqual([{ hooks: [{ type: 'command', command: expect.stringContaining('claude-agent-hook.mjs" tool'), async: true }] }]);
+    expect(s.hooks.Stop[1]).toEqual({ hooks: [{ type: 'command', command: expect.stringContaining('claude-agent-hook.mjs" stop'), async: true }] });
+    for (const g of [s.hooks.PermissionRequest[0], s.hooks.PreToolUse[0], s.hooks.Stop[1]]) {
+      const cmd = g.hooks[0].command as string;
+      expect(cmd).toContain('${STRADO_CLAUDE_HOOK%/*}'); // found beside the status hook: no path baked in
+      expect(cmd).not.toMatch(/\/Users|\/private|\b7777\b/);
+    }
     const stopCmd = s.hooks.Stop[0].hooks[0].command;
     expect(stopCmd).toContain('$STRADO_CLAUDE_HOOK');
     expect(stopCmd).toContain(' idle ');
@@ -107,16 +116,31 @@ describe('installClaudeHooks', () => {
     const stopCmds = s.hooks.Stop.flatMap((g: any) => g.hooks.map((h: any) => h.command));
     expect(stopCmds.some((c: string) => c.includes('/old/path/'))).toBe(false); // stale dropped
     expect(stopCmds).toContain('echo keep-me'); // foreign kept
-    expect(stopCmds.filter((c: string) => c.includes('STRADO_CLAUDE_HOOK'))).toHaveLength(1);
+    expect(stopCmds.filter((c: string) => c.includes('STRADO_CLAUDE_HOOK'))).toHaveLength(2); // status + mission control
   });
 
   it('is idempotent — re-install does not duplicate entries', async () => {
     await installClaudeHooks(tmp);
     await installClaudeHooks(tmp);
     const s = await readSettings();
-    expect(s.hooks.Stop).toHaveLength(1);
+    expect(s.hooks.Stop).toHaveLength(2);
     expect(s.hooks.UserPromptSubmit).toHaveLength(1);
     expect(s.hooks.Notification).toHaveLength(1);
+    expect(s.hooks.PermissionRequest).toHaveLength(1);
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+  });
+
+  it('an older form of a mission-control hook is replaced, not duplicated', async () => {
+    await fs.mkdir(path.join(tmp, '.claude'));
+    await fs.writeFile(path.join(tmp, '.claude', 'settings.local.json'), JSON.stringify({ hooks: {
+      PermissionRequest: [{ hooks: [{ type: 'command', command: 'node "$STRADO_CLAUDE_HOOK" old', timeout: 30 }] }, { hooks: [{ type: 'command', command: 'echo mine' }] }],
+    } }));
+    await installClaudeHooks(tmp);
+    const s = await readSettings();
+    const cmds = s.hooks.PermissionRequest.flatMap((g: any) => g.hooks.map((h: any) => h.command));
+    expect(cmds).toHaveLength(2);
+    expect(cmds).toContain('echo mine');
+    expect(cmds.some((c: string) => c.includes('claude-agent-hook.mjs" permission'))).toBe(true);
   });
 
   it('replaces a malformed array hooks value with an object', async () => {

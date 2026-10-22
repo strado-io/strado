@@ -18,9 +18,8 @@ vi.mock('../hooks/useWorkspace', () => ({
 // these tests don't exercise Intercom, so stub a quiet, "loaded" context.
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: [], tasks: [], peers: [], loaded: true, error: null,
-    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
-    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+    peers: [], loaded: true, error: null,
+    refresh: vi.fn(),
   }),
 }));
 // An in-memory Focus store standing in for the server's, so opens can be
@@ -61,10 +60,10 @@ vi.mock('../api', () => ({
     ]), start: vi.fn().mockResolvedValue({ status: 'starting' }), stop: vi.fn().mockResolvedValue({ status: 'stopping' }) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     intercom: {
-      stations: vi.fn().mockResolvedValue([
+      stations: vi.fn().mockResolvedValue({ stations: [
         { agentId: 'claude-1@app', alias: null, name: 'claude-1', mode: 'claude', worktreePath: '/wt/FD-9', worktreeName: 'FD-9', sessionId: '1',
           lifecycle: 'idle', live: true, needsYou: true, calls: [{ id: 'e1', title: 'Which database?', body: '', createdAt: 1 }], lastActivityAt: 1 },
-      ]),
+      ], orphanCalls: [] }),
       escalations: { resolve: vi.fn().mockResolvedValue({}), dismiss: vi.fn().mockResolvedValue({}) },
     },
     tickets: {
@@ -186,12 +185,11 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toHaveAttribute('placeholder', 'Tell Strado what to do…  ⌘K');
   });
 
-  it('home: "All worktrees →" shows the full list; "⚑ N waiting" opens the intercom questions', async () => {
+  it('home: "All worktrees →" shows the full list; "⚑ N waiting" selects the agent that needs you', async () => {
     renderDashboard();
     await screen.findByRole('heading', { name: 'What do you want to do?' });
     fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
-    expect(await screen.findByRole('dialog', { name: 'Intercom' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(await screen.findByTestId('agent-line')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
   });
@@ -223,16 +221,13 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toBeInTheDocument();
   });
 
-  it('home has no ⎇ chip (Recent and "All worktrees →" list them); on the Worktrees page the Dock\'s chip lists them in its box', async () => {
+  it('home has no Dock location (Recent and "All worktrees →" list them); on the Worktrees page the Dock names none, as a label', async () => {
     renderDashboard();
     await home();
-    expect(screen.queryByRole('button', { name: 'No worktree open — switch' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('No worktree open')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
-    fireEvent.click(await within(await screen.findByTestId('dock')).findByRole('button', { name: 'No worktree open — switch' }));
-    const pop = screen.getByTestId('command-bar-popover');
-    expect(pop).toHaveAttribute('data-placement', 'above');
-    fireEvent.click(within(pop).getByText('FD-9'));
-    expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
+    const where = await within(await screen.findByTestId('dock')).findByLabelText('No worktree open');
+    expect(where.tagName).toBe('SPAN');
   });
 
   it('home shows the sidebar as the user left it (stored open stays open); ⌘B toggles it there and remembers', async () => {
@@ -292,17 +287,14 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 
-  it('the Dock follows the open worktree: its chip names it (with its project), the chip lists worktrees', async () => {
+  it('the Dock follows the open worktree: its location names it (with its project)', async () => {
     renderDashboard();
     await home();
     fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' })); // the Dock (home has none)
-    expect(await screen.findByRole('button', { name: 'No worktree open — switch' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('No worktree open')).toBeInTheDocument();
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
-    expect(screen.getByRole('button', { name: 'Worktree: Repo One / FD-9 · fd-9 — switch' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree: Repo One / FD-9 · fd-9 — switch' }));
-    expect(document.activeElement).toBe(screen.getByLabelText('Global search'));
-    expect(within(screen.getByTestId('command-bar-popover')).getByText('FD-9')).toBeInTheDocument();
+    expect(screen.getByLabelText('Worktree: Repo One / FD-9 · fd-9')).toBeInTheDocument();
   });
 
   it('shows the Worktrees page and no hub initially', async () => {
@@ -348,8 +340,8 @@ describe('Dashboard inline hub', () => {
     await home();
     fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
-    // Intercom is a workspace action on the Worktrees page, even with no running servers.
-    expect(screen.getByRole('button', { name: 'Open intercom' })).toBeInTheDocument();
+    // No intercom drawer: Mission Control (the strip and the box) is where an agent asks for you.
+    expect(screen.queryByRole('button', { name: /open intercom/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
     expect(await screen.findByRole('searchbox', { name: 'Search code reviews' })).toBeInTheDocument();

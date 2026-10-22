@@ -8,9 +8,13 @@ import { jarvisFetch } from './hubToken';
 import type { ParseContext, TabRef } from './types';
 
 /** A worktree's package.json scripts as parser context ("run dev" → `pnpm run dev`). */
-export function scriptsContext(s: JarvisScripts | null): Pick<ParseContext, 'packageScripts' | 'packageManager'> {
+export function scriptsContext(s: JarvisScripts | null): Pick<ParseContext, 'packageScripts' | 'packageManager' | 'runCommands'> {
   if (!s) return { packageScripts: {} };
-  return { packageManager: s.packageManager, packageScripts: Object.fromEntries(s.scripts.map((n) => [n, `${s.packageManager} run ${n}`])) };
+  return {
+    packageManager: s.packageManager,
+    packageScripts: Object.fromEntries(s.scripts.map((n) => [n, `${s.packageManager} run ${n}`])),
+    ...(s.runCommands ? { runCommands: s.runCommands } : {}),
+  };
 }
 
 type JarvisServer = JarvisServerPort & {
@@ -83,9 +87,11 @@ export function createJarvisServerPort(wsId: string): JarvisServer {
     },
     answerCall: (callId, text) => api.intercom.escalations.resolve(wsId, callId, text),
     dismissCall: (callId) => api.intercom.escalations.dismiss(wsId, callId),
+    interruptAgent: (agentId) => api.intercom.interrupt(wsId, agentId),
     // The worktree's configured dev command; P0 has no per-call override.
-    startServer: (worktreePath) => api.worktrees.start(wsId, worktreePath),
-    stopServer: (worktreePath) => api.worktrees.stop(wsId, worktreePath),
+    // The default run: no runId at all, exactly as before run commands.
+    startServer: (worktreePath, _command, _script, run) => (run ? api.worktrees.start(wsId, worktreePath, run) : api.worktrees.start(wsId, worktreePath)),
+    stopServer: (worktreePath, run) => (run ? api.worktrees.stop(wsId, worktreePath, run) : api.worktrees.stop(wsId, worktreePath)),
   };
 }
 

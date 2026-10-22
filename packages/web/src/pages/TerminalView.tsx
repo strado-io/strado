@@ -1,4 +1,15 @@
 import { OpenSidebarButton } from '../components/SidebarToggle';
+import { isRunTab, runIdOfTab, runTabId } from '../lib/runTab';
+import { RunButton, type RunEntry, type RunStatus } from '../components/runCommands/RunButton';
+import { RunCommandsDialog, runCommandsError } from '../components/runCommands/RunCommandsDialog';
+/** A run tab's label: "run" for the default command's, "run: <name>" for another's; null for any other tab. */
+function runTabLabel(g: Pick<Group, 'runNames'>, id: string): string | null {
+  const runId = runIdOfTab(id);
+  if (runId === null) return null;
+  return runId ? `run: ${g.runNames?.[runId] ?? runId}` : 'run';
+}
+/** Process states in which the run tab is restored: live, or crashed (its output one click away). */
+const RUN_TAB_STATES = new Set(['starting', 'running', 'stopping', 'crashed']);
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -21,7 +32,6 @@ import {
   rememberBrowserUrl,
 } from '../hooks/browserTabs';
 import { DiffView } from './DiffView';
-import { LogPanel } from '../components/LogPanel';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
 import { formatActiveTime } from '../components/WorktreeRow';
@@ -29,7 +39,7 @@ import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
   CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, OpencodeIcon, PiIcon,
-  LogsIcon, PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
+  PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { useTickets, ticketRef } from '../hooks/tickets';
@@ -77,6 +87,8 @@ function sameTab(a: { path: string; mode: string; id: string; remote?: { runnerI
 // ("repo | worktree"), sub tabs for that group's sessions.
 type Group = {
   path: string;
+  /** Run tabs' command names, by runId (the default's tab is just "run"). */
+  runNames?: Record<string, string>;
   repoName: string;
   label: string;
   claudeOpen: boolean;
@@ -155,8 +167,10 @@ const AGENT_ICON: Record<string, string> = {
 // refuse sign-in in previews (sniffing the UA here broke the Browser tab).
 const isElectron = typeof window !== 'undefined' && !!window.strado;
 
+/** Numbered sessions in order; a named one (the run tab) after them. */
 function sortIds(ids: Iterable<string>): string[] {
-  return [...new Set(ids)].sort((a, b) => Number(a) - Number(b));
+  const n = (x: string) => (/^\d+$/.test(x) ? Number(x) : Infinity);
+  return [...new Set(ids)].sort((a, b) => n(a) - n(b) || a.localeCompare(b));
 }
 
 function rowLabel(w: Pick<Worktree, 'path' | 'branch' | 'meta'>): string {
@@ -245,7 +259,7 @@ function groupTabs(
       const Icon = hosted ? SHELL_HOST_ICON[hosted.mode] : ShellIcon;
       return {
         tab: { path: g.path, mode: 'shell' as const, id },
-        label: shellNames[shellNameKey(g.path, id)] ?? (id === '1' ? 'Shell' : `Shell ${id}`),
+        label: shellNames[shellNameKey(g.path, id)] ?? runTabLabel(g, id) ?? (id === '1' ? 'Shell' : `Shell ${id}`),
         icon: <Icon className={hosted ? AGENT_ICON[hosted.status] : IDLE_ICON} />,
         // the swapped icon needs a name on hover, or a Codex-hosted shell just
         // looks like a mislabelled Codex tab
@@ -750,10 +764,30 @@ export function TerminalView({
       detectedUrl: worktree.process?.detectedUrl,
       proxyUrl: worktree.process?.proxyUrl,
       exitCode: worktree.process?.exitCode,
+      tab: worktree.process?.tab ?? null,
     },
   }));
+  // The run tab comes back (after a reload, or a Run from elsewhere) once per
+  // worktree while the server has one live or crashed; a tab the user closed
+  // stays closed until the next Run.
+  // The other run commands' processes (not the default's: that is `procs`), by worktree then runId.
+  const [runs, setRuns] = useState<Record<string, Record<string, ProcState & { name?: string }>>>({});
+  const runTabShownRef = useRef(new Set<string>());
+  const runShownKey = (path: string, runId: string) => `${path}\0${runId}`;
+  useEffect(() => {
+    const restore = (path: string, runId: string, p: { tab?: 'run' | null; status: string; name?: string }) => {
+      const key = runShownKey(path, runId);
+      if (p.tab !== 'run' || !RUN_TAB_STATES.has(p.status) || runTabShownRef.current.has(key)) return;
+      if (!groups.some((g) => g.path === path)) return;
+      runTabShownRef.current.add(key);
+      addRunTab(path, runId || undefined, p.name);
+    };
+    for (const [path, p] of Object.entries(procs)) restore(path, '', p);
+    for (const [path, byId] of Object.entries(runs)) for (const [runId, p] of Object.entries(byId)) restore(path, runId, p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [procs, runs, groups]);
 
-  // Repo configs (env profiles) and the user's in-panel profile switches.
+  // Repo configs (run commands).
   const [reposById, setReposById] = useState<Record<string, RepoConfig>>({});
 
   // A dev server on a runner binds the RUNNER's loopback, so it is reachable
@@ -770,7 +804,8 @@ export function TerminalView({
       null
     : null;
   const remoteForward = useRemoteForward(remote?.runnerId ?? null, remotePreviewPort);
-  const [envSel, setEnvSel] = useState<Record<string, string>>({});
+  // The run-command editor, for a repo ("+ Add run command…").
+  const [runEditor, setRunEditor] = useState<{ repoId: string } | null>(null);
   // Why the last Run/Stop click did nothing — the request failed (no start
   // command, say). Per worktree; cleared by the next click or by the server
   // reporting a start.
@@ -1008,9 +1043,6 @@ export function TerminalView({
   const [showDiff, setShowDiff] = useState(false);
   const showDiffRef = useRef(false);
   showDiffRef.current = showDiff;
-  const [showLogs, setShowLogs] = useState(false);
-  const showLogsRef = useRef(false);
-  showLogsRef.current = showLogs;
   // Custom shell-tab names (double-click a shell tab to rename; shell only —
   // agent/vscode/browser tabs keep their fixed labels). `renaming` holds the
   // tab being edited plus the draft text for the inline input.
@@ -1087,6 +1119,14 @@ export function TerminalView({
           if (row.hasOpencodeSession) confirmedRef.current!.opencode.add(row.path);
           if (row.hasPiSession) confirmedRef.current!.pi.add(row.path);
         }
+        setRuns((prev) => {
+          const next = { ...prev };
+          for (const row of rows) {
+            const others = (row.runs ?? []).filter((r) => r.runId && r.runId !== row.process?.runId);
+            if (others.length > 0) next[row.path] = Object.fromEntries(others.map((r) => [r.runId!, { status: r.status, port: r.port, detectedUrl: r.detectedUrl, exitCode: r.exitCode, tab: r.tab ?? null, name: r.name }]));
+          }
+          return next;
+        });
         setProcs((prev) => {
           const next = { ...prev };
           for (const row of rows) {
@@ -1096,6 +1136,7 @@ export function TerminalView({
               detectedUrl: row.process?.detectedUrl,
               proxyUrl: row.process?.proxyUrl,
               exitCode: row.process?.exitCode,
+              tab: row.process?.tab ?? null,
             };
           }
           return next;
@@ -1220,7 +1261,12 @@ export function TerminalView({
     if (remote) return;
     return subscribeWorktrees((evt) => {
       const path = evt.data.path;
-      const proc = evt.data.process as { status?: string; port?: number | null; detectedUrl?: string | null; proxyUrl?: string | null; exitCode?: number | null } | undefined;
+      const proc = evt.data.process as { status?: string; port?: number | null; detectedUrl?: string | null; proxyUrl?: string | null; exitCode?: number | null; tab?: 'run' | null } | undefined;
+      // Another run command's process (the default's comes as `process`).
+      const run = (evt.data as { run?: ProcState & { runId?: string; name?: string } }).run;
+      if (run?.runId) {
+        setRuns((prev) => ({ ...prev, [path]: { ...prev[path], [run.runId!]: { ...prev[path]?.[run.runId!], ...run } } }));
+      }
       if (proc) {
         setProcs((prev) => ({
           ...prev,
@@ -1370,10 +1416,9 @@ export function TerminalView({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (showDiffRef.current) return;
-      // Esc peels popovers first (add-session menu), then the logs drawer.
-      // The hub itself is left via Back / sidebar now, not Esc.
+      // Esc peels popovers (the add-session menu). The hub itself is left via
+      // Back / sidebar, not Esc.
       if (addMenuRef.current) setAddMenu(null);
-      else if (showLogsRef.current) setShowLogs(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -2210,6 +2255,23 @@ export function TerminalView({
     const tab = allocSession('shell');
     if (tab) activateTab(tab);
   };
+
+  // The run tab: the shell session the dev server runs in. Open it (as a
+  // local tab until the server lists it) and focus it, reusing it if open.
+  // A run command's tab (`runId` absent = the default's), listed until the user closes it.
+  const addRunTab = (path: string, runId?: string, name?: string) => {
+    const id = runTabId(runId);
+    setGroups((prev) => prev.map((x) => {
+      if (x.path !== path) return x;
+      const runNames = runId && name ? { ...x.runNames, [runId]: name } : x.runNames;
+      return x.localShellIds.includes(id) ? { ...x, runNames } : { ...x, runNames, localShellIds: sortIds([...x.localShellIds, id]) };
+    }));
+    return id;
+  };
+  const openRunTab = (path: string, runId?: string, name?: string) => {
+    runTabShownRef.current.add(runShownKey(path, runId ?? ''));
+    activateTab({ path, mode: 'shell', id: addRunTab(path, runId, name) });
+  };
   addShellRef.current = addShell;
 
   // "Browser" in the new-session menu: open the primary preview if it isn't
@@ -2571,7 +2633,8 @@ export function TerminalView({
   // command, or an agent that's actively working. Confirmed close falls
   // through to closeTab.
   const requestCloseTab = async (tab: Tab) => {
-    if (tab.mode === 'shell') {
+    // The run tab only detaches (the dev server keeps running): nothing to ask.
+    if (tab.mode === 'shell' && !isRunTab(tab.id)) {
       let busy = false;
       try {
         busy = tab.remote ? false : (await api.worktrees.sessionBusy(localWsId, tab.path, 'shell', tab.id)).busy;
@@ -2655,7 +2718,11 @@ export function TerminalView({
     }
     // VS Code / Browser / Knowledge Base are client-side embed tabs — nothing
     // to kill server-side.
-    if (tab.mode !== 'vscode' && tab.mode !== 'browser' && tab.mode !== 'kb') {
+    // A run tab: its idle post-run shell ends; a live run only detaches (the
+    // server refuses with 409 'running' and the dev server keeps running).
+    const runTab = tab.mode === 'shell' && isRunTab(tab.id) && !tab.remote;
+    if (runTab) api.worktrees.closeRunTab(localWsId, tab.path, runIdOfTab(tab.id) || undefined).catch(() => undefined);
+    if (tab.mode !== 'vscode' && tab.mode !== 'browser' && tab.mode !== 'kb' && !runTab) {
       if (remote) {
         // The session lives on the runner — the local server has never heard
         // of this path. Suppress the id BEFORE the request so a poll snapshot
@@ -2961,17 +3028,9 @@ export function TerminalView({
           </button>
           </div>
           {(() => {
+            // The default run command's process (the header's main Run).
             const p = procs[active.path] ?? { status: 'idle' as const };
-            // starting counts as busy so a start that hangs can still be cancelled;
-            // stopping does not — a second Stop has nothing to add.
-            const busy = p.status === 'running' || p.status === 'starting';
-            const stopping = p.status === 'stopping';
             const crashed = p.status === 'crashed';
-            const runLabel = p.status === 'starting' ? 'Starting…'
-              : p.status === 'running' ? (p.port ? `Stop :${p.port}` : 'Stop')
-                : stopping ? 'Stopping…'
-                  : crashed ? 'Crashed'
-                    : 'Run';
             const runNote = runError?.path === active.path
               ? runError.message
               : crashed
@@ -2991,7 +3050,14 @@ export function TerminalView({
               : p.proxyUrl ?? p.detectedUrl ?? (p.port ? `port ${p.port}` : '');
             const row = rowsRef.current.get(active.path) ?? (active.path === worktree.path ? worktree : undefined);
             const repo = row?.repoId ? reposById[row.repoId] : undefined;
-            const profiles = repo?.envProfiles ?? [];
+            // The repo's run commands (the first is the default; its state is `p`), else one unnamed default.
+            const commands = repo?.runCommands ?? [];
+            const runEntries: RunEntry[] = commands.length > 0
+              ? commands.map((c, i) => {
+                const st = i === 0 ? p : runs[active.path]?.[c.id];
+                return { id: c.id, name: c.name, status: (st?.status ?? 'idle') as RunStatus, port: st?.port ?? null };
+              })
+              : [{ id: '', name: '', status: p.status as RunStatus, port: p.port ?? null }];
             const jiraIssue = row?.meta?.ticketId ? tickets.issues[ticketRef(row.meta.ticketProvider, row.meta.ticketId)] : undefined;
             const spent = formatActiveTime(row?.activitySeconds);
             const origEstimate = jiraIssue?.estimate && !/^0[mhd]$/.test(jiraIssue.estimate) ? jiraIssue.estimate : null;
@@ -3027,67 +3093,44 @@ export function TerminalView({
                     )}
                   </span>
                 )}
-                {profiles.length > 0 && (
-                  <select
-                    value={
-                      envSel[active.path] ??
-                      row?.meta?.activeEnvProfile ??
-                      repo?.defaultEnvProfile ??
-                      profiles[0]?.name ??
-                      ''
-                    }
-                    onChange={(e) => {
-                      const profile = e.target.value;
-                      if (busy && !confirm(`Switch env to "${profile}"? This will restart the running process.`)) {
-                        return;
+                <RunButton
+                  entries={runEntries}
+                  defaultId={runEntries[0]?.id ?? null}
+                  menu={!remote}
+                  detail={detail}
+                  onStart={(id) => {
+                    const path = active.path;
+                    const cmd = runEntries.find((x) => x.id === id);
+                    const runId = id === runEntries[0]?.id ? undefined : id;
+                    setRunError((cur) => (cur?.path === path ? null : cur));
+                    void (async () => {
+                      try {
+                        try {
+                          await (runId ? api.worktrees.start(localWsId, path, runId) : api.worktrees.start(localWsId, path));
+                        } catch (err) {
+                          // Its run tab is a shell again and the user is running something there: ask.
+                          if ((err as { details?: { reason?: string } }).details?.reason !== 'run_tab_busy') throw err;
+                          if (!confirm('The run tab is running something. Stop it and run?')) return;
+                          await api.worktrees.start(localWsId, path, runId, { force: true });
+                        }
+                        // A start runs in its run tab: bring it up once the server has made it.
+                        if (!remote) openRunTab(path, runId, cmd?.name);
+                      } catch (err) {
+                        // SSE carries the process states; a refused request has no
+                        // SSE and would otherwise be a click that did nothing.
+                        setRunError({ path, message: (err as Error).message || 'request failed' });
                       }
-                      setEnvSel((prev) => ({ ...prev, [active.path]: profile }));
-                      api.worktrees.setEnvProfile(localWsId, active.path, profile).catch(() => undefined);
-                    }}
-                    title="Env profile (switching restarts the running process)"
-                    aria-label="Env profile"
-                    className="h-[26px] shrink-0 self-start rounded border border-zinc-800 bg-zinc-950 px-1.5 text-[11px] uppercase tracking-wide text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
-                  >
-                    {profiles.map((pr) => (
-                      <option key={pr.name} value={pr.name}>
-                        {pr.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
-                <button
-                  className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
-                    p.status === 'running'
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                      : p.status === 'starting'
-                        ? 'animate-pulse border-amber-500/30 bg-amber-500/10 text-amber-300'
-                        : stopping
-                          ? 'animate-pulse border-zinc-700 bg-zinc-900 text-zinc-400'
-                          : crashed
-                            ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
-                            : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
-                  }`}
-                  disabled={stopping}
-                  onClick={() => {
-                    if (stopping) return;
+                    })();
+                  }}
+                  onStop={(id) => {
                     const path = active.path;
                     setRunError((cur) => (cur?.path === path ? null : cur));
-                    const call = busy
-                      ? api.worktrees.stop(localWsId, path)
-                      : api.worktrees.start(localWsId, path);
-                    // SSE carries the process states; a refused request has no
-                    // SSE and would otherwise be a click that did nothing.
-                    call.catch((err: unknown) => {
-                      setRunError({ path, message: (err as Error).message || 'request failed' });
-                    });
+                    (id === runEntries[0]?.id ? api.worktrees.stop(localWsId, path) : api.worktrees.stop(localWsId, path, id))
+                      .catch((err: unknown) => setRunError({ path, message: (err as Error).message || 'request failed' }));
                   }}
-                  title={`${busy || stopping ? 'Stop' : 'Start'} dev server — ${p.status}${detail ? ` (${detail})` : ''}`}
-                  aria-label={busy || stopping ? 'Stop dev server' : 'Start dev server'}
-                >
-                  {busy || stopping ? <StopIcon /> : <PlayIcon />}
-                  <span>{runLabel}</span>
-                </button>
+                  onOpenTab={(id) => openRunTab(active.path, id === runEntries[0]?.id ? undefined : id, runEntries.find((x) => x.id === id)?.name)}
+                  onAdd={() => { if (repo) setRunEditor({ repoId: repo.id }); else setRunError({ path: active.path, message: 'This worktree has no repo to add run commands to' }); }}
+                />
                 {runNote && (
                   <span
                     role="alert"
@@ -3098,35 +3141,20 @@ export function TerminalView({
                     {crashed && !remote && (
                       <button
                         type="button"
-                        onClick={() => setShowLogs(true)}
+                        onClick={() => openRunTab(active.path)}
                         className="shrink-0 rounded border border-red-500/30 px-1 text-[10px] text-red-200 hover:bg-red-500/10"
-                      >Logs</button>
+                      >Open run tab</button>
                     )}
                   </span>
                 )}
               </>
             );
           })()}
-          {/* Logs, diff and the changes rail all read LOCAL git and process
-              state. For a worktree on a runner they would silently show
+          {/* Diff and the changes rail read LOCAL git state. For a worktree on a runner they would silently show
               nothing, so they are absent rather than inert — the same rule the
               capability flag applies to VS Code and Browser. */}
           {!remote && (
             <>
-              <button
-                className={`flex shrink-0 items-center gap-1.5 self-start rounded-md border px-2 py-1 text-[11px] font-medium transition ${
-                  showLogs
-                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-200'
-                    : 'border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100'
-                }`}
-                onClick={() => setShowLogs((v) => !v)}
-                title="Logs"
-                aria-label="Logs"
-                aria-pressed={showLogs}
-              >
-                <LogsIcon />
-                <span>Logs</span>
-              </button>
               <button
                 className={`flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900 ${
                   showDiff ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
@@ -3143,6 +3171,8 @@ export function TerminalView({
               </button>
             </>
           )}
+          {/* Usage last: Run, Changes, then the quota dial at the far right. */}
+          <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
           {/* Which machine, always visible. Without it a remote hub is
               indistinguishable from a local one. */}
           {remote && (
@@ -3161,7 +3191,7 @@ export function TerminalView({
             <div
               role="menu"
               aria-label="DevTools dock"
-              className="fixed z-40 w-44 rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+              className="surface-pop fixed z-40 w-44 rounded-lg p-1"
               style={{ left: dtMenu.x, top: dtMenu.y }}
             >
               {([
@@ -3226,7 +3256,7 @@ export function TerminalView({
           if (cards.length === 0) return null;
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="flex max-w-[92vw] items-stretch gap-3 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/95 p-4 shadow-2xl">
+              <div className="surface-pop flex max-w-[92vw] items-stretch gap-3 overflow-x-auto rounded-xl p-4">
                 {cards.map((c, i) => (
                   <div
                     key={c.key}
@@ -3264,7 +3294,7 @@ export function TerminalView({
               <div
                 role="menu"
                 aria-label="Browser actions"
-                className="fixed z-40 w-52 rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+                className="surface-pop fixed z-40 w-52 rounded-lg p-1"
                 style={{ left: bwMenu.x, top: bwMenu.y }}
               >
                 <button
@@ -3350,7 +3380,7 @@ export function TerminalView({
             <div
               role="menu"
               aria-label="New session"
-              className="fixed z-40 w-44 rounded-lg border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+              className="surface-pop fixed z-40 w-44 rounded-lg p-1"
               style={{ left: addMenu.x, top: addMenu.y }}
             >
               {([
@@ -3491,7 +3521,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showLogs || showDiff);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showDiff);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3728,20 +3758,22 @@ export function TerminalView({
         </div>
         </div>
       </div>
-      {showLogs && (
-        // stopPropagation: clicks in the drawer must not bubble to the
-        // terminal overlay's onClick and close the panel.
-        <div onClick={(e) => e.stopPropagation()}>
-          <LogPanel
-            worktree={
-              rowsRef.current.get(active.path) ??
-              (active.path === worktree.path
-                ? worktree
-                : ({ path: active.path, process: {} } as unknown as Worktree))
+      {runEditor && reposById[runEditor.repoId] && (
+        <RunCommandsDialog
+          repoName={reposById[runEditor.repoId]!.name}
+          commands={reposById[runEditor.repoId]!.runCommands ?? []}
+          startAdding
+          onClose={() => setRunEditor(null)}
+          onSave={async (list) => {
+            const repoId = runEditor.repoId;
+            try {
+              const saved = await api.repos.setRunCommands(localWsId, repoId, list);
+              setReposById((prev) => (prev[repoId] ? { ...prev, [repoId]: { ...prev[repoId]!, runCommands: saved } } : prev));
+            } catch (err) {
+              throw new Error(runCommandsError(err));
             }
-            onClose={() => setShowLogs(false)}
-          />
-        </div>
+          }}
+        />
       )}
       {showDiff && (
         // stopPropagation: a click on the diff backdrop must not bubble to the

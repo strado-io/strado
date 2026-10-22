@@ -32,7 +32,6 @@ const detected = {
   startCommand: 'cargo run',
   defaultPort: 8080,
   editor: 'code',
-  envProfiles: [],
   warnings: ['a warning that should not block registration'],
 };
 

@@ -95,7 +95,6 @@ const base = {
   onAddRepo: vi.fn(),
   onOpenWorktree: vi.fn(),
   onNewWorktree: vi.fn(),
-  onSearch: vi.fn(),
   onWorktreeSettings: vi.fn(),
   onDeleteWorktree: vi.fn(),
   activeWorktreePath: null,
@@ -187,7 +186,7 @@ describe('Sidebar tree', () => {
     expect(screen.queryByRole('status', { name: 'agent working' })).toBeNull();
   });
 
-  it('marks worktrees that own sessions and softly fills the selected row', () => {
+  it('cards show no session icons; the selected row is softly filled', () => {
     const withSession = { ...wt('/r1/FD-1', 'FD-1'), hasShellSession: true };
     const withoutSession = wt('/r1/FD-2', 'FD-2');
     wrap(
@@ -195,7 +194,7 @@ describe('Sidebar tree', () => {
         activeWorktreePath={withSession.path} />,
     );
 
-    expect(screen.getByTestId(`session-stack-${withSession.path}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`session-stack-${withSession.path}`)).toBeNull();
     expect(screen.queryByTestId(`session-stack-${withoutSession.path}`)).toBeNull();
     const selectedRow = screen.getByRole('button', { name: 'FD-1' }).closest('.group');
     expect(selectedRow).toHaveClass('bg-zinc-800/80');
@@ -283,28 +282,6 @@ describe('Sidebar tree', () => {
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();
   });
 
-  it('shows at most three overlapping session avatars plus a count, and lists every session on hover', () => {
-    const busy = {
-      ...wt('/r1/FD-1', 'FD-1', 'idle', { additions: 4, deletions: 1, files: 2 }),
-      claudeSessions: ['1', '2'],
-      codexSessions: ['1'],
-      shellSessions: ['1', '2', '3'],
-    };
-    wrap(<Sidebar {...base} worktrees={[busy]} />);
-
-    const stack = screen.getByTestId(`session-stack-${busy.path}`);
-    // Three faces plus "+3": the name keeps the width the other faces took.
-    expect(stack.querySelectorAll('[data-session-avatar]')).toHaveLength(3);
-    expect(stack.querySelectorAll('[data-session-avatar]')[1]).toHaveClass('-ml-1', 'h-4', 'w-4', 'ring-1');
-    expect(stack.querySelector('[data-session-overflow]')).toHaveTextContent('+3');
-    expect(stack).toHaveAccessibleName('6 open sessions: Claude, Claude 2, Codex, Shell, Shell 2, Shell 3');
-    const diff = screen.getByTestId(`diff-${busy.path}`);
-    expect(diff.compareDocumentPosition(stack) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    fireEvent.mouseEnter(stack);
-    expect(screen.queryByRole('tooltip')).toBeNull();
-  });
-
   it('uses the merge icon for a merged PR', () => {
     const worktree = wt('/r1/FD-1', 'FD-1');
     vi.mocked(useMrSummaries).mockReturnValue(new Map([[
@@ -380,13 +357,11 @@ describe('Sidebar tree', () => {
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });
 
-  it('toolbar buttons search and start a worktree; Add repo lives in the blank-space menu', () => {
-    const onNewWorktree = vi.fn(); const onAddRepo = vi.fn(); const onSearch = vi.fn();
-    wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} onSearch={onSearch} />);
+  it('the toolbar button starts a worktree; Add repo lives in the blank-space menu', () => {
+    const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
+    wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
     fireEvent.click(activePane().getByRole('button', { name: 'New worktree' }));
     expect(onNewWorktree).toHaveBeenCalled();
-    fireEvent.click(activePane().getByRole('button', { name: 'Search' }));
-    expect(onSearch).toHaveBeenCalled();
     expect(activePane().queryByRole('button', { name: 'Add repo' })).toBeNull();
     fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
     fireEvent.click(screen.getByRole('button', { name: 'Add repo…' }));

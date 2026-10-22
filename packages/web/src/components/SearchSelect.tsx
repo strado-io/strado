@@ -63,7 +63,7 @@ export function SearchSelect({
         <span className="shrink-0 text-zinc-600">▾</span>
       </button>
       {open && (
-        <div className={`absolute z-20 w-64 overflow-hidden rounded-md border border-zinc-700 bg-zinc-900 shadow-xl ${align === 'right' ? 'right-0' : 'left-0'} ${side === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+        <div className={`surface-pop absolute z-20 w-64 overflow-hidden rounded-md ${align ==='right' ?'right-0' :'left-0'} ${side ==='top' ?'bottom-full mb-1' :'top-full mt-1'}`}>
           {searchable && (
             <input
               ref={inputRef}

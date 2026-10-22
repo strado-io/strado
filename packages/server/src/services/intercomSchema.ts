@@ -181,7 +181,6 @@ export const TaskListQuery = z.object({
   mine: z.enum(['1', '0']).optional(),
   limit: z.coerce.number().int().min(1).max(TASK_LIST_MAX).optional(),
 });
-export const TaskAssignBody = z.object({ agent: z.string().min(1).max(256) });
 
 export const EscalationStatus = z.enum(['open', 'resolved', 'dismissed']);
 export type EscalationStatus = z.infer<typeof EscalationStatus>;
@@ -202,10 +201,6 @@ export const EscalationCreateBody = z
 export type EscalationCreateBody = z.infer<typeof EscalationCreateBody>;
 export const EscalationResolveBody = z.object({
   resolution: z.string().min(1).superRefine(utf8Max(ESCALATION_BODY_MAX, 'resolution')),
-});
-export const EscalationListQuery = z.object({
-  status: EscalationStatus.optional(),
-  limit: z.coerce.number().int().min(1).max(ESCALATION_LIST_MAX).optional(),
 });
 
 // `strado` is a reserved name: no tab may take it as an alias and no route

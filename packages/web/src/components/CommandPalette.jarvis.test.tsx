@@ -94,7 +94,7 @@ function setup(over: Partial<JarvisPaletteProps> = {}) {
     interrupt: vi.fn(), close: vi.fn().mockResolvedValue({ ok: true }), message: vi.fn().mockResolvedValue({}), recap: vi.fn(),
     startServer: vi.fn(), stopServer: vi.fn(), answerCall: vi.fn(), dismissCall: vi.fn(),
   };
-  const nav = { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() };
+  const nav = { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() };
   const jarvis: JarvisPaletteProps = {
     wsId: 'default', parse: vi.fn(stubParse), context: vi.fn(ctx),
     ports: () => ({ hub, server, nav }), onRan: vi.fn(), onActed: vi.fn(), ...over,

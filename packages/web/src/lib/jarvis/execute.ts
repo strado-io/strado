@@ -30,22 +30,31 @@ export type JarvisServerPort = {
   message(agentId: string, text: string, opts?: { ask?: boolean }): Promise<unknown>;
   /** A short recap of what the agents are doing / have done, from their saved turns. */
   recap?(agents: string[] | 'all', question?: string | null): Promise<{ text: string }>;
-  startServer(worktreePath: string, command: string, script: string | null): Promise<unknown>;
-  stopServer(worktreePath: string): Promise<unknown>;
+  /** `run`: a run command (id or name); null = the default. */
+  startServer(worktreePath: string, command: string, script: string | null, run?: string | null): Promise<unknown>;
+  stopServer(worktreePath: string, run?: string | null): Promise<unknown>;
   /** A call to the human (an open escalation): answer it, or hang up. */
   answerCall(callId: string, text: string): Promise<unknown>;
   dismissCall(callId: string): Promise<unknown>;
+  /** Esc to an agent's tab, by agent id (Mission Control). */
+  interruptAgent?(agentId: string): Promise<unknown>;
 };
 /** How the server delivered a message to an agent, always through the
  * intercom: 'sent' (at rest, told it has mail just now) or 'queued' (busy,
  * reads it after its turn). Nothing is typed into its prompt. */
-export type MessageDelivery = { delivered: 'sent' | 'queued'; to: { agentId: string; alias: string | null } };
+export type MessageDelivery = {
+  delivered: 'sent' | 'queued'; to: { agentId: string; alias: string | null };
+  /** The message went as the reply to this open call of the agent's (the call is closed). */
+  answered?: { callId: string; title: string };
+};
 const asDelivery = (v: unknown): MessageDelivery | null => {
-  const d = v as { delivered?: unknown; to?: { agentId?: unknown; alias?: string | null } } | null;
+  const d = v as { delivered?: unknown; to?: { agentId?: unknown; alias?: string | null }; answered?: { callId?: unknown; title?: unknown } } | null;
   // An older server says 'typed' for what is now 'sent'.
   const delivered = d?.delivered === 'typed' ? 'sent' : d?.delivered;
   if (!d || (delivered !== 'sent' && delivered !== 'queued') || typeof d.to?.agentId !== 'string') return null;
-  return { delivered, to: { agentId: d.to.agentId, alias: d.to.alias ?? null } };
+  const a = d.answered;
+  const answered = typeof a?.callId === 'string' && typeof a.title === 'string' ? { answered: { callId: a.callId, title: a.title } } : {};
+  return { delivered, to: { agentId: d.to.agentId, alias: d.to.alias ?? null }, ...answered };
 };
 
 export type JarvisNavPort = {
@@ -53,8 +62,6 @@ export type JarvisNavPort = {
   focus(focusId: string): void;
   workspace(wsId: string): void;
   repo(repoPath: string): void;
-  /** The Line view: every station, the live feed, the board. */
-  line(): void;
   /** The Add repo dialog, prefilled with a path when one was typed. */
   addRepo(path: string | null): void;
   /** The New worktree dialog, in that repo when one was named. */
@@ -276,6 +283,15 @@ export async function runPlan(plan: { steps: Step[] }, ports: JarvisPorts): Prom
           if (d) messages.push(d);
           break;
         }
+        case 'agent.interrupt':
+          await (ports.server.interruptAgent ?? fail('Stopping agents is not available here'))(s.args.agentId);
+          break;
+        case 'agent.steer': {
+          await (ports.server.interruptAgent ?? fail('Stopping agents is not available here'))(s.args.agentId);
+          const d = asDelivery(await ports.server.message(s.args.agentId, s.args.text));
+          if (d) messages.push(d);
+          break;
+        }
         case 'agent.ask': {
           const raw = await ports.server.message(s.args.agentId, s.args.question, { ask: true });
           const d = asDelivery(raw);
@@ -294,16 +310,15 @@ export async function runPlan(plan: { steps: Step[] }, ports: JarvisPorts): Prom
           break;
         }
         case 'server.start':
-          await ports.server.startServer(s.args.worktreePath, s.args.command, s.args.script);
+          await ports.server.startServer(s.args.worktreePath, s.args.command, s.args.script, s.args.run ?? null);
           break;
         case 'server.stop':
-          await ports.server.stopServer(s.args.worktreePath);
+          await ports.server.stopServer(s.args.worktreePath, s.args.run ?? null);
           break;
         case 'nav.worktree': ports.nav.worktree(s.args.path); break;
         case 'nav.focus': ports.nav.focus(s.args.focusId); break;
         case 'nav.workspace': ports.nav.workspace(s.args.wsId); break;
         case 'nav.repo': ports.nav.repo(s.args.repoPath); break;
-        case 'nav.line': ports.nav.line(); break;
         case 'nav.page': (ports.app ?? fail('Pages are not available here')).page(s.args.page); break;
         case 'settings.open': (ports.app ?? fail('Settings are not available here')).settings(s.args.section); break;
         case 'ui.sidebar': {

@@ -28,8 +28,13 @@ export type JarvisContext = {
   focuses: { name: string; worktrees?: string[] }[];
   scripts: string[];
   packageManager: string;
+  /** The current worktree's run commands, by name; the first is the default (its Run). */
+  runCommands?: { name: string }[];
   agents: { name: string; mode: string; lifecycle: string }[];
-  calls?: { from: string; title: string }[];
+  /** `body`: what the agent asked (added by the server from the open call). */
+  calls?: { from: string; title: string; body?: string }[];
+  /** The task board's open and claimed tasks (added by the server). */
+  tasks?: { title: string; status: 'open' | 'claimed'; by?: string }[];
   repos?: { name: string }[];
 };
 
@@ -57,6 +62,9 @@ export const noTags = (s: string) => s.replace(/</g, '\\u003c').replace(/>/g, '\
 
 /** The API takes at most this many strict tools per request (a 400 otherwise). */
 export const MAX_STRICT_TOOLS = 20;
+/** …and at most this many parameters typed as a union (["string","null"] or
+ * anyOf) across those strict tools. Prefer a plain string with "" for none. */
+export const MAX_UNION_PARAMS = 16;
 
 /** One tool per model-capable registry action, plus `answer`. Order and bytes
  * are stable (cache). Strict (schema-guaranteed) for everything that runs,
@@ -99,7 +107,8 @@ export const JARVIS_SYSTEM = [
   'Turn the user\'s request into tool calls, one per step, in the order they should run. Every call is shown to the user as a preview and runs only when they confirm, so act on clear intent without asking.',
   'Rules:',
   '- Use only tab, worktree, Focus and agent names that appear in the context. Refer to the focused tab as "this" and to a tab opened earlier in the same request as "#N" (N = that step\'s 1-based position).',
-  '- "Run X" where X is a package script means the command "<packageManager> run X". Never invent shell commands the user did not ask for; never chain destructive commands.',
+  '- Run commands (context.runCommands, the current worktree\'s; the first is the default dev server): "run api", "start web", "stop api", "restart storybook" are server_start / server_stop with run = that name, even when a package script has the same name. "Start / stop the dev server" names none: run "" (the default).',
+  '- "Run X" where X is a package script (and not a run command) means the command "<packageManager> run X". Never invent shell commands the user did not ask for; never chain destructive commands.',
   '- Placement: "in a new tab", "as a tab", "new tab", "separate tab" mean split "tab" (its own tab, no split). Only "next to", "beside", "right", "below", "under" or "split" mean a split ("right" / "down").',
   '- "Show", "open", "go to" or "take me to" a page or Settings means navigate (nav_page / settings_open), even when the context could answer it in words. Answer in words only a real question ("which…", "how many…", "is…").',
   '- Focuses (saved groups of worktrees) are edited with focus_edit: create one (optionally with worktrees), rename it, delete it, or add/remove worktrees. "Switch to" a Focus is nav_focus.',
@@ -110,11 +119,13 @@ export const JARVIS_SYSTEM = [
   '- To give a running agent work, use agent_message. To start a new agent with a task, use tab_open with a prompt.',
   '- A question FOR an agent, to be answered by it ("ask claude-1 if the tests pass", "ask claude how it is doing", "codex, why did you change the router?"), is agent_ask. "Ask X to <do something>" is work: agent_message.',
   '- "What is X doing / working on", "what has X done", "did X finish Y", "what are the agents doing" is agent_recap (agent "all" for every agent): it reads saved turns and does not disturb the agent. Never agent_ask for these.',
+  '- "Stop / interrupt / cancel X" is agent_interrupt. "Stop and do Y instead", "tell X to switch to Y now" (it must change course mid-turn) is agent_steer. A message that can wait for the agent to finish its turn is agent_message. Permission requests are never answered by you: the user clicks Approve/Deny.',
   '- Workspaces: context.workspace is the one this window is in; context.workspaces lists them all. "Which workspace am I in", "list my workspaces" is the answer tool from context. "Switch / go to / open the X workspace" is nav_workspace with X\'s exact context name (closest match by name; ask with the names in choices when unclear). Already in X: say so with the answer tool.',
   '- Focuses: context.focus is the Focus open now ("this focus", "the focus"); context.focuses lists each Focus with its worktrees. "What is in this focus" is the answer tool. A Focus-wide request becomes one step per member: tab_open with worktree set for each worktree ("open a shell in every worktree in this focus"); agent_ask or agent_message for each agent whose worktree is in it ("ask all the claudes in this focus …" means each claude agent there). Agents in other worktrees are named "worktree/name" in the context. More than 12 steps: ask first with the answer tool. Agents of the Focus doing what: agent_recap with agent "all" and focus set.',
   '- A repo name ("in Strado Website", "open claude in the website repo") means a worktree of that repo (context.worktrees[].repo): the one in context.focus first, else the only one, else the first listed (most recent). Pass that worktree\'s context name. Ask only when the repo has several and none is in the open Focus.',
   '- focus_edit names Focuses by their context name: "this focus" is context.focus.name. "Remove X from this focus" is focus_edit op remove; with no Focus open, ask which.',
-  '- context.calls are agents waiting on the user. When the user answers one ("tell opencode no change needed", "yes go ahead" right after asking about it), use call_answer; to ignore one, call_dismiss. A message to an agent that is NOT calling is agent_message.',
+  '- context.calls are agents waiting on the user (body = what they asked). When the user answers one ("tell opencode no change needed", "yes go ahead" right after asking about it), use call_answer; to ignore one, call_dismiss. A message to an agent that is NOT calling is agent_message. "What does X want", "what is X asking", "who needs me" is the answer tool, from context.calls.',
+  '- context.tasks is the agents\' task board (open and claimed, `by` = who claimed it). "What tasks are open", "who is on what" is the answer tool from it. You cannot create, assign or close tasks: say the agents manage them.',
   '- context.worktree is null when no worktree is open (the home screen). Then every tab_open, browser_open and server step MUST set worktree. If the user named one, use it; otherwise ask with the answer tool, putting the most recent worktrees from context.worktrees (listed most recent first) in choices as complete requests, e.g. "in master: open claude and ask how are you". Never leave worktree null on the home screen.',
   '- A "$ " line never reaches you; everything else the user types is yours to interpret, including short or casual phrasing ("put the shell next to claude", "kill the dev server", "go to master").',
   '- A bare kind name ("claude", "the agent", "codex", "the shell", "it") means, in order: the focused tab if it is that kind; else the only tab of that kind in the current worktree; else the most recently opened one there, which is the one with the highest number (shell-2 over shell-1), busy or not. Never pick a tab in another worktree unless the user names that worktree. Do not ask when this rule decides.',

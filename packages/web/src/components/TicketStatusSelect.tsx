@@ -82,7 +82,7 @@ export function TicketStatusSelect({ issue }: { issue: TicketIssue }) {
           }}
         >
           <div
-            className="absolute max-h-80 w-56 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900 py-1 text-xs shadow-2xl"
+            className="surface-pop absolute max-h-80 w-56 overflow-y-auto rounded-md py-1 text-xs"
             style={{ left: anchor.x, top: anchor.y }}
             onClick={(e) => e.stopPropagation()}
             role="menu"

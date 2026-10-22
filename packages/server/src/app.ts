@@ -11,7 +11,7 @@ import { createNodeModulesLinkService, NodeModulesLinkService } from './services
 import { createProcessManager, ProcessManager } from './services/processManager.js';
 import { createDevProxy, type DevProxy } from './services/devProxy.js';
 import { createDebugLog, DebugLog } from './services/debugLog.js';
-import { createTerminalManager, parseSessionKey, sessionsPayload, TerminalManager } from './services/terminalManager.js';
+import { createTerminalManager, isRunKey, parseSessionKey, sessionsPayload, TerminalManager } from './services/terminalManager.js';
 import { createDaemonTerminalManager } from './services/ptyDaemon/manager.js';
 import { createGitStatusService, GitStatusService } from './services/gitStatus.js';
 import { createAgentStatusStore, ClaudeStatusStore } from './services/claudeStatusStore.js';
@@ -37,6 +37,7 @@ import { createAgentRegistry, type AgentRegistry } from './services/agentRegistr
 import { createDisabledIntercomStore, createIntercomStore, INTERCOM_CHANNEL, type IntercomStore } from './services/intercomStore.js';
 import { createTurnDiary, type TurnDiary } from './services/turnDiary.js';
 import { createPtyActivity, type PtyActivity } from './services/ptyActivity.js';
+import { createAgentControl, type AgentControl } from './services/agentControl.js';
 import { createIntercomPush, type IntercomPush } from './services/intercomPush.js';
 import { createShellRunner, type ShellRunner } from './services/shellRunner.js';
 import { createUiClients, type UiClients } from './services/uiClients.js';
@@ -75,6 +76,8 @@ export type Deps = {
   // Intercom step 5: per-PTY quiet clocks and the push-a-nudge service. The
   // pusher writes ONE line into an idle Claude tab; the hook path delivers.
   ptyActivity: PtyActivity;
+  // Mission control: agents' live tool lines and the permission requests they hold for the human.
+  agentControl: AgentControl;
   intercomPush: IntercomPush;
   shellRunner: ShellRunner;
   // App control: the server → window command channel (splits, focus, Browser
@@ -263,6 +266,8 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   // WS already closed) must refresh that worktree's session badges, so the
   // palette/dashboard don't keep showing a dead agent as live.
   const onTerminalExit = (key: string) => {
+    // The Run terminal is the process manager's, not a tab or an agent.
+    if (isRunKey(key)) return;
     // Idempotent; the terminal route's own exit handler may also call it.
     void agents.release(key);
     ptyActivity.forget(key);
@@ -380,7 +385,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     const data = evt.data as { scopeId?: unknown; to?: unknown };
     if (typeof data.scopeId === 'string' && typeof data.to === 'string') void intercomPush.consider(data.scopeId, data.to, 'arrival');
   });
-  return {
+  const deps: Deps = {
     workspaces,
     registry,
     bus,
@@ -394,6 +399,9 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
       sandbox && sandboxRuntime
         ? sandboxProcessWrapper({ rt: sandboxRuntime, isSandboxed: (cwd) => sandboxSlugs.slugOf(cwd) })
         : undefined,
+      // Run in the worktree's Run terminal (a tab in the hub), not a piped child.
+      // Read at start time: the routes' terminal is deps.terminal (tests swap it).
+      () => deps.terminal,
     ),
     devProxy: createDevProxy(debugLog),
     terminal,
@@ -407,6 +415,10 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     intercom: liveIntercom,
     turnDiary,
     ptyActivity,
+    agentControl: createAgentControl({
+      // The hub's stations refetch on it (routes/events.ts forwards `station.changed`).
+      onChange: (scopeId, agentId) => bus.emit(INTERCOM_CHANNEL, { type: 'station.changed', data: { scopeId, agentId } }),
+    }),
     intercomPush,
     shellRunner,
     uiClients: createUiClients(),
@@ -437,6 +449,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     forgetSandboxActivity,
     parked,
   };
+  return deps;
 }
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {

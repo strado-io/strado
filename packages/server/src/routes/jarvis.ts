@@ -8,13 +8,15 @@ import type { AgentMode } from '../services/handoffStore.js';
 import { cutUtf8 } from '../services/intercomContext.js';
 import { HUMAN } from '../services/intercomStore.js';
 import { NUDGE } from '../services/intercomPush.js';
-import { BODY_MAX, STRADO_SENDER_ID } from '../services/intercomSchema.js';
+import { BODY_MAX, HUMAN_AGENT_ID, STRADO_SENDER_ID } from '../services/intercomSchema.js';
 import { createTabOps, keyOfRef, type CommandResult } from '../services/tabOps.js';
 import { assertHubRequest } from './appControl.js';
 import { ACTIONS } from '../services/actions.js';
 import type { RecapAgent } from '../services/jarvisModel.js';
 import { readProfile } from '../services/profileStore.js';
 import { sessionKeyFor } from '../services/terminalManager.js';
+import { findOwningRepo } from '../services/worktreeRoot.js';
+import { deriveRunCommands } from '../repoConfig.js';
 
 // Jarvis: the hub's command box (⌘K). These routes act as the HUMAN — no
 // spawn guard, no escalation — so they must only answer the hub itself:
@@ -98,13 +100,19 @@ const PlanBody = z.object({
     focuses: z.array(z.object({ name, worktrees: z.array(name).max(30).default([]) }).strict()).max(30),
     scripts: z.array(z.string().max(100)).max(50),
     packageManager: z.string().max(10),
+    runCommands: z.array(z.object({ name }).strict()).max(30).default([]),
     agents: z.array(z.object({ name, mode: z.string().max(20), lifecycle: z.string().max(20) }).strict()).max(30),
     // Agents waiting on the user (dock calls), and the repos a new worktree can come from.
     calls: z.array(z.object({ from: name, title: z.string().max(300) }).strict()).max(20).default([]),
+    // Never from the box: the route adds the board itself (contextWithBoard).
+    tasks: z.array(z.never()).max(0).default([]),
     repos: z.array(z.object({ name }).strict()).max(50).default([]),
   }).strict(),
   thread: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().min(1).max(2000) }).strict()).max(6),
 }).strict();
+
+const CALL_BODY_MAX = 500;
+const TASKS_MAX = 20;
 
 const ScriptsQuery = z.object({ worktreePath: z.string().min(1).max(4096) });
 
@@ -241,6 +249,22 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
   // Natural language: free text → a proposed plan (or a short answer). The
   // box previews it and runs nothing until ⏎. A `$` line is a literal shell
   // command and never leaves the machine.
+  /** What the box cannot know but the model needs to answer "what does X want"
+   * and "what tasks are open": each call's question, and the task board. */
+  const contextWithBoard = (scopeId: string, context: z.infer<typeof PlanBody>['context']) => {
+    const list = <T>(read: () => T[]): T[] => { try { return read(); } catch { return []; } }; // the board is off
+    const open = list(() => app.deps.intercom.listEscalations(scopeId, { status: 'open', limit: 200 })).filter((e) => e.to === HUMAN_AGENT_ID);
+    const calls = context.calls.map((c) => {
+      const e = open.find((x) => x.title === c.title);
+      return e ? { ...c, body: cutUtf8(e.body, CALL_BODY_MAX) } : c;
+    });
+    const short = (agentId: string) => agentId.split('@')[0]!;
+    const tasks = (['open', 'claimed'] as const).flatMap((status) => list(() => app.deps.intercom.listTasks(scopeId, { status, limit: TASKS_MAX })))
+      .slice(0, TASKS_MAX)
+      .map((t) => ({ title: cutUtf8(t.title, 200), status: t.status as 'open' | 'claimed', ...(t.claimedBy ? { by: short(t.claimedBy.agentId) } : {}) }));
+    return { ...context, calls, tasks };
+  };
+
   app.post('/jarvis/plan', { bodyLimit: 128 * 1024 }, async (req, reply) => {
     requireHub(app, req);
     const b = PlanBody.parse(req.body);
@@ -260,7 +284,7 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
     // decision wins and cancels the model; otherwise the model's answer is
     // already on its way, so a Jev "no" costs no extra time (live: Jev took
     // 0.6–0.9 s, which run in series added to every Haiku answer).
-    const input = { text: b.text, context: b.context, thread: b.thread };
+    const input = { text: b.text, context: contextWithBoard(req.workspace!.id, b.context), thread: b.thread };
     const modelAc = new AbortController();
     ac.signal.addEventListener('abort', () => modelAc.abort());
     const slow = app.deps.jarvisModel.plan(input, modelAc.signal);
@@ -322,11 +346,22 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
     requireHub(app, req);
     const { worktreePath } = ScriptsQuery.parse(req.query ?? {});
     await ops.assertWorktree(req.workspace!.id, worktreePath);
-    return readScripts(worktreePath);
+    // And the repo's run commands, so "run api" / "stop web" resolve in the box.
+    const repo = findOwningRepo(await req.workspace!.stores.repos.list(), worktreePath, app.deps.homeStateDir, { includeRepoRoot: true });
+    const runCommands = repo ? deriveRunCommands(repo).map((c) => ({ id: c.id, name: c.name })) : [];
+    return { ...(await readScripts(worktreePath)), runCommands };
   });
 
   // A message from the human to an agent, through the intercom inbox (so a
   // busy agent reads it at its next prompt; an idle one is nudged).
+  /** The agent's oldest open call to the human, or null (none, or the board is off). */
+  const oldestCallFrom = (scopeId: string, agentId: string) => {
+    let open: ReturnType<typeof app.deps.intercom.listEscalations> = [];
+    try { open = app.deps.intercom.listEscalations(scopeId, { status: 'open', limit: 200 }); } catch { return null; }
+    // Newest first, ties in insertion order (ids are random within a millisecond).
+    return open.filter((e) => e.to === HUMAN_AGENT_ID && e.from.agentId === agentId).at(-1) ?? null;
+  };
+
   app.post('/jarvis/message', { bodyLimit: BODY_MAX + 16 * 1024 }, async (req, reply) => {
     requireHub(app, req);
     const b = MessageBody.parse(req.body);
@@ -336,16 +371,22 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
     // A shell has no prompt and no inbox reader: a message would sit queued
     // forever behind a "queued" toast. Commands for a shell go through run.
     if (to.mode === 'shell') throw new AppError('VALIDATION', `${to.alias ?? to.agentId} is a shell: run a command in it instead`, { reason: 'shell_target' });
+    // An agent calling the human (an escalation, or an ask that reached the
+    // human) is waiting on an answer: the box's message IS that answer, to the
+    // oldest open call, which then closes. An ask is a new question instead.
+    const call = b.ask ? null : oldestCallFrom(scopeId, to.agentId);
     // Always through the intercom: the agent reads the human's words from its
     // inbox (the hook's strada-intercom block / intercom_inbox), never as text
     // typed into its prompt. An agent at rest is told it has mail at once: the
     // inbox push does that on arrival, except for a Claude with no status
     // since a restart ('starting'), which the push never reaches, so the
     // route sends it the same notice. Only that notice crosses the PTY.
-    const { receipt } = app.deps.intercom.send({
-      scopeId, fromAgentId: HUMAN.agentId, fromExecutionId: HUMAN.executionId, toAgentId: to.agentId,
-      kind: b.ask ? 'request' : 'message', replyTo: null, body: b.body, context: [], idempotencyKey: null, expiresInMs: null,
-    });
+    const id = call
+      ? app.deps.intercom.resolveEscalation(scopeId, call.id, HUMAN, b.body).replyMessageId ?? call.id
+      : app.deps.intercom.send({
+        scopeId, fromAgentId: HUMAN.agentId, fromExecutionId: HUMAN.executionId, toAgentId: to.agentId,
+        kind: b.ask ? 'request' : 'message', replyTo: null, body: b.body, context: [], idempotencyKey: null, expiresInMs: null,
+      }).receipt.id;
     const me = (await app.deps.agents.list(scopeId)).find((a) => a.agentId === to.agentId);
     const atRest = !!me && me.live && me.lifecycle !== 'working' && me.lifecycle !== 'needs_input';
     if (atRest && me.mode === 'claude' && me.lifecycle === 'starting') {
@@ -353,6 +394,10 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
       void app.deps.intercomPush.nudge(sessionKeyFor(me.mode, me.worktreePath, me.sessionId), NUDGE(queued));
     }
     reply.code(201);
-    return { delivered: atRest ? 'sent' : 'queued', id: receipt.id, to: { agentId: to.agentId, alias: to.alias }, ...(b.ask ? { ask: true } : {}) };
+    return {
+      delivered: atRest ? 'sent' : 'queued', id, to: { agentId: to.agentId, alias: to.alias },
+      ...(b.ask ? { ask: true } : {}),
+      ...(call ? { answered: { callId: call.id, title: call.title } } : {}),
+    };
   });
 }

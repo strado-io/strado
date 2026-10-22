@@ -5,10 +5,12 @@ import { installClaudeHooks, installOpencodePlugin, piExtensionPath } from '../s
 import { agentSpawnSpec, withAgentSpawnLock } from '../services/agentSpawn.js';
 import { probeOpencodeStandalone } from '../services/opencodeLaunch.js';
 import { installClaudeMcp } from '../services/claudeMcp.js';
-import { claudeKey, codexKey, opencodeKey, piKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
+import { claudeKey, codexKey, opencodeKey, piKey, runKey, sessionsPayload, shellKey } from '../services/terminalManager.js';
 import { peekLines } from '../services/terminalText.js';
 import { defaultShell } from '../services/platform.js';
 import { PARK_BANNER } from '../services/claudePark.js';
+import { resolveRunCommand, type ResolvedRun } from '../services/startCommand.js';
+import { procKey } from '../services/processManager.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
@@ -24,7 +26,88 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+const exitLine = (code: number | null) => `\r\n\x1b[2m[process exited with code ${code ?? '?'}]\x1b[0m\r\n`;
+
 export async function registerTerminalRoutes(app: FastifyInstance) {
+  // The worktree's Run tab: the start command's terminal (Run in the header
+  // starts it; processes.ts). Attaching never starts anything. After the
+  // process ends the tab keeps its last output, read-only, until the next Run,
+  // which closes this socket (code 4000) so the tab reconnects to the new one.
+  app.get<{ Querystring: { ws?: string; path?: string; cols?: string; rows?: string; run?: string } }>(
+    '/ws/run',
+    { websocket: true },
+    async (connection, req) => {
+      const socket = connection.socket;
+      const target = req.query.path;
+      const pending: Buffer[] = [];
+      const bufferHandler = (raw: Buffer) => { pending.push(raw); };
+      socket.on('message', bufferHandler);
+      const say = (text: string) => { if (socket.readyState === socket.OPEN) { try { socket.send(text); } catch { /* ignore */ } } };
+      // 4404: final, the tab stops reconnecting (4000 below: reconnect to the new run).
+      const fail = (message: string) => {
+        socket.off('message', bufferHandler);
+        say(`\r\n[run] ${message}\r\n`);
+        socket.close(4404, 'no run');
+      };
+      if (!req.query.ws || !target) return fail('missing ws or path');
+      if (!(await app.deps.workspaces.get(req.query.ws))) return fail(`workspace ${req.query.ws} not found`);
+      const repos = await (await app.deps.registry.get(req.query.ws)).repos.list();
+      const repo = findOwningRepo(repos, target, app.deps.homeStateDir, { includeRepoRoot: true });
+      if (!repo) return fail(`no repo owns ${target}`);
+      try {
+        assertPathUnder(target, [repo.path, ...worktreeRootsFor(app.deps.homeStateDir, repo)]);
+      } catch {
+        return fail('invalid path');
+      }
+      socket.off('message', bufferHandler);
+
+      // `run`: one of the repo's run commands by id; absent, the default.
+      let run: ResolvedRun | null = null;
+      if (req.query.run) {
+        try {
+          run = resolveRunCommand(repo, req.query.run);
+        } catch {
+          return fail(`no run command ${req.query.run}`);
+        }
+      }
+      const other = run && !run.isDefault ? run : null;
+      const key = runKey(target, other?.id);
+      const term = app.deps.terminal;
+      const procId = other ? procKey(target, other) : target;
+      const proc = app.deps.proc.status(procId);
+      const live = term.status(key).status === 'running';
+      if (!live && proc.tab !== 'run') return fail('Nothing is running here yet. Press Run to start it.');
+
+      const dim = (v: string | undefined) => { const n = Number(v); return Number.isInteger(n) && n >= 2 && n <= 500 ? n : null; };
+      const cols = dim(req.query.cols);
+      const rows = dim(req.query.rows);
+      if (live && cols && rows) term.resize(key, cols, rows);
+      // The terminal's own screen; the log lines when it has none left (an
+      // older run the terminal manager no longer holds).
+      say(term.snapshot(key) || app.deps.proc.snapshot(procId).join('\r\n'));
+      if (!live) say(exitLine(proc.exitCode));
+
+      const unsub = term.subscribe(key, say);
+      const unsubExit = term.onExit(key, (code) => say(exitLine(code)));
+      // The next Run replaces this terminal: hand the tab over to it.
+      const unsubBus = app.deps.bus.on('worktrees', (evt) => {
+        const data = evt.data as { path?: string; process?: { status?: string }; run?: { runId?: string; status?: string } };
+        if (data.path !== target) return;
+        const started = other ? data.run?.runId === other.id && data.run.status === 'starting' : data.process?.status === 'starting';
+        if (started) socket.close(4000, 'restarted');
+      });
+      const handleMsg = (raw: Buffer) => {
+        let msg: ClientMsg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
+        if (msg.type === 'data') term.write(key, msg.data);
+        else if (msg.type === 'resize') term.resize(key, msg.cols, msg.rows);
+      };
+      socket.on('message', handleMsg);
+      for (const raw of pending) handleMsg(raw);
+      socket.on('close', () => { unsub(); unsubExit(); unsubBus(); });
+    },
+  );
+
   // Hover peek: last lines of a session buffer as plain text.
   app.get<{ Querystring: { ws?: string; path?: string; mode?: string; session?: string } }>(
     '/api/terminal/peek',

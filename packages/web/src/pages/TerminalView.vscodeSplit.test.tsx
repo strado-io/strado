@@ -5,9 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // these tests mount it without the provider, so stub a quiet, "loaded" context.
 vi.mock('../contexts/IntercomContext', () => ({
   useIntercom: () => ({
-    escalations: [], tasks: [], peers: [], loaded: true, error: null,
-    refresh: vi.fn(), resolve: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(),
-    assignTask: vi.fn(), releaseTask: vi.fn(), doneTask: vi.fn(), cancelTask: vi.fn(),
+    peers: [], loaded: true, error: null,
+    refresh: vi.fn(),
   }),
 }));
 
@@ -64,7 +63,6 @@ vi.mock('../api', () => ({
       sessionBusy: vi.fn().mockResolvedValue({ busy: false }),
       start: vi.fn().mockResolvedValue({}),
       stop: vi.fn().mockResolvedValue(undefined),
-      setEnvProfile: vi.fn().mockResolvedValue({}),
       patch: vi.fn().mockResolvedValue({}),
       logs: vi.fn().mockResolvedValue({ lines: [] }),
       upload: vi.fn(),

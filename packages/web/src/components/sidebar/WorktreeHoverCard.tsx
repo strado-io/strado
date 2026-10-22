@@ -107,7 +107,7 @@ export function WorktreeHoverCard({
       // z-30 keeps the card above the board and the sidebar it floats out of,
       // and below every dialog: a hover affordance must never cover a
       // confirm the user is trying to read.
-      className="fixed z-30 flex flex-col gap-2 rounded-lg border border-zinc-700 bg-zinc-900 p-2.5 text-left shadow-2xl"
+      className="surface-pop fixed z-30 flex flex-col gap-2 rounded-lg p-2.5 text-left"
       style={{ left: x, top: y, width: HOVER_CARD_WIDTH }}
     >
       <div>

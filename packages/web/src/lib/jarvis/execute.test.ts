@@ -31,7 +31,7 @@ function ports(over: { hubPath?: string | null } = {}) {
     answerCall: vi.fn().mockResolvedValue(undefined),
     dismissCall: vi.fn().mockResolvedValue(undefined),
   };
-  const nav = { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() };
+  const nav = { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() };
   const p: JarvisPorts = { hub: over.hubPath === null ? null : hub, server, nav };
   return { p, hub, server, nav };
 }
@@ -248,12 +248,10 @@ describe('runPlan', () => {
     const r = await runPlan(plan(
       step('call.answer', { callId: 'e1', agentId: 'claude-1@a', text: 'use postgres' }, { where: 'server', risk: 'exec', undoable: false }),
       step('call.dismiss', { callId: 'e2', agentId: 'claude-2@a' }, { where: 'server', risk: 'exec', undoable: false }),
-      step('nav.line', {}, { risk: 'read' }),
     ), p);
     expect(r.ok).toBe(true);
     expect(server.answerCall).toHaveBeenCalledWith('e1', 'use postgres');
     expect(server.dismissCall).toHaveBeenCalledWith('e2');
-    expect(nav.line).toHaveBeenCalled();
   });
 
   it('"add repo" and "new worktree" open their dialogs (prefilled when the text named a path or repo)', async () => {
@@ -282,6 +280,13 @@ describe('runPlan', () => {
       { delivered: 'sent', to: { agentId: 'claude-1@a', alias: null } },
       { delivered: 'queued', to: { agentId: 'claude-2@a', alias: 'reviewer' } },
     ]);
+  });
+
+  it('a message that answered the agent\'s open call carries which call', async () => {
+    const { p, server } = ports();
+    server.message.mockResolvedValueOnce({ delivered: 'sent', to: { agentId: 'claude-1@a', alias: null }, answered: { callId: 'e1', title: 'Which DB?' } });
+    const r = await runPlan(plan(step('agent.message', { agentId: 'claude-1@a', text: 'pg' }, { where: 'server', risk: 'exec', undoable: false })), p);
+    expect(r.messages).toEqual([{ delivered: 'sent', to: { agentId: 'claude-1@a', alias: null }, answered: { callId: 'e1', title: 'Which DB?' } }]);
   });
 
   it('an older server\'s "typed" reads as "sent"; an unknown delivery is dropped', async () => {
@@ -317,8 +322,8 @@ describe('runPlan', () => {
     expect(server.message).toHaveBeenCalledWith('claude-1@a', 'fix it');
     expect(r.messages).toEqual([]); // the server said nothing about delivery (an older server)
     expect(server.interrupt).toHaveBeenCalledWith(ref('shell', '1'));
-    expect(server.startServer).toHaveBeenCalledWith(P, 'npm run dev', 'dev');
-    expect(server.stopServer).toHaveBeenCalledWith(P);
+    expect(server.startServer).toHaveBeenCalledWith(P, 'npm run dev', 'dev', null);
+    expect(server.stopServer).toHaveBeenCalledWith(P, null);
     expect(nav.worktree).toHaveBeenCalledWith('/w/b');
   });
 

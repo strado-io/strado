@@ -58,7 +58,7 @@ export function RunningServers({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1 min-w-56 rounded-md border border-zinc-800 bg-zinc-950 p-1 shadow-2xl">
+          <div className="surface-pop absolute right-0 top-full z-50 mt-1 min-w-56 rounded-md p-1">
             {running.map((w) => (
               <div key={w.path} className="group flex items-center gap-2 rounded pr-1 hover:bg-zinc-900">
                 <button

@@ -125,7 +125,7 @@ export function MenuPopover({ pos, items, anchor, onClose }: {
         onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
       <div
         role="menu"
-        className={`fixed z-50 min-w-44 ${anchor === 'right' ? '-translate-x-full' : ''} rounded-md border border-zinc-800 bg-zinc-950 p-1 shadow-2xl`}
+        className={`surface-pop fixed z-50 min-w-44 ${anchor ==='right' ?'-translate-x-full' :''} rounded-md p-1`}
         style={{ left: pos.x, top: pos.y }}
         onClick={(e) => e.stopPropagation()}
       >

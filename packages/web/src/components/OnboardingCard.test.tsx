@@ -21,8 +21,7 @@ const DETECTED = {
   startCommand: 'npm run dev',
   defaultPort: 5173,
   editor: 'code',
-  envProfiles: [{ name: 'DEV', envFile: '.env.dev' }],
-  defaultEnvProfile: 'DEV',
+  runCommands: [{ id: 'dev', name: 'dev', command: 'npm run dev', envFile: '.env.dev' }, { id: 'storybook', name: 'storybook', command: 'npm run storybook' }],
   warnings: ['could not detect a port — defaulted to 8080'],
 };
 
@@ -52,6 +51,17 @@ describe('OnboardingCard', () => {
     // warnings are stripped from the create payload
     const { warnings: _w, ...repo } = DETECTED;
     expect(add).toHaveBeenCalledWith('default', repo);
+  });
+
+  it('lists the detected run commands (the first, the default, with its port), and never env profiles', async () => {
+    render(<OnboardingCard wsId="default" onAdded={() => {}} onOpenRepos={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Repo folder path'), { target: { value: '/Users/me/code/my-app' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Detect' }));
+    const card = await screen.findByTestId('detected-repo');
+    expect(card).toHaveTextContent('dev: npm run dev → port 5173');
+    expect(card).toHaveTextContent('storybook: npm run storybook');
+    expect(card).not.toHaveTextContent(/env profile/i);
+    expect(screen.queryByText(/env profiles/i)).toBeNull();
   });
 
   it('shows the server error when detection fails', async () => {

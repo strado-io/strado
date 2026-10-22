@@ -107,7 +107,7 @@ export function OrgChip({
           <div
             role="menu"
             aria-label="Switch organization"
-            className="absolute bottom-full left-0 z-50 mb-1 w-full min-w-52 rounded-md border border-zinc-800 bg-zinc-950 p-1 shadow-2xl"
+            className="surface-pop absolute bottom-full left-0 z-50 mb-1 w-full min-w-52 rounded-md p-1"
           >
             <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-600">
               Organization

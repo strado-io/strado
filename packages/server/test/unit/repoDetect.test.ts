@@ -35,11 +35,12 @@ describe('detectRepo', () => {
     expect(d.projectSubdir).toBeNull();
     expect(d.startCommand).toBe('npm run dev');
     expect(d.defaultPort).toBe(4000);
-    expect(d.envProfiles).toEqual([
-      { name: 'DEV', envFile: '.env.dev' },
-      { name: 'PROD', envFile: '.env.prod' },
+    // Each env file is a run command (the script loads none itself, so the file is injected).
+    expect(d.runCommands).toEqual([
+      { id: 'dev', name: 'DEV', command: 'npm run dev', envFile: '.env.dev' },
+      { id: 'prod', name: 'PROD', command: 'npm run dev', envFile: '.env.prod' },
     ]);
-    expect(d.defaultEnvProfile).toBe('DEV');
+    expect(d).not.toHaveProperty('envProfiles');
     expect(d.warnings).toEqual([]);
   });
 

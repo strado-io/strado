@@ -15,6 +15,10 @@ import { readShellNames } from '../../hooks/shellNames';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { runUndo, type JarvisAppPort, type JarvisNavPort, type UndoOp } from '../../lib/jarvis/execute';
 import type { ParseContext, TabRef } from '../../lib/jarvis/types';
+import type { StationDto } from '../../api';
+import { runPlan } from '../../lib/jarvis/execute';
+import { runStep, tabStep } from '../../lib/jarvis/parse';
+import type { MissionBoxDeps } from '../mission/useMissionBox';
 
 /** `notice`: a success that still has news the screen doesn't show (a message queued for a busy agent). */
 export type JarvisRun = { ok: boolean; summary: string; undo: UndoOp[]; undoable: boolean; notice?: boolean;
@@ -24,7 +28,15 @@ export type JarvisRun = { ok: boolean; summary: string; undo: UndoOp[]; undoable
 /** The ⌘K palette with Jarvis wired to this window: the hub (when one is
  * open) for layout, the human /jarvis routes for resources, the board for
  * navigation. Lives inside UiControlProvider so it can reach the hub. */
-export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCommandSettings, ...palette }: ComponentProps<typeof CommandPalette> & {
+/** Mission Control: the stations it shows, and where to put "open that agent's tab" (⌘O, ⌘-click). */
+export type MissionProps = {
+  stations: StationDto[];
+  openRef: MutableRefObject<((agentId: string) => void) | null>;
+  /** Filled with the selected shell's actions: the box's own shell.run step (and its confirm), Ctrl-C. */
+  shellRef: MutableRefObject<MissionBoxDeps['shell'] | null>;
+};
+
+export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCommandSettings, mission, ...palette }: ComponentProps<typeof CommandPalette> & {
   wsId: string;
   nav: JarvisNavPort;
   /** Pages, Settings and plain settings (the rest of the app). */
@@ -33,6 +45,7 @@ export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCo
   onRan: (r: JarvisRun) => void;
   /** Settings → Command box (the Anthropic key and "Local only"). */
   onOpenCommandSettings: () => void;
+  mission?: MissionProps;
 }) {
   // Natural language needs a key and must not be switched off; read both on
   // mount and every time the bar takes focus (the bar outlives a Settings
@@ -113,6 +126,47 @@ export function JarvisPaletteHost({ wsId, nav, app, lastActedOn, onRan, onOpenCo
       onOpenSettings: onOpenCommandSettings,
     },
   };
+  // An agent's own tab: focus it (opening its worktree first), else just its worktree.
+  const openAgent = (agentId: string) => {
+    const ctx = context();
+    const t = ctx.tabs.find((x) => x.agentId === agentId);
+    if (t) {
+      const ref: TabRef = { worktreePath: t.worktreePath, mode: t.mode, sessionId: t.sessionId, ...(t.executionId ? { executionId: t.executionId } : {}) };
+      void runPlan({ steps: [tabStep(ctx, 'focus', { kind: 'tab', ref })] }, jarvis.ports()).then((r) => { if (r.ok) lastActedOn.current = ref; });
+      return;
+    }
+    const st = mission?.stations.find((x) => x.agentId === agentId) ?? palette.stations?.find((x) => x.agentId === agentId);
+    if (st) nav.worktree(st.worktreePath);
+  };
+  // A shell station's tab, as the server knows it.
+  const shellRef = (agentId: string): TabRef | null => {
+    const t = context().tabs.find((x) => x.agentId === agentId && x.mode === 'shell');
+    if (t) return { worktreePath: t.worktreePath, mode: 'shell', sessionId: t.sessionId, ...(t.executionId ? { executionId: t.executionId } : {}) };
+    const st = mission?.stations.find((x) => x.agentId === agentId);
+    return st && st.mode === 'shell' ? { worktreePath: st.worktreePath, mode: 'shell', sessionId: st.sessionId } : null;
+  };
+  const shellRunStep = (agentId: string, command: string) => {
+    const ref = shellRef(agentId);
+    return ref ? runStep(context(), command, { kind: 'tab', ref }) : null;
+  };
+  if (mission) {
+    mission.openRef.current = openAgent;
+    mission.shellRef.current = {
+      risk: (id, command) => { const s = shellRunStep(id, command); return s?.needsConfirm ? s.confirmReason ?? 'needs a confirm' : null; },
+      run: async (id, command) => {
+        const s = shellRunStep(id, command);
+        if (!s) throw new Error('That shell is not open');
+        // The user pressed ↵ twice for a confirmed line: it runs as typed.
+        const r = await runPlan({ steps: [{ ...s, needsConfirm: false }] }, jarvis.ports());
+        if (!r.ok) throw new Error(r.failed?.reason ?? 'It did not run');
+      },
+      interrupt: async (id) => {
+        const ref = shellRef(id);
+        if (!ref) throw new Error('That shell is not open');
+        await jarvisServerPort(wsId).interrupt(ref);
+      },
+    };
+  }
   // Push-to-talk: ElevenLabs when its key is saved (and Local only is off; any
   // window with a microphone), else the desktop app's on-device engine (macOS).
   const engine = useVoiceEngine(voiceBridge());
@@ -160,7 +214,7 @@ export function JarvisToast({ wsId, run, onDone }: { wsId: string; run: JarvisRu
   }, [run, canUndo]);
   if (run.ok && !run.notice) return null;
   return (
-    <div role="status" className="fixed bottom-4 left-1/2 z-[70] flex max-w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 shadow-xl">
+    <div role="status" className="surface-pop fixed bottom-4 left-1/2 z-[70] flex max-w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-lg px-3 py-2 text-xs text-zinc-200">
       <span className={`line-clamp-2 min-w-0 ${run.ok ? '' : 'text-amber-300'}`}>{run.ok ? run.summary : `Partly done: ${run.summary}`}</span>
       {!run.undoable && canUndo && <span className="text-zinc-500">(commands sent can’t be taken back)</span>}
       {canUndo && (

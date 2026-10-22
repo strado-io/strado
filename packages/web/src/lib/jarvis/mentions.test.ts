@@ -119,11 +119,11 @@ describe('home and the Line through the model', () => {
     expect(first(planFromModel([{ action: 'nav.newWorktree', args: { repo: null } }], ctx({ repos })))).toMatchObject({ args: { repoPath: null } });
     expect(planFromModel([{ action: 'nav.newWorktree', args: { repo: 'nope' } }], ctx({ repos })).steps).toHaveLength(0);
   });
-  it('nav.line', () => {
-    expect(first(planFromModel([{ action: 'nav.line', args: {} }], ctx()))).toMatchObject({ action: 'nav.line' });
+  it('nav.line is gone (the Line drawer was removed)', () => {
+    expect(planFromModel([{ action: 'nav.line', args: {} }], ctx()).steps).toHaveLength(0);
   });
   it('the registry has them', () => {
-    expect(ACTION_IDS).toEqual(expect.arrayContaining(['call.answer', 'call.dismiss', 'nav.line', 'nav.addRepo', 'nav.newWorktree']));
+    expect(ACTION_IDS).toEqual(expect.arrayContaining(['call.answer', 'call.dismiss', 'nav.addRepo', 'nav.newWorktree']));
   });
 });
 

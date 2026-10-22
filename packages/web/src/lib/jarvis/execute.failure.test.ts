@@ -31,7 +31,7 @@ function ports(over: { hubPath?: string | null } = {}) {
     answerCall: vi.fn().mockResolvedValue(undefined),
     dismissCall: vi.fn().mockResolvedValue(undefined),
   };
-  const nav = { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), line: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() };
+  const nav = { worktree: vi.fn(), focus: vi.fn(), workspace: vi.fn(), repo: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn() };
   const p: JarvisPorts = { hub: over.hubPath === null ? null : hub, server, nav };
   return { p, hub, server, nav };
 }

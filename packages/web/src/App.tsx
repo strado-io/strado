@@ -186,9 +186,6 @@ function AppShell() {
             await api.worktrees.patch(wsId, dialog.worktree.path, patch);
             track('settings_saved');
           }}
-          onSetEnvProfile={async (profile) => {
-            await api.worktrees.setEnvProfile(wsId, dialog.worktree.path, profile);
-          }}
           onResetTime={async () => {
             if (!confirm('Reset tracked time for this worktree to zero? This cannot be undone.')) {
               close();

@@ -7,7 +7,7 @@ const ctx = (over: Partial<ParseContext> = {}): ParseContext => ({
   tabs: [], focused: null, lastActedOn: null, currentWorktree: '/wt/app', worktrees: [{ path: '/wt/app', name: 'app' }],
   focuses: [], packageScripts: {}, peers: [], ...over,
 });
-const plan = (n: number): ModelResult => ({ kind: 'plan', steps: [{ action: 'nav.line', args: { n } }], model: 'm', ms: 1 });
+const plan = (n: number): ModelResult => ({ kind: 'plan', steps: [{ action: 'ui.state', args: { n } }], model: 'm', ms: 1 });
 
 /** A fake ask whose calls resolve when the test says so, and honour abort. */
 function fakeAsk() {

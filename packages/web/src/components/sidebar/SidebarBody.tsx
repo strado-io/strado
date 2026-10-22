@@ -10,7 +10,6 @@ import { sessionChips } from '../../hooks/sessions';
 import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor } from '../Sidebar';
-import { SessionAvatarStack } from './sessionAvatars';
 import { cardLines, worktreeLabel } from './labels';
 import { WorktreeCard } from './WorktreeCard';
 import { readWorktreeLru } from '../../lib/worktreeLru';
@@ -50,8 +49,6 @@ export type SidebarBodyProps = {
   onRebuildSandbox?: (w: RemoteWorktree) => void;
   /** True until the first runner-worktree fetch for this space settles. */
   remoteLoading?: boolean;
-  /** Toolbar Search: opens ⌘K. */
-  onSearch: () => void;
   /** Surfaces a failed change in the dashboard's error banner. */
   onError?: (message: string) => void;
   /** False for a neighbour space's pane in the carousel: it shows, but does not answer global events. */
@@ -116,7 +113,6 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
         titleLeading={agentMark(w as unknown as Worktree)}
         trailing={(
           <>
-            <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
             {unsandboxed && (
               <span
                 data-testid={`no-sandbox-${testIdSuffix}`}
@@ -161,7 +157,7 @@ export function SidebarBody({
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
-  remoteLoading = false, onSearch, onError, isActivePane = true,
+  remoteLoading = false, onError, isActivePane = true,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const { focuses, active, activeId, activate, create, rename, remove, setMembership, addMembers } = useFocuses(wsId);
@@ -250,7 +246,6 @@ export function SidebarBody({
           trailing={(
             <>
               {diffBadge(w, testIdSuffix)}
-              <SessionAvatarStack chips={chips} testId={`session-stack-${testIdSuffix}`} />
               {isRunning(w) && (
                 <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                   <span
@@ -287,13 +282,11 @@ export function SidebarBody({
   });
 
   const repoRoots = new Set(repos.map((r) => r.path));
-  // What the switcher shows per Focus: the repos its members span, and whether
-  // an agent in it is waiting or working, or every PR in it is merged/closed.
+  // What the switcher shows per Focus: whether an agent in it is waiting or
+  // working, or every PR in it is merged/closed.
   const rowInfo = new Map<string, FocusRowInfo>(focuses.map((f) => {
     const locals = f.members.flatMap((id) => { const w = localByPinId.get(id); return w ? [w] : []; });
     const remotes = f.members.flatMap((id) => { const w = remoteByPinId.get(id); return w ? [w] : []; });
-    const repoIds = [...new Set([...locals.map((w) => w.repoId), ...remotes.map((w) => w.localRepoId)])];
-    const reposIn = repoIds.flatMap((id) => { const r = repos.find((x) => x.id === id); return r ? [{ id: r.id, name: r.name }] : []; });
     const attention = locals.map((w) => attentionOf(w, mrByPath.get(w.path)));
     // A repo's own checkout (main/master) never finishes, whatever PR its
     // branch once had; Done needs at least one real worktree, all merged or closed.
@@ -301,7 +294,7 @@ export function SidebarBody({
     const done = real.length > 0 && real.length === locals.length && remotes.length === 0
       && real.every((w) => { const st = mrByPath.get(w.path)?.state; return st === 'merged' || st === 'closed'; });
     const status = attention.includes('needs-you') ? 'needs-you' : attention.includes('working') ? 'working' : done ? 'done' : null;
-    return [f.id, { repos: reposIn, status }];
+    return [f.id, { status }];
   }));
 
   // The empty states' actions: full-width rows, drawn like a place a card will go.
@@ -320,7 +313,7 @@ export function SidebarBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarToolbar onSearch={onSearch} onNewWorktree={() => onNewWorktree()}
+      <SidebarToolbar onNewWorktree={() => onNewWorktree()}
         leading={<FocusPill focus={active} open={switcher} pillRef={pillRef} onClick={() => setSwitcher((s) => !s)} />} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <section aria-label="Focus" className="mt-2">

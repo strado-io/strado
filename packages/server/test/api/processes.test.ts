@@ -99,10 +99,9 @@ describe('process routes', () => {
     expect(stop.statusCode).toBe(204);
   });
 
-  it('starts a repo whose profile file is not named by the command, injecting it instead', async () => {
-    // What detection produces for any project with a .env: a DEFAULT profile
-    // and a start command that never mentions it. This used to be refused
-    // with "startCommand must contain {ENV_FILE} placeholder".
+  it('a run command with an env file that the command does not name: the file is injected', async () => {
+    // What detection produces for any project with a .env (an env profile,
+    // now a run command with envFile) and a start command that never mentions it.
     await fs.writeFile(path.join(worktree, '.env'), 'GREETING=hello-from-env\n');
     await fs.writeFile(
       path.join(worktree, 'server.js'),
@@ -111,7 +110,7 @@ describe('process routes', () => {
     const patched = await app.inject({
       method: 'PATCH',
       url: '/api/w/default/repos/r',
-      payload: { envProfiles: [{ name: 'DEFAULT', envFile: '.env' }], defaultEnvProfile: 'DEFAULT' },
+      payload: { runCommands: [{ id: 'dev', name: 'dev', command: 'node server.js', envFile: '.env' }] },
     });
     expect(patched.statusCode).toBe(200);
 

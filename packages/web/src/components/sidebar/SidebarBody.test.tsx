@@ -40,7 +40,7 @@ function props(over: Partial<SidebarBodyProps> = {}): SidebarBodyProps {
     wsId: 'w1', repos: [r1, r2], worktrees: [wt('/r1/wt', 'r1'), wt('/r2/wt', 'r2'), wt('/r2/other', 'r2')],
     remoteWorktrees: [], runnerStatuses: [],
     onAddRepo: vi.fn(), onOpenWorktree: vi.fn(), activeWorktreePath: null, onNewWorktree: vi.fn(),
-    onWorktreeSettings: vi.fn(), onDeleteWorktree: vi.fn(), onSearch: vi.fn(),
+    onWorktreeSettings: vi.fn(), onDeleteWorktree: vi.fn(),
     ...over,
   };
 }
@@ -65,7 +65,7 @@ describe('SidebarBody: the active Focus', () => {
     withFocus('local:/r2/other', 'local:/gone', 'local:/r1/wt');
     render(<SidebarBody {...props()} />);
     expect(pill()).toHaveAccessibleName('Focus: Billing');
-    expect(pill()).toHaveTextContent('Focus · Billing'); // a Focus, not a selected worktree
+    expect(pill()).toHaveTextContent(/^Billing$/); // just the Focus's name
     const section = screen.getByRole('region', { name: 'Focus' });
     const cards = within(section).getAllByRole('button', { name: 'fx-412' });
     expect(cards).toHaveLength(2);
@@ -167,11 +167,10 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.queryByRole('dialog', { name: 'Add worktrees to Billing' })).toBeNull();
   });
 
-  it('toolbar: Search opens the palette, New worktree calls out; no Add repo button', () => {
-    const onSearch = vi.fn(); const onNewWorktree = vi.fn();
-    render(<SidebarBody {...props({ onSearch, onNewWorktree })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    expect(onSearch).toHaveBeenCalled();
+  it('toolbar: New worktree calls out; no Search or Add repo button', () => {
+    const onNewWorktree = vi.fn();
+    render(<SidebarBody {...props({ onNewWorktree })} />);
+    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'New worktree' }));
     expect(onNewWorktree).toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Add repo' })).toBeNull();
@@ -264,7 +263,7 @@ describe('SidebarBody: the Focus switcher', () => {
     expect(within(popover()).queryByText('Done')).toBeNull();
   });
 
-  it('rows show the repos a Focus spans, a status glyph, and Done ones sink to a group at the bottom', () => {
+  it('rows show a status glyph (no repo initials, no member count), and Done ones sink to a group at the bottom', () => {
     const worktrees = [
       { ...wt('/r1/wt', 'r1'), claudeStatus: 'waiting', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree,
       wt('/r2/wt', 'r2'), wt('/r2/other', 'r2'),
@@ -277,7 +276,7 @@ describe('SidebarBody: the Focus switcher', () => {
     fireEvent.click(pill());
     const billing = within(popover()).getByRole('button', { name: /Billing/ });
     expect(billing).toHaveTextContent('⚑');
-    expect(within(billing).getByTitle('api')).toBeInTheDocument();
+    expect(within(billing).queryByTitle('api')).toBeNull();
     const perf = within(popover()).getByRole('button', { name: /Perf/ });
     expect(perf).toHaveTextContent('✔');
     expect(within(popover()).getByText('Done')).toBeInTheDocument();

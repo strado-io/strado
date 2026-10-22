@@ -405,3 +405,45 @@ body {
 .app-drag :is(button, a, input, select, textarea, label, summary, [role="button"], [role="tab"], [role="menu"], [role="dialog"], [role="listbox"], [data-tab-key], [contenteditable="true"], [draggable="true"], .no-drag) {
   -webkit-app-region: no-drag;
 }
+
+/* A floating layer (popover, menu, dropdown, hover card, toast): a cool
+   near-black a little lifted from the app, a hairline edge lit from the top,
+   and a deep soft shadow, so it reads as on top without turning grey.
+   In the components layer, so an element's own utilities (a coloured border)
+   still win. Inside it, highlights are translucent white so they stay visible
+   on any surface, and fields go back to the app's black so they read as fields. */
+@layer components {
+  .surface-pop {
+    border-width: 1px;
+    border-color: rgb(255 255 255 / 0.09);
+    background-color: rgb(20 21 25);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.05),
+      0 0 0 1px rgb(0 0 0 / 0.6),
+      0 16px 40px -8px rgb(0 0 0 / 0.75);
+  }
+}
+.surface-pop .hover\:bg-zinc-800:hover,
+.surface-pop .bg-zinc-800 { background-color: rgb(255 255 255 / 0.07); }
+.surface-pop .hover\:bg-zinc-900:hover,
+.surface-pop .bg-zinc-900 { background-color: rgb(255 255 255 / 0.04); }
+.surface-pop input:not([type='checkbox']):not([type='radio']):not([type='range']),
+.surface-pop textarea,
+.surface-pop select { background-color: rgb(10 10 12); }
+
+/* The bottom control panel (agent strip + Dock): a step lifted from the
+   terminals above it, so it reads as Strado's own layer, not part of a tab. */
+.dock-panel { background-color: rgb(14 15 18); }
+
+/* Agent pills: a slow breathing light while an agent works (sky) or waits on
+   you (amber). It stays INSIDE the pill (border + inner glow), so the strip's
+   row never clips it. Still for anyone who asked for reduced motion. */
+@keyframes pill-breathe {
+  0%, 100% { border-color: rgb(var(--pill-glow) / 0.22); box-shadow: inset 0 0 0 0 rgb(var(--pill-glow) / 0); }
+  50% { border-color: rgb(var(--pill-glow) / 0.6); box-shadow: inset 0 0 8px 0 rgb(var(--pill-glow) / 0.22); }
+}
+.pill-breathe-working { --pill-glow: 56 189 248; animation: pill-breathe 2.4s ease-in-out infinite; }
+.pill-breathe-needs { --pill-glow: 251 191 36; animation: pill-breathe 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .pill-breathe-working, .pill-breathe-needs { animation: none; }
+}

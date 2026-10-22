@@ -1,12 +1,16 @@
 import type { ReactNode } from 'react';
+import { FocusIcon } from '../sidebar/FocusSwitcher';
+import { BranchIcon } from '../sidebar/rowBits';
+import { FolderIcon } from '../hub/icons';
 
 /** The Strado Dock: the one row at the bottom of every page.
- * `[⎇ repo / worktree·branch] [ command box ]`. */
-export function Dock({ worktree, onBrowse, bare = false, children }: {
+ * `◎ Focus › 📁 repo › ⑂ worktree·branch  [ command box ]`. The location is a label
+ * only: switching is the box's job (type a name, or pick from its list). */
+export function Dock({ worktree, focus = null, bare = false, children }: {
   /** `repo`: the project folder it belongs to, when known. */
   worktree: { repo?: string | null; name: string; branch: string | null } | null;
-  /** The chip: the worktree list, through the command box. */
-  onBrowse: () => void;
+  /** The open Focus's name, shown first. */
+  focus?: string | null;
   /** Home: no strip (home has its own box). */
   bare?: boolean;
   /** The command box; absent while the home screen holds it (a spacer keeps the row's shape). */
@@ -16,21 +20,30 @@ export function Dock({ worktree, onBrowse, bare = false, children }: {
   const here = worktree ? [worktree.name, worktree.branch !== worktree.name ? worktree.branch : null].filter(Boolean).join(' · ') : null;
   const label = here && worktree?.repo ? `${worktree.repo} / ${here}` : here;
   return (
-    <div data-testid="dock" className="relative flex min-h-9 shrink-0 items-center gap-2 border-t border-zinc-900 bg-zinc-950 px-4 py-0.5">
-      <button
-        type="button"
-        aria-label={label ? `Worktree: ${label} — switch` : 'No worktree open — switch'}
-        title="Switch worktree"
-        onClick={onBrowse}
-        className="flex max-w-[30%] shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-      >
-        <span aria-hidden className="text-zinc-600">⎇</span>
-        <span className="truncate">
-          {worktree?.repo && <span className="text-zinc-500">{worktree.repo} / </span>}
-          {here ?? 'no worktree'}
+    // The control panel's bottom row: the same lifted surface as the agent strip above it (no rule between them).
+    <div data-testid="dock" className="dock-panel relative flex min-h-11 shrink-0 items-center gap-3 px-4 pb-2 pt-1">
+      {/* Each part carries its kind's icon (the sidebar's own) and says what it is on hover. */}
+      <span data-testid="dock-location" aria-label={label ? `Worktree: ${label}` : 'No worktree open'}
+        className="flex max-w-[42%] shrink-0 items-center gap-1.5 pl-1 text-[12px] text-zinc-300">
+        {focus && (
+          <span data-testid="dock-focus" title={`Focus: ${focus}`} className="flex min-w-0 shrink items-center gap-1 text-zinc-500">
+            <span className="shrink-0 text-sky-400/80"><FocusIcon size={12} /></span>
+            <span className="max-w-[9rem] truncate">{focus}</span>
+            <span aria-hidden className="ml-0.5 text-zinc-700">›</span>
+          </span>
+        )}
+        {worktree?.repo && (
+          <span data-testid="dock-repo" title={`Repository: ${worktree.repo}`} className="flex min-w-0 shrink items-center gap-1 text-zinc-400">
+            <FolderIcon className="shrink-0 text-zinc-500" />
+            <span className="max-w-[10rem] truncate">{worktree.repo}</span>
+            <span aria-hidden className="ml-0.5 text-zinc-700">›</span>
+          </span>
+        )}
+        <span data-testid="dock-worktree" title={here ? `Worktree: ${here}` : 'No worktree open'} className="flex min-w-0 items-center gap-1">
+          <BranchIcon className="shrink-0 text-emerald-400/80" />
+          <span className="truncate font-medium text-zinc-200">{here ?? 'no worktree'}</span>
         </span>
-        <span aria-hidden className="text-zinc-600">▾</span>
-      </button>
+      </span>
       {children ?? <div className="min-w-0 flex-1" />}
     </div>
   );

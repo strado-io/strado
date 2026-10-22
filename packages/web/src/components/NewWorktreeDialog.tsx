@@ -340,7 +340,7 @@ export function NewWorktreeDialog({
                 </button>
 
                 {ticketPickerOpen && (
-                  <div className="absolute bottom-full left-0 z-10 mb-2 w-96 max-w-[calc(100vw-3rem)] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-950 shadow-2xl">
+                  <div className="surface-pop absolute bottom-full left-0 z-10 mb-2 w-96 max-w-[calc(100vw-3rem)] overflow-hidden rounded-lg">
                     <div className="border-b border-zinc-800 p-2.5">
                       <label>
                         <span className="sr-only">Ticket (optional)</span>

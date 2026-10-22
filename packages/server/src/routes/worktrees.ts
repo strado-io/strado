@@ -220,6 +220,8 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           tracked: meta !== null,
           meta,
           process: app.deps.proc.status(w.path),
+          // Every run command started this session, the default first.
+          runs: app.deps.proc.runs(w.path),
           nodeModules,
           claudeStatus: app.deps.claudeStatus.get(w.path),
           claudeStatusById: app.deps.claudeStatus.sessions(w.path),
@@ -584,7 +586,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           ?? (gitOwner?.bare ? sandboxSlugFor(path.basename(target), target) : null);
 
         step('stop');
-        await app.deps.proc.stop(target);
+        await app.deps.proc.stopAll(target);
         app.deps.terminal.killUnder(target);
         app.deps.parked.removeUnder(target);
         if (sandboxSlug && app.deps.sandbox) {

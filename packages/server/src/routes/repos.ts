@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { RepoConfigSchema } from '../repoConfig.js';
+import { mintRunId, RepoConfigSchema } from '../repoConfig.js';
 import { backfillCloneUrls } from '../services/repoBackfill.js';
 import { detectRepo, uniqueRepoId } from '../services/repoDetect.js';
 import { AppError } from '../errors.js';
@@ -190,6 +190,29 @@ export async function registerReposRoutes(app: FastifyInstance) {
   app.patch<{ Params: { id: string } }>('/repos/:id', async (req) => {
     const patch = req.body as Record<string, unknown>;
     return req.workspace!.stores.repos.patch(req.params.id, patch);
+  });
+
+  // The repo's run commands, replaced as a list (its order is the tabs'; the
+  // first is the default Run). A row without an id gets one from its name.
+  const RunCommandsBody = z.object({
+    runCommands: z.array(z.object({
+      id: z.string().trim().min(1).max(80).optional(),
+      name: z.string().max(80),
+      command: z.string().max(4000),
+      envFile: z.string().trim().min(1).max(500).nullable().optional(),
+    })).max(50),
+  });
+  app.put<{ Params: { id: string } }>('/repos/:id/run-commands', async (req) => {
+    const body = RunCommandsBody.parse(req.body);
+    const taken = new Set(body.runCommands.flatMap((c) => (c.id ? [c.id] : [])));
+    const runCommands = body.runCommands.map((c) => ({
+      id: c.id ?? mintRunId(c.name, taken),
+      name: c.name.trim(),
+      command: c.command.trim(),
+      ...(c.envFile ? { envFile: c.envFile } : {}),
+    }));
+    const repo = await req.workspace!.stores.repos.patch(req.params.id, { runCommands });
+    return { runCommands: repo.runCommands ?? [] };
   });
 
   app.delete<{ Params: { id: string } }>('/repos/:id', async (req, reply) => {

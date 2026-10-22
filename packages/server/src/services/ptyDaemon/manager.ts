@@ -9,6 +9,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { SessionMeta, UpgradeResult } from '@strado/ptyd/protocol';
 import {
+  isRunKey,
   parseSessionKey,
   sessionEnv,
   type BuildSpec,
@@ -100,9 +101,9 @@ export async function createDaemonTerminalManager(
   const buildSpec = opts.buildSpec ?? defaultBuildSpec;
   // One place where a spec is settled, so the wrapper cannot be bypassed by
   // the override path. Mirrored in terminalManager.ts.
-  const resolveSpec = (cwd: string, override?: SpawnSpec): SpawnSpec => {
+  const resolveSpec = (cwd: string, override?: SpawnSpec, extraEnvKeys?: string[]): SpawnSpec => {
     const spec = override ?? buildSpec(cwd);
-    return opts.wrapSpec ? opts.wrapSpec(cwd, spec) : spec;
+    return opts.wrapSpec ? opts.wrapSpec(cwd, spec, extraEnvKeys) : spec;
   };
   const mirrors = new Map<string, Mirror>();
   const inflightOpens = new Map<string, Promise<TerminalInfo>>();
@@ -419,7 +420,7 @@ export async function createDaemonTerminalManager(
   pruneTimer.unref();
 
   return {
-    async ensure(key, cwd, spec, size) {
+    async ensure(key, cwd, spec, size, ensureOpts) {
       const m = mirror(key);
       if (m.info.status === 'running') return { ...m.info };
       // Two racing ensures (WS reconnect storm, second tab) must share one
@@ -448,12 +449,12 @@ export async function createDaemonTerminalManager(
             connected = true;
           }
         }
-        const s: SpawnSpec = resolveSpec(cwd, spec);
+        const s: SpawnSpec = resolveSpec(cwd, spec, ensureOpts?.env ? Object.keys(ensureOpts.env) : undefined);
         const meta: SessionMeta = {
           shell: s.file,
           argv: s.args,
           cwd,
-          env: { ...sessionEnv(key, cwd), ...(opts.extraEnv?.(key, cwd) ?? {}) },
+          env: { ...sessionEnv(key, cwd), ...(opts.extraEnv?.(key, cwd) ?? {}), ...(ensureOpts?.env ?? {}) },
           cols: size?.cols ?? 80,
           rows: size?.rows ?? 24,
         };
@@ -558,7 +559,7 @@ export async function createDaemonTerminalManager(
     liveSessions() {
       const out: LiveSession[] = [];
       for (const [key, m] of mirrors) {
-        if (m.info.status !== 'running') continue;
+        if (m.info.status !== 'running' || isRunKey(key)) continue;
         out.push(parseSessionKey(key));
       }
       return out;

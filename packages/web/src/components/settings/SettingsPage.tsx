@@ -10,6 +10,7 @@ import { ProfileSection } from './ProfileSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
 import { RunnersPanel } from '../RunnersPanel';
 import { useEntitlements } from '../../hooks/entitlements';
+import { TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from '../SidebarToggle';
 import type { Feature } from '../../api';
 
 export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
@@ -155,6 +156,7 @@ export function SettingsPage({
 }) {
   const [search, setSearch] = useState('');
   const backButton = useRef<HTMLButtonElement>(null);
+  const insetTitleBar = useInsetTitleBar();
   const content = useRef<HTMLDivElement>(null);
   const initialIntegration = isIntegration(section) ? section : 'github';
   const [active, setActive] = useState<SettingsSection>(isIntegration(section) ? 'integrations' : section);
@@ -197,12 +199,16 @@ export function SettingsPage({
   return (
     <div className={`fixed inset-x-0 top-0 ${bottomInset ? 'bottom-11' : 'bottom-0'} z-50 flex bg-zinc-950 text-zinc-200`} data-testid="settings-page">
         <nav aria-label="Settings" className="flex w-44 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/50 sm:w-56 lg:w-64">
-          <div className="shrink-0 p-3 pb-4 sm:p-5">
+          {/* macOS: one title-bar row like the sidebar's: the traffic lights, then Back. Its blank part drags the window. */}
+          <div className={`app-drag flex shrink-0 items-center gap-1 px-2 ${insetTitleBar ? '' : 'pt-2'}`} style={insetTitleBar ? { height: TITLE_BAR_HEIGHT } : undefined}>
+            <TrafficLightsSpacer />
             <button ref={backButton} type="button" onClick={onClose}
-              className="mb-5 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14" /></svg>
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[13px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14" /></svg>
               Back to app
             </button>
+          </div>
+          <div className="shrink-0 p-3 pb-4 pt-2 sm:px-5">
             <label className="flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/50 px-2.5 py-2 focus-within:border-zinc-500">
               <svg className="shrink-0 text-zinc-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
               <input aria-label="Search settings" placeholder="Search settings…" value={search} onChange={(event) => setSearch(event.target.value)}
