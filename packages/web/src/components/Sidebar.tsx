@@ -88,12 +88,17 @@ function WorkspaceSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-900"
+        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-[10px] px-1.5 text-left transition-colors hover:bg-white/[0.04]"
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-semibold uppercase text-zinc-300">
+        {/* A tinted tile, like a tab's icon on the right. */}
+        <span
+          aria-hidden
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] text-[10px] font-semibold uppercase text-zinc-200 ring-1 ring-inset ring-white/10"
+          style={{ backgroundColor: `color-mix(in srgb, ${active.color} 28%, transparent)` }}
+        >
           {active.icon.slice(0, 2)}
         </span>
-        <span data-testid="space-name" className="truncate text-sm font-medium text-zinc-100">
+        <span data-testid="space-name" className="truncate text-[13px] font-medium text-zinc-100">
           {active.name}
         </span>
         <svg className="ml-auto shrink-0 text-zinc-600" width="12" height="12" viewBox="0 0 12 12" aria-hidden>
@@ -105,7 +110,7 @@ function WorkspaceSwitcher({
         <div
           role="menu"
           aria-label="Workspaces"
-          className="surface-pop absolute left-0 top-full z-40 mt-1 w-64 rounded-lg p-1"
+          className="surface-pop absolute left-0 top-full z-40 mt-1 w-64 rounded-[13px] p-1"
         >
           {workspaces.map((workspace) => {
             const selected = workspace.id === active.id;
@@ -119,14 +124,14 @@ function WorkspaceSwitcher({
                   setOpen(false);
                   onSelect(workspace.id);
                 }}
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${
-                  selected ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                className={`flex w-full items-center gap-2 rounded-[10px] px-2 py-1.5 text-left text-[13px] ${
+                  selected ? 'tab-pill text-zinc-100' : 'border border-transparent text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
                 }`}
               >
                 <span
                   aria-hidden
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-white"
-                  style={{ backgroundColor: workspace.color }}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] text-[10px] font-semibold text-zinc-200 ring-1 ring-inset ring-white/10"
+                  style={{ backgroundColor: `color-mix(in srgb, ${workspace.color} 28%, transparent)` }}
                 >
                   {workspace.icon.slice(0, 2)}
                 </span>
@@ -230,7 +235,7 @@ export function Sidebar({
   const insetTitleBar = useInsetTitleBar();
 
   return (
-    <aside className="relative flex h-screen shrink-0 flex-col border-r border-zinc-900 bg-zinc-950" style={{ width }}>
+    <aside className="relative flex h-screen shrink-0 flex-col border-r border-white/[0.06] bg-zinc-950" style={{ width }}>
       <div
         role="separator"
         aria-orientation="vertical"
@@ -242,7 +247,7 @@ export function Sidebar({
         // macOS: one row — the traffic lights (no native title bar), the space
         // switcher, then « at the far right. The row's blank parts drag the window.
         // The switcher is only as wide as its name, so the rest of the row drags too.
-        <div className="app-drag flex shrink-0 items-center gap-1 border-b border-zinc-900 pl-2 pr-3"
+        <div className="app-drag flex shrink-0 items-center gap-1 pl-2 pr-3"
           style={{ height: TITLE_BAR_HEIGHT }}>
           <TrafficLightsSpacer />
           <div className="min-w-0 flex-1 [&>div>button]:w-auto [&>div>button]:max-w-full">
@@ -251,7 +256,7 @@ export function Sidebar({
           <SidebarToggleButton open onClick={onCollapse} />
         </div>
       ) : (
-        <div className="border-b border-zinc-900 px-3 py-3">
+        <div className="px-3 py-3">
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
@@ -268,7 +273,7 @@ export function Sidebar({
         onCommit={(id) => { void commitSpace(id); }}
       />
 
-      <div className="flex flex-col gap-1 border-t border-zinc-900 p-2">
+      <div className="flex flex-col gap-1 border-t border-white/[0.06] p-2">
         <SpaceDots
           spaces={allWorkspaces}
           activeId={workspace.id}

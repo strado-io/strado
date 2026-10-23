@@ -30,7 +30,7 @@ async function listen(hits: any[]): Promise<number> {
   return (server.address() as { port: number }).port;
 }
 
-async function run(agent: 'claude' | 'codex' | 'opencode' | 'pi') {
+async function run(agent: 'claude' | 'codex' | 'opencode' | 'pi', args = ['--flag', 'value']) {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'shell-agent-'));
   const fakeBin = path.join(tmp, 'bin');
   const capture = path.join(tmp, 'capture.json');
@@ -42,7 +42,7 @@ async function run(agent: 'claude' | 'codex' | 'opencode' | 'pi') {
   const hits: any[] = [];
   const port = await listen(hits);
   const code = await new Promise<number>((resolve) => {
-    const child = spawn(process.execPath, [path.join(HOOKS, 'bin', agent), '--flag', 'value'], {
+    const child = spawn(process.execPath, [path.join(HOOKS, 'bin', agent), ...args], {
       env: {
         ...process.env,
         PATH: [path.join(HOOKS, 'bin'), fakeBin, process.env.PATH ?? ''].join(path.delimiter),
@@ -81,6 +81,14 @@ describe('Shell agent launchers', () => {
     expect(result.capture.argv[0]).toBe('-e');
     expect(result.capture.argv[1]).toContain('strado-pi-status.ts');
     expect(result.capture.argv.slice(2)).toEqual(['--flag', 'value']);
+    expect(result.capture.path.split(path.delimiter)).not.toContain(path.join(HOOKS, 'bin'));
+  });
+
+  it('runs Pi\'s own commands (pi update) untouched: first argument, no extension, no session', async () => {
+    const result = await run('pi', ['update', 'self']);
+    expect(result.code).toBe(0);
+    expect(result.capture.argv).toEqual(['update', 'self']);
+    expect(result.hits).toEqual([]);
     expect(result.capture.path.split(path.delimiter)).not.toContain(path.join(HOOKS, 'bin'));
   });
 

@@ -4,7 +4,8 @@
 
 export type PaneNode =
   | { kind: 'leaf'; key: string }
-  | { kind: 'split'; dir: 'row' | 'col'; ratio: number; a: PaneNode; b: PaneNode };
+  // `name`: the tab group's name (set on a layout's root only).
+  | { kind: 'split'; dir: 'row' | 'col'; ratio: number; a: PaneNode; b: PaneNode; name?: string };
 
 export type PaneDockSide = 'left' | 'right' | 'top' | 'bottom';
 
@@ -100,6 +101,45 @@ export function withRatio(node: PaneNode, addr: number[], ratio: number): PaneNo
   return head === 0
     ? { ...node, a: withRatio(node.a, rest, ratio) }
     : { ...node, b: withRatio(node.b, rest, ratio) };
+}
+
+/** A layout's group name, if the user gave it one. */
+export function groupName(node: PaneNode): string | null {
+  return node.kind === 'split' && node.name ? node.name : null;
+}
+
+/** Name (or, blank, unname) a layout's group. */
+export function withGroupName(node: PaneNode, name: string | null): PaneNode {
+  if (node.kind !== 'split') return node;
+  const { name: _old, ...rest } = node;
+  const n = name?.trim();
+  return n ? { ...rest, name: n } : rest;
+}
+
+/**
+ * Keep group names across a rewrite of a worktree's layouts (a pane added,
+ * removed, docked; the root collapsing to a child). Each unnamed new layout
+ * takes the name of the old named layout it shares the most panes with; a
+ * name goes to one layout only.
+ */
+export function carryNames(prev: PaneNode[], next: PaneNode[]): PaneNode[] {
+  const named = prev.filter((node) => groupName(node) !== null);
+  if (named.length === 0) return next;
+  const used = new Set(next.map(groupName).filter((n): n is string => n !== null));
+  return next.map((node) => {
+    if (node.kind !== 'split' || groupName(node) !== null) return node;
+    const keys = new Set(leafKeys(node));
+    let best: { name: string; overlap: number } | null = null;
+    for (const old of named) {
+      const name = groupName(old)!;
+      if (used.has(name)) continue;
+      const overlap = leafKeys(old).filter((k) => keys.has(k)).length;
+      if (overlap > 0 && (!best || overlap > best.overlap)) best = { name, overlap };
+    }
+    if (!best) return node;
+    used.add(best.name);
+    return withGroupName(node, best.name);
+  });
 }
 
 function sane(node: unknown): node is PaneNode {

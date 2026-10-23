@@ -43,13 +43,13 @@ export function RunningServers({
           : '';
 
   return (
-    <div className="relative">
+    <div className="relative shrink-0 self-center">
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label="Running dev servers"
         aria-expanded={open}
         title="Running dev servers"
-        className="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+        className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
         <span className="tabular-nums">{running.length}</span>

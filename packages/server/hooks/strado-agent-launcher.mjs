@@ -72,6 +72,27 @@ function realPathEnv() {
     .join(path.delimiter);
 }
 
+// Pi's own commands (`pi update`, `pi install …`) are only recognised as the
+// FIRST argument; anything in front turns them into a chat message. They are
+// not a session either, so they run untouched and unregistered.
+const PI_COMMANDS = new Set(['install', 'remove', 'uninstall', 'update', 'list', 'config', 'auth', 'mcp']);
+
+async function passThrough(agent, argv) {
+  const child = spawn(agent, argv, { env: { ...process.env, PATH: realPathEnv() }, stdio: 'inherit' });
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => {
+      try { child.kill(signal); } catch { /* child already exited */ }
+    });
+  }
+  process.exitCode = await new Promise((resolve) => {
+    child.once('error', (err) => {
+      process.stderr.write(`[strado] could not start ${agent}: ${err.message}\n`);
+      resolve(127);
+    });
+    child.once('exit', (exitCode) => resolve(exitCode ?? 1));
+  });
+}
+
 function opencodeHasStandalone(env) {
   try {
     const r = spawnSync('opencode', ['--help'], { env, encoding: 'utf8', timeout: 5000 });
@@ -84,6 +105,10 @@ function opencodeHasStandalone(env) {
 export async function launchAgent(agent) {
   if (!['claude', 'codex', 'opencode', 'pi'].includes(agent)) {
     throw new Error(`unsupported agent launcher: ${agent}`);
+  }
+  if (agent === 'pi' && PI_COMMANDS.has(process.argv[2] ?? '')) {
+    await passThrough(agent, process.argv.slice(2));
+    return;
   }
 
   // Waiting doubles as "this agent is currently open in the Shell". Its real

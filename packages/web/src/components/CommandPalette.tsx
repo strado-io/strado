@@ -28,7 +28,7 @@ import type { ParseContext, ParseInput, Plan, TabRef } from '../lib/jarvis/types
 import { runPlan, type JarvisPorts, type UndoOp } from '../lib/jarvis/execute';
 import { bindPlan, verifyPlan } from '../lib/jarvis/safety';
 import { planKey } from '../lib/jarvis/parse';
-import { clearHistory, frecencyScore, logFallthrough, readHistoryEntries, recordUse, rememberCommand, type HistoryEntry } from '../lib/jarvis/history';
+import { frecencyScore, logFallthrough, readHistoryEntries, recordUse, rememberCommand, type HistoryEntry } from '../lib/jarvis/history';
 import { plainAnswer } from './jarvis/AnswerText';
 
 /** The ⌘K box as a command line (Jarvis). Nothing is suggested while typing;
@@ -173,8 +173,7 @@ type Item =
   // Typed text before ⏎: the single quiet "⏎ to run" line.
   | { type: 'submit' }
   | { type: 'nav'; r: Result }
-  | { type: 'jarvis'; plan: Plan; index: number }
-  | { type: 'history'; text: string; pasted: boolean; chips: Chip[]; n: number };
+  | { type: 'jarvis'; plan: Plan; index: number };
 
 type Result =
   | { kind: 'worktree'; id: string; label: string; detail: string; worktree: Worktree; wsId?: string; remote?: undefined }
@@ -512,7 +511,8 @@ export function CommandPalette({
   const items = useMemo<Item[]>(() => {
     const nav: Item[] = results.map((r) => ({ type: 'nav', r }));
     const text = query.trim();
-    if (!text) return [...nav, ...history.slice(0, 5).map((h, n): Item => ({ type: 'history', text: h.text, pasted: h.pasted, chips: h.chips ?? [], n }))];
+    // No Recent list: ↑ in the empty box recalls past commands instead.
+    if (!text) return nav;
     if (!jarvis) return nav;
     // Only what ⏎ brought up: the model's plans, local readings it revealed,
     // or a reply. Before that, one quiet "⏎ to run" line.
@@ -1058,7 +1058,6 @@ export function CommandPalette({
     if (item.type === 'choice') return askChoice(item.text);
     if (item.type === 'model' || item.type === 'submit') submit(keepOpen);
     else if (item.type === 'nav') pick(item.r);
-    else if (item.type === 'history') { setQuery(item.text); setChips(item.chips); setPasted(item.pasted); }
     else void runRow(item.index, keepOpen);
   };
 
@@ -1323,20 +1322,11 @@ export function CommandPalette({
               );
             }
             const groupKey = item.type === 'nav' ? item.r.kind : item.type;
-            const header = groupKey !== lastKind ? (item.type === 'nav' ? GROUP_LABEL[item.r.kind] : item.type === 'jarvis' ? 'Commands' : 'Recent') : null;
+            const header = groupKey !== lastKind ? (item.type === 'nav' ? GROUP_LABEL[item.r.kind] : 'Commands') : null;
             lastKind = groupKey;
             const headerEl = header && (
               <div className="flex items-center justify-between px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-zinc-600">
                 <span>{header}</span>
-                {item.type === 'history' && jarvis && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); clearHistory(jarvis.wsId); setHistory([]); setSel(0); inputRef.current?.focus(); }}
-                    className="normal-case tracking-normal text-zinc-500 hover:text-zinc-300"
-                  >
-                    Clear history
-                  </button>
-                )}
               </div>
             );
             if (item.type === 'jarvis') {
@@ -1354,28 +1344,6 @@ export function CommandPalette({
                     onHover={() => setSel(i)}
                     onSettings={jarvis?.model ? () => { dismiss(); jarvis.model!.onOpenSettings(); } : undefined}
                   />
-                </div>
-              );
-            }
-            if (item.type === 'history') {
-              return (
-                <div key={`history:${item.text}`}>
-                  {headerEl}
-                  <button
-                    data-idx={i}
-                    data-testid={`history-row-${item.n}`}
-                    title={item.text}
-                    onClick={() => activate(item)}
-                    onMouseEnter={() => setSel(i)}
-                    className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left font-mono text-xs ${i === sel ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400'}`}
-                  >
-                    {/* One line, the chips it was typed with drawn as in the box. */}
-                    <span data-testid="history-text" className="min-w-0 truncate whitespace-nowrap">
-                      {chipSegments(item.text, item.chips).map((seg, k) => (seg.chip
-                        ? <span key={k} data-testid={`history-chip-${chipKey(seg.chip)}`} className={`rounded-sm ${chipTone(seg.chip)}`}>{seg.text}</span>
-                        : <span key={k}>{seg.text}</span>))}
-                    </span>
-                  </button>
                 </div>
               );
             }
@@ -1422,7 +1390,7 @@ export function CommandPalette({
             );
           })}
         </div>
-        {!picker && items.some((it) => it.type === 'nav' || it.type === 'history' || it.type === 'jarvis' || it.type === 'choice') && (
+        {!picker && items.some((it) => it.type === 'nav' || it.type === 'jarvis' || it.type === 'choice') && (
           <div data-testid="command-bar-footer" className="flex items-center gap-1 border-t border-zinc-800/70 px-3 py-1 text-[10px] text-zinc-600">
             {FOOTER_KEYS.map(([k, what], n) => (
               <span key={k}>{n > 0 && ' · '}<kbd className="rounded border border-zinc-700/80 px-1 font-sans text-[10px] text-zinc-500">{k}</kbd> {what}</span>

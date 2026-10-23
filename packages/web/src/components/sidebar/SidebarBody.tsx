@@ -99,7 +99,8 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       runnerName={w.runnerName}
       onOpen={open}
       onContextMenu={onContextMenu && menuItems.length > 0 ? (e) => onContextMenu(e, menuItems) : undefined}
-      className={`group relative flex items-stretch rounded-lg ${activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
+      active={activeRow}
+      className="group relative flex items-stretch"
     >
       <WorktreeCard
         repo={repoName ? { id: w.localRepoId ?? repoName, name: repoName } : null}
@@ -230,8 +231,8 @@ export function SidebarBody({
         onOpenDiff={onOpenDiff}
         onSettings={onWorktreeSettings}
         onContextMenu={(e) => openContextMenu(e, menuItems)}
-        className={`group relative flex items-stretch rounded-lg ${
-          activeRow ? 'bg-zinc-800/80' : 'hover:bg-zinc-900'}`}
+        active={activeRow}
+        className="group relative flex items-stretch"
       >
         <WorktreeCard
           repo={repo ? { id: repo.id, name: repo.name } : null}

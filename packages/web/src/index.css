@@ -413,12 +413,41 @@ body {
    still win. Inside it, highlights are translucent white so they stay visible
    on any surface, and fields go back to the app's black so they read as fields. */
 @layer components {
+  /* Frosted glass, the one token for Strado's own surfaces (the tab bar, pane
+     cards, popovers): translucent, blurred and saturated, a 1px top highlight,
+     a soft shadow. Text on it stays at the app's contrast: the tint is low and
+     what shows through is the app's near-black. In the components layer, so a
+     utility (a tint, a state colour) still wins. */
+  .glass {
+    border-width: 1px;
+    border-color: rgb(255 255 255 / 0.07);
+    background-color: rgb(255 255 255 / 0.04);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    backdrop-filter: blur(24px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      0 8px 24px -12px rgb(0 0 0 / 0.6);
+  }
+  /* The raised piece on glass (the active tab): a brighter sheet. */
+  .glass-pill {
+    border-width: 1px;
+    border-color: rgb(255 255 255 / 0.10);
+    background-color: rgb(255 255 255 / 0.07);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.10),
+      0 1px 2px rgb(0 0 0 / 0.4),
+      0 4px 12px -4px rgb(0 0 0 / 0.5);
+  }
+  /* Popovers and menus: the same glass, darker underneath so a menu over a
+     busy terminal still reads (AA on zinc-200/400 text). */
   .surface-pop {
     border-width: 1px;
     border-color: rgb(255 255 255 / 0.09);
-    background-color: rgb(20 21 25);
+    background-color: rgb(20 21 25 / 0.82);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    backdrop-filter: blur(24px) saturate(160%);
     box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.05),
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
       0 0 0 1px rgb(0 0 0 / 0.6),
       0 16px 40px -8px rgb(0 0 0 / 0.75);
   }
@@ -435,6 +464,34 @@ body {
    terminals above it, so it reads as Strado's own layer, not part of a tab. */
 .dock-panel { background-color: rgb(14 15 18); }
 
+/* Split panes as cards (Rex-style): each pane its own rounded card a hair
+   lighter than the app, a hairline edge, gaps between. The terminal's own
+   background is set to the same colour (XtermPane reads --pane-card), so the
+   card and what is in it read as one surface. The focused pane in a split
+   gets a brighter edge. */
+:root { --pane-card: 21 22 25; --pane-edge: 255 255 255; }
+:root[data-theme='light'] { --pane-card: 255 255 255; --pane-edge: 0 0 0; }
+:root[data-app-theme='true-black'] { --pane-card: 10 10 10; }
+:root[data-app-theme='ayu-dark'] { --pane-card: 25 29 34; }
+:root[data-app-theme='dracula'] { --pane-card: 34 35 42; }
+:root[data-app-theme='nord'] { --pane-card: 45 50 59; }
+.bg-pane-card { background-color: rgb(var(--pane-card)); }
+/* The card is .glass (edge, top highlight, soft shadow); --pane-card is the
+   glass colour made solid (white 4% over the app), for the card and what sits
+   inside it. A light theme has no glass: a plain white card. */
+/* Its fill is pinned solid: glass's backdrop saturate would shift the colour
+   under the header away from the terminal's, and behind a card is only the
+   app's flat background anyway. Edge, top highlight and shadow stay glass. */
+.pane-card { background-color: rgb(var(--pane-card)); border-radius: 0.75rem; transition: border-color 120ms; }
+:root[data-theme='light'] .pane-card {
+  background-color: rgb(var(--pane-card));
+  border-color: rgb(0 0 0 / 0.08);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+.pane-card[data-focused='true'] { border-color: rgb(var(--pane-edge) / 0.15); }
+
 /* Agent pills: a slow breathing light while an agent works (sky) or waits on
    you (amber). It stays INSIDE the pill (border + inner glow), so the strip's
    row never clips it. Still for anyone who asked for reduced motion. */
@@ -447,3 +504,21 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .pill-breathe-working, .pill-breathe-needs { animation: none; }
 }
+
+/* The tab bar, like Rex: two quiet layers only. A faint container, and the
+   active tab (single or group, same pill) a lighter fill with a hairline edge.
+   No drop shadows, no inner rings: nothing reads as a box inside a box. */
+.tab-bar { background-color: rgb(255 255 255 / 0.035); border: 1px solid rgb(255 255 255 / 0.06); }
+.tab-pill {
+  border: 1px solid rgb(255 255 255 / 0.11);
+  background-color: rgb(255 255 255 / 0.085);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+.tab-bar [data-testid='tab-tile'] { --tw-ring-color: transparent; }
+.tab-divider { background-color: rgb(255 255 255 / 0.16); }
+/* An agent's permission request above the box: a card like the panes, amber-edged. */
+.approval-card { background-color: rgb(18 18 20); border: 1px solid rgb(251 191 36 / 0.28); box-shadow: 0 8px 24px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.04); }
+:root[data-theme='light'] .approval-card { background-color: #fff; border-color: rgb(217 119 6 / 0.35); box-shadow: 0 6px 18px rgb(0 0 0 / 0.08); }
+:root[data-theme='light'] .tab-divider { background-color: rgb(0 0 0 / 0.12); }
+:root[data-theme='light'] .tab-bar { background-color: rgb(0 0 0 / 0.03); border-color: rgb(0 0 0 / 0.08); }
+:root[data-theme='light'] .tab-pill { background-color: #fff; border-color: rgb(0 0 0 / 0.1); box-shadow: none; }

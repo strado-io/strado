@@ -242,7 +242,11 @@ export function createJarvisModel(deps: { create?: CreateFn; readKey?: () => Pro
         const action = byTool.get(u.name);
         if (action && u.input && typeof u.input === 'object') steps.push({ action, args: u.input as Record<string, unknown> });
       }
-      if (steps.length > 0) return { kind: 'plan', steps, model, ms };
+      if (steps.length > 0) {
+        // Which actions it chose (no content: kinds and modes only), so "why did it open two" has an answer.
+        deps.log?.(`model plan: ${steps.map((st) => `${st.action}${typeof st.args.mode === 'string' ? `(${st.args.mode})` : ''}`).join(' · ')}`);
+        return { kind: 'plan', steps, model, ms };
+      }
       // The answer tool's text is the reply; prose before it is the model's
       // lead-in (often the same thing said twice). Prose only stands in when
       // there is no answer at all.

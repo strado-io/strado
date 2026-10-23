@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { dockLeaf, leafKeys, readPaneLayouts, rememberPaneLayouts, type PaneNode } from './paneLayout';
+import { carryNames, dockLeaf, groupName, leafKeys, readPaneLayouts, rememberPaneLayouts, removeLeaf, withGroupName, type PaneNode } from './paneLayout';
 
 beforeEach(() => localStorage.clear());
 
@@ -65,5 +65,35 @@ describe('pane layout persistence', () => {
   it('persists multiple groups for one worktree', () => {
     rememberPaneLayouts('/repo', [first, second]);
     expect(readPaneLayouts()).toEqual({ '/repo': [first, second] });
+  });
+});
+
+describe('group names', () => {
+  const leaf = (key: string): PaneNode => ({ kind: 'leaf', key });
+  const split = (a: PaneNode, b: PaneNode, name?: string): PaneNode => ({ kind: 'split', dir: 'row', ratio: 0.5, a, b, ...(name ? { name } : {}) });
+
+  it('a name lives on the layout\'s root; blank clears it; a lone leaf has none', () => {
+    const g = withGroupName(split(leaf('shell:1'), leaf('claude:1')), '  Review  ');
+    expect(groupName(g)).toBe('Review');
+    expect(groupName(withGroupName(g, '   '))).toBeNull();
+    expect(withGroupName(leaf('shell:1'), 'x')).toEqual(leaf('shell:1'));
+  });
+
+  it('survives a reload', () => {
+    rememberPaneLayouts('/w', [withGroupName(split(leaf('shell:1'), leaf('claude:1')), 'Review')]);
+    expect(groupName(readPaneLayouts()['/w']![0]!)).toBe('Review');
+  });
+
+  it('carryNames: a rewritten layout keeps its group\'s name (the root collapsed, a pane added or removed)', () => {
+    const named = split(split(leaf('a'), leaf('b')), leaf('c'), 'Review');
+    const other = split(leaf('x'), leaf('y'), 'Logs');
+    // Removing c collapses the root to the inner split: the name moves with it.
+    const after = [removeLeaf(named, 'c')!, other];
+    expect(carryNames([named, other], after).map(groupName)).toEqual(['Review', 'Logs']);
+    // A brand-new group gets no name; one name is never given to two groups.
+    const fresh = split(leaf('p'), leaf('q'));
+    expect(carryNames([named], [split(leaf('a'), leaf('d')), split(leaf('b'), leaf('e')), fresh]).map(groupName)).toEqual(['Review', null, null]);
+    // A name set on the new layout wins.
+    expect(carryNames([named], [split(leaf('a'), leaf('b'), 'New')]).map(groupName)).toEqual(['New']);
   });
 });

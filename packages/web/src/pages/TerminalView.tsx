@@ -10,16 +10,17 @@ function runTabLabel(g: Pick<Group, 'runNames'>, id: string): string | null {
 }
 /** Process states in which the run tab is restored: live, or crashed (its output one click away). */
 const RUN_TAB_STATES = new Set(['starting', 'running', 'stopping', 'crashed']);
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
-import { api, type UiCommandAck, type UiTabRef } from '../api';
+import { api, type StationDto, type UiCommandAck, type UiTabRef } from '../api';
 import { subscribeWorktrees } from '../eventStream';
 import { useCapabilities } from '../hooks/capabilities';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
 import { readVscodeTabs, rememberVscodeTab } from '../hooks/vscodeTabs';
+import { readDiffTabs, rememberDiffTab } from '../hooks/diffTabs';
 import {
   forgetKbTabState, readKbTabIds, readKbTabs, rememberKbSelection,
   rememberKbTab, rememberKbTabIds,
@@ -38,18 +39,23 @@ import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
-  CodexIcon, CopyIcon, ExternalIcon, GlobeIcon, OpencodeIcon, PiIcon,
+  CodexIcon, CopyIcon, ExternalIcon, GitIcon, GlobeIcon, OpencodeIcon, PiIcon,
   PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
+import { TabStrip, TabTile } from '../components/hub/TabStrip';
+import { stateOf as stationState } from '../lib/dock/stations';
 import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
 import { agentTabStatus, shellHostedAgent } from '../hooks/agentTabStatus';
 import {
   dockLeaf, hasLeaf, leafKeys, placeLeaf, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
-  removeLeaf, splitLeaf, withRatio, type PaneDockSide, type PaneNode,
+  removeLeaf, replaceLeaf, splitLeaf, withRatio, carryNames, groupName, withGroupName, type PaneDockSide, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
+import { PaneCard } from '../components/hub/PaneCard';
+import { PaneLayout } from '../components/hub/PaneLayout';
+import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
@@ -62,7 +68,7 @@ import { hubKeyOf, nextBrowserId, type ParsedUiCommand, type UiPlace } from '../
 
 type Tab = {
   path: string;
-  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb';
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb' | 'diff';
   id: string;
   /** Set when this session's pty lives on a runner rather than this machine. */
   remote?: RemoteTarget | null;
@@ -107,6 +113,8 @@ type Group = {
   kbOpen: boolean;
   // Extra independently stateful document tabs beyond Knowledge Base 1.
   kbIds: string[];
+  // Client-side too: the Changes tab (the diff view as a tab, local git only).
+  diffOpen: boolean;
   claudeStatus?: 'idle' | 'working' | 'waiting';
   // Per-session status for multi-session worktrees; id '1' falls back to the
   // aggregate field when absent (older servers).
@@ -304,6 +312,9 @@ function groupTabs(
           icon: <BookIcon className={IDLE_ICON} />,
         };
     }),
+    ...(g.diffOpen && !g.remote
+      ? [{ tab: { path: g.path, mode: 'diff' as const, id: '1' }, label: 'Changes', icon: <GitIcon className={IDLE_ICON} /> }]
+      : []),
   ];
   // A remote group's pty tabs all target the runner. The Browser tab is a LOCAL
   // desktop surface (it renders the forwarded 127.0.0.1 URL), and VS Code/KB are
@@ -311,7 +322,7 @@ function groupTabs(
   // do.
   const withTarget = g.remote
     ? entries.map((e) =>
-        e.tab.mode === 'vscode' || e.tab.mode === 'browser' || e.tab.mode === 'kb'
+        e.tab.mode === 'vscode' || e.tab.mode === 'browser' || e.tab.mode === 'kb' || e.tab.mode === 'diff'
           ? e
           : { ...e, tab: { ...e.tab, remote: g.remote } },
       )
@@ -546,12 +557,13 @@ export function TerminalView({
   onOpenUsage,
   openSeq = 0,
   modalOpen = false,
+  mission,
 }: {
   worktree: Worktree;
   onClose: () => void;
   /** undefined = a generic open (sidebar row, palette) — restore the tab the
    *  user was on last time; an explicit mode always wins */
-  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb';
+  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb' | 'diff';
   sessionId?: string;
   /** Bumps on every explicit open request from the parent (for example, a
    *  notification). `mode`/`sessionId` are read once at mount, so this is what
@@ -569,6 +581,10 @@ export function TerminalView({
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
+  /** Mission Control in the tab bar: the stations (a tab wears its agent's state). */
+  mission?: {
+    stations: StationDto[];
+  };
 }) {
   const { workspace } = useWorkspace();
   const { showTime, showStatus } = useHubDisplayPreferences();
@@ -619,6 +635,7 @@ export function TerminalView({
         : (readKbTabIds()[w.path] ?? []).includes(t.id);
     }
     if (t.mode === 'browser') return isElectron && readBrowserTabs().has(w.path);
+    if (t.mode === 'diff') return !w.remote && readDiffTabs().has(w.path);
     return false;
   };
   const [{ mode, sessionId }] = useState(() => {
@@ -634,7 +651,8 @@ export function TerminalView({
   const paneLayoutsRef = useRef(paneLayouts);
   paneLayoutsRef.current = paneLayouts;
   const setLayouts = (path: string, nodes: PaneNode[]) => {
-    const splits = nodes.filter((node) => node.kind === 'split');
+    // A rewritten layout keeps its group's name (see carryNames).
+    const splits = carryNames(paneLayoutsRef.current[path] ?? [], nodes.filter((node) => node.kind === 'split'));
     setPaneLayouts((prev) => {
       const next = { ...prev };
       if (splits.length > 0) next[path] = splits;
@@ -647,6 +665,7 @@ export function TerminalView({
   useEffect(() => {
     if (mode === 'vscode') rememberVscodeTab(worktree.path, true);
     if (mode === 'kb' && sessionId === '1') rememberKbTab(worktree.path, true);
+    if (mode === 'diff') rememberDiffTab(worktree.path, true);
   }, [mode, sessionId, worktree.path]);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -658,8 +677,8 @@ export function TerminalView({
   // match the tabs the strip builds.
   const remoteFor = (path: string) => (remote ? { ...remote, path } : null);
   const [active, setActive] = useState<Tab>(
-    mode === 'vscode' || mode === 'browser' || mode === 'kb'
-      ? { path: worktree.path, mode, id: mode === 'vscode' ? '1' : sessionId }
+    mode === 'vscode' || mode === 'browser' || mode === 'kb' || mode === 'diff'
+      ? { path: worktree.path, mode, id: mode === 'vscode' || mode === 'diff' ? '1' : sessionId }
       : { path: worktree.path, mode, id: sessionId, remote: remoteFor(worktree.path) },
   );
   const activeRef = useRef(active);
@@ -676,6 +695,9 @@ export function TerminalView({
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   // Cmd+T opens a new shell in the active worktree (ref for the same reason).
   const addShellRef = useRef<() => void>(() => undefined);
+  // Cmd+L opens the Changes tab (ref for the same reason).
+  const openChangesRef = useRef<() => void>(() => undefined);
+  const lastNonDiffRef = useRef<Tab | null>(null);
   // Agent tabs the user explicitly closed. A close kills the session AND sets
   // claudeOpen=false optimistically, but a stale in-flight SSE snapshot (taken
   // before the kill, hasClaudeSession=true) would otherwise re-open the tab —
@@ -717,6 +739,7 @@ export function TerminalView({
       ...(readKbTabIds()[worktree.path] ?? []),
       ...(mode === 'kb' && sessionId !== '1' ? [sessionId] : []),
     ]),
+    diffOpen: !worktree.remote && (mode === 'diff' || readDiffTabs().has(worktree.path)),
     claudeStatus: worktree.claudeStatus,
     claudeStatusById: worktree.claudeStatusById,
     parkedClaudeIds: worktree.parkedClaudeSessions,
@@ -1040,9 +1063,6 @@ export function TerminalView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remote, remoteForward.forward, groups, browserUrl, procs[worktree.path]?.status, procs[worktree.path]?.port, procs[worktree.path]?.detectedUrl, procs[worktree.path]?.proxyUrl]);
-  const [showDiff, setShowDiff] = useState(false);
-  const showDiffRef = useRef(false);
-  showDiffRef.current = showDiff;
   // Custom shell-tab names (double-click a shell tab to rename; shell only —
   // agent/vscode/browser tabs keep their fixed labels). `renaming` holds the
   // tab being edited plus the draft text for the inline input.
@@ -1198,9 +1218,10 @@ export function TerminalView({
             const storedBrowser = isElectron && readBrowserTabs().has(row.path);
             const storedKb = readKbTabs().has(row.path);
             const storedKbIds = readKbTabIds()[row.path] ?? [];
+            const storedDiff = !remote && readDiffTabs().has(row.path);
             const live =
               row.hasClaudeSession || row.hasCodexSession || row.hasOpencodeSession || row.hasPiSession ||
-              storedVscode || storedBrowser ||
+              storedVscode || storedBrowser || storedDiff ||
               storedKb || storedKbIds.length > 0 || (row.shellSessions?.length ?? 0) > 0;
             if (!live) continue;
             const meta = rowMetaRef.current.get(row.path)!;
@@ -1219,6 +1240,7 @@ export function TerminalView({
               browserIds: isElectron ? readBrowserTabIds()[row.path] ?? [] : [],
               kbOpen: storedKb,
               kbIds: storedKbIds,
+              diffOpen: storedDiff,
               claudeStatus: row.claudeStatus,
               claudeStatusById: row.claudeStatusById,
               parkedClaudeIds: row.parkedClaudeSessions,
@@ -1305,6 +1327,7 @@ export function TerminalView({
             browserIds: [],
             kbOpen: false,
             kbIds: [],
+            diffOpen: false,
             claudeStatus: evt.data.claudeStatus,
             claudeStatusById: evt.data.claudeStatusById,
             parkedClaudeIds: Array.isArray(evt.data.parkedClaudeSessions) ? (evt.data.parkedClaudeSessions as string[]) : undefined,
@@ -1411,11 +1434,8 @@ export function TerminalView({
    }, [worktree.path, remote]);
 
   useEffect(() => {
-    // While the diff overlay is open, Esc belongs to it (DiffView has its own
-    // listener) — don't also close the terminal panel underneath.
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (showDiffRef.current) return;
       // Esc peels popovers (the add-session menu). The hub itself is left via
       // Back / sidebar, not Esc.
       if (addMenuRef.current) setAddMenu(null);
@@ -1446,7 +1466,7 @@ export function TerminalView({
 
   // ---------- split panes (Cmd+D / Cmd+Shift+D) ----------
   const isPtyMode = (m: Tab['mode']): m is PtyTab['mode'] =>
-    m !== 'vscode' && m !== 'browser' && m !== 'kb';
+    m !== 'vscode' && m !== 'browser' && m !== 'kb' && m !== 'diff';
   // Resolve against the actual strip rather than reparsing the key. Besides
   // keeping remote runner identity exact, this lets Browser and Knowledge Base
   // leaves participate in the same layout tree as PTY sessions.
@@ -1515,13 +1535,14 @@ export function TerminalView({
 
   // Split the focused pane, spawning a fresh session of the same mode into
   // the new half (right for row, below for col).
-  const splitPane = (dir: 'row' | 'col') => {
-    if (!isPtyMode(active.mode) || active.path !== worktree.path) return;
-    const newTab = allocSession(active.mode);
+  const splitPaneAt = (at: Tab, dir: 'row' | 'col') => {
+    if (!isPtyMode(at.mode) || at.path !== worktree.path) return;
+    const newTab = allocSession(at.mode);
     if (!newTab) return;
-    commitLayoutAt(activeLayoutIndex, splitLeaf(paneTree, tabKeyOf(active), tabKeyOf(newTab), dir));
+    commitLayoutAt(activeLayoutIndex, splitLeaf(paneTree, tabKeyOf(at), tabKeyOf(newTab), dir));
     setActive(newTab);
   };
+  const splitPane = (dir: 'row' | 'col') => splitPaneAt(active, dir);
   const splitPaneRef = useRef(splitPane);
   splitPaneRef.current = splitPane;
   const activateTabRef = useRef(activateTab);
@@ -1558,7 +1579,9 @@ export function TerminalView({
     el.addEventListener('pointerup', up);
   };
 
+  // Each leaf's card (drop targets measure it) and its body (live surfaces are placed over it).
   const paneLeafElsRef = useRef(new Map<string, HTMLDivElement>());
+  const paneBodyElsRef = useRef(new Map<string, HTMLDivElement>());
   const paneSurfaceRef = useRef<HTMLDivElement>(null);
   const [paneRects, setPaneRects] = useState<Record<string, {
     left: number;
@@ -1576,65 +1599,145 @@ export function TerminalView({
     setActive(tab);
   };
 
-  const renderPane = (node: PaneNode, addr: number[]): React.ReactNode => {
-    if (node.kind === 'leaf') {
-      const tab = keyToTab(worktree.path, node.key);
-      if (!tab) return null;
-      const isFocused = sameTab(active, tab);
-      const isDocked = !!layout && hasLeaf(layout, node.key);
-      const label = tabs.find((entry) => tabKeyOf(entry.tab) === node.key)?.label ?? node.key;
+  // A card's Split right/down makes an empty pane on that side at once (a
+  // `new:` placeholder leaf) holding "Open a surface", the + menu's kinds.
+  // A choice runs exactly as the + menu would; the tab it makes active then
+  // takes the placeholder's place. Esc / ✕ / focus leaving drop the pane.
+  const [newPaneKey, setNewPaneKey] = useState<string | null>(null);
+  const newPaneSeqRef = useRef(0);
+  const pendingSurfaceRef = useRef<{ placeholder: string; path: string } | null>(null);
+  const withoutLeaf = (nodes: PaneNode[], key: string) => nodes
+    .map((node) => (hasLeaf(node, key) ? removeLeaf(node, key) : node))
+    .filter((node): node is PaneNode => node?.kind === 'split');
+  const openEmptyPane = (anchor: Tab, dir: 'row' | 'col') => {
+    const current = newPaneKey ? withoutLeaf(paneLayoutsRef.current[worktree.path] ?? [], newPaneKey) : paneLayoutsRef.current[worktree.path] ?? [];
+    const key = `new:${++newPaneSeqRef.current}`;
+    const anchorKey = tabKeyOf(anchor);
+    const index = current.findIndex((l) => hasLeaf(l, anchorKey));
+    const base: PaneNode = index >= 0 ? current[index]! : { kind: 'leaf', key: anchorKey };
+    const placed = splitLeaf(base, anchorKey, key, dir);
+    setLayouts(worktree.path, index >= 0 ? current.map((l, i) => (i === index ? placed : l)) : [...current, placed]);
+    setNewPaneKey(key);
+    if (!sameTab(active, anchor)) setActive(anchor);
+  };
+  const cancelEmptyPane = () => {
+    if (!newPaneKey) return;
+    setLayouts(worktree.path, withoutLeaf(paneLayoutsRef.current[worktree.path] ?? [], newPaneKey));
+    setNewPaneKey(null);
+  };
+  useLayoutEffect(() => {
+    const p = pendingSurfaceRef.current;
+    if (!p) return;
+    pendingSurfaceRef.current = null;
+    if (active.path !== p.path) return;
+    const key = tabKeyOf(active);
+    // Lifted out of wherever it already sat (VS Code is one per worktree), then
+    // put where the empty pane is.
+    const current = withoutLeaf(paneLayoutsRef.current[p.path] ?? [], key);
+    setLayouts(p.path, current.map((l) => (hasLeaf(l, p.placeholder) ? replaceLeaf(l, p.placeholder, key) : l)));
+    setNewPaneKey(null);
+    // Only the tab the choice activated, in this same commit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+  const openSurface = (option: NewSessionOption) => {
+    if (!newPaneKey) return;
+    pendingSurfaceRef.current = { placeholder: newPaneKey, path: worktree.path };
+    option.run();
+    // Nothing became active (the choice opened nothing): forget the intent.
+    // A task, not a microtask: React commits the choice's updates first.
+    window.setTimeout(() => { pendingSurfaceRef.current = null; }, 0);
+  };
+
+  // Tab groups: a split layout is ONE tab in the strip. Clicking it shows the
+  // layout (its focused member, else its first); renaming names the group;
+  // closing closes every member, each with its own busy confirm.
+  const requestCloseTabRef = useRef<(tab: Tab) => Promise<void>>(async () => {});
+  // Each group tab's member keys (a click on the group touches all of them).
+  const groupKeysRef = useRef(new Map<number, string[]>());
+  const stripGroups = splitGroups
+    .filter((group) => group.tabs.length > 1)
+    .map((group) => ({
+      layoutIndex: group.layoutIndex,
+      keys: group.tabs.map((entry) => tabKeyOf(entry.tab)),
+      name: groupName(group.node),
+      active: group.layoutIndex === activeLayoutIndex,
+    }));
+  groupKeysRef.current = new Map(stripGroups.map((g) => [g.layoutIndex, g.keys]));
+  const activateGroup = (layoutIndex: number) => {
+    const group = splitGroups.find((g) => g.layoutIndex === layoutIndex);
+    if (!group || group.layoutIndex === activeLayoutIndex) return;
+    const first = group.tabs[0];
+    if (first) activateTab(first.tab);
+  };
+  const renameGroup = (layoutIndex: number, name: string | null) => {
+    const current = paneLayoutsRef.current[worktree.path] ?? [];
+    if (!current[layoutIndex]) return;
+    setLayouts(worktree.path, current.map((node, i) => (i === layoutIndex ? withGroupName(node, name) : node)));
+  };
+  const closeGroup = async (layoutIndex: number) => {
+    const members = splitGroups.find((g) => g.layoutIndex === layoutIndex)?.tabs.map((entry) => entry.tab) ?? [];
+    for (const tab of members) await requestCloseTabRef.current(tab);
+  };
+
+  const renderLeaf = (key: string): React.ReactNode => {
+    if (key === newPaneKey) {
       return (
-        <div
-          key={node.key}
-          ref={(el) => {
-            if (el) paneLeafElsRef.current.set(node.key, el);
-            else paneLeafElsRef.current.delete(node.key);
+        <PaneCard
+          key={key}
+          paneKey={key}
+          title="New pane"
+          icon={<PlusIcon className="text-zinc-500" />}
+          focused
+          docked
+          hostRef={(el) => {
+            if (el) paneLeafElsRef.current.set(key, el);
+            else paneLeafElsRef.current.delete(key);
           }}
-          data-testid="pane-host"
-          data-pane-key={node.key}
-          className={`group relative h-full w-full min-h-0 min-w-0 overflow-hidden ${
-            isDocked && isFocused ? 'ring-1 ring-inset ring-sky-500/40' : ''
-          }`}
+          bodyRef={() => {}}
+          onActivate={() => {}}
+          onClose={cancelEmptyPane}
         >
-          {isDocked && tab.mode !== 'browser' && (
-            <button
-              type="button"
-              aria-label={`Open ${label} as full tab`}
-              title="Remove from split and open as full tab"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => openPaneAsFullTab(tab)}
-              className={`absolute right-2 top-2 z-20 rounded border border-zinc-700 bg-zinc-950/90 px-1.5 py-0.5 text-[10px] text-zinc-400 shadow-lg backdrop-blur hover:border-zinc-500 hover:text-zinc-100 ${
-                isFocused ? 'opacity-70' : 'opacity-0'
-              } transition-opacity group-hover:opacity-100 focus:opacity-100`}
-            >
-              Full tab
-            </button>
-          )}
-        </div>
+          <div
+            className="h-full w-full"
+            onBlur={(e) => {
+              // Focus moved to something else in the hub: the pane was abandoned.
+              const to = e.relatedTarget as Node | null;
+              if (to && !e.currentTarget.contains(to)) cancelEmptyPane();
+            }}
+          >
+            <OpenSurface options={newSessionOptions()} onPick={openSurface} onCancel={cancelEmptyPane} />
+          </div>
+        </PaneCard>
       );
     }
+    const tab = keyToTab(worktree.path, key);
+    if (!tab) return null;
+    const entry = tabs.find((t) => tabKeyOf(t.tab) === key);
+    const label = entry?.label ?? key;
+    const docked = !!layout && hasLeaf(layout, key);
+    const canSplit = tab.path === worktree.path;
     return (
-      <div
-        data-testid="pane-split"
-        data-split-dir={node.dir}
-        className={`flex h-full w-full min-h-0 min-w-0 ${node.dir === 'row' ? 'flex-row' : 'flex-col'}`}
-      >
-        <div style={{ flexBasis: `${node.ratio * 100}%` }} className="min-h-0 min-w-0 shrink-0 grow-0 overflow-hidden">
-          {renderPane(node.a, [...addr, 0])}
-        </div>
-        <div
-          role="separator"
-          aria-orientation={node.dir === 'row' ? 'vertical' : 'horizontal'}
-          aria-label="Resize panes"
-          className={
-            node.dir === 'row'
-              ? 'w-1 shrink-0 cursor-col-resize bg-zinc-900 hover:bg-sky-500/60'
-              : 'h-1 shrink-0 cursor-row-resize bg-zinc-900 hover:bg-sky-500/60'
-          }
-          onPointerDown={(e) => startDividerDrag(e, addr, node.dir)}
-        />
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{renderPane(node.b, [...addr, 1])}</div>
-      </div>
+      <PaneCard
+        key={key}
+        paneKey={key}
+        title={label}
+        icon={<TabTile mode={tab.mode} icon={entry?.icon} />}
+        focused={!newPaneKey && sameTab(active, tab)}
+        docked={docked}
+        hostRef={(el) => {
+          if (el) paneLeafElsRef.current.set(key, el);
+          else paneLeafElsRef.current.delete(key);
+        }}
+        bodyRef={(el) => {
+          if (el) paneBodyElsRef.current.set(key, el);
+          else paneBodyElsRef.current.delete(key);
+        }}
+        onActivate={() => { if (!sameTab(active, tab)) setActive(tab); }}
+        onSplitRight={canSplit ? () => openEmptyPane(tab, 'row') : undefined}
+        onSplitDown={canSplit ? () => openEmptyPane(tab, 'col') : undefined}
+        onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
+        onClose={() => { void requestCloseTab(tab); }}
+      />
     );
   };
 
@@ -1656,7 +1759,7 @@ export function TerminalView({
         const outer = surface.getBoundingClientRect();
         const next: typeof paneRects = {};
         for (const key of leafKeys(paneTree)) {
-          const el = paneLeafElsRef.current.get(key);
+          const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
           if (!el) continue;
           const rect = el.getBoundingClientRect();
           next[key] = {
@@ -1684,7 +1787,7 @@ export function TerminalView({
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
     for (const key of leafKeys(paneTree)) {
-      const el = paneLeafElsRef.current.get(key);
+      const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
       if (el) ro.observe(el);
     }
     window.addEventListener('resize', sync);
@@ -1830,13 +1933,13 @@ export function TerminalView({
         commit();
         return;
       }
-      // Cmd+L toggles the worktree's Changes modal (diff + its MR). Ctrl+L deliberately falls
-      // through so shells keep their clear-screen binding.
+      // Cmd+L opens (or jumps to) the worktree's Changes tab (diff + its MR). Ctrl+L deliberately
+      // falls through so shells keep their clear-screen binding.
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'l') {
         if (e.repeat) return;
         e.preventDefault();
         e.stopPropagation();
-        setShowDiff((open) => !open);
+        openChangesRef.current();
         return;
       }
       // Cmd+W closes the active tab (terminal/shell/agent focus lands here;
@@ -1907,7 +2010,7 @@ export function TerminalView({
         return;
       }
       if (combo === 'changes') {
-        setShowDiff((open) => !open);
+        openChangesRef.current();
         return;
       }
       const dir = combo === 'tab-next' ? 1 : combo === 'tab-prev' ? -1 : null;
@@ -1966,7 +2069,7 @@ export function TerminalView({
             setSwitchCards((p) => ({ ...p, [cardKey]: { url, img: r } }));
           }
         });
-      } else if (t.mode !== 'vscode' && t.mode !== 'kb') {
+      } else if (t.mode !== 'vscode' && t.mode !== 'kb' && t.mode !== 'diff') {
         // Hover previews read the LOCAL pty buffer; a remote session's buffer
         // lives on the runner, and asking here would return an empty preview
         // that looks like a dead session.
@@ -2001,13 +2104,14 @@ export function TerminalView({
   useEffect(() => {
     if (layouts.length === 0) return;
     const valid = new Set(tabKeysJoined.split(',').filter(Boolean));
+    if (newPaneKey) valid.add(newPaneKey);
     if (!layouts.some((candidate) => leafKeys(candidate).some((key) => !valid.has(key)))) return;
     const pruned = layouts
       .map((candidate) => pruneLeaves(candidate, valid))
       .filter((candidate): candidate is PaneNode => candidate?.kind === 'split');
     setLayouts(worktree.path, pruned);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layouts, tabKeysJoined, worktree.path]);
+  }, [layouts, tabKeysJoined, worktree.path, newPaneKey]);
   const tabElsRef = useRef(new Map<string, HTMLElement>());
   const TAB_GAP = 2; // gap-0.5 in the strip
   const tabDragRef = useRef<null | {
@@ -2137,6 +2241,11 @@ export function TerminalView({
     tabDragRef.current = null;
     if (!d || !d.started) return;
     justDraggedRef.current = true;
+    // The browser's click after this pointerup is what the guard eats. When
+    // the drop folds the dragged tab into a group tab, that click never reaches
+    // a tab, so the guard must not outlive this gesture: it would swallow the
+    // next real click on another tab.
+    window.setTimeout(() => { justDraggedRef.current = false; }, 0);
     // Resolve once more at the release coordinates. This prevents a stale
     // preview from docking after the pointer leaves a pane between the final
     // move event and pointerup.
@@ -2340,15 +2449,52 @@ export function TerminalView({
     if (tab) activateTab(tab);
   };
 
+  // The kinds the hub can open, in the new-session (+) menu's order with its
+  // rules; a card's split menu offers the same list.
+  const newSessionOptions = (): NewSessionOption[] => [
+    { mode: 'claude', label: 'Claude', icon: <ClaudeIcon />, run: () => addAgent('claude') },
+    { mode: 'codex', label: 'Codex', icon: <CodexIcon />, run: () => addAgent('codex') },
+    {
+      mode: 'opencode',
+      label: 'OpenCode',
+      icon: <OpencodeIcon />,
+      run: () => addAgent('opencode'),
+      disabled: opencodeInstalled === false,
+      hint: 'OpenCode needs to be installed to use',
+    },
+    {
+      mode: 'pi',
+      label: 'Pi',
+      icon: <PiIcon />,
+      run: () => addAgent('pi'),
+      disabled: piInstalled === false,
+      hint: 'Pi needs to be installed to use',
+    },
+    { mode: 'shell', label: 'Shell', icon: <ShellIcon />, run: addShell },
+    ...(caps.embeds
+      ? [{ mode: 'vscode', label: 'VS Code', icon: <VsCodeIcon />, run: () => openMode('vscode') }]
+      : []),
+    { mode: 'kb', label: 'Knowledge Base', icon: <BookIcon />, run: () => addKb() },
+    // The diff reads LOCAL git state; a runner worktree has none here.
+    ...(!remote ? [{ mode: 'diff', label: 'Changes', icon: <GitIcon />, run: () => openMode('diff') }] : []),
+    // No per-runner "Shell on <runner>" row: runner worktrees show
+    // up in the sidebar like local ones, so a shell opened from
+    // THAT worktree already lands on the runner, in the right repo.
+    // The old row had to guess a repo (first worktree it found).
+    ...(browserEmbeds
+      ? [{ mode: 'browser', label: 'Browser', icon: <GlobeIcon />, run: addBrowser }]
+      : []),
+  ];
+
   // Header quick-launch: open (or jump to) a Claude/Codex/VS Code tab for the
   // ACTIVE worktree without leaving the panel. Marking the group open and
   // activating the tab is enough — the terminal WS spawns the pty on connect.
   const openMode = (
-    m: 'claude' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb',
+    m: 'claude' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb' | 'diff',
     opts?: { path?: string; id?: string },
   ) => {
     const path = opts?.path ?? active.path;
-    const id = m === 'vscode' ? '1' : opts?.id ?? '1';
+    const id = m === 'vscode' || m === 'diff' ? '1' : opts?.id ?? '1';
     // Re-opening an agent lifts the user-closed suppression so SSE session
     // detection can drive the tab again.
     if (m === 'claude' || m === 'codex' || m === 'opencode' || m === 'pi') {
@@ -2357,6 +2503,7 @@ export function TerminalView({
       killedRemoteRef.current.delete(remoteKillKey(path, m, id));
     }
     if (m === 'vscode') rememberVscodeTab(path, true);
+    if (m === 'diff') rememberDiffTab(path, true);
     if (m === 'kb') {
       if (id === '1') rememberKbTab(path, true);
       else {
@@ -2387,6 +2534,7 @@ export function TerminalView({
               browserOpen: g.browserOpen || m === 'browser',
               kbOpen: g.kbOpen || (m === 'kb' && id === '1'),
               kbIds: m === 'kb' && id !== '1' ? sortIds([...g.kbIds, id]) : g.kbIds,
+              diffOpen: g.diffOpen || m === 'diff',
             }
           : g,
       ),
@@ -2397,10 +2545,24 @@ export function TerminalView({
       path,
       mode: m,
       id,
-      remote: m === 'vscode' || m === 'browser' || m === 'kb' ? null : remoteFor(path),
+      remote: m === 'vscode' || m === 'browser' || m === 'kb' || m === 'diff' ? null : remoteFor(path),
     });
   };
 
+
+  // The +/- button and Cmd+L: the worktree's diff as a tab (local git only).
+  // Again from the Changes tab goes back to the tab you came from.
+  if (active.mode !== 'diff') lastNonDiffRef.current = active;
+  const openChanges = () => {
+    if (remote) return;
+    const back = lastNonDiffRef.current;
+    if (activeRef.current.mode === 'diff' && back && tabs.some((t) => sameTab(t.tab, back))) {
+      activateTab(back);
+      return;
+    }
+    openMode('diff', { path: worktree.path });
+  };
+  openChangesRef.current = openChanges;
 
   // Apply an explicit open request from the parent (such as a notification)
   // that lands while THIS worktree's hub is already open — the
@@ -2503,9 +2665,12 @@ export function TerminalView({
   const typedAtRef = useRef(new Map<string, number>());
   useEffect(() => {
     const noteIn = (map: Map<string, number>) => (event: Event) => {
-      const el = (event.target as Element | null)?.closest?.('[data-pane-key],[data-tab-key]');
+      const el = (event.target as Element | null)?.closest?.('[data-pane-key],[data-tab-key],[data-group-index]');
       const key = el?.getAttribute('data-pane-key') ?? el?.getAttribute('data-tab-key');
       if (key) map.set(key, Date.now());
+      // A group tab stands for all its members.
+      const group = el?.getAttribute('data-group-index');
+      if (group != null) for (const k of groupKeysRef.current.get(Number(group)) ?? []) map.set(k, Date.now());
     };
     const onPointer = noteIn(humanAtRef.current);
     const onKey = noteIn(typedAtRef.current);
@@ -2661,6 +2826,7 @@ export function TerminalView({
   closeActiveTabRef.current = () => {
     void requestCloseTab(activeRef.current);
   };
+  requestCloseTabRef.current = requestCloseTab;
 
   // VS Code and Browser tabs are client-side state mirrored in localStorage.
   // Settings → Sessions closes them by writing storage; run the normal close
@@ -2722,7 +2888,7 @@ export function TerminalView({
     // server refuses with 409 'running' and the dev server keeps running).
     const runTab = tab.mode === 'shell' && isRunTab(tab.id) && !tab.remote;
     if (runTab) api.worktrees.closeRunTab(localWsId, tab.path, runIdOfTab(tab.id) || undefined).catch(() => undefined);
-    if (tab.mode !== 'vscode' && tab.mode !== 'browser' && tab.mode !== 'kb' && !runTab) {
+    if (tab.mode !== 'vscode' && tab.mode !== 'browser' && tab.mode !== 'kb' && tab.mode !== 'diff' && !runTab) {
       if (remote) {
         // The session lives on the runner — the local server has never heard
         // of this path. Suppress the id BEFORE the request so a poll snapshot
@@ -2856,6 +3022,10 @@ export function TerminalView({
           rememberBrowserTabIds(tab.path, nextIds);
           return { ...g, browserIds: nextIds };
         }
+        if (tab.mode === 'diff') {
+          rememberDiffTab(tab.path, false);
+          return { ...g, diffOpen: false };
+        }
         if (tab.mode === 'kb') {
           forgetKbTabState(tab.path, tab.id);
           if (tab.id === '1') {
@@ -2875,6 +3045,9 @@ export function TerminalView({
     );
   };
   closeTabRef.current = closeTab;
+  // The station (intercom agent) behind a tab: same worktree, kind and session. A runner's shells have none here.
+  const stationOfTab = (tab: Tab): StationDto | undefined =>
+    tab.remote ? undefined : mission?.stations.find((st) => st.worktreePath === tab.path && st.mode === tab.mode && st.sessionId === tab.id);
 
   return (
     <div
@@ -2907,126 +3080,25 @@ export function TerminalView({
           {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
-          <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
-          {displayedTabs.map(({ tab, label: tabLabel, icon, hint }) => {
-            const isActive =
-              sameTab(active, tab);
-            const renamable =
-              tab.mode === 'shell' || tab.mode === 'claude' || tab.mode === 'codex'
-              || tab.mode === 'opencode' || tab.mode === 'pi';
-            const isRenaming =
-              renamable && renaming?.path === tab.path && renaming?.mode === tab.mode && renaming?.id === tab.id;
-            const commitRename = () => {
-              if (!renaming) return;
-              renameSession(renaming.path, renaming.mode, renaming.id, renaming.value);
-              setRenaming(null);
-            };
-            const tKey = tabKeyOf(tab);
-            const splitGroup = splitGroups.find((group) => hasLeaf(group.node, tKey));
-            const splitTabs = splitGroup?.tabs ?? [];
-            const isInSplit = !!splitGroup;
-            const splitIndex = isInSplit ? splitTabs.findIndex((entry) => tabKeyOf(entry.tab) === tKey) : -1;
-            const splitShape = !isInSplit
-              ? 'ml-0.5 rounded-md'
-              : splitTabs.length === 1
-                ? 'ml-0.5 rounded-md'
-                : splitIndex === 0
-                  ? 'ml-0.5 rounded-l-md rounded-r-none'
-                  : splitIndex === splitTabs.length - 1
-                    ? '-ml-px rounded-l-none rounded-r-md'
-                    : '-ml-px rounded-none';
-            return (
-              <span
-                key={tKey}
-                data-tab-key={tKey}
-                data-in-split={isInSplit || undefined}
-                data-split-group={splitGroup?.layoutIndex}
-                ref={(el) => {
-                  if (el) tabElsRef.current.set(tKey, el);
-                  else tabElsRef.current.delete(tKey);
-                }}
-                onPointerDown={(e) => { if (!isRenaming) tabPointerDown(e, tKey); }}
-                onPointerMove={tabPointerMove}
-                onPointerUp={tabPointerUp}
-                onPointerCancel={tabPointerCancel}
-                onClickCapture={(e) => {
-                  // a completed drag must not also activate the tab
-                  if (justDraggedRef.current) {
-                    justDraggedRef.current = false;
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }
-                }}
-                className={`group flex shrink-0 select-none items-center pr-1 text-xs transition-colors ${splitShape} ${
-                  isActive
-                    ? isInSplit
-                      ? 'z-[1] border border-sky-500/40 bg-sky-500/15 text-zinc-100'
-                      : 'bg-zinc-800 text-zinc-100'
-                    : isInSplit
-                      ? 'border border-sky-500/15 bg-sky-500/5 text-zinc-400 hover:border-sky-500/30 hover:bg-sky-500/10 hover:text-zinc-200'
-                      : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
-                }`}
-                style={{ touchAction: 'none' }}
-              >
-                {isRenaming ? (
-                  <span className="flex items-center gap-1.5 py-1 pl-2 pr-1">
-                    {icon}
-                    <input
-                      autoFocus
-                      value={renaming.value}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        e.stopPropagation(); // typing must not trigger tab hotkeys
-                        if (e.key === 'Enter') commitRename();
-                        else if (e.key === 'Escape') setRenaming(null);
-                      }}
-                      aria-label="Rename tab"
-                      className="w-24 rounded border border-zinc-700 bg-zinc-950 px-1 py-0 text-xs text-zinc-100 outline-none focus:border-zinc-500"
-                    />
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => activateTab(tab)}
-                    onDoubleClick={
-                      renamable
-                        ? () => setRenaming({ path: tab.path, mode: tab.mode as NamedSessionMode, id: tab.id, value: tabLabel })
-                        : undefined
-                    }
-                    title={[hint, renamable ? 'Double-click to rename' : null].filter(Boolean).join(' · ') || undefined}
-                    className="flex items-center gap-1.5 py-1 pl-2 pr-1"
-                  >
-                    {icon}
-                    {tabLabel}
-                  </button>
-                )}
-                <button
-                  data-tab-close
-                  onClick={() => requestCloseTab(tab)}
-                  title={`Close ${tabLabel} session`}
-                  aria-label={`Close ${tabLabel} session`}
-                  className={`rounded p-0.5 text-zinc-600 hover:text-red-300 ${
-                    isActive ? '' : 'opacity-0 group-hover:opacity-100'
-                  }`}
-                >
-                  ✕
-                </button>
-              </span>
-            );
-          })}
-          <button
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              setAddMenu((m) => (m ? null : { x: r.left, y: r.bottom + 4 }));
-            }}
-            title="New session"
-            aria-label="New session"
-            className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
-          >
-            <PlusIcon />
-          </button>
-          </div>
+          <TabStrip
+            tabs={displayedTabs}
+            isActive={(tab) => sameTab(active, tab)}
+            splitGroups={splitGroups.map((group) => ({ layoutIndex: group.layoutIndex, keys: group.tabs.map((entry) => tabKeyOf(entry.tab)) }))}
+            groups={stripGroups}
+            onActivateGroup={activateGroup}
+            onCloseGroup={(i) => { void closeGroup(i); }}
+            onRenameGroup={renameGroup}
+            renaming={renaming}
+            onRenaming={setRenaming}
+            onRename={(r) => renameSession(r.path, r.mode, r.id, r.value)}
+            tabEl={(key, el) => { if (el) tabElsRef.current.set(key, el); else tabElsRef.current.delete(key); }}
+            pointer={{ down: tabPointerDown, move: tabPointerMove, up: tabPointerUp, cancel: tabPointerCancel }}
+            justDraggedRef={justDraggedRef}
+            onActivate={activateTab}
+            onClose={(tab) => { void requestCloseTab(tab); }}
+            onAdd={(r) => setAddMenu((m) => (m ? null : { x: r.left, y: r.bottom + 4 }))}
+            stateOf={mission ? (tab) => { const st = stationOfTab(tab); return st ? stationState(st) : null; } : undefined}
+          />
           {(() => {
             // The default run command's process (the header's main Run).
             const p = procs[active.path] ?? { status: 'idle' as const };
@@ -3065,7 +3137,7 @@ export function TerminalView({
               <>
                 {showTime && (spent || origEstimate) && (
                   <span
-                    className="ml-3 shrink-0 self-start font-mono text-[11px]"
+                    className="ml-3 shrink-0 self-center font-mono text-[11px]"
                     title="Active time / original estimate"
                   >
                     {spent && <span className="text-zinc-300">{spent}</span>}
@@ -3075,7 +3147,7 @@ export function TerminalView({
                   </span>
                 )}
                 {showStatus && (row?.meta || jiraIssue) && (
-                  <span className="ml-3 shrink-0 self-start">
+                  <span className="ml-3 shrink-0 self-center">
                     {jiraIssue ? (
                       <TicketStatusSelect issue={jiraIssue} />
                     ) : (
@@ -3135,7 +3207,7 @@ export function TerminalView({
                   <span
                     role="alert"
                     title={runNote}
-                    className="flex max-w-[260px] shrink-0 items-center gap-1.5 self-start py-1 text-[11px] text-red-300"
+                    className="flex max-w-[260px] shrink-0 items-center gap-1.5 self-center text-[11px] text-red-300"
                   >
                     <span className="truncate">{runNote}</span>
                     {crashed && !remote && (
@@ -3156,13 +3228,13 @@ export function TerminalView({
           {!remote && (
             <>
               <button
-                className={`flex shrink-0 items-center gap-1.5 self-start rounded-md px-2.5 py-1 hover:bg-zinc-900 ${
-                  showDiff ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
+                className={`flex h-7 shrink-0 items-center gap-1.5 self-center rounded-md px-2.5 hover:bg-zinc-900 ${
+                  active.mode === 'diff' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
                 }`}
-                onClick={() => setShowDiff(true)}
+                onClick={openChanges}
                 title="Changes (⌘L)"
                 aria-label="Changes"
-                aria-pressed={showDiff}
+                aria-pressed={active.mode === 'diff'}
               >
                 <span className="font-mono text-[11px] tabular-nums">
                   <span className="text-emerald-400">+{activeDiff?.additions ?? 0}</span>{' '}
@@ -3177,7 +3249,7 @@ export function TerminalView({
               indistinguishable from a local one. */}
           {remote && (
             <span
-              className="shrink-0 self-start rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400"
+              className="shrink-0 self-center rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400"
               title={`${worktree.path} on ${remote.runnerName}`}
             >
               {remote.runnerName}
@@ -3383,36 +3455,7 @@ export function TerminalView({
               className="surface-pop fixed z-40 w-44 rounded-lg p-1"
               style={{ left: addMenu.x, top: addMenu.y }}
             >
-              {([
-                { label: 'Claude', icon: <ClaudeIcon className="text-zinc-500" />, run: () => addAgent('claude') },
-                { label: 'Codex', icon: <CodexIcon className="text-zinc-500" />, run: () => addAgent('codex') },
-                {
-                  label: 'OpenCode',
-                  icon: <OpencodeIcon className="text-zinc-500" />,
-                  run: () => addAgent('opencode'),
-                  disabled: opencodeInstalled === false,
-                  hint: 'OpenCode needs to be installed to use',
-                },
-                {
-                  label: 'Pi',
-                  icon: <PiIcon className="text-zinc-500" />,
-                  run: () => addAgent('pi'),
-                  disabled: piInstalled === false,
-                  hint: 'Pi needs to be installed to use',
-                },
-                { label: 'Shell', icon: <ShellIcon className="text-zinc-500" />, run: addShell },
-                ...(caps.embeds
-                  ? [{ label: 'VS Code', icon: <VsCodeIcon className="text-zinc-500" />, run: () => openMode('vscode') }]
-                  : []),
-                { label: 'Knowledge Base', icon: <BookIcon className="text-zinc-500" />, run: () => addKb() },
-                // No per-runner "Shell on <runner>" row: runner worktrees show
-                // up in the sidebar like local ones, so a shell opened from
-                // THAT worktree already lands on the runner, in the right repo.
-                // The old row had to guess a repo (first worktree it found).
-                ...(browserEmbeds
-                  ? [{ label: 'Browser', icon: <GlobeIcon className="text-zinc-500" />, run: addBrowser }]
-                  : []),
-              ] as { label: string; icon: React.ReactNode; run: () => void; disabled?: boolean; hint?: string; badge?: string }[]).map((o) => (
+              {newSessionOptions().map((o) => (
                 <button
                   key={o.label}
                   role="menuitem"
@@ -3430,7 +3473,7 @@ export function TerminalView({
                       : 'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100'
                   }
                 >
-                  {o.icon}
+                  <span className="text-zinc-500">{o.icon}</span>
                   {o.label}
                   {o.disabled && <span className="ml-auto text-[10px] text-zinc-600">{o.badge ?? 'install'}</span>}
                 </button>
@@ -3455,14 +3498,14 @@ export function TerminalView({
                   data-vscode-path={g.path}
                   src={`${vscodeUrls[g.path]?.url ?? ''}?folder=${encodeURIComponent(g.path)}`}
                   title={placed ? 'VS Code' : `VS Code — ${g.path}`}
-                  className={placed ? 'z-10 border-0 bg-zinc-950' : 'hidden'}
+                  className={placed ? 'z-10 border-0 bg-pane-card' : 'hidden'}
                   style={placement}
                   allow="clipboard-read; clipboard-write"
                 />
               );
             })}
           {vscodeShown && !vscodeUrls[worktree.path] && (
-            <div className="z-10 overflow-hidden bg-zinc-950" style={dockedSurfaceStyle(vscodePaneKey)}>
+            <div className="z-10 overflow-hidden bg-pane-card" style={dockedSurfaceStyle(vscodePaneKey)}>
               {vscodeError ? (
                 <div className="p-4 text-sm text-zinc-500">VS Code web failed to start: {vscodeError}</div>
               ) : (
@@ -3492,7 +3535,7 @@ export function TerminalView({
                 <div
                   key={`pty:${paneKey}`}
                   data-testid={`terminal-surface-${paneKey}`}
-                  className={placed ? 'z-10 overflow-hidden bg-zinc-950' : 'hidden'}
+                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
                   style={placement}
                 >
                   <XtermPane
@@ -3521,7 +3564,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || showDiff);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3547,7 +3590,7 @@ export function TerminalView({
                   <div
                     key={`bw:${pk}`}
                     data-testid={`browser-pane-${bid}`}
-                    className={placed ? 'z-10 flex flex-col overflow-hidden bg-zinc-950' : 'hidden'}
+                    className={placed ? 'z-10 flex flex-col overflow-hidden bg-pane-card' : 'hidden'}
                     style={placement}
                     onPointerDownCapture={() => {
                       if (!sameTab(active, { path: g.path, mode: 'browser', id: bid })) {
@@ -3631,16 +3674,6 @@ export function TerminalView({
                       >
                         ⋯
                       </button>
-                      {layout && hasLeaf(layout, paneKey) && (
-                        <button
-                          onClick={() => openPaneAsFullTab({ path: g.path, mode: 'browser', id: bid })}
-                          title="Remove from split and open as full tab"
-                          aria-label={`Open Browser${bid === '1' ? '' : ` ${bid}`} as full tab`}
-                          className="ml-0.5 shrink-0 rounded border border-sky-500/30 bg-sky-950/40 px-1.5 py-1 text-[10px] text-sky-300 hover:bg-sky-950/70 hover:text-sky-100"
-                        >
-                          Full tab
-                        </button>
-                      )}
                     </div>
                     {url && browserLoad[pk]?.loading && (
                       <div className="h-0.5 w-full overflow-hidden bg-zinc-900">
@@ -3720,7 +3753,7 @@ export function TerminalView({
                 <div
                   key={`kb-${g.path}-${id}`}
                   data-testid={id === '1' ? `kb-pane-${g.path}` : `kb-pane-${g.path}-${id}`}
-                  className={placed ? 'z-10 overflow-hidden bg-zinc-950' : 'hidden'}
+                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
                   style={placement}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'kb', id })) {
@@ -3753,8 +3786,34 @@ export function TerminalView({
                 </div>
               );
             })}
-        <div data-testid="xterm-pane" className="relative h-full w-full">
-          {renderPane(paneTree, [])}
+          {groups
+            .filter((g) => g.diffOpen && !g.remote)
+            .map((g) => {
+              const paneKey = tabKeyOf({ mode: 'diff', id: '1' });
+              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const placement = dockedSurfaceStyle(paneKey);
+              const placed = shown && !!placement;
+              // Kept mounted like the KB: the selected file and scroll survive tab switches.
+              return (
+                <div
+                  key={`diff-${g.path}`}
+                  data-testid={`diff-pane-${g.path}`}
+                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
+                  style={placement}
+                  onPointerDownCapture={() => {
+                    if (!sameTab(active, { path: g.path, mode: 'diff', id: '1' })) setActive({ path: g.path, mode: 'diff', id: '1' });
+                  }}
+                >
+                  <DiffView
+                    embedded
+                    active={placed && sameTab(active, { path: g.path, mode: 'diff', id: '1' })}
+                    worktree={rowsRef.current.get(g.path) ?? (g.path === worktree.path ? worktree : ({ path: g.path } as Worktree))}
+                  />
+                </div>
+              );
+            })}
+        <div data-testid="xterm-pane" className="relative h-full w-full p-2">
+          <PaneLayout node={paneTree} renderLeaf={renderLeaf} onDividerPointerDown={startDividerDrag} />
         </div>
         </div>
       </div>
@@ -3774,19 +3833,6 @@ export function TerminalView({
             }
           }}
         />
-      )}
-      {showDiff && (
-        // stopPropagation: a click on the diff backdrop must not bubble to the
-        // terminal overlay's onClick and close both layers.
-        <div onClick={(e) => e.stopPropagation()}>
-          <DiffView
-            worktree={
-              rowsRef.current.get(active.path) ??
-              (active.path === worktree.path ? worktree : ({ path: active.path } as Worktree))
-            }
-            onClose={() => setShowDiff(false)}
-          />
-        </div>
       )}
     </div>
   );

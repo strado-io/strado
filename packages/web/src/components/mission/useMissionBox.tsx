@@ -2,12 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { StationDto } from '../../api';
 import type { CardKey } from './AgentCard';
 import { AgentLine } from './AgentLine';
-import { ApprovalPanel } from './ApprovalPanel';
-import { cardAgent, decideApproval, pendingApprovals } from './mission';
+import { cardAgent } from './mission';
 
 export type MissionBoxDeps = {
   wsId: string;
-  /** In scope (the strip's), so the approvals shown match the pills. */
+  /** In scope (the strip's). */
   stations: StationDto[];
   selectedAgentId: string | null;
   onSelect: (agentId: string | null) => void;
@@ -15,7 +14,6 @@ export type MissionBoxDeps = {
   message: (agentId: string, text: string) => Promise<unknown>;
   interrupt: (agentId: string) => Promise<unknown>;
   recap?: (agentIds: string[]) => Promise<{ text: string }>;
-  answerApproval: (wsId: string, id: string, decision: 'allow' | 'deny') => Promise<unknown>;
   /** The escalation route's dismiss: a stale call cleared by a human click. */
   dismissCall: (wsId: string, callId: string) => Promise<unknown>;
   /** The escalation route's resolve: typing to an agent with an open call answers it (the call clears). */
@@ -29,11 +27,10 @@ export type MissionBoxDeps = {
   };
 };
 
-/** Mission Control: the selected agent's line (in the strip's row), the
- * approvals waiting for you (above the strip, by MissionStack), and the keys
+/** Mission Control: the selected agent's line (in the strip's row) and the keys
  * that act on the agent whose chip leads the box (↵ queue, ⌘↵ steer, ⌃C
  * interrupt, ⌘O open its tab). Selecting never opens a box. */
-export function useMissionBox(d: MissionBoxDeps): { line: ReactNode; approvals: ReactNode; agentKey?: (key: CardKey, text: string) => boolean } {
+export function useMissionBox(d: MissionBoxDeps): { line: ReactNode; agentKey?: (key: CardKey, text: string) => boolean } {
   // One piece of news on the line ("queued: …", an error, a recap), until the selection changes.
   const [note, setNote] = useState<string | null>(null);
   // A destructive line waiting for its second ↵ (the same text).
@@ -41,7 +38,6 @@ export function useMissionBox(d: MissionBoxDeps): { line: ReactNode; approvals: 
   useEffect(() => { setNote(null); setConfirming(null); }, [d.selectedAgentId]);
 
   const selected = d.selectedAgentId ? d.stations.find((s) => s.agentId === d.selectedAgentId) ?? null : null;
-  const approvals = pendingApprovals(d.stations);
 
   const act = (what: string, run: () => Promise<string | null>) => {
     void run().then((n) => { if (n !== null) setNote(n); }, (err) => setNote(`Couldn't ${what}: ${err instanceof Error ? err.message : String(err)}`));
@@ -100,8 +96,7 @@ export function useMissionBox(d: MissionBoxDeps): { line: ReactNode; approvals: 
         onDismissCalls={(_id, callIds) => act('dismiss', async () => { for (const c of callIds) await d.dismissCall(d.wsId, c); return 'call dismissed'; })}
       />
   ) : null;
-  const panel = approvals.length > 0
-    ? <ApprovalPanel approvals={approvals} onOpen={d.openAgent} onDecide={(id, decision) => decideApproval(d.answerApproval, d.wsId, id, decision)} />
-    : null;
-  return { line, approvals: panel, agentKey };
+  // A permission request is answered in the agent's own tab; the tab says
+  // "needs you" (amber), so nothing here mirrors it.
+  return { line, agentKey };
 }

@@ -171,6 +171,33 @@ describe('GET /ws/terminal', () => {
     ws.close();
   });
 
+  it('Enter in an agent\'s own tab dismisses its open calls to the human (you answered in person)', async () => {
+    const ws = await openSocket(`ws=default&path=${encodeURIComponent(repo)}&mode=claude&session=1`);
+    const { claudeKey } = await import('../../src/services/terminalManager');
+    const key = claudeKey(repo, '1');
+    let env = deps.agents.envFor(key, repo);
+    for (const start = Date.now(); Date.now() - start < 5_000 && !env.STRADO_AGENT_TOKEN; env = deps.agents.envFor(key, repo)) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const created = await app.inject({
+      method: 'POST', url: '/api/intercom/escalations',
+      headers: { authorization: `Bearer ${env.STRADO_AGENT_TOKEN}` },
+      payload: { title: 'Hi! What can I help with?', body: 'Waiting on you.' },
+    });
+    expect(created.statusCode).toBe(201);
+    const open = () => app.deps.intercom.listEscalations('default', { status: 'open' });
+    expect(open()).toHaveLength(1);
+    // Keystrokes without Enter leave it open.
+    ws.send(JSON.stringify({ type: 'data', data: 'fix the header' }));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(open()).toHaveLength(1);
+    ws.send(JSON.stringify({ type: 'data', data: '\r' }));
+    for (const start = Date.now(); Date.now() - start < 5_000 && open().length > 0;) await new Promise((r) => setTimeout(r, 25));
+    expect(open()).toHaveLength(0);
+    expect(app.deps.intercom.listEscalations('default')[0]!.status).toBe('dismissed');
+    ws.close();
+  });
+
   it('marks the worktree as having a Claude session in the listing', async () => {
     const ws = await openSocket(`ws=default&path=${encodeURIComponent(repo)}`);
     // poll the listing until the session flag shows up

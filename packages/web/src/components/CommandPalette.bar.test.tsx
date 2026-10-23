@@ -616,33 +616,16 @@ describe('CommandPalette as the always-visible command bar', () => {
       expect(screen.queryByTestId('jarvis-submit')).not.toBeInTheDocument();
     });
 
-    describe('Recent rows', () => {
+    describe('Recent commands', () => {
       const chips = [{ label: 'claude-2', agentId: 'claude-2@app' }, { label: 'FD-1', worktreePath: P }];
       const long = `tell @claude-2 to review #FD-1 ${'and then some more dictated words '.repeat(8)}`;
 
-      it('draw @/# mentions as the chips typed with them, one truncated line each', () => {
-        rememberCommand('default', long, { chips });
-        const s = setup({ stations });
-        act(() => s.input.focus());
-        const row = screen.getByTestId('history-row-0');
-        expect(within(row).getByTestId('history-chip-claude-2@app')).toHaveTextContent('@claude-2');
-        expect(within(row).getByTestId('history-chip-claude-2@app').className).toMatch(/\bbg-sky-/);
-        expect(within(row).getByTestId(`history-chip-#${P}`)).toHaveTextContent('#FD-1');
-        expect(within(row).getByTestId(`history-chip-#${P}`).className).toMatch(/\bbg-emerald-/);
-        const text = within(row).getByTestId('history-text');
-        expect(text.className).toMatch(/\btruncate\b/);
-        expect(text.className).toMatch(/\bwhitespace-nowrap\b/);
-        expect(row).toHaveAttribute('title', long.trim());
-      });
-
-      it('a click, or ↑ recall, restores the text with its chips', () => {
+      it('the empty box lists no Recent rows; ↑ recalls the last command with its chips', () => {
         rememberCommand('default', 'tell @claude-2 hi', { chips: [chips[0]!] });
         const s = setup({ stations });
         act(() => s.input.focus());
-        fireEvent.click(screen.getByTestId('history-row-0'));
-        expect(s.input).toHaveValue('tell @claude-2 hi');
-        expect(screen.getByTestId('chip-claude-2@app')).toHaveTextContent('@claude-2');
-        s.type('');
+        expect(screen.queryByText('tell @claude-2 hi')).not.toBeInTheDocument();
+        expect(screen.queryByText(/recent/i)).not.toBeInTheDocument();
         s.key('ArrowUp');
         expect(s.input).toHaveValue('tell @claude-2 hi');
         expect(screen.getByTestId('chip-claude-2@app')).toBeInTheDocument();

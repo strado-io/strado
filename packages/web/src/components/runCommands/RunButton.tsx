@@ -33,7 +33,7 @@ export function RunButton({ entries, defaultId, onStart, onStop, onOpenTab, onAd
     return () => window.removeEventListener('pointerdown', away, true);
   }, [open]);
 
-  const base = 'flex shrink-0 items-center gap-1.5 self-start border px-2 py-1 text-[11px] font-medium transition';
+  const base = 'flex h-7 shrink-0 items-center gap-1.5 self-center border px-2 text-[11px] font-medium transition';
   const def = entries.find((x) => x.id === defaultId) ?? entries[0];
   if (!def) {
     return (
@@ -55,9 +55,9 @@ export function RunButton({ entries, defaultId, onStart, onStop, onOpenTab, onAd
       : def.status === 'stopping' ? 'animate-pulse border-zinc-700 bg-zinc-900 text-zinc-400'
         : def.status === 'crashed' ? 'border-red-500/30 bg-red-500/10 text-red-300'
           : 'border-zinc-800 text-zinc-300 hover:border-zinc-600';
-  const half = 'flex items-center gap-1.5 py-1 text-[11px] font-medium transition hover:bg-white/5 hover:text-zinc-100 disabled:hover:bg-transparent';
+  const half = 'flex h-full items-center gap-1.5 text-[11px] font-medium transition hover:bg-white/5 hover:text-zinc-100 disabled:hover:bg-transparent';
   return (
-    <div ref={rootRef} className={`relative flex shrink-0 self-start overflow-visible rounded-md border ${tone}`}>
+    <div ref={rootRef} className={`relative flex h-7 shrink-0 self-center overflow-visible rounded-md border ${tone}`}>
       <button
         type="button"
         aria-label={[busy ? 'Stop' : 'Run', def.name].filter(Boolean).join(' ')}

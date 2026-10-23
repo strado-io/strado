@@ -81,7 +81,7 @@ export function QuotaCircle({ wsId, onOpenUsage, onOpenChange }: {
     + `${percent(used)} used${resetPhrase}`;
 
   return (
-    <div ref={ref} className="relative shrink-0 self-start">
+    <div ref={ref} className="relative shrink-0 self-center">
       <button
         type="button"
         aria-label={`Agent usage — ${label}`}
@@ -89,7 +89,7 @@ export function QuotaCircle({ wsId, onOpenUsage, onOpenChange }: {
         aria-expanded={open}
         title={label}
         onClick={() => setOpen((value) => !value)}
-        className={`flex h-[26px] w-[26px] items-center justify-center rounded-md border transition ${
+        className={`flex h-7 w-7 items-center justify-center rounded-md border transition ${
           open ? 'border-zinc-600 bg-zinc-900' : 'border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900'
         }`}
       >

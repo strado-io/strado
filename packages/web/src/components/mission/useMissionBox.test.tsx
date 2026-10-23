@@ -16,7 +16,6 @@ const deps = (over: Partial<MissionBoxDeps> = {}): MissionBoxDeps => ({
   message: vi.fn(async () => ({ delivered: 'queued' })),
   interrupt: vi.fn(async () => ({ ok: true })),
   recap: vi.fn(async () => ({ text: 'It is running the tests.' })),
-  answerApproval: vi.fn(async () => ({ ok: true })),
   dismissCall: vi.fn(async () => ({})),
   answerCall: vi.fn(async () => ({})),
   shell: { risk: vi.fn(() => null), run: vi.fn(async () => {}), interrupt: vi.fn(async () => {}) },
@@ -25,7 +24,7 @@ const deps = (over: Partial<MissionBoxDeps> = {}): MissionBoxDeps => ({
 let api: ReturnType<typeof useMissionBox>;
 function Harness({ d }: { d: MissionBoxDeps }) {
   api = useMissionBox(d);
-  return <div>{api.approvals}{api.line}</div>;
+  return <div>{api.line}</div>;
 }
 
 describe('useMissionBox', () => {
@@ -39,7 +38,6 @@ describe('useMissionBox', () => {
   it('nothing selected and nothing pending: nothing above, no keys taken', () => {
     render(<Harness d={deps({ selectedAgentId: null })} />);
     expect(api.line).toBeNull();
-    expect(api.approvals).toBeNull();
     expect(api.agentKey).toBeUndefined();
   });
 
@@ -129,12 +127,10 @@ describe('useMissionBox', () => {
     expect(screen.getByTestId('agent-line-note')).toHaveTextContent("Couldn't reply: already answered");
   });
 
-  it('approvals from the given stations show above the input, even with nobody selected; a click answers by id', async () => {
-    const d = deps({ selectedAgentId: null, stations: [st({ approvals: [{ id: 'ap1', kind: 'command', title: 'Bash', detail: 'rm -rf dist', createdAt: 1 }] })] });
-    render(<Harness d={d} />);
-    expect(screen.getByRole('group', { name: 'codex-2 wants to run a command' })).toBeInTheDocument();
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Approve' })); });
-    expect(d.answerApproval).toHaveBeenCalledWith('w1', 'ap1', 'allow');
+  it('a pending approval shows no popup above the box (the tab answers it; its pill says needs you)', () => {
+    render(<Harness d={deps({ selectedAgentId: null, stations: [st({ approvals: [{ id: 'ap1', kind: 'command', title: 'Bash', detail: 'rm -rf dist', createdAt: 1 }] })] })} />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(api.line).toBeNull();
   });
 
   describe('a selected shell', () => {

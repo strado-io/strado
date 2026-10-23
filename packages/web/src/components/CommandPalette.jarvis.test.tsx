@@ -208,12 +208,12 @@ describe('CommandPalette — Jarvis', () => {
     expect(screen.queryByTestId('jarvis-row-0')).not.toBeInTheDocument();
   });
 
-  it('empty box: recent commands under the Focuses, and ↑ recalls the last one', () => {
+  it('empty box: no Recent list; ↑ recalls the last commands in order', () => {
     rememberCommand('default', 'split down');
     rememberCommand('default', 'shell right');
     const s = setup();
-    expect(screen.getByText('Recent')).toBeInTheDocument();
-    expect(screen.getByText('split down')).toBeInTheDocument();
+    expect(screen.queryByText('Recent')).not.toBeInTheDocument();
+    expect(screen.queryByText('split down')).not.toBeInTheDocument();
     s.key('ArrowUp');
     expect(s.input).toHaveValue('shell right');
     s.key('ArrowUp');
@@ -278,17 +278,6 @@ describe('CommandPalette — Jarvis QA fixes', () => {
     s.key('Enter');
     expect(screen.getByText(/pasted/i)).toBeInTheDocument();
     expect(s.server.spawn).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('CommandPalette — Jarvis history privacy', () => {
-  it('"Clear history" in the empty box forgets recent commands', () => {
-    rememberCommand('default', 'split down');
-    setup();
-    expect(screen.getByText('split down')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /clear history/i }));
-    expect(screen.queryByText('split down')).not.toBeInTheDocument();
-    expect(readHistory('default')).toEqual([]);
   });
 });
 
