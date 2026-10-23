@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // TerminalView reads intercom state for the focused tab's escalation banner;
@@ -108,6 +108,8 @@ class FakeWS {
 
 import { TerminalView } from './TerminalView';
 import type { Worktree } from '../types';
+// Tab lookups: the strip only (a pane card's header repeats the tab's title).
+const strip = () => within(screen.getByTestId('tab-segments'));
 
 const worktree = {
   path: '/Users/me/repo.worktrees/FD-1',
@@ -138,8 +140,8 @@ describe('VS Code split panes', () => {
     localStorage.setItem('strado:vscode-tabs', JSON.stringify([P]));
     render(<TerminalView worktree={worktree} mode="shell" onClose={() => {}} />);
 
-    const shell = screen.getByText('Shell').closest('span')!;
-    const vscode = screen.getByText('VS Code').closest('span')!;
+    const shell = strip().getByText('Shell').closest<HTMLElement>('[data-tab-key]')!;
+    const vscode = screen.getByText('VS Code').closest<HTMLElement>('[data-tab-key]')!;
     const pane = screen.getByTestId('pane-host');
     vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue(rect(10, 0, 60, 30));
     vi.spyOn(vscode, 'getBoundingClientRect').mockReturnValue(rect(72, 0, 80, 30));
@@ -151,8 +153,9 @@ describe('VS Code split panes', () => {
     fireEvent.pointerUp(vscode, { pointerId: 3, clientX: 790, clientY: 320 });
 
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
-    expect(shell).toHaveAttribute('data-split-group', '0');
-    expect(vscode).toHaveAttribute('data-split-group', '0');
+    // The two tabs are now one group tab in the strip.
+    expect(screen.getByTestId('tab-group')).toHaveAttribute('data-group-index', '0');
+    expect(screen.getByTestId('tab-group')).toHaveTextContent('Shell · VS Code');
     // Both leaves render as pane hosts; the pane tree is not hidden.
     expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
     expect(screen.getByTestId('xterm-pane')).not.toHaveClass('hidden');

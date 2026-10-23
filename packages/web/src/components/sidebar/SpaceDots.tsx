@@ -63,9 +63,10 @@ export function SpaceDots({
                   aria-hidden
                   data-testid={`space-dot-${s.id}`}
                   className={`h-1.5 rounded-full transition-all duration-150 ease-out ${
+                    // Subtle: the current space a short bar, the rest dim dots that brighten on hover.
                     active
-                      ? 'w-4 bg-zinc-300 group-hover:bg-zinc-200'
-                      : 'w-1.5 bg-zinc-700 group-hover:scale-150 group-hover:bg-zinc-400'
+                      ? 'w-3.5 bg-zinc-400 group-hover:bg-zinc-300'
+                      : 'w-1.5 bg-zinc-700 group-hover:bg-zinc-400'
                   }`}
                 />
               </button>

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // TerminalView reads intercom state for the focused tab's escalation banner;
@@ -124,6 +124,8 @@ import { TerminalView } from './TerminalView';
 import type { Worktree } from '../types';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
 import { readBrowserUrls } from '../hooks/browserTabs';
+// Tab lookups: the strip only (a pane card's header repeats the tab's title).
+const strip = () => within(screen.getByTestId('tab-segments'));
 
 const P = '/Users/me/repo.worktrees/FD-1';
 const worktree = {
@@ -205,7 +207,9 @@ describe('TerminalView app-control bridge', () => {
     render(<TerminalView worktree={worktree} mode="shell" onClose={() => {}} />);
     const ack = await apply({ op: 'place', worktreePath: P, tab: ref('shell', '3'), split: 'right', anchor: ref('shell', '1'), focus: false });
     expect(ack).toEqual({ applied: true });
-    const shells = () => screen.getAllByText(/^Shell/).length;
+    // Plain shell tabs plus the members of a group tab (one deck layer each).
+    const shells = () => document.querySelectorAll('[data-tab-key^="shell:"]').length
+      + (screen.queryByTestId('tab-group')?.querySelectorAll('[data-testid="tile-layer"]').length ?? 0);
     const emit = (shellSessions: string[]) => act(() => { for (const h of wtStream.handlers) h({ type: 'worktree.updated', data: { path: P, shellSessions } }); });
     expect(shells()).toBe(3);
     emit(['1', '2']); // stale: taken before the spawn landed
@@ -233,9 +237,10 @@ describe('TerminalView app-control bridge', () => {
       fireEvent.keyDown(window, { key: 'a' });
       expect(await apply({ op: 'place', worktreePath: P, tab: ref('shell', '2'), split: 'down', anchor: null, focus: false }, Date.now() + 2_500))
         .toEqual({ applied: true });
-      // A click on the strip's tab counts like a click in its pane.
+      // A click on the strip's tab counts like a click in its pane; shell:1 is
+      // in a group tab now, and a click on the group touches all its members.
       vi.setSystemTime(new Date('2026-10-17T10:00:12Z'));
-      fireEvent.pointerDown(document.querySelector('[data-tab-key="shell:1"]')!);
+      fireEvent.pointerDown(screen.getByTestId('tab-group'));
       expect(await apply({ op: 'place', worktreePath: P, tab: ref('shell', '2'), split: 'right', anchor: ref('shell', '1'), focus: false }, Date.now() + 2_500))
         .toEqual({ applied: false, reason: 'human_active' });
       // After 5 s of quiet the agent may act.

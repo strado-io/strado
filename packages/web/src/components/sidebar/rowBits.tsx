@@ -48,8 +48,8 @@ export function BranchIcon({ className = '' }: { className?: string }) {
 export function HoverActions({ active, children }: { active: boolean; children: React.ReactNode }) {
   return (
     <span
-      className={`absolute right-1 z-10 flex items-center rounded opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
-        active ? 'bg-zinc-800' : 'bg-zinc-900'
+      className={`absolute right-1 top-1 z-10 flex items-center rounded-md opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
+        active ? 'bg-zinc-800/80' : 'bg-zinc-900/80'
       }`}
     >
       {children}
@@ -185,9 +185,10 @@ export function agentWaiting(w: Worktree): boolean {
   return sessionChips([w]).map(chipStatus).includes('waiting');
 }
 
-/** Before a card's title: the spinner while an agent works, an amber flag while one waits. Null when neither. */
+/** Before a card's title: the spinner while an agent works, an amber dot while one waits. Null when neither. */
 export function agentMark(w: Worktree): React.ReactNode {
-  if (agentWaiting(w)) return <span role="status" aria-label="agent waiting" title="Waiting on you" className="text-[11px] leading-none text-amber-400">⚑</span>;
+  // A small amber dot, the colour the tab bar uses for "needs you".
+  if (agentWaiting(w)) return <span role="status" aria-label="agent waiting" title="Waiting on you" className="h-1.5 w-1.5 rounded-full bg-amber-400" />;
   if (agentWorking(w)) return <BrailleSpinner small />;
   return null;
 }

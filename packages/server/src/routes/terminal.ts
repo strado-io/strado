@@ -11,6 +11,7 @@ import { defaultShell } from '../services/platform.js';
 import { PARK_BANNER } from '../services/claudePark.js';
 import { resolveRunCommand, type ResolvedRun } from '../services/startCommand.js';
 import { procKey } from '../services/processManager.js';
+import { HUMAN_AGENT_ID } from '../services/intercomSchema.js';
 
 type ClientMsg =
   | { type: 'data'; data: string }
@@ -29,6 +30,18 @@ function shellQuote(value: string): string {
 const exitLine = (code: number | null) => `\r\n\x1b[2m[process exited with code ${code ?? '?'}]\x1b[0m\r\n`;
 
 export async function registerTerminalRoutes(app: FastifyInstance) {
+  // The open calls to the human from the agent in this tab, closed.
+  const dismissCallsFrom = (sessionKey: string) => {
+    const ex = app.deps.agents.byKey(sessionKey);
+    if (!ex) return;
+    try {
+      for (const e of app.deps.intercom.listEscalations(ex.scopeId, { status: 'open' })) {
+        if (e.to === HUMAN_AGENT_ID && e.from.agentId === ex.agentId) app.deps.intercom.dismissEscalation(ex.scopeId, e.id);
+      }
+    } catch {
+      // Calls are a courtesy here; typing must never fail on them.
+    }
+  };
   // The worktree's Run tab: the start command's terminal (Run in the header
   // starts it; processes.ts). Attaching never starts anything. After the
   // process ends the tab keeps its last output, read-only, until the next Run,
@@ -338,6 +351,10 @@ export async function registerTerminalRoutes(app: FastifyInstance) {
             app.deps.codexStatus.set(target, 'working', sessionId);
             app.deps.intercomPush.turnStarted(sessionKey);
           }
+          // Talking to an agent in its own tab answers whatever it called you
+          // about: its open calls close (dismissed, no reply sent — you just
+          // replied in person), so its tab stops pulsing "needs you".
+          if (msg.data.includes('\r')) dismissCallsFrom(sessionKey);
           // A Shell-scoped launcher registers Codex as waiting while its TUI
           // is open. Codex has no prompt-submit hook, so Enter is the turn
           // boundary here too — but only while that launcher is active, never

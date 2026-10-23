@@ -34,9 +34,19 @@ export const NO_DRAG = '[-webkit-app-region:no-drag]';
 /** Lucide "panel-left". */
 function PanelIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect width="18" height="18" x="3" y="3" rx="2" />
       <path d="M9 3v18" />
+    </svg>
+  );
+}
+// Lucide "panel-left-close": the same panel, with an arrow pointing it shut.
+function PanelCloseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M9 3v18" />
+      <path d="m16 15-3-3 3-3" />
     </svg>
   );
 }
@@ -46,8 +56,8 @@ export function SidebarToggleButton({ open, onClick }: { open: boolean; onClick:
   const label = open ? 'Collapse sidebar' : 'Open sidebar';
   return (
     <button type="button" aria-label={label} title={`${label} (⌘B)`} onClick={onClick}
-      className={`${NO_DRAG} flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200`}>
-      {open ? <span aria-hidden className="text-base leading-none">«</span> : <PanelIcon />}
+      className={`${NO_DRAG} flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200`}>
+      {open ? <PanelCloseIcon /> : <PanelIcon />}
     </button>
   );
 }

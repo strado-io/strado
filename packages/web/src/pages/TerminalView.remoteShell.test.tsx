@@ -141,8 +141,8 @@ describe('remote hub tab highlight', () => {
     // The initial active tab is Shell 1. Its strip entry must carry the
     // active style — sameTab() compares runner identity, so a runner-stamped
     // `active` against a runner-less strip tab highlights nothing.
-    const wrapper = screen.getByLabelText('Close Shell session').closest('span.group');
-    expect(wrapper?.className).toContain('bg-zinc-800');
+    const wrapper = screen.getByLabelText('Close Shell session').closest('[data-tab-key]');
+    expect(wrapper).toHaveAttribute('data-active', 'true');
   });
 });
 

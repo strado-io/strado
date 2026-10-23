@@ -197,7 +197,7 @@ describe('Sidebar tree', () => {
     expect(screen.queryByTestId(`session-stack-${withSession.path}`)).toBeNull();
     expect(screen.queryByTestId(`session-stack-${withoutSession.path}`)).toBeNull();
     const selectedRow = screen.getByRole('button', { name: 'FD-1' }).closest('.group');
-    expect(selectedRow).toHaveClass('bg-zinc-800/80');
+    expect(selectedRow).toHaveClass('tab-pill');
     expect(selectedRow).not.toHaveClass('ring-1');
   });
 
@@ -275,8 +275,8 @@ describe('Sidebar tree', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
     const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
-    // Weight marks the open worktree only; nothing is open here.
-    expect(within(card).getByRole('button', { name: 'FD-1' })).not.toHaveClass('font-medium');
+    // Brightness marks the open worktree only; nothing is open here.
+    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('text-zinc-400');
     expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();

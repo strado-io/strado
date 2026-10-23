@@ -10,8 +10,7 @@ import { Dock } from '../components/dock/Dock';
 import { HomeScreen } from '../components/home/HomeScreen';
 import { recentWorktrees } from '../lib/home/recent';
 import { lightOf } from '../lib/dock/stations';
-import { AgentStrip } from '../components/mission/AgentStrip';
-import { focusWorktreesOf, missionStations, placeNamer, projectNamer, stripAgents } from '../components/mission/mission';
+import { focusWorktreesOf, missionStations } from '../components/mission/mission';
 import { OrphanCalls } from '../components/mission/OrphanCalls';
 import { MissionStack } from '../components/mission/MissionStack';
 import { RunCommandsDialog, runCommandsError } from '../components/runCommands/RunCommandsDialog';
@@ -768,7 +767,6 @@ export function Dashboard(props: {
     message: (id, text) => missionServer.message(id, text),
     interrupt: (id) => api.intercom.interrupt(wsId, id),
     recap: missionServer.recap ? (ids) => missionServer.recap!(ids) : undefined,
-    answerApproval: (ws, id, decision) => api.intercom.answerApproval(ws, id, decision),
     dismissCall: (ws, id) => api.intercom.escalations.dismiss(ws, id),
     answerCall: (ws, id, text) => api.intercom.escalations.resolve(ws, id, text),
     shell: {
@@ -777,18 +775,17 @@ export function Dashboard(props: {
       interrupt: (id) => missionShellRef.current?.interrupt(id) ?? Promise.reject(new Error('The box is not ready')),
     },
   });
-  const agentStrip = (
-    <AgentStrip
-      agents={stripAgents(placeNamer(state.worktrees, state.repos), missionScoped, projectNamer(state.worktrees, state.repos))}
-      selectedId={selectedAgent}
-      onSelect={(id) => selectAgent(selectedAgent === id ? null : id)}
-      onOpen={(id) => openAgentRef.current?.(id)}
-      selectedLine={missionBox.line}
-    />
-  );
+  // One strip: the hub's tab bar, only this worktree's tabs, each wearing its
+  // agent's state. The box keeps only the selected agent's line, while its chip leads.
+  const hubMission = {
+    stations,
+  };
+  const agentStrip = missionBox.line
+    ? <div data-testid="selected-agent-line" className="min-w-0 px-2 py-0.5">{missionBox.line}</div>
+    : null;
   // In the bar it reports its height, so the popover opens above it (home's popover opens below the box).
   const orphanLines = <OrphanCalls calls={orphanCalls} onDismiss={(id) => api.intercom.escalations.dismiss(wsId, id)} />;
-  const missionStack = (inBar: boolean) => <MissionStack onHeight={inBar ? setStackHeight : undefined} approvals={<>{missionBox.approvals}{orphanLines}</>} strip={agentStrip} />;
+  const missionStack = (inBar: boolean) => <MissionStack onHeight={inBar ? setStackHeight : undefined} approvals={orphanLines} strip={agentStrip} />;
   // The chip names the project too: "master" alone doesn't say which repo.
   const repoNameOf = (id: string | null | undefined) => (id ? state.repos.find((r) => r.id === id)?.name ?? null : null);
   const dockWorktree = selectedRemote
@@ -1020,6 +1017,7 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
+              mission={hubMission}
             />
           </div>
         ) : selectedWorktree ? (
@@ -1036,6 +1034,7 @@ export function Dashboard(props: {
               runningServers={runningServers}
               onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
+              mission={hubMission}
             />
           </div>
         ) : activeView.kind === 'reviews' ? (

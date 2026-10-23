@@ -41,12 +41,20 @@ describe('WorktreeCard', () => {
     expect(screen.getByText('feat/x')).toHaveClass('text-zinc-500');
   });
 
-  it('only the open worktree looks selected: a closed one has a quiet, regular-weight title', () => {
+  it('the title is 13px medium: bright on the open worktree, quiet otherwise', () => {
     const { rerender } = render(<WorktreeCard title="master" subtitle="" time="" active={false} onOpen={() => {}} label="master" />);
-    expect(screen.getByText('master')).not.toHaveClass('font-medium');
-    expect(screen.getByText('master')).not.toHaveClass('text-zinc-50');
+    expect(screen.getByText('master')).toHaveClass('text-[13px]', 'font-medium', 'text-zinc-400');
     rerender(<WorktreeCard title="master" subtitle="" time="" active onOpen={() => {}} label="master" />);
-    expect(screen.getByText('master')).toHaveClass('font-medium', 'text-zinc-50');
+    expect(screen.getByText('master')).toHaveClass('font-medium', 'text-zinc-100');
+  });
+
+  it('the second (mono) line only when it says something the title does not', () => {
+    const { container, rerender } = render(<WorktreeCard title="main" subtitle="main" time="" active={false} onOpen={() => {}} label="main" />);
+    expect(container.querySelector('[data-card-subtitle]')).toBeNull();
+    rerender(<WorktreeCard title="Main " subtitle=" main" time="" active={false} onOpen={() => {}} label="main" />);
+    expect(container.querySelector('[data-card-subtitle]')).toBeNull();
+    rerender(<WorktreeCard title="Fix login" subtitle="FD-12-login" time="" active={false} onOpen={() => {}} label="x" />);
+    expect(container.querySelector('[data-card-subtitle]')).toHaveTextContent('FD-12-login');
   });
 
   it('gives a repo a stable two-letter avatar coloured by its id', () => {
@@ -57,5 +65,11 @@ describe('WorktreeCard', () => {
     expect(c.textContent).toBe('ST');
     expect(a.className).toBe(b.className);
     expect(a.className).not.toBe(c.className);
+  });
+
+  it('the repo avatar is a tab-style tile: 20px, rounded 6px, tinted, an inset ring', () => {
+    const tile = render(<RepoAvatar id="r1" name="Fleetx Dashboard" />).container.firstElementChild!;
+    expect(tile).toHaveAttribute('data-testid', 'repo-tile');
+    expect(tile).toHaveClass('h-5', 'w-5', 'rounded-[6px]', 'ring-1', 'ring-inset');
   });
 });

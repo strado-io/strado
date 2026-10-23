@@ -4,14 +4,14 @@
 // (PR state, changes, sessions). Behaviour (open, hover card, menus) is the
 // caller's; this is only the shape.
 
-/** Palette for repo avatars; a repo keeps its colour by a hash of its id. */
+/** Palette for repo avatars (tinted like the tab tiles); a repo keeps its colour by a hash of its id. */
 const AVATAR_COLORS = [
-  'bg-violet-500/25 text-violet-200',
-  'bg-sky-500/25 text-sky-200',
-  'bg-emerald-500/25 text-emerald-200',
-  'bg-amber-500/25 text-amber-200',
-  'bg-rose-500/25 text-rose-200',
-  'bg-teal-500/25 text-teal-200',
+  'bg-violet-400/10 ring-violet-400/20 text-violet-200',
+  'bg-sky-400/10 ring-sky-400/20 text-sky-200',
+  'bg-emerald-400/10 ring-emerald-400/20 text-emerald-200',
+  'bg-amber-400/10 ring-amber-400/20 text-amber-200',
+  'bg-rose-400/10 ring-rose-400/20 text-rose-200',
+  'bg-teal-400/10 ring-teal-400/20 text-teal-200',
 ];
 
 function hash(s: string): number {
@@ -30,7 +30,8 @@ export function repoInitials(name: string): string {
 export function RepoAvatar({ id, name }: { id: string; name: string }) {
   const color = AVATAR_COLORS[hash(id) % AVATAR_COLORS.length]!;
   return (
-    <span aria-hidden className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-semibold leading-none ${color}`}>
+    // The same 20px tinted tile the tab bar puts under a tab's icon (hub/TabTile).
+    <span aria-hidden data-testid="repo-tile" className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] text-[9px] font-semibold leading-none ring-1 ring-inset ${color}`}>
       {repoInitials(name)}
     </span>
   );
@@ -57,7 +58,9 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
   titleClassName?: string;
 }) {
   // A resting card reads quietly; the one you are in is the bright one.
-  const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-50' : 'text-zinc-400 group-hover:text-zinc-200';
+  const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-100' : 'text-zinc-400 group-hover:text-zinc-200';
+  // The mono line only when it adds something ("main" under "main" says nothing).
+  const second = subtitle.trim().toLowerCase() === title.trim().toLowerCase() ? '' : subtitle;
   return (
     // The whole card opens the worktree; the title button carries the
     // accessible name and keyboard focus, and its click bubbles up here.
@@ -72,16 +75,16 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
       <div className="flex min-w-0 items-center gap-1.5">
         {titleLeading && <span className="flex h-4 w-3.5 shrink-0 items-center justify-center">{titleLeading}</span>}
         <button type="button" aria-label={label} title={label}
-          className={`block min-w-0 flex-1 truncate text-left text-[13px] leading-5 ${active ? 'font-medium' : ''} ${titleColor} ${titleClassName}`}>
+          className={`block min-w-0 flex-1 truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
           {title}
         </button>
       </div>
       <div className="mt-px flex min-h-4 items-center gap-1.5">
         {leading}
-        {subtitle && (
-          <span data-card-subtitle className={`min-w-0 flex-1 truncate font-mono text-[11px] ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>{subtitle}</span>
+        {second && (
+          <span data-card-subtitle className={`min-w-0 flex-1 truncate font-mono text-[11px] ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>{second}</span>
         )}
-        {!subtitle && <span className="flex-1" />}
+        {!second && <span className="flex-1" />}
         {trailing && <span className="flex shrink-0 items-center gap-1.5">{trailing}</span>}
       </div>
     </div>

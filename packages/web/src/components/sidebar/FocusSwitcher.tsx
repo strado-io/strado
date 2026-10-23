@@ -41,13 +41,13 @@ export function FocusPill({ focus, open, onClick, pillRef }: {
   return (
     <button ref={pillRef} type="button" onClick={onClick} aria-haspopup="dialog" aria-expanded={open}
       aria-label={`Focus: ${focus?.name ?? 'none'}`} title={focus ? `Focus: ${focus.name}. Click to switch.` : 'No focus. Click to create one.'}
-      className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] ${
-        focus ? 'text-zinc-200 hover:bg-zinc-900' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'}`}>
+      className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] px-2 text-left text-[13px] transition-colors ${
+        focus ? 'text-zinc-200 hover:bg-white/[0.05]' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-300'}`}>
       {/* Just the Focus's name; the title and the popover say what it is. */}
       <span className="min-w-0 flex-1 truncate">
         {focus ? <span className="font-medium">{focus.name}</span> : 'No focus'}
       </span>
-      <svg {...icon} width={12} height={12} className="shrink-0 text-zinc-600"><path d="m6 9 6 6 6-6" /></svg>
+      <svg {...icon} width={12} height={12} className="shrink-0 text-zinc-500"><path d="m6 9 6 6 6-6" /></svg>
     </button>
   );
 }

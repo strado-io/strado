@@ -137,9 +137,10 @@ function HubBridge({ path }: { path: string }) {
 }
 // Stand in for the hub so the test asserts selection, not terminal internals.
 vi.mock('./TerminalView', () => ({
-  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId }: any) => (
+  TerminalView: ({ worktree, onClose, modalOpen, mode, sessionId, mission }: any) => (
     <div data-testid="inline-hub" data-modal-open={modalOpen ? 'true' : 'false'}
-      data-mode={mode ?? ''} data-session={sessionId ?? ''}>
+      data-mode={mode ?? ''} data-session={sessionId ?? ''}
+      data-stations={(mission?.stations ?? []).map((s: any) => s.agentId).join(',')}>
       hub:{worktree.path}
       <button onClick={onClose}>‹ Back</button>
       <HubBridge path={worktree.path} />
@@ -452,6 +453,15 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     fireEvent.keyDown(box(), { key: 'Enter' });
     await waitFor(() => expect(api.intercom.escalations.resolve).toHaveBeenCalledWith('default', 'e1', 'postgres'));
     expect(screen.queryByRole('dialog', { name: /intercom/i })).not.toBeInTheDocument();
+  });
+
+  it('one strip: the hub\'s tab bar gets the stations; no agent strip under the box', async () => {
+    renderDashboard();
+    await openFd9FromHome();
+    const hub = screen.getByTestId('inline-hub');
+    await waitFor(() => expect(hub).toHaveAttribute('data-stations', 'claude-1@app'));
+    expect(screen.queryByTestId('agent-strip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('selected-agent-line')).not.toBeInTheDocument();
   });
 
   it('the Dock has no station lights: just the worktree chip and the box', async () => {

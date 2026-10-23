@@ -96,6 +96,26 @@ describe('ApprovalPanel', () => {
     await act(async () => { done('ok'); });
   });
 
+  it('a question (AskUserQuestion) reads as the question and its numbered options, never raw JSON', () => {
+    const detail = JSON.stringify({ questions: [{ question: 'What should we do next with pi?', header: 'Pi next', options: [{ label: 'Real task test', description: 'x' }, { label: 'Nothing for now', description: 'y' }] }] });
+    const onOpen = vi.fn();
+    render(<ApprovalPanel approvals={[a({ kind: 'tool', title: 'use AskUserQuestion', detail })]} onDecide={vi.fn()} onOpen={onOpen} />);
+    expect(screen.getByRole('group', { name: 'claude-1 has a question' })).toBeInTheDocument();
+    expect(screen.getByTestId('approval-detail').textContent).toBe('What should we do next with pi?\n1. Real task test\n2. Nothing for now');
+    expect(screen.getByTestId('approval-detail').textContent).not.toContain('{');
+    fireEvent.click(screen.getByRole('button', { name: 'Answer in tab ↗' }));
+    expect(onOpen).toHaveBeenCalledWith('claude-1@x');
+  });
+
+  it('a tool\'s JSON input reads as key: value lines (long values cut)', () => {
+    const detail = JSON.stringify({ file_path: '/src/app.ts', limit: 40, note: 'x'.repeat(300) });
+    render(<ApprovalPanel approvals={[a({ kind: 'file-read', title: 'Read', detail })]} onDecide={vi.fn()} onOpen={vi.fn()} />);
+    const text = screen.getByTestId('approval-detail').textContent!;
+    expect(text.split('\n').slice(0, 2)).toEqual(['file_path: /src/app.ts', 'limit: 40']);
+    expect(text).toMatch(/^note: x{160}…$/m);
+    expect(screen.getByText('Read')).toBeInTheDocument();
+  });
+
   it('"Open tab ↗" opens that agent\'s tab', () => {
     const onOpen = vi.fn();
     render(<ApprovalPanel approvals={[a()]} onDecide={vi.fn()} onOpen={onOpen} />);

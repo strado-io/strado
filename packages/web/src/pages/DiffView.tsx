@@ -277,7 +277,14 @@ const HunkBlock = memo(
     prev.disabled === next.disabled,
 );
 
-export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: () => void }) {
+/** The worktree's changes and MRs: a modal by default, or `embedded` as a hub
+ * tab (fills its pane, no Close; keys only while `active`). */
+export function DiffView({ worktree, onClose, embedded = false, active = true }: {
+  worktree: Worktree;
+  onClose?: () => void;
+  embedded?: boolean;
+  active?: boolean;
+}) {
   const { workspace } = useWorkspace();
   const wsId = workspace.id;
 
@@ -441,7 +448,7 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || !active) return;
       if (reviewOpen) {
         // MrReviewModal is stacked above this modal and has its own Esc
         // listener that will also fire and call its onClose — both
@@ -454,17 +461,18 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
         setCreateMr(null);
         return;
       }
-      onClose();
+      // A tab is closed from its strip, not by Esc.
+      if (!embedded) onClose?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, createMr, reviewOpen]);
+  }, [onClose, createMr, reviewOpen, embedded, active]);
 
   // ↑/↓ walk the file list in its visual order (staged section before
   // unstaged; a partially staged file appears in both but is visited once).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      if ((e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || !active) return;
       // The MR view (tab or stacked review modal) has its own ↑/↓ for its files.
       if (showTree || mrsOpen || reviewOpen) return;
       // Typing in the commit message / search inputs keeps native caret keys.
@@ -496,7 +504,7 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, changesFiles, branchFiles, showTree, mrsOpen, reviewOpen]);
+  }, [tab, changesFiles, branchFiles, showTree, mrsOpen, reviewOpen, active]);
 
   function selectFile(path: string) {
     selectedRef.current = path;
@@ -801,9 +809,11 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className={embedded ? 'h-full w-full' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4'} onClick={embedded ? undefined : onClose}>
       <div
-        className="diff-view relative flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className={embedded
+          ? 'diff-view relative flex h-full w-full flex-col overflow-hidden bg-zinc-950'
+          : 'diff-view relative flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl'}
         onClick={(e) => e.stopPropagation()}
       >
         {createMr && (
@@ -1039,12 +1049,14 @@ export function DiffView({ worktree, onClose }: { worktree: Worktree; onClose: (
           >
             ↻
           </button>
-          <button
-            className="shrink-0 rounded-md px-2.5 py-1 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
-            onClick={onClose}
-          >
-            Close (Esc)
-          </button>
+          {!embedded && (
+            <button
+              className="shrink-0 rounded-md px-2.5 py-1 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+              onClick={onClose}
+            >
+              Close (Esc)
+            </button>
+          )}
         </div>
 
         {mrsOpen ? (

@@ -1,4 +1,4 @@
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // TerminalView reads intercom state for the focused tab's escalation banner;
@@ -119,6 +119,8 @@ class FakeWS {
 
 import { TerminalView } from './TerminalView';
 import type { Worktree } from '../types';
+// Tab lookups: the strip only (a pane card's header repeats the tab's title).
+const strip = () => within(screen.getByTestId('tab-segments'));
 
 const worktree = {
   path: '/Users/me/repo.worktrees/FD-1',
@@ -223,8 +225,8 @@ describe('browser split panes', () => {
       />,
     );
 
-    const shell = screen.getByText('Shell').closest('span')!;
-    const browser = screen.getByText('Browser').closest('span')!;
+    const shell = strip().getByText('Shell').closest<HTMLElement>('[data-tab-key]')!;
+    const browser = screen.getByText('Browser').closest<HTMLElement>('[data-tab-key]')!;
     const pane = screen.getByTestId('pane-host');
     vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({
       x: 10, y: 0, left: 10, top: 0, right: 70, bottom: 30, width: 60, height: 30,
@@ -244,9 +246,11 @@ describe('browser split panes', () => {
     fireEvent.pointerUp(browser, { pointerId: 3, clientX: 790, clientY: 320 });
 
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
-    expect(shell).toHaveAttribute('data-split-group', '0');
-    expect(browser).toHaveAttribute('data-split-group', '0');
-    expect(browser).toHaveClass('border-sky-500/40', 'bg-sky-500/15');
+    // The two tabs are now one group tab in the strip, and it is the shown one.
+    const group = screen.getByTestId('tab-group');
+    expect(group).toHaveAttribute('data-group-index', '0');
+    expect(group).toHaveAttribute('data-active', 'true');
+    expect(group).toHaveTextContent('Shell · Browser');
     expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
     await vi.waitFor(() => expect(screen.getByTestId('browser-pane-1')).not.toHaveClass('hidden'));
     expect(screen.getByRole('button', { name: 'Open Browser as full tab' })).toBeInTheDocument();

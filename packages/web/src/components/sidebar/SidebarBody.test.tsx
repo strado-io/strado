@@ -118,7 +118,7 @@ describe('SidebarBody: the active Focus', () => {
     render(<SidebarBody {...props()} />);
     const card = screen.getByRole('button', { name: 'fx-412' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('2h')).toBeInTheDocument();
-    expect(within(card).getAllByText('fx-412')).toHaveLength(2); // title and the branch line
+    expect(within(card).getAllByText('fx-412')).toHaveLength(1); // the branch line repeating the title is hidden
   });
 
   it('titles a card from its ticket summary, else its PR title, when the worktree has no title of its own', () => {

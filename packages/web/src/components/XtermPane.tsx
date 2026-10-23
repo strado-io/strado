@@ -75,7 +75,20 @@ function barHoldsKeyboard(): boolean {
   return document.activeElement instanceof HTMLElement && document.activeElement.dataset.stradoBar !== undefined;
 }
 
+/** The theme with the pane card's colour (`--pane-card`, "r g b") as its
+ * background, so a terminal and its card read as one surface. */
+export function cardTerminalTheme(theme: ITheme): ITheme {
+  const rgb = getComputedStyle(document.documentElement).getPropertyValue('--pane-card').trim().split(/\s+/).map(Number);
+  if (rgb.length !== 3 || rgb.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return theme;
+  const hex = `#${rgb.map((n) => n.toString(16).padStart(2, '0')).join('')}`;
+  return { ...theme, background: hex, ...(theme.cursorAccent ? { cursorAccent: hex } : {}) };
+}
+
 function activeTerminalTheme(): ITheme {
+  return cardTerminalTheme(baseTerminalTheme());
+}
+
+function baseTerminalTheme(): ITheme {
   switch (document.documentElement.dataset.appTheme) {
     case 'true-black': return TRUE_BLACK_TERMINAL_THEME;
     case 'ayu-dark': return AYU_DARK_TERMINAL_THEME;
@@ -637,7 +650,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
   return (
     <div
       data-testid={visible ? 'pane-leaf' : undefined}
-      className="relative h-full w-full min-h-0 min-w-0 bg-zinc-950"
+      className="relative h-full w-full min-h-0 min-w-0 bg-pane-card"
       onPointerDownCapture={onFocus}
       // Drop-to-attach uploads into the LOCAL worktree and types that path, so
       // on a remote pane it would hand the agent a path its machine cannot see.

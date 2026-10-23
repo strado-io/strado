@@ -105,6 +105,8 @@ vi.mock('../api', () => ({
   ApiClientError: class extends Error {},
   api: {
     envCheck: (...a: unknown[]) => envCheck(...a),
+    // The focus heartbeat beats once a test leaves something focused.
+    activity: { beat: vi.fn().mockResolvedValue({ ok: true }) },
     kb: {
       files: (...a: unknown[]) => kbFiles(...a),
       file: (...a: unknown[]) => kbFile(...a),
@@ -160,6 +162,8 @@ class FakeWS {
 import { TerminalView } from './TerminalView';
 import { renderClaudeLight } from '../components/XtermPane';
 import type { Worktree } from '../types';
+// Tab lookups: the strip only (a pane card's header repeats the tab's title).
+const strip = () => within(screen.getByTestId('tab-segments'));
 
 const worktree = {
   path: '/Users/me/repo.worktrees/FD-1',
@@ -366,7 +370,7 @@ describe('TerminalView', () => {
       // The tab strip renders labels as plain text (no role="tab" in this app —
       // see the existing 'Shell 2' assertions at TerminalView.test.tsx:262), and
       // clicking the item closes the menu, so this text can only be the tab.
-      expect(screen.getByText('Knowledge Base')).toBeInTheDocument();
+      expect(strip().getByText('Knowledge Base')).toBeInTheDocument();
       // KB is not a pty mode: no terminal WebSocket may be opened for it.
       expect(FakeWS.instances.every((ws) => !ws.url.includes('mode=kb'))).toBe(true);
 
@@ -436,14 +440,16 @@ describe('TerminalView', () => {
     expect(await screen.findByText(/no changes|couldn.t load changes|loading/i)).toBeInTheDocument();
   });
 
-  it('⌘L toggles the Changes rail', () => {
+  it('⌘L opens the Changes tab; again goes back to the tab you came from (the Changes tab stays)', () => {
     render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
     const changes = screen.getByRole('button', { name: 'Changes' });
     expect(changes).toHaveAttribute('aria-pressed', 'false');
     fireEvent.keyDown(window, { key: 'l', metaKey: true });
     expect(changes).toHaveAttribute('aria-pressed', 'true');
+    expect(document.querySelector('[data-tab-key="diff:1"]')).toHaveAttribute('data-active', 'true');
     fireEvent.keyDown(window, { key: 'l', metaKey: true });
     expect(changes).toHaveAttribute('aria-pressed', 'false');
+    expect(document.querySelector('[data-tab-key="diff:1"]')).not.toHaveAttribute('data-active');
   });
 
   it('leaves Ctrl+L to the shell (clear screen) and ignores auto-repeat', () => {
@@ -544,7 +550,7 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('Claude').closest('[title]')?.getAttribute('title')).toContain('Parked');
+    expect(strip().getByText('Claude').closest('[title]')?.getAttribute('title')).toContain('Parked');
   });
 
   it('renders one tab per shell session plus claude', () => {
@@ -555,7 +561,7 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
     expect(screen.getByText('Shell')).toBeInTheDocument();
     expect(screen.getByText('Shell 2')).toBeInTheDocument();
   });
@@ -579,7 +585,7 @@ describe('TerminalView', () => {
     expect(shellTab).toHaveTextContent('Shell 2');
     expect(shellTab.querySelector('svg')).toHaveClass('animate-pulse');
     // the dedicated Claude tab is idle — it must not borrow the aggregate
-    const claudeTab = screen.getByText('Claude').closest('button')!;
+    const claudeTab = strip().getByText('Claude').closest('button')!;
     expect(claudeTab).toHaveAttribute('title', 'Double-click to rename');
     expect(claudeTab.querySelector('svg')).not.toHaveClass('animate-pulse');
   });
@@ -629,7 +635,7 @@ describe('TerminalView', () => {
     );
     expect(lastWsUrl()).toContain('mode=shell');
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
   });
 
   it('with nothing saved, a generic open lands on a shell', () => {
@@ -694,7 +700,7 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
     expect(screen.getByText('Claude 2')).toBeInTheDocument();
   });
 
@@ -708,7 +714,7 @@ describe('TerminalView', () => {
     );
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Claude' }));
-    expect(screen.getByText('Claude 2')).toBeInTheDocument();
+    expect(strip().getByText('Claude 2')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=claude');
     expect(lastWsUrl()).toContain('session=2');
   });
@@ -726,7 +732,7 @@ describe('TerminalView', () => {
       expect(killSession).toHaveBeenCalledWith(expect.anything(), baseWorktree.path, 'claude', '2'),
     );
     expect(screen.queryByText('Claude 2')).not.toBeInTheDocument();
-    expect(screen.getByText('Claude')).toBeInTheDocument(); // session 1 untouched
+    expect(strip().getByText('Claude')).toBeInTheDocument(); // session 1 untouched
   });
 
   it('an SSE claudeSessions update adds and removes Claude tabs', () => {
@@ -756,7 +762,7 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(strip().getByText('Codex')).toBeInTheDocument();
     expect(screen.getByText('Codex 2')).toBeInTheDocument();
     expect(screen.getByText('OpenCode')).toBeInTheDocument();
     expect(screen.getByText('OpenCode 2')).toBeInTheDocument();
@@ -772,7 +778,7 @@ describe('TerminalView', () => {
     );
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }));
-    expect(screen.getByText('Codex 2')).toBeInTheDocument();
+    expect(strip().getByText('Codex 2')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=codex');
     expect(lastWsUrl()).toContain('session=2');
   });
@@ -790,7 +796,7 @@ describe('TerminalView', () => {
       expect(killSession).toHaveBeenCalledWith(expect.anything(), baseWorktree.path, 'codex', '2'),
     );
     expect(screen.queryByText('Codex 2')).not.toBeInTheDocument();
-    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(strip().getByText('Codex')).toBeInTheDocument();
   });
 
   it('agent tabs rename on double-click, and the name persists', () => {
@@ -825,9 +831,186 @@ describe('TerminalView', () => {
     // the new pane is a second claude session with its own pty connection
     expect(lastWsUrl()).toContain('mode=claude');
     expect(lastWsUrl()).toContain('session=2');
-    expect(screen.getByText('Claude 2')).toBeInTheDocument();
+    // Both now sit in one group tab.
+    expect(screen.getByTestId('tab-group')).toHaveTextContent('Claude · Claude 2');
     // layout persisted so the split survives reload
     expect(localStorage.getItem('strado.paneLayout')).toContain('claude:2');
+  });
+
+  it('each pane is a card whose header splits, returns to a full tab, and closes', () => {
+    render(
+      <TerminalView
+        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
+        mode="shell"
+        onClose={vi.fn()}
+      />,
+    );
+    // A lone tab is a card too: no full-tab action, the tab's tile in its header.
+    const lone = screen.getByTestId('pane-host');
+    expect(lone.className).toMatch(/\bpane-card\b/);
+    expect(within(lone).getByTestId('tab-tile')).toBeInTheDocument();
+    expect(within(lone).queryByRole('button', { name: /full tab/ })).not.toBeInTheDocument();
+    fireEvent.click(within(lone).getByRole('button', { name: 'Split Shell down' }));
+    fireEvent.keyDown(screen.getByRole('menu', { name: 'Open a surface' }), { key: 't' });
+    expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'col');
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
+    // The new pane is focused: its card is the marked one.
+    const second = screen.getAllByTestId('pane-host')[1]!;
+    expect(second).toHaveAttribute('data-focused', 'true');
+    expect(screen.getAllByTestId('pane-host')[0]).not.toHaveAttribute('data-focused');
+    fireEvent.click(within(second).getByRole('button', { name: 'Open Shell 2 as full tab' }));
+    expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
+  });
+
+  describe('a card\'s Split right / Split down opens an empty pane: "Open a surface"', () => {
+    const shellOnly = () => render(
+      <TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} mode="shell" onClose={vi.fn()} />,
+    );
+    const keys = () => screen.getAllByTestId('pane-host').map((el) => el.getAttribute('data-pane-key'));
+    const surface = () => screen.getByRole('menu', { name: 'Open a surface' });
+
+    it('the split happens at once: an empty "New pane" card on that side, listing the kinds with their letters', () => {
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell right' }));
+      expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
+      const [first, second] = screen.getAllByTestId('pane-host');
+      expect(first).toHaveAttribute('data-pane-key', 'shell:1');
+      expect(second!.getAttribute('data-pane-key')).toMatch(/^new:/);
+      expect(within(second!).getByTestId('pane-header')).toHaveTextContent('New pane');
+      expect(second).toContainElement(surface());
+      expect(surface()).toHaveFocus();
+      const rows = within(surface()).getAllByRole('menuitem');
+      expect(rows.map((r) => r.getAttribute('data-label')).slice(0, 5)).toEqual(['Claude', 'Codex', 'OpenCode', 'Pi', 'Shell']);
+      // Nothing was opened yet: no new session, no new tab.
+      expect(screen.queryByTestId('tab-group')).not.toBeInTheDocument();
+      expect(localStorage.getItem('strado.paneLayout') ?? '').not.toContain('claude');
+    });
+
+    it('C opens Claude in that pane', () => {
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell right' }));
+      fireEvent.keyDown(surface(), { key: 'c' });
+      expect(screen.queryByRole('menu', { name: 'Open a surface' })).not.toBeInTheDocument();
+      expect(keys()).toEqual(['shell:1', 'claude:1']);
+      expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
+      expect(lastWsUrl()).toContain('mode=claude');
+      expect(screen.getByTestId('tab-group')).toHaveTextContent(/Claude · Shell|Shell · Claude/);
+    });
+
+    it('D opens Changes (the diff) in that pane', async () => {
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell right' }));
+      fireEvent.keyDown(surface(), { key: 'd' });
+      expect(keys()).toEqual(['shell:1', 'diff:1']);
+      expect(screen.getByTestId('tab-group')).toHaveTextContent(/Shell · Changes/);
+      await vi.waitFor(() => expect(screen.getByTestId(`diff-pane-${baseWorktree.path}`)).not.toHaveClass('hidden'));
+    });
+
+    it('Split down, then ↓ ↵ picks with the keyboard (Codex below)', () => {
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell down' }));
+      fireEvent.keyDown(surface(), { key: 'ArrowDown' });
+      fireEvent.keyDown(surface(), { key: 'Enter' });
+      expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'col');
+      expect(keys()).toEqual(['shell:1', 'codex:1']);
+    });
+
+    it('a click on a row opens it there', () => {
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell right' }));
+      fireEvent.click(within(surface()).getByRole('menuitem', { name: /Shell/ }));
+      expect(keys()).toEqual(['shell:1', 'shell:2']);
+    });
+
+    it('a disabled kind\'s letter (not installed) is ignored', async () => {
+      envCheck.mockResolvedValue([{ id: 'opencode', found: false, hint: 'OpenCode needs to be installed to use' }]);
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell right' }));
+      const row = within(surface()).getByRole('menuitem', { name: /OpenCode/ });
+      await vi.waitFor(() => expect(row).toBeDisabled());
+      fireEvent.keyDown(surface(), { key: 'o' });
+      expect(surface()).toBeInTheDocument();
+      expect(keys()[1]).toMatch(/^new:/);
+    });
+
+    it('Esc, or the empty card\'s ✕, removes the pane: the layout is as it was', () => {
+      shellOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell right' }));
+      fireEvent.keyDown(surface(), { key: 'Escape' });
+      expect(keys()).toEqual(['shell:1']);
+      expect(screen.queryByTestId('pane-split')).not.toBeInTheDocument();
+      expect(localStorage.getItem('strado.paneLayout') ?? '{}').not.toContain('new:');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell down' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close New pane' }));
+      expect(keys()).toEqual(['shell:1']);
+    });
+
+    it('inside an existing split, the empty pane goes beside that card and leaves the rest as it was', () => {
+      shellOnly();
+      fireEvent.keyDown(window, { key: 'd', metaKey: true }); // shell:1 | shell:2
+      fireEvent.click(screen.getByRole('button', { name: 'Split Shell 2 down' }));
+      fireEvent.keyDown(surface(), { key: 'Escape' });
+      expect(keys()).toEqual(['shell:1', 'shell:2']);
+    });
+  });
+
+  describe('tab groups: a split layout is one tab in the strip', () => {
+    // Shell 1 + Shell 3 split (⌘D from Shell 1); Shell 2 stays a lone tab.
+    const grouped = () => {
+      render(
+        <TerminalView worktree={{ ...baseWorktree, shellSessions: ['1', '2'] } as Worktree} mode="shell" onClose={vi.fn()} />,
+      );
+      fireEvent.keyDown(window, { key: 'd', metaKey: true });
+      return screen.getByTestId('tab-group');
+    };
+
+    it('two split tabs collapse into one group tab with both tiles, titled by its members', () => {
+      const group = grouped();
+      expect(within(group).getAllByTestId('tile-layer')).toHaveLength(2);
+      expect(group).toHaveTextContent('Shell · Shell 3');
+      expect(strip().queryByText('Shell 3', { exact: true })).not.toBeInTheDocument();
+      expect(strip().getByText('Shell 2')).toBeInTheDocument();
+      expect(screen.getAllByTestId('tab-group')).toHaveLength(1);
+    });
+
+    it('clicking the group shows its layout: both cards', () => {
+      const group = grouped();
+      fireEvent.click(strip().getByText('Shell 2'));
+      expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
+      fireEvent.click(within(group).getByTestId('tab-title'));
+      expect(screen.getAllByTestId('pane-host').map((el) => el.getAttribute('data-pane-key'))).toEqual(['shell:1', 'shell:3']);
+    });
+
+    it('closing the group asks per busy member, then closes them all', async () => {
+      grouped();
+      sessionBusy.mockResolvedValueOnce({ busy: true }).mockResolvedValueOnce({ busy: false });
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Close group Shell · Shell 3' }));
+      await vi.waitFor(() => expect(killSession).toHaveBeenCalledTimes(2));
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(killSession.mock.calls.map((c) => c[3]).sort()).toEqual(['1', '3']);
+      expect(screen.queryByTestId('tab-group')).not.toBeInTheDocument();
+      confirmSpy.mockRestore();
+    });
+
+    it('a member taken out (its card\'s full tab) ungroups: two plain tabs again', () => {
+      grouped();
+      fireEvent.click(screen.getByRole('button', { name: 'Open Shell 3 as full tab' }));
+      expect(screen.queryByTestId('tab-group')).not.toBeInTheDocument();
+      expect(strip().getByText('Shell 3')).toBeInTheDocument();
+    });
+
+    it('double-click renames the group; the name survives a reload', () => {
+      const group = grouped();
+      fireEvent.doubleClick(within(group).getByTestId('tab-title'));
+      const input = within(screen.getByTestId('tab-group')).getByRole('textbox', { name: 'Rename group' });
+      fireEvent.change(input, { target: { value: 'Review' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(screen.getByTestId('tab-group')).toHaveTextContent('Review');
+      const saved = JSON.parse(localStorage.getItem('strado.paneLayout') ?? '{}');
+      expect(saved[baseWorktree.path][0].name).toBe('Review');
+    });
   });
 
   it('Cmd+Shift+D splits the focused pane top/bottom', () => {
@@ -873,8 +1056,8 @@ describe('TerminalView', () => {
       />,
     );
 
-    const shell1 = screen.getByText('Shell').closest('span')!;
-    const shell2 = screen.getByText('Shell 2').closest('span')!;
+    const shell1 = strip().getByText('Shell').closest<HTMLElement>('[data-tab-key]')!;
+    const shell2 = screen.getByText('Shell 2').closest<HTMLElement>('[data-tab-key]')!;
     const pane = screen.getByTestId('pane-host');
     vi.spyOn(shell1, 'getBoundingClientRect').mockReturnValue({
       x: 10, y: 0, left: 10, top: 0, right: 70, bottom: 30, width: 60, height: 30,
@@ -897,12 +1080,10 @@ describe('TerminalView', () => {
     expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
     expect(localStorage.getItem('strado.paneLayout')).toContain('shell:2');
-    expect(shell1).toHaveAttribute('data-in-split', 'true');
-    expect(shell2).toHaveAttribute('data-in-split', 'true');
-    expect(shell1).toHaveAttribute('data-split-group', '0');
-    expect(shell2).toHaveAttribute('data-split-group', '0');
-    expect(shell1).toHaveClass('border-sky-500/15', 'bg-sky-500/5');
-    expect(shell2).toHaveClass('border-sky-500/40', 'bg-sky-500/15');
+    // The two tabs are one group tab now, the shown one; Shell 2's card is focused.
+    expect(screen.getByTestId('tab-group')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('tab-group')).toHaveTextContent('Shell · Shell 2');
+    expect(screen.getAllByTestId('pane-host')[1]).toHaveAttribute('data-focused', 'true');
     expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Shell 2 as full tab' }));
@@ -911,7 +1092,7 @@ describe('TerminalView', () => {
     expect(localStorage.getItem('strado.paneLayout')).not.toContain(baseWorktree.path);
   });
 
-  it('creates and switches between multiple split groups in one worktree', () => {
+  it('creates and switches between multiple split groups in one worktree', async () => {
     render(
       <TerminalView
         worktree={{ ...baseWorktree, shellSessions: ['1', '2', '3', '4'] } as Worktree}
@@ -934,8 +1115,8 @@ describe('TerminalView', () => {
     };
 
     // First group: Shell + Shell 2.
-    let shell1 = screen.getByText('Shell').closest('span')!;
-    let shell2 = screen.getByText('Shell 2').closest('span')!;
+    let shell1 = strip().getByText('Shell').closest<HTMLElement>('[data-tab-key]')!;
+    let shell2 = screen.getByText('Shell 2').closest<HTMLElement>('[data-tab-key]')!;
     mockTabRect(shell1, 10);
     mockTabRect(shell2, 82);
     mockPaneRect(screen.getByTestId('pane-host'));
@@ -944,13 +1125,16 @@ describe('TerminalView', () => {
     fireEvent.pointerUp(shell2, { pointerId: 11, clientX: 790, clientY: 320 });
     fireEvent.click(shell2); // browser emits this click after pointerup; drag guard consumes it
     expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
+    // Shell 2 folded into a group tab, so that click found no tab: the guard
+    // still ends with the gesture and the next click is a real one.
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
     // Leave that group intact, open Shell 3 full-size, then make a second
     // independent group by docking Shell 4 beside it.
     fireEvent.click(screen.getByText('Shell 3'));
     expect(screen.getAllByTestId('pane-host')).toHaveLength(1);
-    const shell3 = screen.getByText('Shell 3').closest('span')!;
-    const shell4 = screen.getByText('Shell 4').closest('span')!;
+    const shell3 = strip().getByText('Shell 3').closest<HTMLElement>('[data-tab-key]')!;
+    const shell4 = screen.getByText('Shell 4').closest<HTMLElement>('[data-tab-key]')!;
     mockTabRect(shell3, 154);
     mockTabRect(shell4, 226);
     mockPaneRect(screen.getByTestId('pane-host'));
@@ -958,29 +1142,26 @@ describe('TerminalView', () => {
     fireEvent.pointerMove(shell4, { pointerId: 12, clientX: 790, clientY: 320 });
     fireEvent.pointerUp(shell4, { pointerId: 12, clientX: 790, clientY: 320 });
     fireEvent.click(shell4);
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
     const saved = JSON.parse(localStorage.getItem('strado.paneLayout') ?? '{}');
     expect(saved[baseWorktree.path]).toHaveLength(2);
 
-    shell1 = screen.getByText('Shell').closest('span')!;
-    shell2 = screen.getByText('Shell 2').closest('span')!;
-    expect(shell1).toHaveAttribute('data-in-split', 'true');
-    expect(shell2).toHaveAttribute('data-in-split', 'true');
-    expect(shell3).toHaveAttribute('data-in-split', 'true');
-    expect(shell4).toHaveAttribute('data-in-split', 'true');
-    expect(shell1).toHaveAttribute('data-split-group', '0');
-    expect(shell2).toHaveAttribute('data-split-group', '0');
-    expect(shell3).toHaveAttribute('data-split-group', '1');
-    expect(shell4).toHaveAttribute('data-split-group', '1');
+    // Two group tabs, one per layout.
+    const groupTabs = screen.getAllByTestId('tab-group');
+    expect(groupTabs.map((g) => [g.getAttribute('data-group-index'), g.textContent])).toEqual([
+      ['0', expect.stringContaining('Shell · Shell 2')],
+      ['1', expect.stringContaining('Shell 3 · Shell 4')],
+    ]);
     expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
     expect(FakeWS.instances).toHaveLength(4);
     const groupSockets = [...FakeWS.instances];
 
-    fireEvent.click(screen.getByText('Shell'));
+    fireEvent.click(within(groupTabs[0]!).getByTestId('tab-title'));
     expect(screen.getAllByTestId('pane-host').map((el) => el.getAttribute('data-pane-key'))).toEqual([
       'shell:1', 'shell:2',
     ]);
-    fireEvent.click(screen.getByText('Shell 3'));
+    fireEvent.click(within(screen.getAllByTestId('tab-group')[1]!).getByTestId('tab-title'));
     expect(screen.getAllByTestId('pane-host').map((el) => el.getAttribute('data-pane-key'))).toEqual([
       'shell:3', 'shell:4',
     ]);
@@ -1000,8 +1181,8 @@ describe('TerminalView', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Knowledge Base' }));
     fireEvent.click(screen.getByText('Shell'));
 
-    const shell = screen.getByText('Shell').closest('span')!;
-    const kb = screen.getByText('Knowledge Base').closest('span')!;
+    const shell = strip().getByText('Shell').closest<HTMLElement>('[data-tab-key]')!;
+    const kb = screen.getByText('Knowledge Base').closest<HTMLElement>('[data-tab-key]')!;
     const pane = screen.getByTestId('pane-host');
     vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({
       x: 10, y: 0, left: 10, top: 0, right: 70, bottom: 30, width: 60, height: 30,
@@ -1021,8 +1202,7 @@ describe('TerminalView', () => {
     fireEvent.pointerUp(kb, { pointerId: 2, clientX: 790, clientY: 320 });
 
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'row');
-    expect(shell).toHaveAttribute('data-split-group', '0');
-    expect(kb).toHaveAttribute('data-split-group', '0');
+    expect(screen.getByTestId('tab-group')).toHaveTextContent('Shell · Knowledge Base');
     expect(screen.queryByLabelText('Split tab group')).not.toBeInTheDocument();
     await vi.waitFor(() =>
       expect(screen.getByTestId(`kb-pane-${baseWorktree.path}`)).not.toHaveClass('hidden'),
@@ -1086,7 +1266,7 @@ describe('TerminalView', () => {
 
     // The other two panes remain persisted and return when either tiled tab is
     // selected; only the popped-out tab is full-size.
-    fireEvent.click(screen.getByText('Shell 2'));
+    fireEvent.click(within(screen.getByTestId('tab-group')).getByTestId('tab-title'));
     expect(screen.getAllByTestId('pane-host')).toHaveLength(2);
     expect(screen.getByTestId('pane-split')).toHaveAttribute('data-split-dir', 'col');
     expect(localStorage.getItem('strado.paneLayout')).not.toContain('shell:1');
@@ -1115,7 +1295,7 @@ describe('TerminalView', () => {
     );
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Shell' }));
-    expect(screen.getByText('Shell 2')).toBeInTheDocument();
+    expect(strip().getByText('Shell 2')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('session=2');
   });
 
@@ -1178,7 +1358,7 @@ describe('TerminalView', () => {
       />,
     );
     expect(screen.queryByText('Claude')).not.toBeInTheDocument();
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
   });
 
   it('applies a later explicit open request on an already-mounted hub — mount respects a closed tab, a bumped openSeq opens it', () => {
@@ -1191,7 +1371,7 @@ describe('TerminalView', () => {
     expect(screen.queryByText('Claude')).not.toBeInTheDocument();
     // A later explicit request bumps openSeq → the closed tab opens.
     view.rerender(<TerminalView worktree={wt} mode="claude" sessionId="1" openSeq={1} onClose={() => {}} />);
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
   });
 
   it('keeps a freshly-opened Claude tab when a pre-spawn hasClaudeSession:false SSE lands', () => {
@@ -1206,11 +1386,11 @@ describe('TerminalView', () => {
         onClose={onClose}
       />,
     );
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
 
     pushSse({ path: baseWorktree.path, hasClaudeSession: false });
 
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
 
     // Once the server confirms the session, a later false is a genuine close.
@@ -1229,12 +1409,12 @@ describe('TerminalView', () => {
         onClose={onClose}
       />,
     );
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
 
     pushSse({ path: baseWorktree.path, hasClaudeSession: false });
 
     expect(screen.queryByText('Claude')).not.toBeInTheDocument();
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=shell');
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -1251,11 +1431,11 @@ describe('TerminalView', () => {
         onClose={onClose}
       />,
     );
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
 
     // Server confirms the session: it now owns id '1' (dropped from local).
     pushSse({ path: baseWorktree.path, shellSessions: ['1'] });
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
 
     // Server later reports the session gone -> tab must actually disappear,
@@ -1278,14 +1458,14 @@ describe('TerminalView', () => {
         onClose={onClose}
       />,
     );
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
 
     // pty spawned -> server confirms id '1' (moves it out of the local set).
     pushSse({ path: baseWorktree.path, shellSessions: ['1'] });
 
     // Stale list response says no shell sessions -> must not wipe the tab.
     await act(async () => { resolveList([{ ...baseWorktree, shellSessions: [] }]); });
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -1302,12 +1482,12 @@ describe('TerminalView', () => {
     // Open a second shell tab locally and switch to it.
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Shell' }));
-    expect(screen.getByText('Shell 2')).toBeInTheDocument();
+    expect(strip().getByText('Shell 2')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('session=2');
 
     // Server confirms both sessions.
     pushSse({ path: baseWorktree.path, shellSessions: ['1', '2'] });
-    expect(screen.getByText('Shell 2')).toBeInTheDocument();
+    expect(strip().getByText('Shell 2')).toBeInTheDocument();
 
     // Server later reports shell 2 gone -> active tab must switch away.
     pushSse({ path: baseWorktree.path, shellSessions: ['1'] });
@@ -1327,7 +1507,7 @@ describe('TerminalView', () => {
     );
     // tab strip has both the live shell and the VS Code tab
     expect(screen.getByText('Shell')).toBeInTheDocument();
-    expect(screen.getByText('VS Code')).toBeInTheDocument();
+    expect(strip().getByText('VS Code')).toBeInTheDocument();
     const frame = await screen.findByTitle('VS Code');
     expect(frame).toHaveAttribute(
       'src',
@@ -1357,12 +1537,12 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('VS Code')).toBeInTheDocument();
+    expect(strip().getByText('VS Code')).toBeInTheDocument();
     const { rememberVscodeTab } = await import('../hooks/vscodeTabs');
     act(() => rememberVscodeTab(baseWorktree.path, false));
     await vi.waitFor(() => expect(screen.queryByText('VS Code')).not.toBeInTheDocument());
     // focus falls back to a surviving tab
-    expect(screen.getByText('Shell')).toBeInTheDocument();
+    expect(strip().getByText('Shell')).toBeInTheDocument();
   });
 
   it('heartbeats while VS Code is visible and reloads the frame when the workbench was restarted', async () => {
@@ -1563,7 +1743,7 @@ describe('TerminalView', () => {
       fireEvent.click(screen.getByLabelText('Run commands'));
       fireEvent.click(screen.getByRole('menuitem', { name: /^api/ }));
       expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path, 'api');
-      expect(await screen.findByText('run: api')).toBeInTheDocument();
+      expect(await strip().findByText('run: api')).toBeInTheDocument();
       await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
       expect(new URL(lastWsUrl()).searchParams.get('run')).toBe('api');
     });
@@ -1579,10 +1759,10 @@ describe('TerminalView', () => {
     it('several at once: the default and api each get their own tab', async () => {
       await hubWithRepo();
       fireEvent.click(screen.getByLabelText('Run dev'));
-      expect(await screen.findByText('run')).toBeInTheDocument();
+      expect(await strip().findByText('run')).toBeInTheDocument();
       fireEvent.click(screen.getByLabelText('Run commands'));
       fireEvent.click(screen.getByRole('menuitem', { name: /^api/ }));
-      expect(await screen.findByText('run: api')).toBeInTheDocument();
+      expect(await strip().findByText('run: api')).toBeInTheDocument();
       expect(screen.getByText('run')).toBeInTheDocument();
     });
     it('after a reload a live run of another command comes back as its tab', async () => {
@@ -1727,7 +1907,7 @@ describe('TerminalView', () => {
       expect(procStop).not.toHaveBeenCalled();
       closeRunTab.mockRejectedValueOnce(Object.assign(new Error('CONFLICT'), { details: { reason: 'running' } }));
       fireEvent.click(screen.getByLabelText('Run'));
-      expect(await screen.findByText('run')).toBeInTheDocument();
+      expect(await strip().findByText('run')).toBeInTheDocument();
       fireEvent.click(screen.getByLabelText('Close run session'));
       await vi.waitFor(() => expect(screen.queryByText('run')).toBeNull());
       expect(screen.queryByRole('alert')).toBeNull();
@@ -1788,7 +1968,7 @@ describe('TerminalView', () => {
       hub();
       fireEvent.click(screen.getByLabelText('Run'));
       expect(procStart).toHaveBeenCalledWith('default', baseWorktree.path);
-      expect(await screen.findByText('run')).toBeInTheDocument();
+      expect(await strip().findByText('run')).toBeInTheDocument();
       await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
       const u = new URL(lastWsUrl());
       expect(u.searchParams.get('ws')).toBe('default');
@@ -1800,7 +1980,7 @@ describe('TerminalView', () => {
     it('closing the run tab detaches: no shell session is killed, the server keeps running', async () => {
       hub();
       fireEvent.click(screen.getByLabelText('Run'));
-      expect(await screen.findByText('run')).toBeInTheDocument();
+      expect(await strip().findByText('run')).toBeInTheDocument();
       pushSse({ path: baseWorktree.path, process: { status: 'running', port: 3000 } });
       fireEvent.click(screen.getByLabelText('Close run session'));
       await vi.waitFor(() => expect(screen.queryByText('run')).toBeNull());
@@ -1811,7 +1991,7 @@ describe('TerminalView', () => {
     it('Run again reuses the run tab (never a second one)', async () => {
       hub();
       fireEvent.click(screen.getByLabelText('Run'));
-      expect(await screen.findByText('run')).toBeInTheDocument();
+      expect(await strip().findByText('run')).toBeInTheDocument();
       pushSse({ path: baseWorktree.path, process: { status: 'stopped', exitCode: 0 } });
       fireEvent.click(screen.getByText('Shell'));
       fireEvent.click(screen.getByLabelText('Run'));
@@ -1871,7 +2051,7 @@ describe('TerminalView', () => {
       expect(within(screen.getByRole('alert')).queryByText('Logs')).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Open run tab' }));
       await vi.waitFor(() => expect(lastWsUrl()).toContain('/ws/run?'));
-      expect(screen.getByText('run')).toBeInTheDocument();
+      expect(strip().getByText('run')).toBeInTheDocument();
       expect(procStart).not.toHaveBeenCalled();
     });
   });
@@ -1890,12 +2070,12 @@ describe('TerminalView', () => {
 
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Claude' }));
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    expect(strip().getByText('Claude')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=claude');
 
     fireEvent.click(screen.getByLabelText('New session'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }));
-    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(strip().getByText('Codex')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=codex');
 
     fireEvent.click(screen.getByLabelText('New session'));
@@ -1942,7 +2122,7 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(strip().getByText('Codex')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=codex');
     expect(lastWsUrl()).toContain('session=1');
   });
@@ -1955,7 +2135,7 @@ describe('TerminalView', () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText('OpenCode')).toBeInTheDocument();
+    expect(strip().getByText('OpenCode')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=opencode');
     expect(lastWsUrl()).toContain('session=1');
   });
@@ -2030,7 +2210,7 @@ describe('TerminalView', () => {
     expect(screen.queryByText('React | FD-2')).not.toBeInTheDocument();
   });
 
-  it('the Changes button opens the diff modal directly and Esc closes only the diff', async () => {
+  it('the Changes button opens the diff as a tab; Esc leaves it and the hub open', async () => {
     const onClose = vi.fn();
     gitChanges.mockResolvedValue({
       files: [{ path: 'src/app.ts', status: 'M', staged: 'none', untracked: false }],
@@ -2040,9 +2220,11 @@ describe('TerminalView', () => {
     expect(await screen.findByPlaceholderText('Commit message')).toBeInTheDocument();
     expect(gitChanges).toHaveBeenCalledWith(expect.anything(), baseWorktree.path);
 
+    expect(screen.getByTestId(`diff-pane-${baseWorktree.path}`)).toContainElement(screen.getByPlaceholderText('Commit message'));
+    expect(screen.queryByText('Close (Esc)')).not.toBeInTheDocument();
+
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByPlaceholderText('Commit message')).not.toBeInTheDocument();
-    // the terminal panel underneath stays open
+    expect(screen.getByPlaceholderText('Commit message')).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
 

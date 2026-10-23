@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { exec } from '../../src/shell';
 import { buildApp, buildDeps } from '../../src/app';
+import { shellKey } from '../../src/services/terminalManager';
 
 let tmp: string;
 let repo: string;
@@ -86,5 +87,14 @@ describe('POST /api/pi/status', () => {
     const res = await app.inject({ method: 'POST', url: '/api/pi/status', payload: { cwd: repo, status: 'closed', sessionId: 'shell:4' } });
     expect(res.statusCode).toBe(200);
     expect(app.deps.piStatus.sessions(repo)).not.toHaveProperty('shell:4');
+  });
+
+  it('a Shell that exits with no tab attached drops the agent it hosted (the next Shell 4 is a plain shell)', async () => {
+    const key = shellKey(repo, '4');
+    await app.deps.terminal.ensure(key, repo, { file: 'sleep', args: ['30'] });
+    // The launcher registered Pi, then the shell was killed with it: no 'closed' ever came.
+    await app.inject({ method: 'POST', url: '/api/pi/status', payload: { cwd: repo, status: 'waiting', sessionId: 'shell:4' } });
+    app.deps.terminal.kill(key);
+    await vi.waitFor(() => expect(app.deps.piStatus.sessions(repo)).not.toHaveProperty('shell:4'));
   });
 });

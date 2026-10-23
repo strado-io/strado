@@ -273,8 +273,15 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
     ptyActivity.forget(key);
     intercomPush?.forget(key);
     shellRunner?.forget(key);
+    const { path: p, mode, id } = parseSessionKey(key);
+    // A Shell tab's hand-launched agents die with it. The terminal route clears
+    // them too, but only while a socket is attached; a shell that exits after
+    // its tab closed would otherwise leave e.g. `shell:1` marked as Pi, and the
+    // next Shell 1 would open wearing the Pi icon.
+    if (mode === 'shell') {
+      for (const store of [claudeStatus, codexStatus, opencodeStatus, piStatus]) store.remove(p, `shell:${id}`);
+    }
     if (!terminal) return; // manager still constructing — sessions can't have UI subscribers yet
-    const { path: p } = parseSessionKey(key);
     const live = terminal.liveSessions().filter((s) => s.path === p);
     bus.emit('worktrees', {
       type: 'worktree.updated',
