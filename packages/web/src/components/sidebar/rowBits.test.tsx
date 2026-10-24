@@ -34,14 +34,13 @@ describe('WorktreeRowItem: each row is a glass card', () => {
     expect(on).toHaveClass('glass-pill', 'rounded-xl');
     expect(on).not.toHaveClass('pane-card');
     expect(on).toHaveAttribute('data-active', 'true');
-    expect(on.querySelector('[data-testid="card-accent"]')).toHaveClass('bg-sky-400', 'w-0.5');
+    expect(on.querySelector('[data-testid="card-accent"]')).toHaveClass('bg-sky-400', 'w-[3px]', 'h-4', 'left-[5px]');
   });
 
-  it('a card with an agent waiting gets an amber edge', () => {
+  it('a waiting card keeps its normal edge (the amber is on its agent ring)', () => {
     const el = row(false, { waiting: true });
     expect(el).toHaveAttribute('data-waiting', 'true');
-    expect(el.className).toMatch(/border-amber-400/);
-    expect(row(false).className).not.toMatch(/amber/);
+    expect(el.className).not.toMatch(/amber/);
   });
 
   it('theme colours only: no raw hex in the card classes', () => {

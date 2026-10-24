@@ -66,7 +66,7 @@ export type WorktreeRowItemProps = {
   active?: boolean;
   /** The open card's accent bar colour (a bg-* class: its repo's colour). */
   accent?: string;
-  /** An agent here is waiting on the person: the card's edge turns amber. */
+  /** An agent here is waiting on the person (marked by the card's amber agent ring, not its edge). */
   waiting?: boolean;
 };
 
@@ -76,7 +76,7 @@ export function WorktreeRowItem({
   // Theme colours only: the pane glass and the edge colour (--pane-edge) both
   // have light-theme values, so the card holds on every preset.
   const look = active === undefined ? ''
-    : `rounded-xl border transition-colors ${active ? 'glass-pill' : 'glass pane-card hover:border-[rgb(var(--pane-edge)/0.12)]'} ${waiting ? '!border-amber-400/50' : ''} `;
+    : `rounded-xl border transition-colors ${active ? 'glass-pill' : 'glass pane-card hover:border-[rgb(var(--pane-edge)/0.12)]'} `;
   const hover = useRowHoverCard();
   const dismiss = useMemo(() => ({ close: hover.close }), [hover.close]);
   // The card floats over the hub, where a native Browser view would otherwise
@@ -86,7 +86,8 @@ export function WorktreeRowItem({
     <div ref={hover.ref} className={`${look}${className}`} data-active={active || undefined} data-waiting={waiting || undefined} {...hover.triggerProps}
       onContextMenu={onContextMenu ? (e) => { hover.close(); onContextMenu(e); } : undefined}>
       {active && accent && (
-        <span aria-hidden data-testid="card-accent" className={`pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full ${accent}`} />
+        // A short pill inside the card's padding, clear of its rounded edge.
+        <span aria-hidden data-testid="card-accent" className={`pointer-events-none absolute left-[5px] top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full opacity-90 ${accent}`} />
       )}
       <RowHoverCardContext.Provider value={dismiss}>{children}</RowHoverCardContext.Provider>
       {hover.open && hover.rects && (
