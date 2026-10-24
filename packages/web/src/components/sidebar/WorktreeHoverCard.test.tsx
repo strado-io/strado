@@ -141,21 +141,20 @@ describe('WorktreeHoverCard', () => {
         })}
       />,
     );
-    const footer = screen.getByTestId('hover-card-footer');
-    expect(footer).toHaveTextContent('2 files');
-    expect(footer).toHaveTextContent('+12');
-    expect(footer).toHaveTextContent('-3');
-    expect(footer).toHaveTextContent('running :3001');
+    const card = screen.getByRole('dialog');
+    expect(screen.getByTestId('hover-card-diff')).toHaveTextContent('2 files+12-3');
+    expect(screen.getByTestId('hover-card-running')).toHaveTextContent('running :3001');
+    expect(card).toHaveTextContent('running :3001');
   });
 
   it('keeps the footer honest on a clean, stopped worktree', () => {
     render(
       <WorktreeHoverCard {...props()} worktree={worktree({ diffStats: null })} />,
     );
-    // Clean and stopped says nothing: only the actions are left.
-    const footer = screen.getByTestId('hover-card-footer');
-    expect(footer).not.toHaveTextContent(/file|running|uncommitted/);
-    expect(footer).toHaveTextContent('New shell');
+    // Clean and stopped says nothing.
+    expect(screen.queryByTestId('hover-card-diff')).toBeNull();
+    expect(screen.queryByTestId('hover-card-running')).toBeNull();
+    expect(screen.getByRole('dialog')).not.toHaveTextContent(/uncommitted/);
   });
 
   it('offers changes, a new shell and settings as quick actions', () => {
@@ -187,6 +186,11 @@ describe('WorktreeHoverCard', () => {
     expect(card.textContent!.match(/testset/g)).toHaveLength(1);
     expect(card).toHaveTextContent('on runner-test');
     expect(screen.queryByText(/^sessions$/i)).toBeNull(); // no heading over the list
+  });
+
+  it('a repo-named title over main says main once', () => {
+    render(<WorktreeHoverCard {...props()} worktree={worktree({ branch: 'main', meta: { title: 'Strado' } as Worktree['meta'] })} />);
+    expect(screen.getByRole('dialog').textContent!.match(/main/g)).toHaveLength(1);
   });
 
   it('names the machine for a session that lives on a runner', () => {

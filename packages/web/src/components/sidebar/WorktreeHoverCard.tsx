@@ -96,13 +96,37 @@ export function WorktreeHoverCard({
   // The branch is a second line only when it says something the name doesn't.
   const label = worktreeLabel(worktree);
   const name = title || label;
-  const branch = worktree.branch && worktree.branch.toLowerCase() !== name.toLowerCase() ? worktree.branch : null;
+  // One detail line, each part said once: the label and branch only where
+  // they differ from what is already shown, then the runner, the changes and
+  // a running dev server.
+  const shown = new Set([name.toLowerCase()]);
+  const fresh = (v: string | null | undefined) => {
+    if (!v || shown.has(v.toLowerCase())) return null;
+    shown.add(v.toLowerCase());
+    return v;
+  };
+  const sub = fresh(label);
+  const branch = fresh(worktree.branch);
   const meta = [
+    sub && <span key="label" className="min-w-0 truncate">{sub}</span>,
     branch && <span key="branch" className="min-w-0 truncate font-mono" title={branch}>{branch}</span>,
-    runnerName && <span key="runner" className="shrink-0">on {runnerName}</span>,
+    runnerName && <span key="runner" className="shrink-0 whitespace-nowrap">on {runnerName}</span>,
+    dirty && (
+      <span key="diff" data-testid="hover-card-diff" className="shrink-0 whitespace-nowrap font-mono">
+        {diff!.files} file{diff!.files === 1 ? '' : 's'}
+        <span className="ml-1 text-emerald-500/80">+{diff!.additions}</span>
+        <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
+      </span>
+    ),
+    running && (
+      <span key="run" data-testid="hover-card-running" className="flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-emerald-400">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+        running{process?.port ? ` :${process.port}` : ''}
+      </span>
+    ),
   ].filter(Boolean);
 
-  const action = 'rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100';
+  const action = 'whitespace-nowrap rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100';
 
   return createPortal(
     <div
@@ -125,9 +149,8 @@ export function WorktreeHoverCard({
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100" title={name}>{name}</span>
           {status && <span className="shrink-0 text-[11px] text-zinc-500">{status}</span>}
         </div>
-        {title && title !== label && <div className="truncate text-[11px] text-zinc-500">{label}</div>}
         {meta.length > 0 && (
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500">
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-zinc-500">
             {meta.flatMap((m, i) => (i ? [<span key={`dot${i}`} aria-hidden className="text-zinc-700">·</span>, m] : [m]))}
           </div>
         )}
@@ -194,24 +217,11 @@ export function WorktreeHoverCard({
         </div>
       )}
 
-      {/* One quiet row: what is live (changes, dev server) on the left, the actions on the right. Clean and stopped says nothing. */}
+      {/* The actions, one quiet row. */}
       <div data-testid="hover-card-footer" className="-mx-1 flex items-center gap-1 border-t border-zinc-800 pt-2">
-        {dirty && (
-          <span className="truncate px-1 font-mono text-[11px] text-zinc-500">
-            {diff!.files} file{diff!.files === 1 ? '' : 's'}
-            <span className="ml-1 text-emerald-500/80">+{diff!.additions}</span>
-            <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
-          </span>
-        )}
-        {running && (
-          <span className="flex shrink-0 items-center gap-1 px-1 font-mono text-[11px] text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-            running{process?.port ? ` :${process.port}` : ''}
-          </span>
-        )}
-        <span className="flex-1" />
         {onOpenDiff && <button type="button" className={action} onClick={onOpenDiff}>Changes</button>}
         {onOpenShell && <button type="button" className={action} onClick={onOpenShell}>New shell</button>}
+        <span className="flex-1" />
         {onOpenSettings && <button type="button" className={action} onClick={onOpenSettings}>Settings</button>}
       </div>
     </div>,
