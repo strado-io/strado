@@ -43,23 +43,50 @@ type RunState = {
 };
 const fresh: RunState = { step: null, detail: null, question: null, terminalKey: null, terminalSeq: 0, lines: [], result: null, error: null };
 
+/** Replayed lines first, then live ones; a line or two may sit on both sides
+ * of the seam, so the live copy of that overlap is dropped. */
+export function joinTranscript(replayed: string[], live: string[]): string[] {
+  for (let k = Math.min(replayed.length, live.length); k > 0; k--) {
+    if (replayed.slice(-k).every((l, i) => l === live[i])) return [...replayed, ...live.slice(k)];
+  }
+  return [...replayed, ...live];
+}
+
 function useSetupJob(jobId: string | null): RunState {
   const [s, set] = useState<RunState>(fresh);
   useEffect(() => {
     set(fresh);
     if (!jobId) return;
-    return subscribeJob(jobId, (evt) => {
+    // Whatever the run printed before we subscribed, fetched once; live lines
+    // that arrive meanwhile wait so the replay goes first.
+    let replayed = false;
+    let gone = false;
+    let early: string[] = [];
+    void Promise.resolve().then(() => api.runners.sshSetup.transcript(jobId))
+      .then(({ lines }) => lines, () => [] as string[])
+      .then((lines) => {
+        if (gone) return;
+        replayed = true;
+        const live = early;
+        early = [];
+        set((c) => ({ ...c, lines: joinTranscript(lines, [...live, ...c.lines]) }));
+      });
+    const addLine = (line: string, unlessLast = false) => {
+      if (!replayed) {
+        if (!(unlessLast && early[early.length - 1] === line)) early.push(line);
+      } else {
+        set((c) => (unlessLast && c.lines[c.lines.length - 1] === line ? c : { ...c, lines: [...c.lines, line] }));
+      }
+    };
+    const off = subscribeJob(jobId, (evt) => {
       if (evt.type === 'progress') {
         const p = ((evt.data ?? {}) as { data?: SshSetupProgress }).data;
         if (!p) return;
         if ('question' in p) set((c) => ({ ...c, question: p.question }));
         else if ('terminal' in p) set((c) => ({ ...c, terminalKey: p.terminal.key, terminalSeq: c.terminalSeq + 1 }));
-        else if ('transcript' in p) set((c) => ({ ...c, lines: [...c.lines, ...(p.transcript ? [p.transcript] : [])] }));
         else if ('step' in p) {
-          set((c) => {
-            const lines = p.detail ? [...c.lines, p.detail] : c.lines;
-            return p.step === c.step ? { ...c, lines, detail: p.detail ?? c.detail } : { ...c, lines, step: p.step, detail: p.detail ?? null };
-          });
+          if (p.detail) addLine(p.detail);
+          set((c) => (p.step === c.step ? { ...c, detail: p.detail ?? c.detail } : { ...c, step: p.step, detail: p.detail ?? null }));
         }
         return;
       }
@@ -70,8 +97,11 @@ function useSetupJob(jobId: string | null): RunState {
       }
       const d = (evt.data ?? {}) as { message?: string; error?: string };
       const error = d.message || d.error || 'Setup stopped';
-      set((c) => ({ ...c, question: null, error, lines: [...c.lines, `\x1b[31m✗ ${error}\x1b[0m`] }));
+      // The job writes "✗ <reason>" as its last line; add it only if it didn't.
+      addLine(`✗ ${error}`, true);
+      set((c) => ({ ...c, question: null, error }));
     });
+    return () => { gone = true; off(); };
   }, [jobId]);
   return s;
 }
@@ -255,7 +285,7 @@ export function SetUpOverSshDialog({ onClose, onAdded, onOpenHost }: {
           <div className="h-[300px] w-full overflow-hidden rounded-lg border border-zinc-800 bg-black p-2" data-testid="ssh-transcript">
             <CommandTerminal
               key={runSeq}
-              lines={startError ? [...run.lines, `\x1b[31m✗ ${startError}\x1b[0m`] : run.lines}
+              lines={startError ? [...run.lines, `✗ ${startError}`] : run.lines}
               attach={run.terminalKey && running ? { url: `${SSH_SETUP_TERMINAL_PATH}?key=${encodeURIComponent(run.terminalKey)}`, seq: run.terminalSeq } : null}
             />
           </div>

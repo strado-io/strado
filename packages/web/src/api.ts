@@ -874,6 +874,9 @@ export const api = {
         request<void>(`/api/runners/ssh-setup/${encodeURIComponent(jobId)}/answer`, { method: 'POST', body: JSON.stringify(body) }),
       cancel: (jobId: string) =>
         request<void>(`/api/runners/ssh-setup/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
+      /** The run's transcript so far (last 2000 lines), for a late attach. */
+      transcript: (jobId: string) =>
+        request<{ lines: string[] }>(`/api/runners/ssh-setup/${encodeURIComponent(jobId)}/transcript`),
     },
     /** A host's Connections tab. Each agent's state comes from a real check
      * on the runner; connect is a job (progress: phase / device code / pin question). */

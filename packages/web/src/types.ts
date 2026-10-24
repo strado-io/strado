@@ -352,9 +352,7 @@ export type SshSetupQuestion = {
 export type SshSetupProgress =
   | { step: SshSetupStepId; detail?: string }
   | { question: SshSetupQuestion }
-  | { terminal: { key: string } }
-  /** Replay for a late subscriber: the transcript so far, sent before anything live. */
-  | { transcript: string };
+  | { terminal: { key: string } };
 export type SshSetupResult = { runnerId: string; name: string; sandboxes: boolean; warnings: string[] };
 export const SSH_SETUP_TERMINAL_PATH = '/ws/ssh-setup-terminal';
 
