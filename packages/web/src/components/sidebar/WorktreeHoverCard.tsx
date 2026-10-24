@@ -6,6 +6,24 @@ import { WORKFLOW_STATUSES } from '../WorkflowStatusSelect';
 import { SESSION_COLOR, SessionAvatarIcon } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { worktreeLabel, worktreeTitle } from './labels';
+import { BranchIcon } from './rowBits';
+
+const icon = { width: 14, height: 14, viewBox: '0 0 24 24', 'aria-hidden': true, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
+// Lucide "laptop", "file-diff", "square-terminal", "settings".
+const LaptopIcon = () => <svg {...icon}><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z" /><path d="M20.054 15.987H3.946" /></svg>;
+const DiffIcon = () => <svg {...icon}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M9 10h6" /><path d="M12 13V7" /><path d="M9 17h6" /></svg>;
+const ShellIcon = () => <svg {...icon}><path d="m7 11 2-2-2-2" /><path d="M11 13h4" /><rect width="18" height="18" x="3" y="3" rx="2" /></svg>;
+const GearIcon = () => <svg {...icon}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>;
+
+/** One line of the card: a 16px icon slot, then the text (the reference look: Claude's session card). */
+function Line({ glyph, children, className = 'text-zinc-300', testId }: { glyph: React.ReactNode; children: React.ReactNode; className?: string; testId?: string }) {
+  return (
+    <div data-testid={testId} className={`flex min-w-0 items-center gap-2.5 text-[13px] ${className}`}>
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500">{glyph}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1 truncate">{children}</span>
+    </div>
+  );
+}
 
 export const HOVER_CARD_WIDTH = 280;
 const GAP = 8;
@@ -92,13 +110,10 @@ export function WorktreeHoverCard({
   const pipeline = mr?.pipeline ? PIPELINE_DETAIL[mr.pipeline] : null;
   const pr = mr ? prKind(mr) : null;
 
-  // The card's name once: the human title when there is one, else the label.
-  // The branch is a second line only when it says something the name doesn't.
+  // The card's name once: the human title when there is one, else the label;
+  // every line below says something the lines above didn't.
   const label = worktreeLabel(worktree);
   const name = title || label;
-  // One detail line, each part said once: the label and branch only where
-  // they differ from what is already shown, then the runner, the changes and
-  // a running dev server.
   const shown = new Set([name.toLowerCase()]);
   const fresh = (v: string | null | undefined) => {
     if (!v || shown.has(v.toLowerCase())) return null;
@@ -107,26 +122,8 @@ export function WorktreeHoverCard({
   };
   const sub = fresh(label);
   const branch = fresh(worktree.branch);
-  const meta = [
-    sub && <span key="label" className="min-w-0 truncate">{sub}</span>,
-    branch && <span key="branch" className="min-w-0 truncate font-mono" title={branch}>{branch}</span>,
-    runnerName && <span key="runner" className="shrink-0 whitespace-nowrap">on {runnerName}</span>,
-    dirty && (
-      <span key="diff" data-testid="hover-card-diff" className="shrink-0 whitespace-nowrap font-mono">
-        {diff!.files} file{diff!.files === 1 ? '' : 's'}
-        <span className="ml-1 text-emerald-500/80">+{diff!.additions}</span>
-        <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
-      </span>
-    ),
-    running && (
-      <span key="run" data-testid="hover-card-running" className="flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-emerald-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-        running{process?.port ? ` :${process.port}` : ''}
-      </span>
-    ),
-  ].filter(Boolean);
 
-  const action = 'whitespace-nowrap rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100';
+  const iconButton = 'flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100';
 
   return createPortal(
     <div
@@ -141,52 +138,61 @@ export function WorktreeHoverCard({
       // z-30 keeps the card above the board and the sidebar it floats out of,
       // and below every dialog: a hover affordance must never cover a
       // confirm the user is trying to read.
-      className="surface-pop fixed z-30 flex flex-col gap-2.5 rounded-xl p-3 text-left"
+      className="surface-pop fixed z-30 flex flex-col gap-2 rounded-xl px-3 py-2.5 text-left"
       style={{ left: x, top: y, width: HOVER_CARD_WIDTH }}
     >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100" title={name}>{name}</span>
-          {status && <span className="shrink-0 text-[11px] text-zinc-500">{status}</span>}
-        </div>
-        {meta.length > 0 && (
-          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-zinc-500">
-            {meta.flatMap((m, i) => (i ? [<span key={`dot${i}`} aria-hidden className="text-zinc-700">·</span>, m] : [m]))}
-          </div>
+      {/* Title, then the quick actions as quiet icons (no footer row). */}
+      <div className="flex min-w-0 items-center gap-1">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100" title={name}>{name}</span>
+        {status && <span className="mr-1 shrink-0 text-[11px] text-zinc-500">{status}</span>}
+        {onOpenDiff && <button type="button" aria-label="Changes" title="Changes" className={iconButton} onClick={onOpenDiff}><DiffIcon /></button>}
+        {onOpenShell && <button type="button" aria-label="New shell" title="New shell" className={iconButton} onClick={onOpenShell}><ShellIcon /></button>}
+        {onOpenSettings && <button type="button" aria-label="Settings" title="Settings" className={iconButton} onClick={onOpenSettings}><GearIcon /></button>}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        {sub && <Line glyph={<span className="text-[11px] font-semibold">#</span>}>{sub}</Line>}
+        <Line glyph={<LaptopIcon />}>{runnerName ?? 'This Mac'}</Line>
+        {branch && <Line glyph={<BranchIcon />} className="text-zinc-400"><span className="truncate font-mono text-[12px]" title={branch}>{branch}</span></Line>}
+        {dirty && (
+          <Line glyph={<DiffIcon />} testId="hover-card-diff" className="text-zinc-400">
+            <span className="font-mono text-[12px]">
+              {diff!.files} file{diff!.files === 1 ? '' : 's'}
+              <span className="ml-1.5 text-emerald-500/80">+{diff!.additions}</span>
+              <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
+            </span>
+          </Line>
+        )}
+        {running && (
+          <Line glyph={<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />} testId="hover-card-running" className="text-emerald-400">
+            <span className="font-mono text-[12px]">running{process?.port ? ` :${process.port}` : ''}</span>
+          </Line>
+        )}
+        {mr && pr && (
+          <button
+            type="button"
+            data-testid="hover-card-pr"
+            aria-label={`Open ${pr.kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
+            onClick={onOpenMr}
+            className="-mx-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-zinc-800"
+          >
+            <Line glyph={<span style={{ color: MR_STATE_COLOR[mr.state] }}><PrStateIcon state={mr.state} /></span>}>
+              <span className="font-mono text-zinc-400">{pr.prefix}{mr.number}</span>
+              <span className="truncate text-zinc-200">{mr.title}</span>
+            </Line>
+            <div className="ml-[26px] flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <span style={{ color: MR_STATE_COLOR[mr.state] }}>{mr.state.charAt(0).toUpperCase() + mr.state.slice(1)}</span>
+              {pipeline && <span className={pipeline.cls}>{pipeline.glyph} {pipeline.label}</span>}
+              <span className="min-w-0 truncate font-mono">{mr.sourceBranch}{mr.targetBranch ? ` → ${mr.targetBranch}` : ''}</span>
+            </div>
+          </button>
         )}
       </div>
 
-      {mr && pr && (
-        <button
-          type="button"
-          data-testid="hover-card-pr"
-          aria-label={`Open ${pr.kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
-          onClick={onOpenMr}
-          className="-mx-1.5 rounded-md px-1.5 py-1 text-left hover:bg-zinc-800"
-        >
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span className="shrink-0" style={{ color: MR_STATE_COLOR[mr.state] }}>
-              <PrStateIcon state={mr.state} />
-            </span>
-            <span className="font-mono text-zinc-400">{pr.prefix}{mr.number}</span>
-            <span style={{ color: MR_STATE_COLOR[mr.state] }}>
-              {mr.state.charAt(0).toUpperCase() + mr.state.slice(1)}
-            </span>
-            {pipeline && (
-              <span className={`ml-auto shrink-0 ${pipeline.cls}`}>{pipeline.glyph} {pipeline.label}</span>
-            )}
-          </div>
-          <div className="mt-0.5 truncate text-[13px] text-zinc-200">{mr.title}</div>
-          <div className="truncate font-mono text-[11px] text-zinc-500">
-            {mr.sourceBranch}{mr.targetBranch ? ` → ${mr.targetBranch}` : ''}
-          </div>
-        </button>
-      )}
-
       {sessions.length === 0 ? (
-        <div className="text-[11px] text-zinc-500">No open sessions</div>
+        <div className="border-t border-zinc-800 pt-2 text-[11px] text-zinc-500">No open sessions</div>
       ) : (
-        <div className="-mx-1.5 max-h-52 space-y-px overflow-y-auto">
+        <div className="-mx-1.5 max-h-52 space-y-px overflow-y-auto border-t border-zinc-800 px-0 pt-1.5">
           {sessions.map((chip) => {
             const state = chipStatus(chip);
             const live = state === 'working' || state === 'waiting';
@@ -195,7 +201,7 @@ export function WorktreeHoverCard({
                 type="button"
                 key={`${chip.mode}:${chip.sessionId}`}
                 onClick={() => onOpenSession(chip.mode, chip.sessionId)}
-                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[13px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                className="flex w-full items-center gap-2.5 rounded-md px-1.5 py-1 text-left text-[13px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
               >
                 <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${SESSION_COLOR[chip.mode]}`}>
                   <SessionAvatarIcon chip={chip} />
@@ -216,14 +222,6 @@ export function WorktreeHoverCard({
           })}
         </div>
       )}
-
-      {/* The actions, one quiet row. */}
-      <div data-testid="hover-card-footer" className="-mx-1 flex items-center gap-1 border-t border-zinc-800 pt-2">
-        {onOpenDiff && <button type="button" className={action} onClick={onOpenDiff}>Changes</button>}
-        {onOpenShell && <button type="button" className={action} onClick={onOpenShell}>New shell</button>}
-        <span className="flex-1" />
-        {onOpenSettings && <button type="button" className={action} onClick={onOpenSettings}>Settings</button>}
-      </div>
     </div>,
     document.body,
   );

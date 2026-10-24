@@ -184,7 +184,7 @@ describe('WorktreeHoverCard', () => {
     render(<WorktreeHoverCard {...props()} worktree={worktree({ branch: 'testset', meta: {} as Worktree['meta'] })} runnerName="runner-test" />);
     const card = screen.getByRole('dialog');
     expect(card.textContent!.match(/testset/g)).toHaveLength(1);
-    expect(card).toHaveTextContent('on runner-test');
+    expect(card).toHaveTextContent('runner-test');
     expect(screen.queryByText(/^sessions$/i)).toBeNull(); // no heading over the list
   });
 
@@ -195,7 +195,7 @@ describe('WorktreeHoverCard', () => {
 
   it('names the machine for a session that lives on a runner', () => {
     render(<WorktreeHoverCard {...props()} runnerName="runner-dev" />);
-    expect(screen.getByRole('dialog')).toHaveTextContent('on runner-dev');
+    expect(screen.getByRole('dialog')).toHaveTextContent('runner-dev');
   });
 
   it('sits beside the sidebar, and flips to its left when the viewport is too narrow', () => {

@@ -457,7 +457,7 @@ describe('Sidebar tree', () => {
       act(() => { vi.advanceTimersByTime(250); });
 
       const card = screen.getByRole('dialog');
-      expect(card).toHaveTextContent('on runner-dev');
+      expect(card).toHaveTextContent('runner-dev');
       // No per-session deep link exists for a remote worktree, so a session
       // click opens the worktree itself rather than pretending otherwise.
       fireEvent.click(within(card).getByRole('button', { name: /Shell/ }));
