@@ -1158,7 +1158,10 @@ export function Dashboard(props: {
             )}
           </div>
         )}
-        {!onHome && !settingsSection && <div className="dock-panel shrink-0 border-t border-white/[0.07] pt-1">{missionStack(true)}</div>}
+        {!onHome && !settingsSection && (
+          // With the bottom bar hidden and nothing in the stack, no rule or padding is left behind.
+          <div data-testid="mission-stack-row" className={`dock-panel shrink-0 ${!showDock && stackHeight === 0 ? '' : 'border-t border-white/[0.07] pt-1'}`}>{missionStack(true)}</div>
+        )}
         <Dock
           worktree={dockWorktree}
           focus={focusApi.active?.name ?? null}
