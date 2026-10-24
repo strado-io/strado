@@ -18,7 +18,7 @@ const GearIcon = () => <svg {...icon}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2
 /** One line of the card: a 16px icon slot, then the text (the reference look: Claude's session card). */
 function Line({ glyph, children, className = 'text-zinc-300', testId }: { glyph: React.ReactNode; children: React.ReactNode; className?: string; testId?: string }) {
   return (
-    <div data-testid={testId} className={`flex min-w-0 items-center gap-2.5 text-[13px] ${className}`}>
+    <div data-testid={testId} className={`flex min-h-5 min-w-0 items-center gap-2.5 text-[12px] leading-5 ${className}`}>
       <span className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500">{glyph}</span>
       <span className="flex min-w-0 flex-1 items-center gap-1 truncate">{children}</span>
     </div>
@@ -138,7 +138,7 @@ export function WorktreeHoverCard({
       // z-30 keeps the card above the board and the sidebar it floats out of,
       // and below every dialog: a hover affordance must never cover a
       // confirm the user is trying to read.
-      className="surface-pop fixed z-30 flex flex-col gap-2 rounded-xl px-3 py-2.5 text-left"
+      className="surface-pop fixed z-30 flex flex-col gap-1.5 rounded-xl px-3 py-2 text-left"
       style={{ left: x, top: y, width: HOVER_CARD_WIDTH }}
     >
       {/* Title, then the quick actions as quiet icons (no footer row). */}
@@ -150,13 +150,13 @@ export function WorktreeHoverCard({
         {onOpenSettings && <button type="button" aria-label="Settings" title="Settings" className={iconButton} onClick={onOpenSettings}><GearIcon /></button>}
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-0.5">
         {sub && <Line glyph={<span className="text-[11px] font-semibold">#</span>}>{sub}</Line>}
         <Line glyph={<LaptopIcon />}>{runnerName ?? 'This Mac'}</Line>
-        {branch && <Line glyph={<BranchIcon />} className="text-zinc-400"><span className="truncate font-mono text-[12px]" title={branch}>{branch}</span></Line>}
+        {branch && <Line glyph={<BranchIcon />} className="text-zinc-400"><span className="truncate font-mono text-[11px]" title={branch}>{branch}</span></Line>}
         {dirty && (
           <Line glyph={<DiffIcon />} testId="hover-card-diff" className="text-zinc-400">
-            <span className="font-mono text-[12px]">
+            <span className="font-mono text-[11px]">
               {diff!.files} file{diff!.files === 1 ? '' : 's'}
               <span className="ml-1.5 text-emerald-500/80">+{diff!.additions}</span>
               <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
@@ -165,7 +165,7 @@ export function WorktreeHoverCard({
         )}
         {running && (
           <Line glyph={<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />} testId="hover-card-running" className="text-emerald-400">
-            <span className="font-mono text-[12px]">running{process?.port ? ` :${process.port}` : ''}</span>
+            <span className="font-mono text-[11px]">running{process?.port ? ` :${process.port}` : ''}</span>
           </Line>
         )}
         {mr && pr && (
@@ -190,9 +190,9 @@ export function WorktreeHoverCard({
       </div>
 
       {sessions.length === 0 ? (
-        <div className="border-t border-zinc-800 pt-2 text-[11px] text-zinc-500">No open sessions</div>
+        <div className="border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-500">No open sessions</div>
       ) : (
-        <div className="-mx-1.5 max-h-52 space-y-px overflow-y-auto border-t border-zinc-800 px-0 pt-1.5">
+        <div className="-mx-1.5 max-h-52 overflow-y-auto border-t border-zinc-800 pt-1">
           {sessions.map((chip) => {
             const state = chipStatus(chip);
             const live = state === 'working' || state === 'waiting';
@@ -201,7 +201,7 @@ export function WorktreeHoverCard({
                 type="button"
                 key={`${chip.mode}:${chip.sessionId}`}
                 onClick={() => onOpenSession(chip.mode, chip.sessionId)}
-                className="flex w-full items-center gap-2.5 rounded-md px-1.5 py-1 text-left text-[13px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                className="flex w-full items-center gap-2.5 rounded-md px-1.5 py-0.5 text-left text-[12px] leading-5 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
               >
                 <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${SESSION_COLOR[chip.mode]}`}>
                   <SessionAvatarIcon chip={chip} />

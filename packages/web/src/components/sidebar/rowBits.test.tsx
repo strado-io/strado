@@ -35,6 +35,9 @@ describe('WorktreeRowItem: each row is a glass card', () => {
     expect(on).not.toHaveClass('pane-card');
     expect(on).toHaveAttribute('data-active', 'true');
     expect(on.querySelector('[data-testid="card-accent"]')).toBeNull();
+    // …and it reads at a glance: a lighter sheet and edge than a resting card.
+    expect(on.className).toContain('!bg-[rgb(var(--pane-edge)/0.08)]');
+    expect(on.className).toContain('!border-[rgb(var(--pane-edge)/0.22)]');
   });
 
   it('a waiting card keeps its normal edge (the amber is on its agent ring)', () => {

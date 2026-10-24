@@ -74,7 +74,10 @@ export function WorktreeRowItem({
   // Theme colours only: the pane glass and the edge colour (--pane-edge) both
   // have light-theme values, so the card holds on every preset.
   const look = active === undefined ? ''
-    : `rounded-xl border transition-colors ${active ? 'glass-pill' : 'glass pane-card hover:border-[rgb(var(--pane-edge)/0.12)]'} `;
+    : `rounded-xl border transition-colors ${active
+      // The open card has to read at a glance: a clearly lighter sheet and edge (theme-aware via --pane-edge).
+      ? 'glass-pill !border-[rgb(var(--pane-edge)/0.22)] !bg-[rgb(var(--pane-edge)/0.08)]'
+      : 'glass pane-card hover:border-[rgb(var(--pane-edge)/0.12)]'} `;
   const hover = useRowHoverCard();
   const dismiss = useMemo(() => ({ close: hover.close }), [hover.close]);
   // The card floats over the hub, where a native Browser view would otherwise
