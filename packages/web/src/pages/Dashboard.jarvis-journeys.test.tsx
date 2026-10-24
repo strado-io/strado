@@ -289,6 +289,18 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     expect(screen.getByTestId('settings-page')).toBeInTheDocument();
   });
 
+  it('bottom bar hidden in Appearance: Settings shows no command bar either', async () => {
+    localStorage.setItem('strado:show-dock', 'false');
+    askModel.mockResolvedValueOnce(plan({ action: 'settings.open', args: { section: 'profile' } }));
+    renderDashboard();
+    await home();
+    await say('open my profile settings');
+    expect(await screen.findByTestId('settings-page')).toBeInTheDocument();
+    const bar = screen.getByTestId('settings-command-bar');
+    expect(bar).toHaveAttribute('data-collapsed', 'true');
+    expect(bar.className).toMatch(/\bh-0\b/);
+  });
+
   it('voice: hold ⌥Space on home, speak, release → the words wait in the box; ⏎ runs them as if typed', async () => {
     let listener: ((e: StradoVoiceEvent) => void) | null = null;
     const voice = {

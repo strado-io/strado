@@ -1197,7 +1197,7 @@ export function Dashboard(props: {
           key={`${settingsSection}:${settingsNonce}`}
           section={settingsSection}
           host={settingsSection === 'runners' ? settingsHost : undefined}
-          bottomInset
+          bottomInset={showDock}
           onClose={() => { setSettingsSection(null); setSettingsHost(undefined); }}
           onJiraConnected={() => {
             track('jira_connected');
@@ -1207,7 +1207,11 @@ export function Dashboard(props: {
         />
       )}
       {settingsSection && (
-        <div className="fixed inset-x-0 bottom-0 z-[60] flex h-11 items-center border-t border-zinc-900 bg-zinc-950 px-4" data-testid="settings-command-bar">
+        // Follows Settings › Appearance › Show bottom bar: hidden, it opens only while ⌘K holds the keyboard.
+        <div className={`fixed inset-x-0 bottom-0 z-[60] flex items-center bg-zinc-950 px-4 ${showDock
+          ? 'h-11 border-t border-zinc-900'
+          : 'h-0 overflow-hidden focus-within:h-11 focus-within:overflow-visible focus-within:border-t focus-within:border-zinc-900'}`}
+          data-testid="settings-command-bar" data-collapsed={!showDock || undefined}>
           {commandBar(false)}
         </div>
       )}
