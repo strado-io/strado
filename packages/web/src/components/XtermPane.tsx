@@ -286,6 +286,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
         // term.unicode is proposed API in xterm 6; without this the graphemes
         // addon below throws from activate() and takes the whole render with it.
         allowProposedApi: true,
+        // xterm's default is 1,000 lines; ptyd keeps 2MB so a reload refills about this much.
+        scrollback: 10_000,
         // Nerd Font first so devicons/powerline glyphs render; falls back to
         // plain monospace when it isn't installed. Devanagari/CJK families sit
         // AFTER the Latin monospaces on purpose — they also cover ASCII and would

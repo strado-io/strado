@@ -220,7 +220,7 @@ export function spawnEnv(key: string, cwd: string, extraEnv?: ExtraEnv, env?: Re
   return { ...sessionEnv(key, cwd), ...(extraEnv?.(key, cwd) ?? {}), ...(env ?? {}) };
 }
 
-const MAX_BUFFER = 256 * 1024;
+const MAX_BUFFER = 2 * 1024 * 1024;
 
 const defaultBuildSpec: BuildSpec = () => ({
   file: defaultShell(),
