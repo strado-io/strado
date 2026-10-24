@@ -59,6 +59,7 @@ function WorkspaceSwitcher({
 }: {
   active: Workspace;
   workspaces: Workspace[];
+  /** A pick from the list or the dots: the dots slide the carousel to a neighbour. */
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -98,7 +99,7 @@ function WorkspaceSwitcher({
         >
           {active.icon.slice(0, 2)}
         </span>
-        <span data-testid="space-name" className="truncate text-[13px] font-medium text-zinc-100">
+        <span data-testid="space-name" className="truncate text-[14px] font-medium text-zinc-100">
           {active.name}
         </span>
         <svg className="ml-auto shrink-0 text-zinc-600" width="12" height="12" viewBox="0 0 12 12" aria-hidden>
@@ -140,6 +141,15 @@ function WorkspaceSwitcher({
               </button>
             );
           })}
+          {/* Where this space sits among the others, and the chord that walks them. */}
+          {workspaces.length > 1 && (
+            <div data-testid="space-dots-row" className="mt-1 flex items-center gap-2 border-t border-zinc-800 px-2 pb-0.5 pt-1.5">
+              <div className="min-w-0 flex-1">
+                <SpaceDots spaces={workspaces} activeId={active.id} onSelect={(id) => { setOpen(false); onSelect(id); }} />
+              </div>
+              <span className="shrink-0 font-mono text-[11px] text-zinc-600">⌘⇧← →</span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -235,7 +245,9 @@ export function Sidebar({
   const insetTitleBar = useInsetTitleBar();
 
   return (
-    <aside className="relative flex h-screen shrink-0 flex-col border-r border-white/[0.06] bg-zinc-950" style={{ width }}>
+    // On the app canvas, like the panes: no edge of its own, so its cards float
+    // on the same ground as the pane cards across the gutter.
+    <aside data-testid="sidebar" className="relative flex h-screen shrink-0 flex-col bg-zinc-950" style={{ width }}>
       <div
         role="separator"
         aria-orientation="vertical"
@@ -256,13 +268,12 @@ export function Sidebar({
           <SidebarToggleButton open onClick={onCollapse} />
         </div>
       ) : (
-        <div className="px-3 py-3">
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
-            </div>
-            <SidebarToggleButton open onClick={onCollapse} />
+        // One row at the tab bar's height, so the two headers line up.
+        <div className="flex shrink-0 items-center gap-1 pl-2 pr-3" style={{ height: TITLE_BAR_HEIGHT }}>
+          <div className="min-w-0 flex-1">
+            <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
           </div>
+          <SidebarToggleButton open onClick={onCollapse} />
         </div>
       )}
 
@@ -273,12 +284,8 @@ export function Sidebar({
         onCommit={(id) => { void commitSpace(id); }}
       />
 
-      <div className="flex flex-col gap-1 border-t border-white/[0.06] p-2">
-        <SpaceDots
-          spaces={allWorkspaces}
-          activeId={workspace.id}
-          onSelect={selectSpace}
-        />
+      {/* The page icons in one glass bar, its bottom on the Dock's line. */}
+      <div className="flex flex-col gap-1.5 px-2 pb-2 pt-1.5">
         <UpdateFooter {...update} />
         <SidebarNav selected={selected} onSelect={onSelect} onOpenSettings={onOpenSettings} />
       </div>

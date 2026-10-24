@@ -1,5 +1,5 @@
-// The Focus pill at the top of the sidebar and the popover behind it. The
-// pill names the active Focus ("No focus" when none). The popover is one
+// The Focus caption at the top of the sidebar and the popover behind it. The
+// caption names the active Focus ("No focus" when none). The popover is one
 // field over the list: type to filter, pick to switch, type a new name and
 // press Enter to create a blank one; New focus opens the composer. Rows are
 // ordered by last use and the first nine carry ⌘1–⌘9 hints; each shows its
@@ -41,13 +41,11 @@ export function FocusPill({ focus, open, onClick, pillRef }: {
   return (
     <button ref={pillRef} type="button" onClick={onClick} aria-haspopup="dialog" aria-expanded={open}
       aria-label={`Focus: ${focus?.name ?? 'none'}`} title={focus ? `Focus: ${focus.name}. Click to switch.` : 'No focus. Click to create one.'}
-      className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] px-2 text-left text-[13px] transition-colors ${
-        focus ? 'text-zinc-200 hover:bg-white/[0.05]' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-300'}`}>
+      // A caption over the cards: small caps, the chevron right after the name.
+      className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-left text-[11px] font-medium uppercase tracking-wide text-zinc-500 transition-colors hover:text-zinc-300">
       {/* Just the Focus's name; the title and the popover say what it is. */}
-      <span className="min-w-0 flex-1 truncate">
-        {focus ? <span className="font-medium">{focus.name}</span> : 'No focus'}
-      </span>
-      <svg {...icon} width={12} height={12} className="shrink-0 text-zinc-500"><path d="m6 9 6 6 6-6" /></svg>
+      <span className="min-w-0 truncate">{focus ? focus.name : 'No focus'}</span>
+      <svg {...icon} width={12} height={12} className="shrink-0"><path d="m6 9 6 6 6-6" /></svg>
     </button>
   );
 }
