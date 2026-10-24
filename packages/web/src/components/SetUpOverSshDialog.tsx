@@ -35,10 +35,13 @@ type RunState = {
   /** Bumped by every {terminal} frame: the job reuses one key and respawns it
    * for each interactive step, so each frame is a fresh attach. */
   terminalSeq: number;
+  /** Everything the run printed, in order: step output and headers, then the
+   * error if it stopped. Append-only; the terminal below never clears. */
+  lines: string[];
   result: SshSetupResult | null;
   error: string | null;
 };
-const fresh: RunState = { step: null, detail: null, question: null, terminalKey: null, terminalSeq: 0, result: null, error: null };
+const fresh: RunState = { step: null, detail: null, question: null, terminalKey: null, terminalSeq: 0, lines: [], result: null, error: null };
 
 function useSetupJob(jobId: string | null): RunState {
   const [s, set] = useState<RunState>(fresh);
@@ -51,7 +54,13 @@ function useSetupJob(jobId: string | null): RunState {
         if (!p) return;
         if ('question' in p) set((c) => ({ ...c, question: p.question }));
         else if ('terminal' in p) set((c) => ({ ...c, terminalKey: p.terminal.key, terminalSeq: c.terminalSeq + 1 }));
-        else if ('step' in p) set((c) => (p.step === c.step ? { ...c, detail: p.detail ?? c.detail } : { ...c, step: p.step, detail: p.detail ?? null }));
+        else if ('transcript' in p) set((c) => ({ ...c, lines: [...c.lines, ...(p.transcript ? [p.transcript] : [])] }));
+        else if ('step' in p) {
+          set((c) => {
+            const lines = p.detail ? [...c.lines, p.detail] : c.lines;
+            return p.step === c.step ? { ...c, lines, detail: p.detail ?? c.detail } : { ...c, lines, step: p.step, detail: p.detail ?? null };
+          });
+        }
         return;
       }
       if (evt.type === 'done') {
@@ -60,7 +69,8 @@ function useSetupJob(jobId: string | null): RunState {
         return;
       }
       const d = (evt.data ?? {}) as { message?: string; error?: string };
-      set((c) => ({ ...c, question: null, error: d.message || d.error || 'Setup stopped' }));
+      const error = d.message || d.error || 'Setup stopped';
+      set((c) => ({ ...c, question: null, error, lines: [...c.lines, `\x1b[31m✗ ${error}\x1b[0m`] }));
     });
   }, [jobId]);
   return s;
@@ -105,8 +115,11 @@ export function SetUpOverSshDialog({ onClose, onAdded, onOpenHost }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [running, onClose]);
 
+  // A new run (Set up or Retry) gets a fresh terminal; nothing else clears it.
+  const [runSeq, setRunSeq] = useState(0);
   const start = async () => {
     if (problem || running) return;
+    setRunSeq((n) => n + 1);
     setStartError(null);
     setStarting(true);
     setJobId(null);
@@ -238,9 +251,13 @@ export function SetUpOverSshDialog({ onClose, onAdded, onOpenHost }: {
           </div>
         )}
 
-        {run.terminalKey && phase !== 'form' && (
-          <div className={`h-[300px] w-full overflow-hidden rounded-lg border border-zinc-800 bg-black p-2 ${phase === 'failed' ? 'opacity-80' : ''}`}>
-            <CommandTerminal key={`${run.terminalKey}#${run.terminalSeq}`} url={`${SSH_SETUP_TERMINAL_PATH}?key=${encodeURIComponent(run.terminalKey)}`} />
+        {phase !== 'form' && (
+          <div className="h-[300px] w-full overflow-hidden rounded-lg border border-zinc-800 bg-black p-2" data-testid="ssh-transcript">
+            <CommandTerminal
+              key={runSeq}
+              lines={startError ? [...run.lines, `\x1b[31m✗ ${startError}\x1b[0m`] : run.lines}
+              attach={run.terminalKey && running ? { url: `${SSH_SETUP_TERMINAL_PATH}?key=${encodeURIComponent(run.terminalKey)}`, seq: run.terminalSeq } : null}
+            />
           </div>
         )}
 

@@ -10,9 +10,9 @@ const mounts = vi.hoisted(() => ({ n: 0 }));
 vi.mock('./CommandTerminal', async () => {
   const { useEffect } = await import('react');
   return {
-    CommandTerminal: ({ url }: { url: string }) => {
+    CommandTerminal: ({ lines, attach }: { lines: string[]; attach: { url: string; seq: number } | null }) => {
       useEffect(() => { mounts.n += 1; }, []);
-      return <div data-testid="term" data-url={url} />;
+      return <div data-testid="term" data-url={attach?.url ?? ''} data-seq={attach?.seq ?? ''} data-lines={JSON.stringify(lines)} />;
     },
   };
 });
@@ -23,6 +23,7 @@ import { SetUpOverSshDialog, destinationProblem } from './SetUpOverSshDialog';
 
 const emit = (e: JobEvent) => act(() => { jobs.handlers.get('job-1')!(e); });
 const progress = (data: unknown) => emit({ type: 'progress', data: { message: 'm', data } });
+const termLines = () => JSON.parse(screen.getByTestId('term').getAttribute('data-lines')!) as string[];
 const stepState = (id: string) => document.querySelector(`[data-step="${id}"]`)!.getAttribute('data-state');
 
 async function started(onClose = vi.fn(), onAdded = vi.fn(), onOpenHost = vi.fn()) {
@@ -71,14 +72,52 @@ describe('SetUpOverSshDialog', () => {
     expect(screen.getByTestId('ssh-detail')).toHaveTextContent('downloading 0.1.32');
   });
 
-  it('each terminal frame re-attaches, even for the same key (one pty respawned per interactive step)', async () => {
+  it('one terminal for the whole run: each terminal frame re-attaches it (same key respawned), never remounts it', async () => {
     mounts.n = 0;
     await started();
-    progress({ terminal: { key: '\0ssh-setup:job-1' } });
     expect(mounts.n).toBe(1);
+    expect(screen.getByTestId('term').getAttribute('data-url')).toBe('');
+    progress({ terminal: { key: '\0ssh-setup:job-1' } });
+    const first = screen.getByTestId('term').getAttribute('data-seq');
     progress({ step: 'podman' });
     progress({ terminal: { key: '\0ssh-setup:job-1' } });
+    expect(screen.getByTestId('term').getAttribute('data-seq')).not.toBe(first);
+    expect(mounts.n).toBe(1);
+  });
+
+  it('every step\'s detail is a transcript line, kept across step changes and a second terminal attach', async () => {
+    await started();
+    progress({ step: 'connect', detail: '▸ Connect' });
+    progress({ terminal: { key: '\0ssh-setup:job-1' } });
+    progress({ step: 'check', detail: '▸ Check machine' });
+    progress({ step: 'check', detail: 'x86_64, systemd 255, podman 4.9' });
+    progress({ step: 'install', detail: '▸ Install' });
+    progress({ terminal: { key: '\0ssh-setup:job-1' } });
+    progress({ step: 'install', detail: 'downloading 0.1.72' });
+    expect(termLines()).toEqual(['▸ Connect', '▸ Check machine', 'x86_64, systemd 255, podman 4.9', '▸ Install', 'downloading 0.1.72']);
+    expect(screen.getByTestId('ssh-detail')).toHaveTextContent('downloading 0.1.72');
+    expect(stepState('install')).toBe('active');
+  });
+
+  it('a late subscriber\'s replayed transcript comes first', async () => {
+    await started();
+    progress({ transcript: '▸ Connect\nconnected as me' });
+    progress({ step: 'check', detail: '▸ Check machine' });
+    expect(termLines()).toEqual(['▸ Connect\nconnected as me', '▸ Check machine']);
+  });
+
+  it('a failure keeps the transcript and adds the error as its last line; Retry starts a fresh terminal', async () => {
+    mounts.n = 0;
+    await started();
+    progress({ step: 'check', detail: '▸ Check machine' });
+    emit({ type: 'error', data: { message: 'This machine is arm64; runners are x86_64 only.' } });
+    expect(termLines()).toEqual(['▸ Check machine', '\x1b[31m✗ This machine is arm64; runners are x86_64 only.\x1b[0m']);
+    expect(screen.getByTestId('term').getAttribute('data-url')).toBe('');
+    ssh.start.mockResolvedValue({ jobId: 'job-2' });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(jobs.handlers.has('job-2')).toBe(true));
     expect(mounts.n).toBe(2);
+    expect(termLines()).toEqual([]);
   });
 
   it('a question shows the exact command; Yes and No answer it', async () => {
