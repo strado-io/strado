@@ -92,12 +92,22 @@ export function WorktreeHoverCard({
   const pipeline = mr?.pipeline ? PIPELINE_DETAIL[mr.pipeline] : null;
   const pr = mr ? prKind(mr) : null;
 
-  const action = 'rounded px-1.5 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100';
+  // The card's name once: the human title when there is one, else the label.
+  // The branch is a second line only when it says something the name doesn't.
+  const label = worktreeLabel(worktree);
+  const name = title || label;
+  const branch = worktree.branch && worktree.branch.toLowerCase() !== name.toLowerCase() ? worktree.branch : null;
+  const meta = [
+    branch && <span key="branch" className="min-w-0 truncate font-mono" title={branch}>{branch}</span>,
+    runnerName && <span key="runner" className="shrink-0">on {runnerName}</span>,
+  ].filter(Boolean);
+
+  const action = 'rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100';
 
   return createPortal(
     <div
       role="dialog"
-      aria-label={`${worktreeLabel(worktree)} details`}
+      aria-label={`${label} details`}
       data-testid={`hover-card-${worktree.path}`}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
@@ -107,25 +117,20 @@ export function WorktreeHoverCard({
       // z-30 keeps the card above the board and the sidebar it floats out of,
       // and below every dialog: a hover affordance must never cover a
       // confirm the user is trying to read.
-      className="surface-pop fixed z-30 flex flex-col gap-2 rounded-lg p-2.5 text-left"
+      className="surface-pop fixed z-30 flex flex-col gap-2.5 rounded-xl p-3 text-left"
       style={{ left: x, top: y, width: HOVER_CARD_WIDTH }}
     >
-      <div>
-        <div className="flex items-center gap-1.5">
-          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-zinc-300">
-            {worktreeLabel(worktree)}
-          </span>
-          {status && (
-            <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">
-              {status}
-            </span>
-          )}
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100" title={name}>{name}</span>
+          {status && <span className="shrink-0 text-[11px] text-zinc-500">{status}</span>}
         </div>
-        {title && <div className="mt-1 line-clamp-2 text-xs font-medium text-zinc-100">{title}</div>}
-        <div className="mt-1 truncate font-mono text-[10px] text-zinc-500" title={worktree.branch ?? undefined}>
-          {worktree.branch ?? 'no branch'}
-        </div>
-        {runnerName && <div className="mt-0.5 truncate text-[10px] text-zinc-500">on {runnerName}</div>}
+        {title && title !== label && <div className="truncate text-[11px] text-zinc-500">{label}</div>}
+        {meta.length > 0 && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500">
+            {meta.flatMap((m, i) => (i ? [<span key={`dot${i}`} aria-hidden className="text-zinc-700">·</span>, m] : [m]))}
+          </div>
+        )}
       </div>
 
       {mr && pr && (
@@ -134,94 +139,80 @@ export function WorktreeHoverCard({
           data-testid="hover-card-pr"
           aria-label={`Open ${pr.kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
           onClick={onOpenMr}
-          className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 p-2 text-left hover:border-zinc-700 hover:bg-zinc-950"
+          className="-mx-1.5 rounded-md px-1.5 py-1 text-left hover:bg-zinc-800"
         >
           <div className="flex items-center gap-1.5 text-[11px]">
             <span className="shrink-0" style={{ color: MR_STATE_COLOR[mr.state] }}>
               <PrStateIcon state={mr.state} />
             </span>
             <span className="font-mono text-zinc-400">{pr.prefix}{mr.number}</span>
-            <span className="font-medium" style={{ color: MR_STATE_COLOR[mr.state] }}>
+            <span style={{ color: MR_STATE_COLOR[mr.state] }}>
               {mr.state.charAt(0).toUpperCase() + mr.state.slice(1)}
             </span>
             {pipeline && (
               <span className={`ml-auto shrink-0 ${pipeline.cls}`}>{pipeline.glyph} {pipeline.label}</span>
             )}
           </div>
-          <div className="mt-1 line-clamp-2 text-xs text-zinc-100">{mr.title}</div>
-          <div className="mt-1 truncate font-mono text-[10px] text-zinc-500">
+          <div className="mt-0.5 truncate text-[13px] text-zinc-200">{mr.title}</div>
+          <div className="truncate font-mono text-[11px] text-zinc-500">
             {mr.sourceBranch}{mr.targetBranch ? ` → ${mr.targetBranch}` : ''}
           </div>
         </button>
       )}
 
-      <div>
-        <div className="flex items-center justify-between px-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-          <span>Sessions</span>
-          {sessions.length > 0 && <span className="font-mono">{sessions.length}</span>}
+      {sessions.length === 0 ? (
+        <div className="text-[11px] text-zinc-500">No open sessions</div>
+      ) : (
+        <div className="-mx-1.5 max-h-52 space-y-px overflow-y-auto">
+          {sessions.map((chip) => {
+            const state = chipStatus(chip);
+            const live = state === 'working' || state === 'waiting';
+            return (
+              <button
+                type="button"
+                key={`${chip.mode}:${chip.sessionId}`}
+                onClick={() => onOpenSession(chip.mode, chip.sessionId)}
+                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[13px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${SESSION_COLOR[chip.mode]}`}>
+                  <SessionAvatarIcon chip={chip} />
+                </span>
+                <span className="min-w-0 flex-1 truncate">{displayLabel(chip)}</span>
+                {live && (
+                  <span
+                    data-testid="session-live-dot"
+                    aria-hidden
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      state === 'working' ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'
+                    }`}
+                  />
+                )}
+                {state && <span className={`shrink-0 text-[11px] ${STATUS_TEXT[state]}`}>{state}</span>}
+              </button>
+            );
+          })}
         </div>
-        {sessions.length === 0 ? (
-          <div className="mt-1 px-0.5 text-xs text-zinc-600">No open sessions</div>
-        ) : (
-          <div className="mt-1 max-h-52 space-y-0.5 overflow-y-auto">
-            {sessions.map((chip) => {
-              const state = chipStatus(chip);
-              const live = state === 'working' || state === 'waiting';
-              return (
-                <button
-                  type="button"
-                  key={`${chip.mode}:${chip.sessionId}`}
-                  onClick={() => onOpenSession(chip.mode, chip.sessionId)}
-                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-                >
-                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${SESSION_COLOR[chip.mode]}`}>
-                    <SessionAvatarIcon chip={chip} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{displayLabel(chip)}</span>
-                  {live && (
-                    <span
-                      data-testid="session-live-dot"
-                      aria-hidden
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        state === 'working' ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'
-                      }`}
-                    />
-                  )}
-                  {state && <span className={`shrink-0 text-[10px] ${STATUS_TEXT[state]}`}>{state}</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      )}
 
-      <div
-        data-testid="hover-card-footer"
-        className="flex items-center gap-2 border-t border-zinc-800 pt-2 font-mono text-[10px] text-zinc-500"
-      >
-        {dirty ? (
-          <span className="truncate">
+      {/* One quiet row: what is live (changes, dev server) on the left, the actions on the right. Clean and stopped says nothing. */}
+      <div data-testid="hover-card-footer" className="-mx-1 flex items-center gap-1 border-t border-zinc-800 pt-2">
+        {dirty && (
+          <span className="truncate px-1 font-mono text-[11px] text-zinc-500">
             {diff!.files} file{diff!.files === 1 ? '' : 's'}
             <span className="ml-1 text-emerald-500/80">+{diff!.additions}</span>
             <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
           </span>
-        ) : (
-          <span className="truncate">No uncommitted changes</span>
         )}
         {running && (
-          <span className="ml-auto flex shrink-0 items-center gap-1 text-emerald-400">
+          <span className="flex shrink-0 items-center gap-1 px-1 font-mono text-[11px] text-emerald-400">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
             running{process?.port ? ` :${process.port}` : ''}
           </span>
         )}
-      </div>
-
-      <div className="flex items-center gap-1">
+        <span className="flex-1" />
         {onOpenDiff && <button type="button" className={action} onClick={onOpenDiff}>Changes</button>}
         {onOpenShell && <button type="button" className={action} onClick={onOpenShell}>New shell</button>}
-        {onOpenSettings && (
-          <button type="button" className={`${action} ml-auto`} onClick={onOpenSettings}>Settings</button>
-        )}
+        {onOpenSettings && <button type="button" className={action} onClick={onOpenSettings}>Settings</button>}
       </div>
     </div>,
     document.body,

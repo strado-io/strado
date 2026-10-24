@@ -152,9 +152,10 @@ describe('WorktreeHoverCard', () => {
     render(
       <WorktreeHoverCard {...props()} worktree={worktree({ diffStats: null })} />,
     );
+    // Clean and stopped says nothing: only the actions are left.
     const footer = screen.getByTestId('hover-card-footer');
-    expect(footer).toHaveTextContent('No uncommitted changes');
-    expect(footer).not.toHaveTextContent('running');
+    expect(footer).not.toHaveTextContent(/file|running|uncommitted/);
+    expect(footer).toHaveTextContent('New shell');
   });
 
   it('offers changes, a new shell and settings as quick actions', () => {
@@ -178,6 +179,14 @@ describe('WorktreeHoverCard', () => {
     expect(screen.queryByRole('button', { name: 'Changes' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New shell' })).toBeInTheDocument();
+  });
+
+  it('names the worktree once: no second line when the branch is the name', () => {
+    render(<WorktreeHoverCard {...props()} worktree={worktree({ branch: 'testset', meta: {} as Worktree['meta'] })} runnerName="runner-test" />);
+    const card = screen.getByRole('dialog');
+    expect(card.textContent!.match(/testset/g)).toHaveLength(1);
+    expect(card).toHaveTextContent('on runner-test');
+    expect(screen.queryByText(/^sessions$/i)).toBeNull(); // no heading over the list
   });
 
   it('names the machine for a session that lives on a runner', () => {
