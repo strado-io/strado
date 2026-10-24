@@ -57,7 +57,18 @@ export type SetupRun<Q extends object = Omit<SshSetupQuestion, 'id'>> = {
   /** False when no such question is waiting. */
   answer(questionId: string, yes: boolean): boolean;
   cancel(): void;
+  /** Every transcript line so far (the last TRANSCRIPT_MAX), for a page that
+   *  attaches late: frames are live, a job keeps only its latest. */
+  transcript: string[];
 };
+
+export const TRANSCRIPT_MAX = 2000;
+const LINE_MAX = 500;
+/** Box output as one plain line: escapes and control characters out, cut. */
+const plainLine = (s: string) =>
+  s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .slice(0, LINE_MAX);
 
 export function createSetupRun<Q extends object = Omit<SshSetupQuestion, 'id'>>(cancelled = CANCELLED): SetupRun<Q> {
   const abort = new AbortController();
@@ -79,6 +90,7 @@ export function createSetupRun<Q extends object = Omit<SshSetupQuestion, 'id'>>(
       return true;
     },
     cancel: () => abort.abort(),
+    transcript: [],
   };
 }
 
@@ -103,7 +115,19 @@ export async function runSshSetup(
   run: SetupRun,
 ): Promise<SshSetupResult> {
   const key = `${SSH_SETUP_KEY_PREFIX}${input.jobId}`;
-  const step = stepReporter(ctx, SSH_SETUP_STEPS);
+  const reporter = stepReporter(ctx, SSH_SETUP_STEPS);
+  /** One transcript line: a detail frame now, and kept on the run. Only our
+   *  own sentences and the install output go here — never pair output. */
+  const say = (text: string) => {
+    const line = plainLine(text);
+    run.transcript.push(line);
+    if (run.transcript.length > TRANSCRIPT_MAX) run.transcript.splice(0, run.transcript.length - TRANSCRIPT_MAX);
+    reporter.detail(line);
+  };
+  const step = (id: (typeof SSH_SETUP_STEPS)[number]['id']) => {
+    reporter(id);
+    say(`▸ ${SSH_SETUP_STEPS.find((s) => s.id === id)!.label}`);
+  };
   const guard = <T>(p: Promise<T>) => untilCancelled(run.signal, p);
   const warnings: string[] = [];
   let session: SshSession | null = null;
@@ -131,7 +155,9 @@ export async function runSshSetup(
     // finally closes it and removes its control dir.
     session = await deps.openSession(input.dest);
     if (run.signal.aborted) throw new AppError('CONFLICT', CANCELLED);
+    say(`Connecting to ${input.dest.target}${input.dest.port ? ` port ${input.dest.port}` : ''} — answer any prompt in the terminal`);
     if ((await inTerminal(session.connectSpec())) !== 0) throw fail('could not connect — check the destination and try again');
+    say('Connected');
 
     step('check');
     // The probe reads the api base from stdin. Bounded: a wedged `podman info`
@@ -145,6 +171,13 @@ export async function runSshSetup(
     const paired = facts.runner.pairedRunnerId;
     const mine = await guard(deps.cloud.listRunnerIds());
     const needsPair = !(paired && mine.includes(paired));
+    const libc = facts.glibc ? `glibc ${facts.glibc}` : facts.musl ? 'musl' : 'libc unknown';
+    say(`OS: ${facts.distro ?? facts.system} ${facts.machine}, ${libc}`);
+    const linger = facts.linger === null ? 'unknown' : facts.linger ? 'on' : 'off';
+    say(`${facts.podman.version ? `podman ${facts.podman.version}` : 'podman: not installed'} · systemd user session: ${facts.systemdUser ? 'yes' : 'no'} · linger: ${linger}`);
+    const pairing = !paired ? 'not paired' : needsPair ? 'paired to another account' : 'paired to your account';
+    say(`strado-runner: ${facts.runner.version ?? 'not installed'} · ${pairing}`);
+    for (const w of warnings) say(`⚠ ${w}`);
 
     step('install');
     const feed = await guard(deps.feedVersion());
@@ -159,29 +192,31 @@ export async function runSshSetup(
     let install = true;
     if (installed && feed && installed === feed) {
       install = false;
-      step.detail(`already on ${installed}`);
+      say(`already on ${installed}`);
     } else if (installed && (!SEMVER.test(installed) || (feed !== null && isNewer(feed, installed)))) {
       install = await run.ask(ctx, {
         kind: 'overwrite-install',
         message: `This box runs strado-runner ${installed}${feed ? `, and the current release is ${feed}` : ''}. Replace it?${
           needsPair && tooOldToPair(installed) ? ' It is too old to pair over SSH without the upgrade.' : ''}`,
       });
-      if (!install) step.detail(`keeping ${installed}`);
+      if (!install) say(`keeping ${installed}`);
     } else if (installed && !feed) {
       install = false;
-      step.detail(`release feed unreachable; keeping ${installed}`);
+      say(`release feed unreachable; keeping ${installed}`);
     }
     if (install) {
+      say(feed ? `Installing strado-runner ${feed}…` : 'Installing strado-runner…');
       const res = await guard(session.run(
         // The script installs from STRADO_API_URL: without it a dev or staging
         // api would fetch the script from itself but the runner from prod.
         'read api; curl -fsSL "$api/install-runner.sh" | STRADO_API_URL="$api" sh',
         `${deps.apiUrl}\n`,
-        (line) => step.detail(line),
+        (line) => say(line),
         10 * 60_000,
       ));
       if (res.code !== 0) throw fail('install failed — see the output above');
       installedVersion = feed;
+      say(feed ? `Installed ${feed}` : 'Installed');
     }
     const bin = `${facts.home}/.strado/runner/bin/strado-runner`;
 
@@ -193,7 +228,7 @@ export async function runSshSetup(
     let runnerId: string;
     if (!needsPair) {
       runnerId = paired!;
-      step.detail('already paired to your account');
+      say(`Already paired to your account as ${runnerId}`);
     } else {
       let force = false;
       if (paired) {
@@ -209,22 +244,27 @@ export async function runSshSetup(
       const id = res.code === 0 ? /^runnerId=([A-Za-z0-9_-]{1,64})\s*$/m.exec(res.stdout)?.[1] : undefined;
       if (!id) throw fail('pairing failed on the box');
       runnerId = id;
+      say(`Paired as ${runnerId}`);
     }
 
     step('service');
     if (!facts.systemdUser) {
       warnings.push('no systemd user session on this box: the runner will not survive logout or reboot');
+      say('No systemd user session — service skipped');
     } else {
       const res = await guard(session.exec([bin, 'install-service'], undefined, 60_000));
       if (res.code !== 0) throw fail('could not install the runner service');
+      say('Runner service installed');
       if (facts.linger === false) {
         const yes = await run.ask(ctx, {
           kind: 'linger',
           message: 'Keep the runner running after you log out? This enables linger for your user, which may ask for your sudo password.',
           command: LINGER_COMMAND,
         });
+        if (yes) say('Enabling linger — answer any sudo prompt in the terminal');
         const ok = yes && (await inTerminal(session.ttySpec(LINGER_COMMAND))) === 0;
         if (!ok) warnings.push('linger is off: the runner stops when you log out of the box');
+        say(ok ? 'Linger enabled' : 'Linger left off: the runner stops when you log out');
       }
     }
 
@@ -237,34 +277,46 @@ export async function runSshSetup(
         message: 'Sandboxes need podman 4.3 or newer on this box. Install it now? This runs with sudo.',
         command,
       });
+      if (yes) say('Installing podman — answer any sudo prompt in the terminal');
       if (yes && (await inTerminal(session.ttySpec(command!))) === 0) {
         // The runner detects its container runtime once, at boot.
         await guard(session.run('systemctl --user restart strado-runner', undefined, undefined, 30_000));
+        say('podman installed; runner restarted — sandboxes on');
       } else {
         sandboxes = false;
         warnings.push(command === null
           ? 'podman could not be installed automatically on this distro: sandboxes are off until you install podman 4.3+'
           : 'sandboxes are off: podman is not installed');
+        say(command === null ? 'Sandboxes off: no automatic podman install for this distro' : 'Sandboxes off: podman not installed');
       }
+    } else {
+      say(facts.podman.version ? `podman ${facts.podman.version} found — sandboxes on` : 'Sandboxes on');
     }
 
     step('online');
     const polls = Math.ceil(deps.pollTimeoutMs / deps.pollIntervalMs);
     for (let i = 0; ; i++) {
       if (await guard(deps.cloud.isOnline(runnerId))) break;
+      say(`waiting for the runner to come online… (${i + 1})`);
       if (i >= polls) {
         throw fail(`runner did not come online in 2 minutes — check: ssh ${input.dest.target} journalctl --user -u strado-runner -n 50`);
       }
       await guard(deps.sleep(deps.pollIntervalMs));
     }
 
+    const name = input.name ?? facts.hostname;
+    say(`Online as ${name}`);
     await deps.recordHost(runnerId, {
       target: input.dest.target,
       port: input.dest.port,
       addedAt: new Date().toISOString(),
       lastInstallVersion: installedVersion,
     });
-    return { runnerId, name: input.name ?? facts.hostname, sandboxes, warnings };
+    return { runnerId, name, sandboxes, warnings };
+  } catch (err) {
+    // Our own fixed sentences only; anything else is a generic line.
+    say(`✗ ${err instanceof AppError ? err.message : 'setup failed'}`);
+    throw err;
   } finally {
     if (deps.terminal.status(key).status === 'running') deps.terminal.kill(key);
     await session?.close();

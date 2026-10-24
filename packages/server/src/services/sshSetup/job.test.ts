@@ -362,3 +362,85 @@ describe('runSshSetup', () => {
     expect(createSetupRun().answer('nope', true)).toBe(false);
   });
 });
+
+describe('runSshSetup: the transcript', () => {
+  const lines = (frames: { data?: unknown }[]) =>
+    frames.map((f) => (f.data as { detail?: string } | undefined)?.detail).filter((d): d is string => typeof d === 'string');
+
+  it('every step writes a header, the probe summary, outcomes and the online polls, as detail frames and in the run ring', async () => {
+    const h = harness({ onlineAfter: 2, facts: facts({ linger: false }), answers: { linger: true } });
+    await h.go();
+    const t = lines(h.frames);
+    for (const head of ['▸ Connect', '▸ Check machine', '▸ Install', '▸ Pair', '▸ Service', '▸ Podman', '▸ Online']) expect(t).toContain(head);
+    expect(t).toContain('OS: ubuntu x86_64, glibc 2.39');
+    expect(t).toContain('podman 4.9.3 · systemd user session: yes · linger: off');
+    expect(t).toContain('strado-runner: not installed · not paired');
+    expect(t).toContain('installing 0.1.32');
+    expect(t).toContain('Paired as r-new');
+    expect(t).toContain('Runner service installed');
+    expect(t).toContain('Linger enabled');
+    expect(t).toContain('podman 4.9.3 found — sandboxes on');
+    expect(t).toContain('waiting for the runner to come online… (1)');
+    expect(t).toContain('waiting for the runner to come online… (2)');
+    expect(t.at(-1)).toBe('Online as box');
+    expect(h.run.transcript).toEqual(t);
+    // Headers come in step order.
+    expect(t.filter((l) => l.startsWith('▸ '))).toEqual(['▸ Connect', '▸ Check machine', '▸ Install', '▸ Pair', '▸ Service', '▸ Podman', '▸ Online']);
+  });
+
+  it('probe warnings are listed; an existing runner and its pairing are named', async () => {
+    const h = harness({ facts: facts({ runner: { version: '0.1.32', pairedRunnerId: 'r-old' } }), runners: ['r-old'] });
+    h.deps.warnings = () => ['low disk space'];
+    await h.go();
+    const t = lines(h.frames);
+    expect(t).toContain('strado-runner: 0.1.32 · paired to your account');
+    expect(t).toContain('⚠ low disk space');
+    expect(t).toContain('Already paired to your account as r-old');
+  });
+
+  it('the failure reason is the last line', async () => {
+    const h = harness({ installCode: 1 });
+    await expect(h.go()).rejects.toThrow('install failed');
+    expect(lines(h.frames).at(-1)).toBe('✗ install failed — see the output above');
+  });
+
+  it('a cancel ends the transcript with the cancel line', async () => {
+    const h = harness({ facts: facts({ linger: false }) });
+    const p = h.go();
+    await vi.waitFor(() => expect(h.questions.length).toBe(1));
+    h.run.cancel();
+    await expect(p).rejects.toThrow('setup cancelled');
+    expect(h.run.transcript.at(-1)).toBe('✗ setup cancelled');
+  });
+
+  it('never the pair code or raw pair output; box output is stripped of escapes and cut', async () => {
+    const h = harness({ pairOut: `SECRET-PAIR-STDOUT\nrunnerId=r-new\n` });
+    (h.session.run as ReturnType<typeof vi.fn>).mockImplementation(async (script: string, _stdin?: string, onLine?: (l: string) => void) => {
+      if (script === 'PROBE') return { code: 0, stdout: 'probe-out', stderr: '' };
+      if (script.includes('install-runner.sh')) {
+        onLine?.(`\x1b[32mok\x1b[0m\x07 ${'x'.repeat(900)}`);
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    await h.go();
+    const all = JSON.stringify(h.run.transcript);
+    expect(all).not.toContain(PAIR_CODE);
+    expect(all).not.toContain('SECRET-PAIR-STDOUT');
+    const out = h.run.transcript.find((l) => l.startsWith('ok '))!;
+    expect(out).not.toMatch(/[\x00-\x1f\x7f]/);
+    expect(out.length).toBeLessThanOrEqual(500);
+  });
+
+  it('the ring keeps the last 2000 lines', async () => {
+    const h = harness();
+    (h.session.run as ReturnType<typeof vi.fn>).mockImplementation(async (script: string, _stdin?: string, onLine?: (l: string) => void) => {
+      if (script === 'PROBE') return { code: 0, stdout: 'probe-out', stderr: '' };
+      if (script.includes('install-runner.sh')) for (let i = 0; i < 2500; i++) onLine?.(`line ${i}`);
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    await h.go();
+    expect(h.run.transcript).toHaveLength(2000);
+    expect(h.run.transcript.at(-1)).toBe('Online as box');
+  });
+});

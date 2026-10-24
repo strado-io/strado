@@ -71,6 +71,9 @@ export const SSH_SETUP_ROUTES = {
   start: '/api/runners/ssh-setup', // POST { destination, name? } → { jobId }
   answer: '/api/runners/ssh-setup/:jobId/answer', // POST { questionId, yes } → 204
   cancel: '/api/runners/ssh-setup/:jobId/cancel', // POST → 204
+  /** GET → { lines: string[] }: the run's transcript so far (the last 2000
+   *  lines), for a page that attaches late; kept 15 min after the run ends. */
+  transcript: '/api/runners/ssh-setup/:jobId/transcript',
   terminal: '/ws/ssh-setup-terminal', // ?key=<terminal.key>
 } as const;
 
