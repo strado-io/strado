@@ -11,7 +11,7 @@ import { createNodeModulesLinkService, NodeModulesLinkService } from './services
 import { createProcessManager, ProcessManager } from './services/processManager.js';
 import { createDevProxy, type DevProxy } from './services/devProxy.js';
 import { createDebugLog, DebugLog } from './services/debugLog.js';
-import { createTerminalManager, isRunKey, parseSessionKey, sessionsPayload, TerminalManager } from './services/terminalManager.js';
+import { createTerminalManager, isRunKey, isSetupKey, parseSessionKey, sessionsPayload, TerminalManager } from './services/terminalManager.js';
 import { createDaemonTerminalManager } from './services/ptyDaemon/manager.js';
 import { createGitStatusService, GitStatusService } from './services/gitStatus.js';
 import { createAgentStatusStore, ClaudeStatusStore } from './services/claudeStatusStore.js';
@@ -258,6 +258,8 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const ptyActivity = createPtyActivity();
   const parked = createParkStore(path.join(homeStateDir, 'parked-sessions.json'));
   const onData = (key: string) => {
+    // An "Add over SSH" pty belongs to its setup job: no worktree, no agent.
+    if (isSetupKey(key)) return;
     ptyActivity.noteOutput(key);
     sandboxActivity.touch(parseSessionKey(key).path);
     onTerminalData(key);
@@ -268,6 +270,7 @@ export async function buildDeps(options: AppOptions = {}): Promise<Deps> {
   const onTerminalExit = (key: string) => {
     // The Run terminal is the process manager's, not a tab or an agent.
     if (isRunKey(key)) return;
+    if (isSetupKey(key)) return;
     // Idempotent; the terminal route's own exit handler may also call it.
     void agents.release(key);
     ptyActivity.forget(key);
@@ -585,6 +588,35 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // Liveness + capability advertisement (runner CLI, remote clients)
   const { registerHealthRoutes } = await import('./routes/health.js');
   await registerHealthRoutes(app);
+  // Agent-login sync target: a runner with sandboxing on. A desktop never
+  // exposes these — its agents use the user's own logins directly.
+  if (process.env.STRADO_RUNNER === '1' && deps.sandbox && deps.sandboxRuntime) {
+    const { registerAgentLoginsRunnerRoutes } = await import('./routes/agentLoginsRunner.js');
+    await registerAgentLoginsRunnerRoutes(app, {
+      sandbox: deps.sandbox,
+      sandboxRuntime: deps.sandboxRuntime,
+      log: (line) => deps.debugLog.log('server', line),
+    });
+    // A host's Connections tab: per-agent checks, device logins, disconnect.
+    const { registerConnectionsRunnerRoutes } = await import('./routes/connectionsRunner.js');
+    await registerConnectionsRunnerRoutes(app, {
+      sandbox: deps.sandbox,
+      sandboxRuntime: deps.sandboxRuntime,
+      log: (line) => deps.debugLog.log('server', line),
+    });
+    // Printed once so the user can compare it with what the laptop pinned.
+    const { loadOrCreateBoxKey } = await import('./services/agentLogins/runnerKey.js');
+    await loadOrCreateBoxKey().then(
+      ({ fingerprint }) => console.log(`[runner] login-sync key fingerprint ${fingerprint}`),
+      () => deps.debugLog.log('server', 'agent-login sync failed: box key'),
+    );
+  }
+  // A host's Sandboxes and Logs tabs. Logs on any runner; the container
+  // routes only with a sandbox runtime (registered inside when there is one).
+  if (process.env.STRADO_RUNNER === '1') {
+    const { registerHostTabsRunnerRoutes, runnerHostTabsDeps } = await import('./routes/hostTabsRunner.js');
+    await registerHostTabsRunnerRoutes(app, runnerHostTabsDeps(app));
+  }
   // Machine-wide pty sessions, outside any workspace scope (see the module).
   const { registerSessionRoutes } = await import('./routes/sessions.js');
   await registerSessionRoutes(app);
@@ -595,6 +627,15 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // same cache, instead of building a second one.
   const { registerRunnerRoutes } = await import('./routes/runners.js');
   const runnerFetch = await registerRunnerRoutes(app);
+  // "Add over SSH": a job that takes a bare Linux box to a paired runner.
+  const { registerSshSetupRoutes } = await import('./routes/sshSetup.js');
+  await registerSshSetupRoutes(app);
+  // A host's Connections tab: per-agent login state, Connect/Check/Disconnect.
+  const { registerConnectionRoutes } = await import('./routes/connections.js');
+  await registerConnectionRoutes(app, runnerFetch);
+  // A host's Sandboxes and Logs tabs: forwards to the runner's own routes.
+  const { registerHostTabRoutes } = await import('./routes/hostTabs.js');
+  await registerHostTabRoutes(app, runnerFetch);
 
   // Org membership (proxies strado-api with the stored token)
   const { registerOrgRoutes } = await import('./routes/org.js');
@@ -688,6 +729,11 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await app.register(fastifyWebsocket);
   const { registerTerminalRoutes } = await import('./routes/terminal.js');
   await registerTerminalRoutes(app);
+  // The "Add over SSH" terminal: attach-only, for the keys a running setup job
+  // owns. After the websocket plugin — registered before it, the route is a
+  // plain GET and every attach is a 500.
+  const { registerSshSetupTerminalRoutes } = await import('./routes/sshSetupTerminal.js');
+  await registerSshSetupTerminalRoutes(app, {});
 
   const { registerClaudeStatusRoutes } = await import('./routes/claudeStatus.js');
   await registerClaudeStatusRoutes(app);

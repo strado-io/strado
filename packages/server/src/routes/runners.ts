@@ -16,6 +16,7 @@ import { cloneCredentialForRepo, sandboxEnvForRepo } from '../services/modelCred
 import { stepReporter } from '../services/jobSteps.js';
 import { followRemoteJob, type RemoteJobEvent } from '../services/remoteJobs.js';
 import { matchRepo, portableCloneUrl, repoIdentity } from '../services/repoIdentity.js';
+import { syncAgentLogins, waitAtMost } from '../services/agentLogins/sync.js';
 
 export type RunnerRow = {
   runnerId: string;
@@ -27,6 +28,8 @@ export type RunnerRow = {
 };
 
 const TIMEOUT_MS = 10_000;
+/** How long worktree create waits for the agent-login sync before going on without it. */
+const LOGIN_SYNC_WAIT_MS = 15_000;
 
 /** Step ids a runner's own worktree job may emit that map 1:1 onto our plan. */
 const REMOTE_STEP_IDS = new Set(['worktree', 'link', 'finalize', 'sandbox-detect', 'sandbox-build']);
@@ -189,20 +192,40 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
   });
 
   const RpcQuery = z.object({ path: z.string().min(1).max(512) });
+  // The generic proxy never reaches a runner's sandbox-credential routes: they
+  // take secrets only from the sealed sync below. Checked on the normalized
+  // path, so `..`, `%2e%2e` and case games land on the same answer; an encoded
+  // slash or backslash has no honest use and might be decoded differently far
+  // side, so it is refused outright.
+  const assertRpcPath = (path: string) => {
+    if (/%2f|%5c/i.test(path)) throw new AppError('FORBIDDEN', 'not available through rpc');
+    let p: string;
+    try {
+      p = new URL(path, 'http://runner.invalid').pathname.toLowerCase();
+    } catch {
+      throw new AppError('FORBIDDEN', 'not available through rpc');
+    }
+    if (p === '/api/sandbox' || p.startsWith('/api/sandbox/')) throw new AppError('FORBIDDEN', 'not available through rpc');
+  };
 
   app.get('/api/runners/:id/rpc', async (req) => {
     const { id } = RunnerParams.parse(req.params);
     const { path } = RpcQuery.parse(req.query);
+    assertRpcPath(path);
     return runner.fetch<unknown>(id, path);
   });
 
   app.post('/api/runners/:id/rpc', async (req) => {
     const { id } = RunnerParams.parse(req.params);
     const { path } = RpcQuery.parse(req.query);
+    assertRpcPath(path);
     // Longer than a read: this carries repo clones and worktree creation, which
     // do real work on the far side.
     return runner.fetch<unknown>(id, path, { method: 'POST', body: req.body, timeoutMs: 60_000 });
   });
+
+  // Agent logins are sent by a host's Connect (routes/connections.ts), the only
+  // place a runner's key is pinned or re-pinned, and by the auto-sync below.
 
   /**
    * Remote worktrees for every linked runner, matched to LOCAL repos.
@@ -482,6 +505,17 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
           .catch(() => ({ sandbox: false as const })),
       ]);
       const sandboxed = !!caps.sandbox;
+      // Hand a sandboxing runner this laptop's agent logins, so the container
+      // never asks to log in. Started now so it lands before the runner creates
+      // the sandbox; it never decides the create: any failure (key changed, old
+      // runner, offline) is one fixed log line. Only to a runner already pinned
+      // from the Sync button: a create never trusts a key on its own.
+      const loginSync = sandboxed
+        ? syncAgentLogins(body.runnerId, { fetch: runner.fetch }, 'auto').then(
+            () => undefined,
+            () => { app.deps.debugLog.log('agent-logins', `auto-sync to ${body.runnerId} skipped`); },
+          )
+        : Promise.resolve();
       const step = stepReporter(ctx, [
         { id: 'runner', label: `Checking ${body.runnerId}` },
         { id: 'clone', label: `Cloning ${repoLabel} on ${body.runnerId}` },
@@ -552,6 +586,9 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
       // GitHub App — with the alias host it found no token, and a private repo
       // that had just cloned fine failed one step later as "cannot authenticate".
       const sandboxEnv = await sandboxEnvForRepo({ ...localRepo, cloneUrl });
+      // A head start, not a gate: a fresh runner may be slow to store the
+      // logins, and the create must not stall on it.
+      await waitAtMost(loginSync, LOGIN_SYNC_WAIT_MS);
 
       const { jobId } = await runner.fetch<{ jobId: string }>(
         body.runnerId,

@@ -73,6 +73,10 @@ const CreateBody = z.object({
     .optional(),
 });
 
+/** The container env a worktree create or rebuild takes; also the host
+ *  Sandboxes tab's Rebuild body. */
+export const SandboxEnvSchema = CreateBody.shape.sandboxEnv;
+
 export async function registerWorktreesRoutes(app: FastifyInstance) {
   /**
    * The repo's bare clone, if it has one — the second place its worktrees can

@@ -31,6 +31,7 @@ import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
+import type { HostTab } from '../components/hosts/HostDetails';
 import { setAppearance } from '../hooks/useAppearance';
 import type { JarvisAppPort } from '../lib/jarvis/execute';
 import { FeedbackDialog } from '../components/FeedbackDialog';
@@ -363,6 +364,8 @@ export function Dashboard(props: {
   const [ticketsOn, setTicketsOn] = useState(false);
   const { providerErrors } = useTickets();
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  // A runner's host page to open inside Settings → Runners, from a deep link.
+  const [settingsHost, setSettingsHost] = useState<{ runnerId: string; tab?: HostTab } | undefined>(undefined);
   // Bumped when the command box changes a setting while Settings is open: the
   // page remounts and reads the new value.
   const [settingsNonce, setSettingsNonce] = useState(0);
@@ -394,8 +397,11 @@ export function Dashboard(props: {
   useEffect(() => { refreshTicketProviders(); }, [refreshTicketProviders]);
   useEffect(() => {
     const open = (e: Event) => {
-      const section = (e as CustomEvent<{ section?: 'gitlab' | 'github' }>).detail?.section ?? 'gitlab';
+      const detail = (e as CustomEvent<{ section?: 'gitlab' | 'github' | 'runners'; runnerId?: string; tab?: HostTab }>).detail;
+      const section = detail?.section ?? 'gitlab';
+      setSettingsHost(section === 'runners' && detail?.runnerId ? { runnerId: detail.runnerId, tab: detail.tab } : undefined);
       setSettingsSection(section);
+      setSettingsNonce((n) => n + 1);
     };
     window.addEventListener('strado:open-settings', open);
     return () => window.removeEventListener('strado:open-settings', open);
@@ -1184,8 +1190,9 @@ export function Dashboard(props: {
         <SettingsPage
           key={`${settingsSection}:${settingsNonce}`}
           section={settingsSection}
+          host={settingsSection === 'runners' ? settingsHost : undefined}
           bottomInset
-          onClose={() => setSettingsSection(null)}
+          onClose={() => { setSettingsSection(null); setSettingsHost(undefined); }}
           onJiraConnected={() => {
             track('jira_connected');
             refreshTicketProviders();

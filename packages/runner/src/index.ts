@@ -2,7 +2,7 @@
 // strado-runner — the self-hosted runner CLI/daemon.
 //
 //   strado-runner                    run in foreground (what systemd invokes)
-//   strado-runner pair --code …      claim this box for an account
+//   strado-runner pair --code …      claim this box for an account (--code - reads stdin)
 //   strado-runner status             identity, tunnel, sessions, version
 //   strado-runner install-service    write + enable the systemd user unit
 //   strado-runner env                re-capture PATH into the unit, restart
@@ -56,34 +56,64 @@ loadEnvFile(paths.envFile);
 applyProxyFromEnv();
 const apiUrl = resolveApiUrl();
 
-async function cmdPair(): Promise<void> {
-  const code = arg('code');
-  if (!code) {
-    console.error('usage: strado-runner pair --code PAIR-XXXX-XXXX [--name <name>] [--api <url>]');
+/** What laptops synced to this box: tied to its owner, not to the box. */
+export function wipeSyncedLogins(home: string): void {
+  for (const f of ['agent-logins-runner.json', 'runner-sender-pin.json']) fs.rmSync(path.join(home, f), { force: true });
+}
+
+export async function cmdPair(
+  deps: {
+    pairRunner: typeof pairRunner;
+    readStdin: () => string;
+    /** null when there was nothing to restart; otherwise whether it worked. */
+    restartService: () => boolean | null;
+    log: (line: string) => void;
+  } = {
+    pairRunner,
+    readStdin: () => fs.readFileSync(0, 'utf8'),
+    restartService: () => (hasSystemd() && fs.existsSync(unitPath()) ? systemctl(['restart', UNIT_NAME]).ok : null),
+    log: (line) => console.log(line),
+  },
+): Promise<void> {
+  const p = runnerPaths();
+  // `--code -` takes it from stdin, so a setup driven over ssh never puts it
+  // in argv, shell history or `ps`.
+  const raw = arg('code');
+  if (!raw) {
+    console.error('usage: strado-runner pair --code PAIR-XXXX-XXXX|- [--name <name>] [--api <url>] [--force]');
     process.exit(1);
   }
-  const existing = readIdentity(paths.identity);
-  if (existing && !flag('force')) {
+  const code = raw === '-' ? deps.readStdin().trim() : raw;
+  if (!code) throw new Error('no pairing code on stdin');
+  const force = flag('force');
+  const existing = readIdentity(p.identity);
+  if (existing && !force) {
     console.error(
       `this box is already paired as "${existing.runnerId}".\n` +
         'Re-pair with --force (the old identity stops working only when you revoke it from your account).',
     );
     process.exit(1);
   }
-  const identity = await pairRunner({
+  const identity = await deps.pairRunner({
     apiUrl,
     code,
     name: arg('name') ?? defaultRunnerName(),
-    runnerVersion: bundleVersion(paths),
+    runnerVersion: bundleVersion(p),
   });
-  writeIdentity(paths.identity, identity);
-  console.log(`paired as "${identity.runnerId}" — identity saved to ${paths.identity}`);
-  if (hasSystemd() && fs.existsSync(unitPath())) {
-    const r = systemctl(['restart', UNIT_NAME]);
-    console.log(r.ok ? 'runner service restarted' : `start it yourself: systemctl --user restart ${UNIT_NAME}`);
-  } else {
-    console.log('start the runner with: strado-runner install-service   (or: strado-runner)');
-  }
+  // A new identity on this box — first pair, after an unpair, or a --force to
+  // another account — may be a new owner. What the previous owner synced must
+  // not outlive that: their Claude token would log the new owner's sandboxes
+  // in as them, and their laptop pin would refuse the new owner's sync. Only
+  // after the pair succeeded, so a failed one keeps the box as it was; and not
+  // for a re-pair that lands on the same runner id.
+  if (existing?.runnerId !== identity.runnerId) wipeSyncedLogins(p.home);
+  writeIdentity(p.identity, identity);
+  deps.log(`paired as "${identity.runnerId}" — identity saved to ${p.identity}`);
+  // Machine-readable, on its own line, for a setup driving this over ssh.
+  deps.log(`runnerId=${identity.runnerId}`);
+  const restarted = deps.restartService();
+  if (restarted === null) deps.log('start the runner with: strado-runner install-service   (or: strado-runner)');
+  else deps.log(restarted ? 'runner service restarted' : `start it yourself: systemctl --user restart ${UNIT_NAME}`);
 }
 
 async function cmdStatus(): Promise<void> {
@@ -209,15 +239,17 @@ async function cmdUpdate(): Promise<void> {
   await applyUpdate(release, paths, (l) => console.log(`[update] ${l}`));
 }
 
-function cmdUnpair(): void {
-  const identity = readIdentity(paths.identity);
+export function cmdUnpair(): void {
+  const p = runnerPaths();
+  const identity = readIdentity(p.identity);
   if (!identity) {
     console.log('not paired');
     return;
   }
   if (hasSystemd() && fs.existsSync(unitPath())) systemctl(['stop', UNIT_NAME]);
-  fs.rmSync(paths.identity, { force: true });
-  console.log(`forgot identity "${identity.runnerId}".`);
+  fs.rmSync(p.identity, { force: true });
+  wipeSyncedLogins(p.home);
+  console.log(`forgot identity "${identity.runnerId}" and the logins synced to it.`);
   console.log('IMPORTANT: also revoke it from your account, or the credential stays valid on any copy of this file.');
 }
 

@@ -10,8 +10,9 @@ import { StringDecoder } from 'node:string_decoder';
 import type { SessionMeta, UpgradeResult } from '@strado/ptyd/protocol';
 import {
   isRunKey,
+  isSetupKey,
   parseSessionKey,
-  sessionEnv,
+  spawnEnv,
   type BuildSpec,
   type ExtraEnv,
   type LiveSession,
@@ -101,9 +102,9 @@ export async function createDaemonTerminalManager(
   const buildSpec = opts.buildSpec ?? defaultBuildSpec;
   // One place where a spec is settled, so the wrapper cannot be bypassed by
   // the override path. Mirrored in terminalManager.ts.
-  const resolveSpec = (cwd: string, override?: SpawnSpec, extraEnvKeys?: string[]): SpawnSpec => {
+  const resolveSpec = (key: string, cwd: string, override?: SpawnSpec, extraEnvKeys?: string[]): SpawnSpec => {
     const spec = override ?? buildSpec(cwd);
-    return opts.wrapSpec ? opts.wrapSpec(cwd, spec, extraEnvKeys) : spec;
+    return opts.wrapSpec && !isSetupKey(key) ? opts.wrapSpec(cwd, spec, extraEnvKeys) : spec;
   };
   const mirrors = new Map<string, Mirror>();
   const inflightOpens = new Map<string, Promise<TerminalInfo>>();
@@ -196,8 +197,17 @@ export async function createDaemonTerminalManager(
 
   // Recovery both at boot (adopt a daemon that outlived the last server) and
   // when the daemon connection drops (daemon crashed or was restarted).
-  const resync = async () => {
-    const sessions = await client.list();
+  //
+  // At boot only, an "Add over SSH" pty is ended, not adopted: its job died
+  // with the last server, and an orphaned ssh or sudo prompt would sit in the
+  // daemon with nobody able to reach or end it. A reconnect keeps them — the
+  // job that owns them is still running in this process.
+  const resync = async (boot = false) => {
+    let sessions = await client.list();
+    if (boot) {
+      for (const s of sessions) if (isSetupKey(s.id)) client.close(s.id);
+      sessions = sessions.filter((s) => !isSetupKey(s.id));
+    }
     const liveIds = new Set(sessions.map((s) => s.id));
     let n = 0;
     for (const s of sessions) {
@@ -222,7 +232,7 @@ export async function createDaemonTerminalManager(
       }
     }
   };
-  await resync();
+  await resync(true);
 
   let destroyed = false;
   let reconnecting = false;
@@ -449,12 +459,12 @@ export async function createDaemonTerminalManager(
             connected = true;
           }
         }
-        const s: SpawnSpec = resolveSpec(cwd, spec, ensureOpts?.env ? Object.keys(ensureOpts.env) : undefined);
+        const s: SpawnSpec = resolveSpec(key, cwd, spec, ensureOpts?.env ? Object.keys(ensureOpts.env) : undefined);
         const meta: SessionMeta = {
           shell: s.file,
           argv: s.args,
           cwd,
-          env: { ...sessionEnv(key, cwd), ...(opts.extraEnv?.(key, cwd) ?? {}), ...(ensureOpts?.env ?? {}) },
+          env: spawnEnv(key, cwd, opts.extraEnv, ensureOpts?.env),
           cols: size?.cols ?? 80,
           rows: size?.rows ?? 24,
         };
@@ -559,7 +569,7 @@ export async function createDaemonTerminalManager(
     liveSessions() {
       const out: LiveSession[] = [];
       for (const [key, m] of mirrors) {
-        if (m.info.status !== 'running' || isRunKey(key)) continue;
+        if (m.info.status !== 'running' || isRunKey(key) || isSetupKey(key)) continue;
         out.push(parseSessionKey(key));
       }
       return out;

@@ -7,6 +7,9 @@ export type ExecFn = (
   timeoutMs?: number,
   /** Every chunk of stdout/stderr as it arrives, for commands that run minutes. */
   onOutput?: (chunk: string) => void,
+  /** Written to stdin, then closed. The only way a secret reaches a one-shot
+   * container: argv and `-e` show up in `ps` and the runtime's inspect. */
+  input?: string,
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 
 // Keep the last 16 MB of each stream: a build log dwarfs execFile's 1 MB
@@ -19,14 +22,14 @@ const MAX_CAPTURE = 16 * 1024 * 1024;
 // at 10s silently kills every first build and degrades the worktree to
 // unsandboxed. Spawn rather than execFile so a long command can report
 // progress while it runs instead of being a silent spinner until exit.
-export const realExec: ExecFn = (file, args, timeoutMs = 10_000, onOutput) =>
+export const realExec: ExecFn = (file, args, timeoutMs = 10_000, onOutput, input) =>
   new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     let child;
     try {
-      child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(file, args, { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     } catch (err) {
       resolve({ code: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 127 : 1, stdout: '', stderr: String(err) });
       return;
@@ -45,6 +48,12 @@ export const realExec: ExecFn = (file, args, timeoutMs = 10_000, onOutput) =>
         /* a reporter must never break the command */
       }
     };
+    if (input !== undefined) {
+      // A child that exits without reading stdin raises EPIPE here; its exit
+      // code is what the caller acts on.
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(input);
+    }
     child.stdout?.on('data', capture('stdout'));
     child.stderr?.on('data', capture('stderr'));
     child.once('error', (err: NodeJS.ErrnoException) => {

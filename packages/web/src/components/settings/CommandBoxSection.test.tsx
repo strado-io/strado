@@ -5,7 +5,9 @@ const mc = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
 const rc = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
 const profile = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
 const vc = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
-vi.mock('../../api', () => ({ api: { modelCredential: mc, routerCredential: rc, voiceCredential: vc, profile } }));
+const ct = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }));
+const senderFingerprint = vi.hoisted(() => vi.fn());
+vi.mock('../../api', () => ({ api: { modelCredential: mc, routerCredential: rc, voiceCredential: vc, agentLogins: { claudeToken: ct, senderFingerprint }, profile } }));
 
 import { CommandBoxSection } from './CommandBoxSection';
 
@@ -17,6 +19,9 @@ beforeEach(() => {
   rc.save.mockReset();
   vc.get.mockReset().mockResolvedValue({ present: false, last4: null });
   vc.save.mockReset();
+  ct.get.mockReset().mockResolvedValue({ present: false, last4: null });
+  ct.save.mockReset();
+  senderFingerprint.mockReset().mockResolvedValue({ fingerprint: '9f8e-7d6c-5b4a-3210' });
   profile.get.mockReset().mockResolvedValue({ fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false });
   profile.save.mockReset().mockImplementation(async (p: object) => ({ fullName: '', callMe: '', telemetryOptOut: false, ...p }));
 });
@@ -127,5 +132,12 @@ describe('CommandBoxSection', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: /local only/i }));
     await waitFor(() => expect(changed).toHaveBeenCalled());
     window.removeEventListener('strado:voice-engine', changed);
+  });
+
+  it('the Claude token lives on a host\'s Connections tab now, not here', async () => {
+    render(<CommandBoxSection />);
+    await screen.findByLabelText('Anthropic API key');
+    expect(screen.queryByLabelText('Claude token for remote sandboxes')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('sender-key')).not.toBeInTheDocument();
   });
 });

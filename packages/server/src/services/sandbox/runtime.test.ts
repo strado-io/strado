@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectRuntime, sandboxEnabled } from './runtime.js';
+import { detectRuntime, realExec, sandboxEnabled } from './runtime.js';
 
 const ok = { code: 0, stdout: 'version 5', stderr: '' };
 const missing = { code: 127, stdout: '', stderr: 'not found' };
@@ -80,5 +80,12 @@ describe('sandboxEnabled opt-out', () => {
   it('STRADO_SANDBOX=0 disables sandboxing on a runner with a runtime', () => {
     expect(sandboxEnabled({ bin: 'podman' }, { STRADO_RUNNER: '1', STRADO_SANDBOX: '0' })).toBe(false);
     expect(sandboxEnabled({ bin: 'podman' }, { STRADO_RUNNER: '1' })).toBe(true);
+  });
+});
+
+describe('realExec', () => {
+  it('pipes input to stdin', async () => {
+    const r = await realExec('cat', [], 5_000, undefined, 'hello stdin');
+    expect(r).toMatchObject({ code: 0, stdout: 'hello stdin' });
   });
 });
