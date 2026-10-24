@@ -522,3 +522,6 @@ body {
 :root[data-theme='light'] .tab-divider { background-color: rgb(0 0 0 / 0.12); }
 :root[data-theme='light'] .tab-bar { background-color: rgb(0 0 0 / 0.03); border-color: rgb(0 0 0 / 0.08); }
 :root[data-theme='light'] .tab-pill { background-color: #fff; border-color: rgb(0 0 0 / 0.1); box-shadow: none; }
+/* The raised piece on glass, on a light theme: a white sheet with a hairline,
+   like .tab-pill there (white-on-white glass would vanish). */
+:root[data-theme='light'] .glass-pill { background-color: #fff; border-color: rgb(0 0 0 / 0.12); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
