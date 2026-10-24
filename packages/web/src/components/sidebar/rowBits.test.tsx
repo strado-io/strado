@@ -18,23 +18,23 @@ describe('agentMark: waiting is a quiet amber dot, not a flag', () => {
 });
 
 describe('WorktreeRowItem: each row is a glass card', () => {
-  const row = (active?: boolean, extra: { accent?: string; waiting?: boolean } = {}) => render(
+  const row = (active?: boolean, extra: { waiting?: boolean } = {}) => render(
     <WorktreeRowItem worktree={w} chips={[]} mr={null} onOpen={vi.fn()} className="extra" active={active} {...extra}>
       <span>row</span>
     </WorktreeRowItem>,
   ).container.firstElementChild as HTMLElement;
 
-  it('resting cards are the pane glass with a hover edge; the open one is the raised glass pill with its repo\'s accent bar', () => {
-    const off = row(false, { accent: 'bg-sky-400' });
+  it('resting cards are the pane glass with a hover edge; the open one is the raised glass pill, with no bar', () => {
+    const off = row(false);
     expect(off).toHaveClass('glass', 'pane-card', 'rounded-xl', 'border', 'extra');
     expect(off.className).toContain('hover:border-[rgb(var(--pane-edge)/0.12)]');
     expect(off).not.toHaveClass('glass-pill');
     expect(off.querySelector('[data-testid="card-accent"]')).toBeNull();
-    const on = row(true, { accent: 'bg-sky-400' });
+    const on = row(true);
     expect(on).toHaveClass('glass-pill', 'rounded-xl');
     expect(on).not.toHaveClass('pane-card');
     expect(on).toHaveAttribute('data-active', 'true');
-    expect(on.querySelector('[data-testid="card-accent"]')).toHaveClass('bg-sky-400', 'w-[3px]', 'h-4', 'left-[5px]');
+    expect(on.querySelector('[data-testid="card-accent"]')).toBeNull();
   });
 
   it('a waiting card keeps its normal edge (the amber is on its agent ring)', () => {
@@ -44,7 +44,7 @@ describe('WorktreeRowItem: each row is a glass card', () => {
   });
 
   it('theme colours only: no raw hex in the card classes', () => {
-    expect(row(true, { accent: 'bg-sky-400', waiting: true }).className).not.toMatch(/#[0-9a-f]{3,8}/i);
+    expect(row(true, { waiting: true }).className).not.toMatch(/#[0-9a-f]{3,8}/i);
   });
 
   it('without `active` it leaves the look to the caller (className only)', () => {

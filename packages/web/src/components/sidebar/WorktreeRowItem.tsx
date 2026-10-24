@@ -62,16 +62,14 @@ export type WorktreeRowItemProps = {
   onContextMenu?: (e: React.MouseEvent) => void;
   /** Given, the row draws itself as a glass card: resting cards are the pane
    * glass (solid pane fill, hairline edge, top highlight), the open one the
-   * raised .glass-pill with an accent bar on its left. */
+   * raised .glass-pill (like the active tab). */
   active?: boolean;
-  /** The open card's accent bar colour (a bg-* class: its repo's colour). */
-  accent?: string;
   /** An agent here is waiting on the person (marked by the card's amber agent ring, not its edge). */
   waiting?: boolean;
 };
 
 export function WorktreeRowItem({
-  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active, accent, waiting,
+  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active, waiting,
 }: WorktreeRowItemProps) {
   // Theme colours only: the pane glass and the edge colour (--pane-edge) both
   // have light-theme values, so the card holds on every preset.
@@ -85,10 +83,6 @@ export function WorktreeRowItem({
   return (
     <div ref={hover.ref} className={`${look}${className}`} data-active={active || undefined} data-waiting={waiting || undefined} {...hover.triggerProps}
       onContextMenu={onContextMenu ? (e) => { hover.close(); onContextMenu(e); } : undefined}>
-      {active && accent && (
-        // A short pill inside the card's padding, clear of its rounded edge.
-        <span aria-hidden data-testid="card-accent" className={`pointer-events-none absolute left-[5px] top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full opacity-90 ${accent}`} />
-      )}
       <RowHoverCardContext.Provider value={dismiss}>{children}</RowHoverCardContext.Provider>
       {hover.open && hover.rects && (
         <WorktreeHoverCard

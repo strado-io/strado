@@ -84,7 +84,13 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
         {time && <span data-card-time className="shrink-0 text-[11px] tabular-nums text-zinc-500">{time}</span>}
       </div>
       <div className={`flex min-h-4 min-w-0 items-center gap-1.5 text-[11px] ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>
-        {repo && <span data-card-repo className="min-w-0 shrink truncate">{repo.name}</span>}
+        {repo && (
+          // The repo's colour as a dot (its identity on every card; the open card is marked by its glass, not a bar).
+          <span data-card-repo className="flex min-w-0 shrink items-center gap-1.5">
+            <span aria-hidden data-testid="card-repo-dot" className={`h-1.5 w-1.5 shrink-0 rounded-full ${repoAccent(repo.id)} ${muted ? 'opacity-40' : 'opacity-80'}`} />
+            <span className="min-w-0 truncate">{repo.name}</span>
+          </span>
+        )}
         {repo && branch && <span aria-hidden>·</span>}
         {branch && <span data-card-subtitle className="min-w-0 flex-1 truncate font-mono">{branch}</span>}
         {!branch && <span className="flex-1" />}

@@ -22,8 +22,9 @@ describe('WorktreeCard', () => {
     expect(line1).toHaveTextContent(/^Clarify unexplained request●5h$/);
     expect(line2).toHaveTextContent(/^Fleetx Dashboard·master\+3 -1$/);
     expect(container.querySelector('[data-card-subtitle]')).toHaveClass('font-mono');
-    // No letter tile on the card any more: the repo's colour is the accent bar.
+    // No letter tile on the card any more: the repo's colour is a dot before its name.
     expect(container.querySelector('[data-testid="repo-tile"]')).toBeNull();
+    expect(screen.getByTestId('card-repo-dot')).toHaveClass(repoAccent('r1'), 'rounded-full');
     expect(screen.queryByText('FD')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'FD-1' }));
     fireEvent.click(screen.getByText('master'));

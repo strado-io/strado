@@ -11,7 +11,7 @@ import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor } from '../Sidebar';
 import { cardLines, worktreeLabel } from './labels';
-import { WorktreeCard, repoAccent } from './WorktreeCard';
+import { WorktreeCard } from './WorktreeCard';
 import { SessionAvatarStack } from './sessionAvatars';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
@@ -104,7 +104,6 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       onOpen={open}
       onContextMenu={onContextMenu && menuItems.length > 0 ? (e) => onContextMenu(e, menuItems) : undefined}
       active={activeRow}
-      accent={repoName ? repoAccent(w.localRepoId ?? repoName) : undefined}
       waiting={agentWaiting(w as unknown as Worktree)}
       className="group relative flex items-stretch"
     >
@@ -239,7 +238,6 @@ export function SidebarBody({
         onSettings={onWorktreeSettings}
         onContextMenu={(e) => openContextMenu(e, menuItems)}
         active={activeRow}
-        accent={repo ? repoAccent(repo.id) : undefined}
         waiting={agentWaiting(w)}
         className="group relative flex items-stretch"
       >
