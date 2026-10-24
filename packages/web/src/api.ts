@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -832,6 +832,17 @@ export const api = {
     save: (key: string | null) =>
       request<ModelCredentialSummary>('/api/voice-credential', { method: 'POST', body: JSON.stringify({ key }) }),
   },
+  // The Claude token (`claude setup-token`) that remote sandboxes use instead of
+  // logging in. Same contract as the keys above: presence and the last four only.
+  agentLogins: {
+    claudeToken: {
+      get: () => request<ModelCredentialSummary>('/api/agent-logins/claude-token'),
+      save: (key: string | null) =>
+        request<ModelCredentialSummary>('/api/agent-logins/claude-token', { method: 'POST', body: JSON.stringify({ key }) }),
+    },
+    /** This laptop's signing-key fingerprint, to compare with the runner's "trusted laptop" log line. */
+    senderFingerprint: () => request<{ fingerprint: string }>('/api/agent-logins/sender-fingerprint'),
+  },
   voice: {
     /** A short-lived ElevenLabs token for one realtime session (the key stays on the server).
      * Fails with code no_key (404), local_only (403), bad_key (401) or upstream (502). */
@@ -854,6 +865,54 @@ export const api = {
       ),
     revoke: (runnerId: string) =>
       request<{ ok: boolean }>(`/api/runners/${encodeURIComponent(runnerId)}/revoke`, { method: 'POST' }),
+    /** Add a host over SSH: the server job does every step; the dialog only
+     * sends the destination, an optional name, and yes/no answers. */
+    sshSetup: {
+      start: (body: { destination: string; name?: string }) =>
+        request<{ jobId: string }>('/api/runners/ssh-setup', { method: 'POST', body: JSON.stringify(body) }),
+      answer: (jobId: string, body: { questionId: string; yes: boolean }) =>
+        request<void>(`/api/runners/ssh-setup/${encodeURIComponent(jobId)}/answer`, { method: 'POST', body: JSON.stringify(body) }),
+      cancel: (jobId: string) =>
+        request<void>(`/api/runners/ssh-setup/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
+    },
+    /** A host's Connections tab. Each agent's state comes from a real check
+     * on the runner; connect is a job (progress: phase / device code / pin question). */
+    connections: {
+      list: (runnerId: string) =>
+        // stale: the runner is offline or unknown, so these are the last checks.
+        request<{ connections: AgentConnection[]; stale: boolean }>(`/api/runners/${encodeURIComponent(runnerId)}/connections`),
+      connect: (runnerId: string, agent: ConnectionAgent) =>
+        request<{ jobId: string }>(`/api/runners/${encodeURIComponent(runnerId)}/connections/${agent}/connect`, { method: 'POST' }),
+      check: (runnerId: string, agent: ConnectionAgent) =>
+        request<{ connection: AgentConnection }>(`/api/runners/${encodeURIComponent(runnerId)}/connections/${agent}/check`, { method: 'POST' }),
+      disconnect: (runnerId: string, agent: ConnectionAgent) =>
+        request<{ connection: AgentConnection }>(`/api/runners/${encodeURIComponent(runnerId)}/connections/${agent}/disconnect`, { method: 'POST' }),
+      answer: (jobId: string, body: { questionId: string; yes: boolean }) =>
+        request<void>(`/api/connections/jobs/${encodeURIComponent(jobId)}/answer`, { method: 'POST', body: JSON.stringify(body) }),
+      cancel: (jobId: string) =>
+        request<void>(`/api/connections/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
+    },
+    /** A host's Sandboxes tab: its containers, and one action on one. Rebuild
+     * is a job ({ jobId }); the rest answer { ok: true }. */
+    sandboxes: {
+      list: (runnerId: string) => request<SandboxList>(`/api/runners/${encodeURIComponent(runnerId)}/sandboxes`),
+      action: (runnerId: string, slug: string, action: SandboxAction) =>
+        request<{ ok: true } | { jobId: string }>(
+          `/api/runners/${encodeURIComponent(runnerId)}/sandboxes/${encodeURIComponent(slug)}/${action}`,
+          { method: 'POST' },
+        ),
+    },
+    /** A host's Logs tab: the runner's own log, redacted on the runner. */
+    logs: (runnerId: string, q: LogQuery = {}) => {
+      const qs = new URLSearchParams();
+      if (q.lines != null) qs.set('lines', String(q.lines));
+      if (q.grep) qs.set('grep', q.grep);
+      if (q.since != null) qs.set('since', String(q.since));
+      const tail = qs.toString();
+      return request<LogPage>(`/api/runners/${encodeURIComponent(runnerId)}/logs${tail ? `?${tail}` : ''}`);
+    },
+    /** The host page's Overview: where it was set up over ssh, and both keys. */
+    host: (runnerId: string) => request<HostInfo>(`/api/runners/${encodeURIComponent(runnerId)}/host`),
     /**
      * Port forwarding: a dev server on the runner reachable at 127.0.0.1 here,
      * so the preview browser and the browser MCP work on it unchanged.

@@ -328,3 +328,91 @@ export type SessionMetrics = {
   /** process tree of each pid asked for with ?pids= (worktree dev servers) */
   processes?: Array<{ pid: number; cpu: number; rssBytes: number; processes: number }>;
 };
+
+// "Add a host over SSH" — mirrors packages/server/src/services/sshSetup/types.ts.
+// The dialog sends only a destination, a name and yes/no answers; the server
+// job builds every command.
+export type SshSetupStepId = 'connect' | 'check' | 'install' | 'pair' | 'service' | 'podman' | 'online';
+export const SSH_SETUP_STEPS: { id: SshSetupStepId; label: string }[] = [
+  { id: 'connect', label: 'Connect' },
+  { id: 'check', label: 'Check machine' },
+  { id: 'install', label: 'Install' },
+  { id: 'pair', label: 'Pair' },
+  { id: 'service', label: 'Service' },
+  { id: 'podman', label: 'Podman' },
+  { id: 'online', label: 'Online' },
+];
+export type SshSetupQuestion = {
+  id: string;
+  kind: 'repair-other-account' | 'overwrite-install' | 'linger' | 'podman';
+  message: string;
+  /** The exact command a yes runs in the terminal. */
+  command?: string;
+};
+export type SshSetupProgress =
+  | { step: SshSetupStepId; detail?: string }
+  | { question: SshSetupQuestion }
+  | { terminal: { key: string } };
+export type SshSetupResult = { runnerId: string; name: string; sandboxes: boolean; warnings: string[] };
+export const SSH_SETUP_TERMINAL_PATH = '/ws/ssh-setup-terminal';
+
+// Host connections — mirrors packages/server/src/services/connections/types.ts.
+// connected only ever comes from a real check on the runner; never a token.
+export type ConnectionAgent = 'claude' | 'codex' | 'opencode' | 'pi';
+export const CONNECTION_AGENTS: ConnectionAgent[] = ['claude', 'codex', 'opencode', 'pi'];
+export type ConnectionState = 'connected' | 'not-connected' | 'failed' | 'unknown';
+export type AgentConnection = {
+  agent: ConnectionAgent;
+  state: ConnectionState;
+  /** One fixed-string line for the row. Never a secret. */
+  detail: string | null;
+  /** ms epoch of the check that produced state; null if never checked. */
+  checkedAt: number | null;
+  /** Pi/OpenCode: a provider login only an interactive terminal can do here. */
+  needsTerminal?: boolean;
+};
+export type DeviceLoginPrompt = { url: string; code: string; expiresAt: number };
+export type ConnectPhase = 'opening-browser' | 'waiting-approval' | 'saving' | 'syncing' | 'checking';
+export type ConnectQuestion = {
+  id: string;
+  kind: 'pin';
+  runnerFingerprint: string;
+  laptopFingerprint: string;
+  /** Set when the runner's key changed: the one this laptop trusted before. */
+  previousFingerprint?: string;
+};
+export type ConnectProgress = { phase: ConnectPhase } | { device: DeviceLoginPrompt } | { question: ConnectQuestion };
+export type ConnectResult = { connection: AgentConnection };
+export type HostInfo = {
+  runnerId: string;
+  ssh: { target: string; port: number | null; addedAt: number; lastInstallVersion: string | null } | null;
+  /** The runner's box-key fingerprint as pinned on this laptop, null if never synced. */
+  pinnedRunnerFingerprint: string | null;
+  laptopFingerprint: string;
+};
+
+// Host Sandboxes and Logs tabs — mirrors packages/server/src/services/hostTabs/types.ts.
+// Never an env value: only these fields leave the runner; log text is redacted there.
+export type SandboxAction = 'restart' | 'stop' | 'start' | 'rebuild' | 'remove';
+export type SandboxRow = {
+  /** Container identity (strado-sbx-<slug>), the key for actions. */
+  slug: string;
+  /** null for a container with no label of ours (shown, never actionable). */
+  worktreePath: string | null;
+  repoName: string | null;
+  worktreeName: string | null;
+  status: 'running' | 'stopped' | 'creating' | 'unknown';
+  image: string;
+  /** ms epoch. */
+  createdAt: number;
+  startedAt: number | null;
+  cpuPercent: number | null;
+  memBytes: number | null;
+  memLimitBytes: number | null;
+  /** Agents whose login changed on the runner after this container was made. */
+  staleLogins: ('claude' | 'codex' | 'opencode' | 'pi')[];
+};
+export type SandboxList = { sandboxes: SandboxRow[]; runtime: 'podman' | 'docker' | null };
+export type LogLine = { ts: number; level: 'info' | 'warn' | 'error' | 'debug'; text: string };
+export type LogQuery = { lines?: number; grep?: string; since?: number };
+export type LogPage = { lines: LogLine[]; source: 'journal' | 'file' | 'none'; nextSince: number | null };

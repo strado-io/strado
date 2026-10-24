@@ -1,11 +1,15 @@
-// Self-hosted runners: list, pair, open, revoke.
+// Self-hosted runners: list, pair, open, revoke. Clicking a row expands it in
+// place with that runner's Overview, Connections, Sandboxes and Logs; one
+// open at a time.
 //
 // "Open" points a window at the runner's own dashboard (served through the
 // relay) rather than folding remote worktrees into the local sidebar — a
 // remote box has different files, different git credentials, and no Electron
 // embeds, and window-level separation keeps that honest.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { api, type RunnerRow } from '../api';
+import { HostDetails, type HostTab } from './hosts/HostDetails';
+import { SetUpOverSshDialog } from './SetUpOverSshDialog';
 
 const POLL_MS = 20_000;
 
@@ -33,7 +37,10 @@ function openRunnerWindow(url: string): void {
   else window.open(url, '_blank', 'noopener');
 }
 
-export function RunnersPanel() {
+export function RunnersPanel({ initialHost }: {
+  /** Open with one runner expanded on a tab (deep link from the settings opener). */
+  initialHost?: { runnerId: string; tab?: HostTab };
+} = {}) {
   const [runners, setRunners] = useState<RunnerRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pairing, setPairing] = useState<{ code: string; expiresAt: string; installCommand: string; pairCommand: string } | null>(null);
@@ -44,6 +51,39 @@ export function RunnersPanel() {
   // so say so instead of looking dead.
   const [slow, setSlow] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sshOpen, setSshOpen] = useState(false);
+  // The expanded runner, each runner's tab, and every runner opened so far:
+  // those stay mounted (hidden when collapsed) so a connect in flight keeps
+  // its job through a collapse.
+  const [expanded, setExpanded] = useState<string | null>(initialHost?.runnerId ?? null);
+  const [tabs, setTabs] = useState<Record<string, HostTab>>(initialHost ? { [initialHost.runnerId]: initialHost.tab ?? 'overview' } : {});
+  const [opened, setOpened] = useState<Set<string>>(() => new Set(initialHost ? [initialHost.runnerId] : []));
+  const [scrollTo, setScrollTo] = useState<string | null>(initialHost?.runnerId ?? null);
+  const rowEls = useRef(new Map<string, HTMLLIElement>());
+
+  const expand = (runnerId: string, tab?: HostTab) => {
+    setExpanded(runnerId);
+    setOpened((o) => (o.has(runnerId) ? o : new Set([...o, runnerId])));
+    if (tab) setTabs((t) => ({ ...t, [runnerId]: tab }));
+  };
+  const toggle = (runnerId: string) => {
+    if (expanded === runnerId) setExpanded(null);
+    else expand(runnerId);
+  };
+  /** The row itself toggles; its own buttons (Open, Link, Revoke) never do. */
+  const onRowClick = (e: MouseEvent, runnerId: string) => {
+    if ((e.target as Element).closest('button, a, input')) return;
+    toggle(runnerId);
+  };
+
+  // A deep link lands on its row once the list has it.
+  useEffect(() => {
+    if (!scrollTo) return;
+    const el = rowEls.current.get(scrollTo);
+    if (!el) return;
+    el.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    setScrollTo(null);
+  }, [scrollTo, runners]);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -135,6 +175,13 @@ export function RunnersPanel() {
     }
   };
 
+  const dialog = sshOpen && (
+    <SetUpOverSshDialog
+      onClose={() => setSshOpen(false)}
+      onAdded={() => void load()}
+      onOpenHost={(runnerId) => { setSshOpen(false); expand(runnerId, 'connections'); setScrollTo(runnerId); void load(); }}
+    />
+  );
   return (
     <section className="flex flex-col gap-3" data-testid="runners-panel">
       <div className="flex items-center justify-between">
@@ -144,6 +191,15 @@ export function RunnersPanel() {
             Other machines running Strado — reach their worktrees and agents from here.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setSshOpen(true)}
+          title="Install and pair a runner on a Linux machine you can reach with ssh"
+          className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
+        >
+          Add over SSH
+        </button>
         <button
           type="button"
           onClick={() => void startPairing()}
@@ -152,7 +208,11 @@ export function RunnersPanel() {
         >
           {busy === 'pair' ? 'Creating…' : 'Add runner'}
         </button>
+        </div>
       </div>
+
+
+      {dialog}
 
       {error && (
         <p className="rounded border border-amber-900/60 bg-amber-950/40 px-2.5 py-2 text-xs text-amber-200">{error}</p>
@@ -202,48 +262,64 @@ export function RunnersPanel() {
         </p>
       ) : (
         <ul className="flex flex-col divide-y divide-zinc-800 rounded border border-zinc-800">
-          {runners.map((r) => (
-            <li key={r.runnerId} className="flex items-center gap-3 px-3 py-2" data-testid={`runner-${r.runnerId}`}>
-              <span
-                aria-label={r.online ? 'online' : 'offline'}
-                title={r.online ? 'online' : `last seen ${relativeTime(r.lastOnlineAt)}`}
-                className={`size-2 shrink-0 rounded-full ${r.online ? 'bg-emerald-500' : 'bg-zinc-600'}`}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-zinc-100">{r.name}</div>
-                <div className="truncate text-[11px] text-zinc-500">
-                  {r.online ? 'online' : `last seen ${relativeTime(r.lastOnlineAt)}`}
-                  {r.runnerVersion ? ` · v${r.runnerVersion}` : ''}
+          {runners.map((r) => {
+            const isOpen = expanded === r.runnerId;
+            return (
+            <li key={r.runnerId} data-testid={`runner-${r.runnerId}`} data-expanded={isOpen || undefined}
+              ref={(el) => { if (el) rowEls.current.set(r.runnerId, el); else rowEls.current.delete(r.runnerId); }}
+              className={isOpen ? 'bg-zinc-900/40' : ''}>
+              <div onClick={(e) => onRowClick(e, r.runnerId)} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-zinc-900/40" data-testid={`runner-row-${r.runnerId}`}>
+                <span
+                  aria-label={r.online ? 'online' : 'offline'}
+                  title={r.online ? 'online' : `last seen ${relativeTime(r.lastOnlineAt)}`}
+                  className={`size-2 shrink-0 rounded-full ${r.online ? 'bg-emerald-500' : 'bg-zinc-600'}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <button type="button" onClick={() => toggle(r.runnerId)} aria-expanded={isOpen} aria-controls={`runner-details-${r.runnerId}`}
+                    className="flex max-w-full items-center gap-1.5 truncate text-left text-sm text-zinc-100">
+                    <span aria-hidden data-testid="runner-chevron" className={`inline-block w-2.5 text-zinc-500 transition-transform ${isOpen ? 'rotate-90' : ''}`}>›</span>
+                    <span className="truncate">{r.name}</span>
+                  </button>
+                  <div className="truncate text-[11px] text-zinc-500">
+                    {r.online ? 'online' : `last seen ${relativeTime(r.lastOnlineAt)}`}
+                    {r.runnerVersion ? ` · v${r.runnerVersion}` : ''}
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => void open(r)}
+                  disabled={!r.online || busy === r.runnerId}
+                  title={r.online ? 'Open this machine’s dashboard' : 'Runner is offline'}
+                  className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                >
+                  Open
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copyLink(r)}
+                  disabled={!r.online || busy === r.runnerId}
+                  title="Copy a single-use link (open it on your phone)"
+                  className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+                >
+                  {copied === r.runnerId ? 'Copied' : 'Link'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void revoke(r)}
+                  disabled={busy === r.runnerId}
+                  className="rounded border border-zinc-800 px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-40"
+                >
+                  Revoke
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => void open(r)}
-                disabled={!r.online || busy === r.runnerId}
-                title={r.online ? 'Open this machine’s dashboard' : 'Runner is offline'}
-                className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
-              >
-                Open
-              </button>
-              <button
-                type="button"
-                onClick={() => void copyLink(r)}
-                disabled={!r.online || busy === r.runnerId}
-                title="Copy a single-use link (open it on your phone)"
-                className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
-              >
-                {copied === r.runnerId ? 'Copied' : 'Link'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void revoke(r)}
-                disabled={busy === r.runnerId}
-                className="rounded border border-zinc-800 px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-40"
-              >
-                Revoke
-              </button>
+              {opened.has(r.runnerId) && (
+                <div id={`runner-details-${r.runnerId}`} hidden={!isOpen} className="pb-3 pl-8 pr-3">
+                  <HostDetails runner={r} expanded={isOpen} tab={tabs[r.runnerId] ?? 'overview'} onTab={(t) => setTabs((m) => ({ ...m, [r.runnerId]: t }))} />
+                </div>
+              )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

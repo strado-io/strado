@@ -6,6 +6,9 @@ import { AppError } from '../errors.js';
 import { readModelCredential, writeModelCredential, credentialSummary } from '../services/modelCredential.js';
 import { readRouterCredential, writeRouterCredential } from '../services/routerCredential.js';
 import { readVoiceCredential, writeVoiceCredential } from '../services/voiceCredential.js';
+import { readClaudeToken, writeClaudeToken } from '../services/agentLogins/store.js';
+import { loadSenderKey } from '../services/agentLogins/senderKey.js';
+import { fingerprintOf } from '../services/agentLogins/seal.js';
 
 const PatchBody = z.object({
   fullName: z.string().max(120).optional(),
@@ -17,6 +20,12 @@ const PatchBody = z.object({
 // null/empty clears the credential; a string sets it. Bounded so a fat-finger
 // paste can't write a megabyte to disk.
 const ModelCredentialBody = z.object({ key: z.string().max(4096).nullable() });
+
+/** Key writes: the local hub only — never a window relayed from another machine. */
+export function assertLocalHub(headers: Record<string, string | string[] | undefined>): void {
+  assertHubRequest(headers);
+  if (headers[VIA_RELAY_HEADER] !== undefined) throw new AppError('FORBIDDEN', 'keys can only be set on this machine');
+}
 
 export async function registerProfileRoutes(app: FastifyInstance) {
   app.get('/api/profile', async () => readProfile());
@@ -30,11 +39,6 @@ export async function registerProfileRoutes(app: FastifyInstance) {
   // The model API key: writeable, but the GET only ever discloses presence and
   // the last four. The renderer never needs the secret back, so the route never
   // returns it.
-  /** Key writes: the local hub only — never a window relayed from another machine. */
-  const assertLocalHub = (headers: Record<string, string | string[] | undefined>) => {
-    assertHubRequest(headers);
-    if (headers[VIA_RELAY_HEADER] !== undefined) throw new AppError('FORBIDDEN', 'keys can only be set on this machine');
-  };
   app.get('/api/model-credential', async () => credentialSummary(await readModelCredential()));
   // Only the local hub may set the key (not a page on another origin, not a
   // relayed remote window): it spends the user's money.
@@ -62,5 +66,21 @@ export async function registerProfileRoutes(app: FastifyInstance) {
     const { key } = ModelCredentialBody.parse(req.body);
     await writeModelCredential(key);
     return credentialSummary(await readModelCredential());
+  });
+
+  // This laptop's sender identity, for comparing with what a runner pinned.
+  // A fingerprint, not a secret; the key itself never leaves the file.
+  app.get('/api/agent-logins/sender-fingerprint', async () => ({
+    fingerprint: fingerprintOf((await loadSenderKey()).publicKey),
+  }));
+
+  // The Claude setup-token remote sandboxes use instead of logging in. Same
+  // rules: presence + last four only; only the local hub may set it.
+  app.get('/api/agent-logins/claude-token', async () => credentialSummary(await readClaudeToken()));
+  app.post('/api/agent-logins/claude-token', async (req) => {
+    assertLocalHub(req.headers);
+    const { key } = ModelCredentialBody.parse(req.body);
+    await writeClaudeToken(key);
+    return credentialSummary(await readClaudeToken());
   });
 }

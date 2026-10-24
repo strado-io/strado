@@ -5,6 +5,7 @@ import path from 'node:path';
 import { defaultShell } from './platform.js';
 import { hooksDir } from './claudeHooks.js';
 import { opencodeConfigContent } from './opencodeLaunch.js';
+import { SSH_SETUP_KEY_PREFIX } from './sshSetup/types.js';
 
 export type TerminalStatus = 'running' | 'exited';
 export type TerminalInfo = { status: TerminalStatus; pid: number | null; exitCode: number | null };
@@ -60,6 +61,11 @@ export function runKey(path: string, id?: string | null): string {
 }
 
 export const isRunKey = (key: string): boolean => /\0run(:[^\0]*)?$/.test(key);
+
+/** An "Add over SSH" pty: the setup job's, never a tab or an agent. Left out
+ * of liveSessions(), never sandbox-wrapped, and spawned without the session
+ * env — no STRADO_* and no agent token ride along on an ssh to another box. */
+export const isSetupKey = (key: string): boolean => key.startsWith(SSH_SETUP_KEY_PREFIX);
 
 /** The session key for a (mode, path, id) triple. An agent launched inside a
  * Shell tab reports `shell:N` as its session id and lives under that Shell
@@ -196,6 +202,24 @@ export function sessionEnv(key: string, cwd: string): Record<string, string> {
   } as Record<string, string>;
 }
 
+// What an "Add over SSH" pty may see of this server's env: enough for the
+// user's own ssh (config, agent, known_hosts, a sane terminal) and nothing
+// else — no API keys, no STRADO_*, nothing a remote could be handed.
+const SETUP_ENV_KEYS = new Set(['HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'TERM', 'LANG', 'TMPDIR', 'SSH_AUTH_SOCK']);
+
+/** The env a session spawns with; shared by the in-process manager and the
+ * ptyd-backed one. A setup key gets an allowlist of the user's own env. */
+export function spawnEnv(key: string, cwd: string, extraEnv?: ExtraEnv, env?: Record<string, string>): Record<string, string> {
+  if (isSetupKey(key)) {
+    const own: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined && (SETUP_ENV_KEYS.has(k) || k.startsWith('LC_'))) own[k] = v;
+    }
+    return { ...own, ...(env ?? {}) };
+  }
+  return { ...sessionEnv(key, cwd), ...(extraEnv?.(key, cwd) ?? {}), ...(env ?? {}) };
+}
+
 const MAX_BUFFER = 256 * 1024;
 
 const defaultBuildSpec: BuildSpec = () => ({
@@ -238,13 +262,13 @@ export function createTerminalManager(
 
   // One place where a spec is settled, so the wrapper cannot be bypassed by
   // the override path. Mirrored in ptyDaemon/manager.ts.
-  const resolveSpec = (cwd: string, override?: SpawnSpec, extraEnvKeys?: string[]): SpawnSpec => {
+  const resolveSpec = (key: string, cwd: string, override?: SpawnSpec, extraEnvKeys?: string[]): SpawnSpec => {
     const spec = override ?? buildSpec(cwd);
-    return wrapSpec ? wrapSpec(cwd, spec, extraEnvKeys) : spec;
+    return wrapSpec && !isSetupKey(key) ? wrapSpec(cwd, spec, extraEnvKeys) : spec;
   };
 
   function spawn(key: string, cwd: string, override?: SpawnSpec, size?: { cols: number; rows: number }, opts?: EnsureOptions): Session {
-    const spec = resolveSpec(cwd, override, opts?.env ? Object.keys(opts.env) : undefined);
+    const spec = resolveSpec(key, cwd, override, opts?.env ? Object.keys(opts.env) : undefined);
     const term = pty.spawn(spec.file, spec.args, {
       name: 'xterm-256color',
       // spawn at the requesting client's real size when known: resize
@@ -255,7 +279,7 @@ export function createTerminalManager(
       cwd,
       // Identity the agent registry minted for this key (agent id, scope,
       // token) rides on top of the shared session env. sessionEnv stays pure.
-      env: { ...sessionEnv(key, cwd), ...(extraEnv?.(key, cwd) ?? {}), ...(opts?.env ?? {}) },
+      env: spawnEnv(key, cwd, extraEnv, opts?.env),
     });
     const session: Session = {
       pty: term,
@@ -351,7 +375,7 @@ export function createTerminalManager(
     liveSessions() {
       const out: LiveSession[] = [];
       for (const [key, s] of sessions) {
-        if (s.info.status !== 'running' || isRunKey(key)) continue;
+        if (s.info.status !== 'running' || isRunKey(key) || isSetupKey(key)) continue;
         out.push(parseSessionKey(key));
       }
       return out;

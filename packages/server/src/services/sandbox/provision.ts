@@ -12,7 +12,9 @@ import { githubProjectFromCloneUrl } from '../runnerGitCredential.js';
 import { issueSandboxGitBrokerToken } from '../sandboxGitBroker.js';
 import { detectSandboxManifest } from './detect.js';
 import { ensureBaseImage } from './image.js';
-import type { SandboxRuntime } from './runtime.js';
+import { realExec, type SandboxRuntime } from './runtime.js';
+import { readRunnerAgentLogins } from '../agentLogins/runnerStore.js';
+import { writeHomeVolume, type VolumePayload } from '../agentLogins/volumeWriter.js';
 import { sandboxSlugFor, type SandboxService } from './sandboxes.js';
 
 export type ProvisionDeps = {
@@ -99,6 +101,25 @@ export async function provisionSandbox(deps: ProvisionDeps, o: ProvisionInput): 
         };
       }
     }
+    // A Claude token the laptop synced to this runner logs every sandbox in
+    // without a /login. One the desktop sent for this repo wins.
+    const synced = await readRunnerAgentLogins();
+    if (synced.disconnected?.includes('claude') && sandboxEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+      // Disconnected here: a token the desktop sends with the create must
+      // not log the sandbox back in either.
+      const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...rest } = sandboxEnv;
+      sandboxEnv = rest;
+    }
+    if (synced.claudeToken && !sandboxEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+      sandboxEnv = { ...sandboxEnv, CLAUDE_CODE_OAUTH_TOKEN: synced.claudeToken };
+    }
+    // The subscription wins: with both set, Claude Code bills ANTHROPIC_API_KEY
+    // (and warns that auth may not work). The key is only for a runner with no
+    // Claude login at all.
+    if (sandboxEnv.CLAUDE_CODE_OAUTH_TOKEN && sandboxEnv.ANTHROPIC_API_KEY) {
+      const { ANTHROPIC_API_KEY: _apiKey, ...rest } = sandboxEnv;
+      sandboxEnv = rest;
+    }
     await sandbox.create({
       worktreePath: o.worktreePath,
       slug: sandboxSlug,
@@ -112,6 +133,21 @@ export async function provisionSandbox(deps: ProvisionDeps, o: ProvisionInput): 
       hooksPath: hooksDir(),
     });
     await sandbox.start(sandboxSlug);
+    // Re-apply what a laptop synced (the sync itself never builds an image,
+    // so on a fresh runner this is the first write), and pre-accept the trust
+    // dialog for this worktree, or the first `claude` stops on it even when
+    // logged in. Best-effort: never fails the create.
+    const volume: VolumePayload = { ...synced.volume };
+    if (sandboxEnv.CLAUDE_CODE_OAUTH_TOKEN || volume.claude) {
+      volume.claude = { ...volume.claude, trustPaths: [o.worktreePath] };
+    }
+    if (Object.keys(volume).length) {
+      const r = await writeHomeVolume(
+        { rt: sandboxRuntime, exec: realExec, image, userArgs: sandbox.userArgs() },
+        volume,
+      ).catch(() => null);
+      if (!r || Object.values(r).includes('failed')) deps.log('agent-login volume write failed');
+    }
     // Only now: the flag means "a container exists", and terminals are
     // routed into it on the strength of it.
     await deps.state.patch(o.worktreePath, { sandbox: { slug: sandboxSlug } });

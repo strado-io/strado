@@ -9,6 +9,7 @@ import { CommandBoxSection } from './CommandBoxSection';
 import { ProfileSection } from './ProfileSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
 import { RunnersPanel } from '../RunnersPanel';
+import type { HostTab } from '../hosts/HostDetails';
 import { useEntitlements } from '../../hooks/entitlements';
 import { TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from '../SidebarToggle';
 import type { Feature } from '../../api';
@@ -142,12 +143,15 @@ function ProUpsell({ name }: { name: string }) {
 
 export function SettingsPage({
   section = 'profile',
+  host,
   onClose,
   onJiraConnected,
   onOpenFeedback,
   bottomInset = false,
 }: {
   section?: SettingsSection;
+  /** With section 'runners': open that runner's host page, on this tab. */
+  host?: { runnerId: string; tab?: HostTab };
   /** Leave the bottom strip for the command box, which stays over Settings. */
   bottomInset?: boolean;
   onClose: () => void;
@@ -276,7 +280,7 @@ export function SettingsPage({
             {active === 'appearance' && <AppearanceSection />}
             {active === 'workspaces' && <WorkspaceManagementSection />}
             {active === 'agents' && <AgentsSection />}
-            {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel />)}
+            {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel initialHost={host} />)}
             {active === 'integrations' && (
               <IntegrationsSection
                 initial={initialIntegration}

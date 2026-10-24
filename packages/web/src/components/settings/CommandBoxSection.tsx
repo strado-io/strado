@@ -1,19 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api, type ModelCredentialSummary } from '../../api';
 import { voiceEngineChanged } from '../../hooks/voice';
 
 type CredentialApi = { get: () => Promise<ModelCredentialSummary>; save: (key: string | null) => Promise<ModelCredentialSummary> };
 
 /** One API key: a password field until saved, then only its last four and Remove. */
-function KeyField({ label, name, placeholder, help, cred: credApi, onSaved }: {
+export function KeyField({ label, name, noun = 'key', placeholder, help, cred: credApi, onSaved, extra }: {
   label: string;
-  /** For the buttons: "Save <name> key" / "Remove <name> key". */
+  /** For the buttons: "Save <name> <noun>" / "Remove <name> <noun>". */
   name: string;
+  noun?: string;
   placeholder: string;
   help: string;
   cred: CredentialApi;
   /** After a save or removal lands. */
   onSaved?: () => void;
+  /** Beside the save button, e.g. how to get the secret. */
+  extra?: ReactNode;
 }) {
   const [cred, setCred] = useState<ModelCredentialSummary | null>(null);
   const [draft, setDraft] = useState('');
@@ -47,8 +50,8 @@ function KeyField({ label, name, placeholder, help, cred: credApi, onSaved }: {
       ) : cred.present ? (
         <div className="flex items-center gap-3">
           <code className="rounded bg-zinc-900 px-2 py-1 text-xs text-zinc-300">{`••••${cred.last4 ?? ''}`}</code>
-          <button type="button" aria-label={`Remove ${name} key`} disabled={busy} onClick={() => void save(null)} className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 disabled:opacity-40">
-            Remove key
+          <button type="button" aria-label={`Remove ${name} ${noun}`} disabled={busy} onClick={() => void save(null)} className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 disabled:opacity-40">
+            Remove {noun}
           </button>
         </div>
       ) : (
@@ -62,15 +65,34 @@ function KeyField({ label, name, placeholder, help, cred: credApi, onSaved }: {
             placeholder={placeholder}
             className="h-8 w-72 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-100 outline-none focus:border-zinc-600"
           />
-          <button type="submit" aria-label={`Save ${name} key`} disabled={busy || !draft.trim()} className="rounded-md bg-sky-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-40">
-            Save key
+          <button type="submit" aria-label={`Save ${name} ${noun}`} disabled={busy || !draft.trim()} className="rounded-md bg-sky-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-40">
+            Save {noun}
           </button>
+          {extra}
         </form>
       )}
       <p className="mt-1.5 text-[11px] text-zinc-500">{help}</p>
       {error && <p role="alert" className="mt-1.5 text-xs text-red-400">{error}</p>}
     </div>
   );
+}
+
+/** `claude setup-token` prints a long-lived token after a browser login. This
+ * copies the command to run anywhere, for pasting the token by hand. */
+export const SETUP_TOKEN_COMMAND = 'claude setup-token';
+export function SetupTokenButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button type="button" title={`Copies “${SETUP_TOKEN_COMMAND}” — run it in any terminal, then paste the token here`}
+      onClick={() => { void navigator.clipboard?.writeText(SETUP_TOKEN_COMMAND); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900">
+      {copied ? 'Copied — run it in a terminal' : 'Get a token'}
+    </button>
+  );
+}
+
+export function SenderKeyLine({ fingerprint, className = '' }: { fingerprint: string; className?: string }) {
+  return <p className={`text-[11px] text-zinc-500 ${className}`} data-testid="sender-key">This laptop’s key: <code className="font-mono text-zinc-400">{fingerprint}</code></p>;
 }
 
 /** Settings for the ⌘K command box's natural language: the Anthropic key it

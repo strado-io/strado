@@ -115,6 +115,10 @@ export function createSandboxService(
 
   return {
     containerName,
+    // For one-shot containers that write into the HOME volume (agent-login
+    // sync): same volume, same user mapping as a real sandbox.
+    ensureHomeVolume,
+    userArgs,
     envFilePath: (slug: string) => path.join(envDir, `${slug}.env`),
 
     async create(c: { worktreePath: string; slug: string; image: string; port: number | null; env: Record<string, string>; socketPath: string | null; hooksPath: string | null }) {

@@ -84,7 +84,7 @@ export function cardTerminalTheme(theme: ITheme): ITheme {
   return { ...theme, background: hex, ...(theme.cursorAccent ? { cursorAccent: hex } : {}) };
 }
 
-function activeTerminalTheme(): ITheme {
+export function activeTerminalTheme(): ITheme {
   return cardTerminalTheme(baseTerminalTheme());
 }
 
@@ -121,7 +121,7 @@ export function renderClaudeLight(data: string): string {
   });
 }
 
-function activeTerminalFont(): string {
+export function activeTerminalFont(): string {
   const setting = document.documentElement.dataset.terminalFont;
   if (setting === 'jetbrains') {
     return '"JetBrains Mono Variable", Menlo, Monaco, "Courier New", monospace';
