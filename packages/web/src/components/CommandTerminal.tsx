@@ -13,6 +13,12 @@ import { activeTerminalFont, activeTerminalTheme } from './XtermPane';
 
 type Frame = { type: 'data'; data: string } | { type: 'exit'; code: number | null } | { type: 'error'; message: string };
 
+/** What a pty may send that would wipe or hide the transcript above it: a full
+ * reset (ESC c), erase display/scrollback (CSI 2J / 3J) and the alternate
+ * screen (CSI ?47 / ?1047 / ?1049 h|l). Dropped; everything else passes. */
+const WIPES = /\x1bc|\x1b\[[23]J|\x1b\[\?(?:47|1047|1049)[hl]/g;
+export const keepTranscript = (data: string) => data.replace(WIPES, '');
+
 /** A line for the transcript: xterm wants CRLF. */
 const asLine = (text: string) => `${text.replace(/\r?\n/g, '\r\n')}\r\n`;
 
@@ -82,7 +88,7 @@ export function CommandTerminal({ lines, attach, onExit, className = '' }: {
     ws.onmessage = (e) => {
       let f: Frame;
       try { f = JSON.parse(String(e.data)) as Frame; } catch { return; }
-      if (f.type === 'data') term.write(f.data);
+      if (f.type === 'data') term.write(keepTranscript(f.data));
       else if (f.type === 'exit') end(f.code);
       else if (f.type === 'error') term.write(`\r\n\x1b[2m${f.message}\x1b[0m\r\n`);
     };

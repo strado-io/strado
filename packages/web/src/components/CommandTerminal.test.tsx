@@ -38,7 +38,7 @@ class FakeWs {
   frame(f: object) { act(() => this.onmessage?.({ data: JSON.stringify(f) })); }
 }
 
-import { CommandTerminal } from './CommandTerminal';
+import { CommandTerminal, keepTranscript } from './CommandTerminal';
 
 beforeEach(() => {
   xt.terms.length = 0;
@@ -96,5 +96,13 @@ describe('CommandTerminal (one transcript for a whole run)', () => {
     expect(FakeWs.all[0]!.closed).toBe(true);
     expect(term().disposed).toBe(false);
     expect(term().out).toEqual(['one\r\n']);
+  });
+
+  it('pty output can\'t wipe or hide the transcript: resets, screen erases and the alternate screen are dropped', () => {
+    expect(keepTranscript('\x1bcA\x1b[2JB\x1b[3JC\x1b[?1049hD\x1b[?1049lE\x1b[?47hF\x1b[?1047lG')).toBe('ABCDEFG');
+    expect(keepTranscript('\x1b[1;31mred\x1b[0m \x1b[K \x1b[2K')).toBe('\x1b[1;31mred\x1b[0m \x1b[K \x1b[2K');
+    render(<CommandTerminal lines={['▸ Connect']} attach={{ url: '/ws/t?key=k', seq: 1 }} />);
+    FakeWs.all[0]!.frame({ type: 'data', data: '\x1b[?1049h\x1b[2Jpassword: ' });
+    expect(term().out).toEqual(['▸ Connect\r\n', 'password: ']);
   });
 });
