@@ -33,6 +33,7 @@ import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import type { HostTab } from '../components/hosts/HostDetails';
 import { setAppearance } from '../hooks/useAppearance';
+import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import type { JarvisAppPort } from '../lib/jarvis/execute';
 import { FeedbackDialog } from '../components/FeedbackDialog';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -338,6 +339,7 @@ export function Dashboard(props: {
   // search button) put the cursor in it.
   const commandBarRef = useRef<CommandBarHandle | null>(null);
   const focusCommandBar = () => commandBarRef.current?.focus();
+  const { showDock } = useHubDisplayPreferences();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
@@ -1161,6 +1163,7 @@ export function Dashboard(props: {
           worktree={dockWorktree}
           focus={focusApi.active?.name ?? null}
           bare={onHome}
+          collapsed={!showDock}
         >
         {onHome || settingsSection ? null : commandBar(false)}
         </Dock>

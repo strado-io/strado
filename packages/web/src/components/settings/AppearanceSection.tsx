@@ -38,7 +38,7 @@ export function AppearanceSection() {
     preset, setPreset, font, setFont,
     diffFont, setDiffFont, terminalFont, setTerminalFont,
   } = useAppearance();
-  const { showTime, setShowTime, showStatus, setShowStatus } = useHubDisplayPreferences();
+  const { showTime, setShowTime, showStatus, setShowStatus, showDock, setShowDock } = useHubDisplayPreferences();
   const themeOptions: { value: ThemePreset; label: string; swatches: string[] }[] = [
     { value: 'true-black', label: 'True Black', swatches: ['#000000', '#0a0a0a', '#f97f1b'] },
     { value: 'graphite', label: 'Graphite', swatches: ['#0b0c0f', '#1e2128', '#f97f1b'] },
@@ -128,6 +128,13 @@ export function AppearanceSection() {
             <div className="mt-0.5 text-xs text-zinc-500">Display the workflow or ticket status control.</div>
           </div>
           <Toggle label="Show status" checked={showStatus} onChange={setShowStatus} />
+        </div>
+        <div className="flex items-center justify-between gap-6 py-3">
+          <div>
+            <div className="text-sm text-zinc-200">Show bottom bar</div>
+            <div className="mt-0.5 text-xs text-zinc-500">The location and command box at the bottom. Hidden, ⌘K still opens it.</div>
+          </div>
+          <Toggle label="Show bottom bar" checked={showDock} onChange={setShowDock} />
         </div>
       </div>
 
