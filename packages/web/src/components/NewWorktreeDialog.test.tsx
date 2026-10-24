@@ -297,8 +297,9 @@ describe('NewWorktreeDialog', () => {
       await startRemoteCreate();
       jobHandler!({ type: 'progress', data: { message: 'Cloning', data: { step: 'clone', steps: STEPS } } });
       expect(onDone).not.toHaveBeenCalled();
-      jobHandler!({ type: 'done', data: {} });
-      await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+      jobHandler!({ type: 'done', data: { result: { runnerId: 'r1', path: '/r/wt' } } });
+      // The job's result reaches the caller, so App can file the new worktree under the open Focus.
+      await vi.waitFor(() => expect(onDone).toHaveBeenCalledWith({ runnerId: 'r1', path: '/r/wt' }));
     });
 
     it('keeps the step list on failure and reports the real error', async () => {

@@ -10,6 +10,8 @@ import { LogPanel } from './components/LogPanel';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
 import { IntercomProvider } from './contexts/IntercomContext';
 import { useWorkspace } from './hooks/useWorkspace';
+import { activeFocusOf, ensureFocusesLoaded, useFocuses } from './hooks/useFocuses';
+import { createdPinId } from './components/sidebar/pinIds';
 import { api, type RemoteWorktree, type FocusTicket } from './api';
 import type { MergeRequest, RepoConfig, Worktree } from './types';
 import { MrReviewModal } from './components/MrReviewModal';
@@ -62,6 +64,7 @@ function AppShell() {
   }, [dialog.kind]);
 
   const close = () => setDialog({ kind: 'none' });
+  const focusApi = useFocuses(wsId);
 
   return (
     <IntercomProvider wsId={wsId}>
@@ -125,12 +128,21 @@ function AppShell() {
             track('worktree_created');
             return api.worktrees.create(wsId, payload);
           }}
-          onDone={() => {
+          onDone={(result) => {
             // Cheap for a local create, essential for a remote one. The dialog
             // owns which runner was selected internally, so one unconditional
             // revalidation avoids duplicating that state in App.
             setRemoteRefreshKey((key) => key + 1);
             close();
+            // Made while a Focus is open: it belongs there, not loose in the space.
+            const pinId = createdPinId(result);
+            if (pinId) {
+              void (async () => {
+                await ensureFocusesLoaded(wsId);
+                const active = activeFocusOf(wsId);
+                if (active && !active.members.includes(pinId)) await focusApi.setMembership(active.id, pinId, true);
+              })().catch(() => { /* the worktree exists either way; it can be added by hand */ });
+            }
           }}
         />
       )}

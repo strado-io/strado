@@ -67,7 +67,8 @@ export async function* parseSse(
 /**
  * Consume a runner's job stream to completion.
  *
- * Resolves when the job reports done; throws with the runner's own message when
+ * Resolves with the runner job's result (e.g. a create's `{ path }`) when it
+ * reports done; throws with the runner's own message when
  * it errors. A stream that ends without a terminal event is a dropped
  * connection, not a success — reporting it as success would tell the user their
  * worktree exists when it may not.
@@ -76,7 +77,7 @@ export async function followRemoteJob(
   url: string,
   onEvent: (evt: RemoteJobEvent) => void,
   opts: { fetchImpl?: typeof fetch } = {},
-): Promise<void> {
+): Promise<unknown> {
   const doFetch = opts.fetchImpl ?? fetch;
   const res = await doFetch(url, { headers: { accept: 'text/event-stream' } });
   if (!res.ok || !res.body) {
@@ -105,7 +106,8 @@ export async function followRemoteJob(
     } else if (event === 'done') {
       terminal = true;
       onEvent({ type: 'done' });
-      return;
+      // Live frames wrap it as { result }; a replay of a finished job sends it bare.
+      return 'result' in payload ? payload.result : payload;
     } else if (event === 'error') {
       terminal = true;
       const code = remoteErrorCode(payload.code);

@@ -613,7 +613,7 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
       step('worktree');
       const { httpBase, ticket } = await runner.credential(body.runnerId);
       // Follow the runner's own job so its steps appear in the same list.
-      await followRemoteJob(
+      const made = await followRemoteJob(
         `${httpBase}/events/jobs/${encodeURIComponent(jobId)}?ticket=${ticket}`,
         forwardRemoteSteps(step, 'worktree'),
       );
@@ -621,7 +621,11 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
       // An old runner that sends no step ids never advanced us past 'worktree';
       // close the plan out here. A sandboxed runner ended on its own last step.
       if (!sandboxed) step('finalize');
-      return { runnerId: body.runnerId, remoteWsId, clonedTo: cloned.path };
+      // The new worktree's path on the runner, so the window can file it under the open Focus.
+      const madePath = made && typeof made === 'object' && typeof (made as { path?: unknown }).path === 'string'
+        ? (made as { path: string }).path
+        : undefined;
+      return { runnerId: body.runnerId, remoteWsId, clonedTo: cloned.path, ...(madePath ? { path: madePath } : {}) };
     });
 
     return { jobId: job.id };
