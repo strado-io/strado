@@ -17,25 +17,40 @@ describe('agentMark: waiting is a quiet amber dot, not a flag', () => {
   });
 });
 
-describe('WorktreeRowItem: each row is a card, like a tab', () => {
-  const row = (active?: boolean) => render(
-    <WorktreeRowItem worktree={w} chips={[]} mr={null} onOpen={vi.fn()} className="extra" active={active}>
+describe('WorktreeRowItem: each row is a glass card', () => {
+  const row = (active?: boolean, extra: { accent?: string; waiting?: boolean } = {}) => render(
+    <WorktreeRowItem worktree={w} chips={[]} mr={null} onOpen={vi.fn()} className="extra" active={active} {...extra}>
       <span>row</span>
     </WorktreeRowItem>,
   ).container.firstElementChild as HTMLElement;
 
-  it('the open worktree is the raised pill (the tab bar\'s .tab-pill); the rest are flat with a faint hover', () => {
-    const on = row(true);
-    expect(on).toHaveClass('tab-pill', 'rounded-[11px]', 'extra');
+  it('resting cards are the pane glass with a hover edge; the open one is the raised glass pill with its repo\'s accent bar', () => {
+    const off = row(false, { accent: 'bg-sky-400' });
+    expect(off).toHaveClass('glass', 'pane-card', 'rounded-xl', 'border', 'extra');
+    expect(off.className).toContain('hover:border-[rgb(var(--pane-edge)/0.12)]');
+    expect(off).not.toHaveClass('glass-pill');
+    expect(off.querySelector('[data-testid="card-accent"]')).toBeNull();
+    const on = row(true, { accent: 'bg-sky-400' });
+    expect(on).toHaveClass('glass-pill', 'rounded-xl');
+    expect(on).not.toHaveClass('pane-card');
     expect(on).toHaveAttribute('data-active', 'true');
-    const off = row(false);
-    expect(off).not.toHaveClass('tab-pill');
-    expect(off).toHaveClass('hover:bg-white/[0.04]', 'rounded-[11px]', 'border-transparent');
+    expect(on.querySelector('[data-testid="card-accent"]')).toHaveClass('bg-sky-400', 'w-0.5');
+  });
+
+  it('a card with an agent waiting gets an amber edge', () => {
+    const el = row(false, { waiting: true });
+    expect(el).toHaveAttribute('data-waiting', 'true');
+    expect(el.className).toMatch(/border-amber-400/);
+    expect(row(false).className).not.toMatch(/amber/);
+  });
+
+  it('theme colours only: no raw hex in the card classes', () => {
+    expect(row(true, { accent: 'bg-sky-400', waiting: true }).className).not.toMatch(/#[0-9a-f]{3,8}/i);
   });
 
   it('without `active` it leaves the look to the caller (className only)', () => {
     const el = row(undefined);
     expect(el).toHaveClass('extra');
-    expect(el).not.toHaveClass('tab-pill', 'rounded-[11px]');
+    expect(el).not.toHaveClass('glass', 'glass-pill');
   });
 });

@@ -60,24 +60,34 @@ export type WorktreeRowItemProps = {
   runnerName?: string;
   /** Right-click on the row; the hover card closes first. */
   onContextMenu?: (e: React.MouseEvent) => void;
-  /** Given, the row draws itself as a card like a tab: the open worktree is
-   * the raised pill (.tab-pill), the rest flat with a faint hover. */
+  /** Given, the row draws itself as a glass card: resting cards are the pane
+   * glass (solid pane fill, hairline edge, top highlight), the open one the
+   * raised .glass-pill with an accent bar on its left. */
   active?: boolean;
+  /** The open card's accent bar colour (a bg-* class: its repo's colour). */
+  accent?: string;
+  /** An agent here is waiting on the person: the card's edge turns amber. */
+  waiting?: boolean;
 };
 
 export function WorktreeRowItem({
-  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active,
+  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active, accent, waiting,
 }: WorktreeRowItemProps) {
+  // Theme colours only: the pane glass and the edge colour (--pane-edge) both
+  // have light-theme values, so the card holds on every preset.
   const look = active === undefined ? ''
-    : `rounded-[11px] border ${active ? 'tab-pill' : 'border-transparent hover:bg-white/[0.04]'} `;
+    : `rounded-xl border transition-colors ${active ? 'glass-pill' : 'glass pane-card hover:border-[rgb(var(--pane-edge)/0.12)]'} ${waiting ? '!border-amber-400/50' : ''} `;
   const hover = useRowHoverCard();
   const dismiss = useMemo(() => ({ close: hover.close }), [hover.close]);
   // The card floats over the hub, where a native Browser view would otherwise
   // paint straight over it; the hub parks that view while the card is up.
   useRendererOverlay(hover.open);
   return (
-    <div ref={hover.ref} className={`${look}${className}`} data-active={active || undefined} {...hover.triggerProps}
+    <div ref={hover.ref} className={`${look}${className}`} data-active={active || undefined} data-waiting={waiting || undefined} {...hover.triggerProps}
       onContextMenu={onContextMenu ? (e) => { hover.close(); onContextMenu(e); } : undefined}>
+      {active && accent && (
+        <span aria-hidden data-testid="card-accent" className={`pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full ${accent}`} />
+      )}
       <RowHoverCardContext.Provider value={dismiss}>{children}</RowHoverCardContext.Provider>
       {hover.open && hover.rects && (
         <WorktreeHoverCard

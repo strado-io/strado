@@ -93,7 +93,7 @@ describe('SidebarBody: the active Focus', () => {
     expect(onDeleteWorktree).not.toHaveBeenCalled();
   });
 
-  it('shows the agent spinner before the title even when the branch line carries a PR badge, and a flag while one waits', () => {
+  it('agent state: tinted session faces on the card (said to assistive tech too), the PR with its number, and an amber edge while one waits', () => {
     withFocus('local:/r1/wt', 'local:/r2/wt');
     const working = { ...wt('/r1/wt', 'r1'), claudeStatus: 'working', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree;
     const waiting = { ...wt('/r2/wt', 'r2'), claudeStatus: 'waiting', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree;
@@ -103,6 +103,11 @@ describe('SidebarBody: the active Focus', () => {
     expect(within(cards[0]!).getByRole('status', { name: 'agent working' })).toBeInTheDocument();
     expect(within(cards[0]!).getByTestId('pr-status-/r1/wt')).toBeInTheDocument();
     expect(within(cards[1]!).getByRole('status', { name: 'agent waiting' })).toBeInTheDocument();
+    const faces = (card: HTMLElement) => card.querySelectorAll('[data-session-avatar]');
+    expect(faces(cards[0]!)[0]).toHaveAttribute('data-state', 'working');
+    expect(faces(cards[1]!)[0]).toHaveAttribute('data-state', 'waiting');
+    expect(cards[1]!).toHaveAttribute('data-waiting', 'true');
+    expect(cards[0]!).not.toHaveAttribute('data-waiting');
   });
 
   it('keeps a merged worktree in the Focus, with its PR badge; nothing settles away', () => {

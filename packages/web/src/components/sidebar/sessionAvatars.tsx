@@ -1,5 +1,5 @@
 import type { SessionChip } from '../../hooks/sessions';
-import { displayLabel } from '../../hooks/sessions';
+import { chipStatus, displayLabel } from '../../hooks/sessions';
 import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
 
 // One colour per session kind, shared by the avatar stack on the row and the
@@ -32,7 +32,20 @@ export function SessionAvatarIcon({ chip }: { chip: SessionChip }) {
 // crowding out the name; the rest become a count.
 const MAX_AVATARS = 3;
 
-export function SessionAvatarStack({ chips, testId }: { chips: SessionChip[]; testId: string }) {
+/** With `tinted`, each face's ring says what that agent is doing. */
+const STATE_RING = {
+  working: 'ring-sky-400/80',
+  waiting: 'ring-amber-400',
+  idle: 'ring-zinc-950',
+} as const;
+const STATE_WORD = { working: 'working', waiting: 'waiting on you', idle: 'idle' } as const;
+
+export function SessionAvatarStack({ chips, testId, tinted = false }: {
+  chips: SessionChip[];
+  testId: string;
+  /** Ring each face by its agent's state (working, waiting, idle). */
+  tinted?: boolean;
+}) {
   if (chips.length === 0) return null;
   const visible = chips.slice(0, MAX_AVATARS);
   const overflow = chips.length - visible.length;
@@ -40,25 +53,32 @@ export function SessionAvatarStack({ chips, testId }: { chips: SessionChip[]; te
     <span
       data-testid={testId}
       role="img"
-      aria-label={`${chips.length} open session${chips.length === 1 ? '' : 's'}: ${chips.map(displayLabel).join(', ')}`}
+      aria-label={`${chips.length} open session${chips.length === 1 ? '' : 's'}: ${chips.map((c) => {
+        const st = tinted ? chipStatus(c) : undefined;
+        return st ? `${displayLabel(c)} (${STATE_WORD[st]})` : displayLabel(c);
+      }).join(', ')}`}
       className="flex shrink-0 items-center"
     >
-      {visible.map((chip, index) => (
-        <span
-          key={`${chip.mode}:${chip.sessionId}`}
-          data-session-avatar
-          aria-hidden
-          className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 ring-1 ring-zinc-950 ${SESSION_COLOR[chip.mode]} ${index > 0 ? '-ml-1' : ''}`}
-          style={{ zIndex: index + 1 }}
-        >
-          <SessionAvatarIcon chip={chip} />
-        </span>
-      ))}
+      {visible.map((chip, index) => {
+        const st = tinted ? chipStatus(chip) : undefined;
+        return (
+          <span
+            key={`${chip.mode}:${chip.sessionId}`}
+            data-session-avatar
+            data-state={st}
+            aria-hidden
+            className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 ring-1 ${STATE_RING[st ?? 'idle']} ${SESSION_COLOR[chip.mode]} ${index > 0 ? '-ml-1' : ''}`}
+            style={{ zIndex: index + 1 }}
+          >
+            <SessionAvatarIcon chip={chip} />
+          </span>
+        );
+      })}
       {overflow > 0 && (
         <span
           data-session-overflow
           aria-hidden
-          className="relative -ml-1 flex h-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 px-1 font-mono text-[9px] leading-none text-zinc-400 ring-1 ring-zinc-950"
+          className="relative -ml-1 flex h-4 shrink-0 items-center justify-center rounded-full bg-zinc-800 px-1 font-mono text-[11px] leading-none text-zinc-400 ring-1 ring-zinc-950"
           style={{ zIndex: visible.length + 1 }}
         >+{overflow}</span>
       )}

@@ -186,7 +186,7 @@ describe('Sidebar tree', () => {
     expect(screen.queryByRole('status', { name: 'agent working' })).toBeNull();
   });
 
-  it('cards show no session icons; the selected row is softly filled', () => {
+  it('the selected row is the raised glass pill; cards carry their own session faces, not the board\'s stack', () => {
     const withSession = { ...wt('/r1/FD-1', 'FD-1'), hasShellSession: true };
     const withoutSession = wt('/r1/FD-2', 'FD-2');
     wrap(
@@ -197,8 +197,10 @@ describe('Sidebar tree', () => {
     expect(screen.queryByTestId(`session-stack-${withSession.path}`)).toBeNull();
     expect(screen.queryByTestId(`session-stack-${withoutSession.path}`)).toBeNull();
     const selectedRow = screen.getByRole('button', { name: 'FD-1' }).closest('.group');
-    expect(selectedRow).toHaveClass('tab-pill');
+    expect(selectedRow).toHaveClass('glass-pill');
     expect(selectedRow).not.toHaveClass('ring-1');
+    expect(screen.getByTestId(`card-sessions-${withSession.path}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`card-sessions-${withoutSession.path}`)).toBeNull();
   });
 
   it('shows worktree children with a running dot when the repo is expanded', () => {
@@ -271,12 +273,12 @@ describe('Sidebar tree', () => {
     expect(onOpenWorktree).not.toHaveBeenCalled();
   });
 
-  it('lays a worktree out as a card: repo line, ticket as title, branch underneath, no PR icon without a PR', () => {
+  it('lays a worktree out as a card: name, then repo · branch, no PR icon without a PR', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
     const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
-    // Brightness marks the open worktree only; nothing is open here.
-    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('text-zinc-400');
+    // At rest the name is zinc-200; the open worktree's is brighter still.
+    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('text-zinc-200');
     expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();

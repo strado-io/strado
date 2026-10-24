@@ -11,11 +11,12 @@ import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor } from '../Sidebar';
 import { cardLines, worktreeLabel } from './labels';
-import { WorktreeCard } from './WorktreeCard';
+import { WorktreeCard, repoAccent } from './WorktreeCard';
+import { SessionAvatarStack } from './sessionAvatars';
 import { readWorktreeLru } from '../../lib/worktreeLru';
 import { ticketRef, useTickets } from '../../hooks/tickets';
 import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
-import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentMark, diffBadge, isRunning, type MenuItem } from './rowBits';
+import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWaiting, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
 import { FocusIcon, FocusPill, FocusPopover, type FocusRowInfo } from './FocusSwitcher';
@@ -27,6 +28,9 @@ export { BranchIcon, RepoIcon, type MenuItem } from './rowBits';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { SidebarToolbar } from './SidebarToolbar';
 import { localPinId, remotePinId } from './pinIds';
+
+/** Waiting outranks working: it is the one that needs the person. */
+const agentState = (w: Worktree) => (agentWaiting(w) ? 'waiting' : agentWorking(w) ? 'working' : null);
 
 export type SidebarBodyProps = {
   wsId: string;
@@ -100,6 +104,8 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       onOpen={open}
       onContextMenu={onContextMenu && menuItems.length > 0 ? (e) => onContextMenu(e, menuItems) : undefined}
       active={activeRow}
+      accent={repoName ? repoAccent(w.localRepoId ?? repoName) : undefined}
+      waiting={agentWaiting(w as unknown as Worktree)}
       className="group relative flex items-stretch"
     >
       <WorktreeCard
@@ -111,14 +117,15 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
         muted={!reachable}
         onOpen={open}
         label={`${label} on ${w.runnerName}${reachable ? '' : ' (offline — the worktree is safe there)'}`}
-        titleLeading={agentMark(w as unknown as Worktree)}
-        trailing={(
+        agents={<SessionAvatarStack chips={chips} testId={`card-sessions-${testIdSuffix}`} tinted />}
+        agentState={agentState(w as unknown as Worktree)}
+        meta={(
           <>
             {unsandboxed && (
               <span
                 data-testid={`no-sandbox-${testIdSuffix}`}
                 title="Sandbox build failed — agents in this worktree run directly on the runner. Rebuild sandbox from the row menu."
-                className="shrink-0 rounded bg-amber-500/15 px-1 text-[9px] font-medium uppercase tracking-wide text-amber-300"
+                className="shrink-0 rounded bg-amber-500/15 px-1 text-[11px] font-medium text-amber-300"
               >
                 no sandbox
               </span>
@@ -232,6 +239,8 @@ export function SidebarBody({
         onSettings={onWorktreeSettings}
         onContextMenu={(e) => openContextMenu(e, menuItems)}
         active={activeRow}
+        accent={repo ? repoAccent(repo.id) : undefined}
+        waiting={agentWaiting(w)}
         className="group relative flex items-stretch"
       >
         <WorktreeCard
@@ -242,15 +251,18 @@ export function SidebarBody({
           active={activeRow}
           onOpen={() => open(w)}
           label={worktreeLabel(w)}
-          titleLeading={agentMark(w)}
-          leading={mr ? <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} /> : null}
-          trailing={(
+          agents={<SessionAvatarStack chips={chips} testId={`card-sessions-${testIdSuffix}`} tinted />}
+          agentState={agentState(w)}
+          meta={(
             <>
+              {mr && <MergeRequestBadge worktree={w} mr={mr} onOpen={onOpenMr} testIdSuffix={testIdSuffix} showNumber />}
               {diffBadge(w, testIdSuffix)}
               {isRunning(w) && (
-                <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" title="running">
                   <span
                     data-testid={`run-dot-${testIdSuffix}`}
+                    role="img"
+                    aria-label="running"
                     className="h-1.5 w-1.5 rounded-full bg-emerald-500"
                   />
                 </span>
