@@ -65,6 +65,17 @@ export async function registerSshSetupRoutes(app: FastifyInstance): Promise<void
   };
 
   const live = new Map<string, SetupRun>();
+  /** Ended runs' transcripts: the failure reason is what a reopened dialog
+   *  most needs. A few, briefly. */
+  const ended = new Map<string, { lines: string[]; at: number }>();
+  const KEEP_MS = 15 * 60_000;
+  const KEEP_MAX = 20;
+  const keep = (jobId: string, lines: string[]) => {
+    const now = Date.now();
+    for (const [id, e] of ended) if (now - e.at > KEEP_MS) ended.delete(id);
+    ended.set(jobId, { lines, at: now });
+    while (ended.size > KEEP_MAX) ended.delete(ended.keys().next().value!);
+  };
 
   app.post(SSH_SETUP_ROUTES.start, async (req) => {
     assertLocalHub(req.headers);
@@ -83,7 +94,10 @@ export async function registerSshSetupRoutes(app: FastifyInstance): Promise<void
       runSshSetup(ctx, { jobId, dest, name: body.data.name ?? null }, deps, run));
     jobId = job.id;
     live.set(job.id, run);
-    void app.deps.jobs.wait(job.id).then(() => live.delete(job.id));
+    void app.deps.jobs.wait(job.id).then(() => {
+      live.delete(job.id);
+      keep(job.id, run.transcript);
+    });
     return { jobId: job.id };
   });
 
@@ -101,10 +115,19 @@ export async function registerSshSetupRoutes(app: FastifyInstance): Promise<void
     const run = live.get(jobId);
     if (!run) throw new AppError('NOT_FOUND', 'no such setup run');
     live.delete(jobId);
+    keep(jobId, run.transcript);
     run.cancel();
     // Now, not when the job settles: until then it still reads as running, and
     // the setup terminal ws would let a late attach reach a live pty.
     app.deps.terminal.kill(`${SSH_SETUP_KEY_PREFIX}${jobId}`);
     return reply.code(204).send();
+  });
+
+  app.get(SSH_SETUP_ROUTES.transcript, async (req) => {
+    assertLocalHub(req.headers);
+    const { jobId } = JobParams.parse(req.params);
+    const lines = live.get(jobId)?.transcript ?? ended.get(jobId)?.lines;
+    if (!lines) throw new AppError('NOT_FOUND', 'no such setup run');
+    return { lines: [...lines] };
   });
 }

@@ -1,6 +1,6 @@
 // In-memory session registry + per-session byte ring buffer.
 // Buffer is memory-only by design: it survives server restarts (the daemon
-// does), not daemon restarts. Matches the old in-process 256KB scrollback.
+// does), not daemon restarts. 2MB: room for the terminal's 10,000-line scrollback.
 
 /** Structural minimum the store needs from a PTY; pty.ts's Pty satisfies it. */
 export interface PtyLike {
@@ -18,7 +18,7 @@ export interface Session {
   exitCode: number | null;
 }
 
-const DEFAULT_BUFFER_CAP = 256 * 1024;
+const DEFAULT_BUFFER_CAP = 2 * 1024 * 1024;
 
 export class SessionStore {
   private readonly sessions = new Map<string, Session>();

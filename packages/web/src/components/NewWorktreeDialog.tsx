@@ -69,7 +69,8 @@ export function NewWorktreeDialog({
    */
   onSubmit: (payload: CreatePayload) => void | Promise<void | { jobId?: string } | undefined>;
   /** Called once the job finishes; the caller closes the dialog. */
-  onDone?: () => void;
+  /** The job finished; `result` is what it returned (the new worktree's `{ path }`, plus `runnerId` for a remote one). */
+  onDone?: (result?: unknown) => void;
 }) {
   const initialRepo = repos.find((r) => r.id === preselectRepoId) ?? repos[0];
   // Opened from a repo row's + button: the repo is already decided — no picker.
@@ -106,7 +107,7 @@ export function NewWorktreeDialog({
   // its failure is shown on the step that failed rather than as a generic
   // "failed to create worktree".
   useEffect(() => {
-    if (progress.done) onDone?.();
+    if (progress.done) onDone?.(progress.result);
   }, [progress.done]);
   useEffect(() => {
     if (progress.error) setCreating(false);

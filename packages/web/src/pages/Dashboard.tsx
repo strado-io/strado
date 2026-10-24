@@ -33,6 +33,7 @@ import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import type { HostTab } from '../components/hosts/HostDetails';
 import { setAppearance } from '../hooks/useAppearance';
+import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import type { JarvisAppPort } from '../lib/jarvis/execute';
 import { FeedbackDialog } from '../components/FeedbackDialog';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -338,6 +339,7 @@ export function Dashboard(props: {
   // search button) put the cursor in it.
   const commandBarRef = useRef<CommandBarHandle | null>(null);
   const focusCommandBar = () => commandBarRef.current?.focus();
+  const { showDock } = useHubDisplayPreferences();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
@@ -1156,11 +1158,15 @@ export function Dashboard(props: {
             )}
           </div>
         )}
-        {!onHome && !settingsSection && <div className="dock-panel shrink-0 border-t border-white/[0.07] pt-1">{missionStack(true)}</div>}
+        {!onHome && !settingsSection && (
+          // With the bottom bar hidden and nothing in the stack, no rule or padding is left behind.
+          <div data-testid="mission-stack-row" className={`dock-panel shrink-0 ${!showDock && stackHeight === 0 ? '' : 'border-t border-white/[0.07] pt-1'}`}>{missionStack(true)}</div>
+        )}
         <Dock
           worktree={dockWorktree}
           focus={focusApi.active?.name ?? null}
           bare={onHome}
+          collapsed={!showDock}
         >
         {onHome || settingsSection ? null : commandBar(false)}
         </Dock>
@@ -1191,7 +1197,7 @@ export function Dashboard(props: {
           key={`${settingsSection}:${settingsNonce}`}
           section={settingsSection}
           host={settingsSection === 'runners' ? settingsHost : undefined}
-          bottomInset
+          bottomInset={showDock}
           onClose={() => { setSettingsSection(null); setSettingsHost(undefined); }}
           onJiraConnected={() => {
             track('jira_connected');
@@ -1201,7 +1207,11 @@ export function Dashboard(props: {
         />
       )}
       {settingsSection && (
-        <div className="fixed inset-x-0 bottom-0 z-[60] flex h-11 items-center border-t border-zinc-900 bg-zinc-950 px-4" data-testid="settings-command-bar">
+        // Follows Settings › Appearance › Show bottom bar: hidden, it opens only while ⌘K holds the keyboard.
+        <div className={`fixed inset-x-0 bottom-0 z-[60] flex items-center bg-zinc-950 px-4 ${showDock
+          ? 'h-11 border-t border-zinc-900'
+          : 'h-0 overflow-hidden focus-within:h-11 focus-within:overflow-visible focus-within:border-t focus-within:border-zinc-900'}`}
+          data-testid="settings-command-bar" data-collapsed={!showDock || undefined}>
           {commandBar(false)}
         </div>
       )}

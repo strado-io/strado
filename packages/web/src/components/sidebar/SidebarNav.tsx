@@ -53,7 +53,8 @@ export function SidebarNav({ selected, onSelect, onOpenSettings }: {
   onOpenSettings: () => void;
 }) {
   return (
-    <nav aria-label="Pages" className="flex items-center gap-1 px-1">
+    // A glass bar like a pane card: 40px, the 28px buttons inside, settings at the right.
+    <nav aria-label="Pages" data-testid="sidebar-nav" className="glass pane-card flex h-10 items-center gap-1 px-1.5">
       <NavButton label="Worktrees" icon={worktreesIcon} active={selected?.kind === 'worktrees'}
         onClick={() => onSelect({ kind: 'worktrees' })} />
       <NavButton label="Code reviews" icon={reviewsIcon} active={selected?.kind === 'reviews'}

@@ -1,6 +1,6 @@
 // strado-ptyd entrypoint.
 //
-//   node ptyd.cjs --socket=/path/to/ptyd.sock [--buffer-bytes=262144]
+//   node ptyd.cjs --socket=/path/to/ptyd.sock [--buffer-bytes=2097152]
 //   node ptyd.cjs --handoff --snapshot=PATH --socket=PATH
 //
 // Flags ride argv, NOT env: esbuild statically inlines process.env.X and

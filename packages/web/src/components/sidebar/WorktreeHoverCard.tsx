@@ -6,6 +6,24 @@ import { WORKFLOW_STATUSES } from '../WorkflowStatusSelect';
 import { SESSION_COLOR, SessionAvatarIcon } from './sessionAvatars';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './prVisuals';
 import { worktreeLabel, worktreeTitle } from './labels';
+import { BranchIcon } from './rowBits';
+
+const icon = { width: 14, height: 14, viewBox: '0 0 24 24', 'aria-hidden': true, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
+// Lucide "laptop", "file-diff", "square-terminal", "settings".
+const LaptopIcon = () => <svg {...icon}><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z" /><path d="M20.054 15.987H3.946" /></svg>;
+const DiffIcon = () => <svg {...icon}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M9 10h6" /><path d="M12 13V7" /><path d="M9 17h6" /></svg>;
+const ShellIcon = () => <svg {...icon}><path d="m7 11 2-2-2-2" /><path d="M11 13h4" /><rect width="18" height="18" x="3" y="3" rx="2" /></svg>;
+const GearIcon = () => <svg {...icon}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>;
+
+/** One line of the card: a 16px icon slot, then the text (the reference look: Claude's session card). */
+function Line({ glyph, children, className = 'text-zinc-300', testId }: { glyph: React.ReactNode; children: React.ReactNode; className?: string; testId?: string }) {
+  return (
+    <div data-testid={testId} className={`flex min-h-5 min-w-0 items-center gap-2.5 text-[12px] leading-5 ${className}`}>
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500">{glyph}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1 truncate">{children}</span>
+    </div>
+  );
+}
 
 export const HOVER_CARD_WIDTH = 280;
 const GAP = 8;
@@ -92,12 +110,25 @@ export function WorktreeHoverCard({
   const pipeline = mr?.pipeline ? PIPELINE_DETAIL[mr.pipeline] : null;
   const pr = mr ? prKind(mr) : null;
 
-  const action = 'rounded px-1.5 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100';
+  // The card's name once: the human title when there is one, else the label;
+  // every line below says something the lines above didn't.
+  const label = worktreeLabel(worktree);
+  const name = title || label;
+  const shown = new Set([name.toLowerCase()]);
+  const fresh = (v: string | null | undefined) => {
+    if (!v || shown.has(v.toLowerCase())) return null;
+    shown.add(v.toLowerCase());
+    return v;
+  };
+  const sub = fresh(label);
+  const branch = fresh(worktree.branch);
+
+  const iconButton = 'flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100';
 
   return createPortal(
     <div
       role="dialog"
-      aria-label={`${worktreeLabel(worktree)} details`}
+      aria-label={`${label} details`}
       data-testid={`hover-card-${worktree.path}`}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
@@ -107,122 +138,90 @@ export function WorktreeHoverCard({
       // z-30 keeps the card above the board and the sidebar it floats out of,
       // and below every dialog: a hover affordance must never cover a
       // confirm the user is trying to read.
-      className="surface-pop fixed z-30 flex flex-col gap-2 rounded-lg p-2.5 text-left"
+      className="surface-pop fixed z-30 flex flex-col gap-1.5 rounded-xl px-3 py-2 text-left"
       style={{ left: x, top: y, width: HOVER_CARD_WIDTH }}
     >
-      <div>
-        <div className="flex items-center gap-1.5">
-          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-zinc-300">
-            {worktreeLabel(worktree)}
-          </span>
-          {status && (
-            <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">
-              {status}
-            </span>
-          )}
-        </div>
-        {title && <div className="mt-1 line-clamp-2 text-xs font-medium text-zinc-100">{title}</div>}
-        <div className="mt-1 truncate font-mono text-[10px] text-zinc-500" title={worktree.branch ?? undefined}>
-          {worktree.branch ?? 'no branch'}
-        </div>
-        {runnerName && <div className="mt-0.5 truncate text-[10px] text-zinc-500">on {runnerName}</div>}
+      {/* Title, then the quick actions as quiet icons (no footer row). */}
+      <div className="flex min-w-0 items-center gap-1">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100" title={name}>{name}</span>
+        {status && <span className="mr-1 shrink-0 text-[11px] text-zinc-500">{status}</span>}
+        {onOpenDiff && <button type="button" aria-label="Changes" title="Changes" className={iconButton} onClick={onOpenDiff}><DiffIcon /></button>}
+        {onOpenShell && <button type="button" aria-label="New shell" title="New shell" className={iconButton} onClick={onOpenShell}><ShellIcon /></button>}
+        {onOpenSettings && <button type="button" aria-label="Settings" title="Settings" className={iconButton} onClick={onOpenSettings}><GearIcon /></button>}
       </div>
 
-      {mr && pr && (
-        <button
-          type="button"
-          data-testid="hover-card-pr"
-          aria-label={`Open ${pr.kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
-          onClick={onOpenMr}
-          className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 p-2 text-left hover:border-zinc-700 hover:bg-zinc-950"
-        >
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span className="shrink-0" style={{ color: MR_STATE_COLOR[mr.state] }}>
-              <PrStateIcon state={mr.state} />
+      <div className="flex flex-col gap-0.5">
+        {sub && <Line glyph={<span className="text-[11px] font-semibold">#</span>}>{sub}</Line>}
+        <Line glyph={<LaptopIcon />}>{runnerName ?? 'This Mac'}</Line>
+        {branch && <Line glyph={<BranchIcon />} className="text-zinc-400"><span className="truncate font-mono text-[11px]" title={branch}>{branch}</span></Line>}
+        {dirty && (
+          <Line glyph={<DiffIcon />} testId="hover-card-diff" className="text-zinc-400">
+            <span className="font-mono text-[11px]">
+              {diff!.files} file{diff!.files === 1 ? '' : 's'}
+              <span className="ml-1.5 text-emerald-500/80">+{diff!.additions}</span>
+              <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
             </span>
-            <span className="font-mono text-zinc-400">{pr.prefix}{mr.number}</span>
-            <span className="font-medium" style={{ color: MR_STATE_COLOR[mr.state] }}>
-              {mr.state.charAt(0).toUpperCase() + mr.state.slice(1)}
-            </span>
-            {pipeline && (
-              <span className={`ml-auto shrink-0 ${pipeline.cls}`}>{pipeline.glyph} {pipeline.label}</span>
-            )}
-          </div>
-          <div className="mt-1 line-clamp-2 text-xs text-zinc-100">{mr.title}</div>
-          <div className="mt-1 truncate font-mono text-[10px] text-zinc-500">
-            {mr.sourceBranch}{mr.targetBranch ? ` → ${mr.targetBranch}` : ''}
-          </div>
-        </button>
-      )}
-
-      <div>
-        <div className="flex items-center justify-between px-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-          <span>Sessions</span>
-          {sessions.length > 0 && <span className="font-mono">{sessions.length}</span>}
-        </div>
-        {sessions.length === 0 ? (
-          <div className="mt-1 px-0.5 text-xs text-zinc-600">No open sessions</div>
-        ) : (
-          <div className="mt-1 max-h-52 space-y-0.5 overflow-y-auto">
-            {sessions.map((chip) => {
-              const state = chipStatus(chip);
-              const live = state === 'working' || state === 'waiting';
-              return (
-                <button
-                  type="button"
-                  key={`${chip.mode}:${chip.sessionId}`}
-                  onClick={() => onOpenSession(chip.mode, chip.sessionId)}
-                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-                >
-                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${SESSION_COLOR[chip.mode]}`}>
-                    <SessionAvatarIcon chip={chip} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{displayLabel(chip)}</span>
-                  {live && (
-                    <span
-                      data-testid="session-live-dot"
-                      aria-hidden
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        state === 'working' ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'
-                      }`}
-                    />
-                  )}
-                  {state && <span className={`shrink-0 text-[10px] ${STATUS_TEXT[state]}`}>{state}</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div
-        data-testid="hover-card-footer"
-        className="flex items-center gap-2 border-t border-zinc-800 pt-2 font-mono text-[10px] text-zinc-500"
-      >
-        {dirty ? (
-          <span className="truncate">
-            {diff!.files} file{diff!.files === 1 ? '' : 's'}
-            <span className="ml-1 text-emerald-500/80">+{diff!.additions}</span>
-            <span className="ml-1 text-red-400/80">-{diff!.deletions}</span>
-          </span>
-        ) : (
-          <span className="truncate">No uncommitted changes</span>
+          </Line>
         )}
         {running && (
-          <span className="ml-auto flex shrink-0 items-center gap-1 text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-            running{process?.port ? ` :${process.port}` : ''}
-          </span>
+          <Line glyph={<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />} testId="hover-card-running" className="text-emerald-400">
+            <span className="font-mono text-[11px]">running{process?.port ? ` :${process.port}` : ''}</span>
+          </Line>
+        )}
+        {mr && pr && (
+          <button
+            type="button"
+            data-testid="hover-card-pr"
+            aria-label={`Open ${pr.kind} ${mr.number}, ${mr.state}${pipeline ? `, ${pipeline.label.toLowerCase()}` : ''}`}
+            onClick={onOpenMr}
+            className="-mx-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-zinc-800"
+          >
+            <Line glyph={<span style={{ color: MR_STATE_COLOR[mr.state] }}><PrStateIcon state={mr.state} /></span>}>
+              <span className="font-mono text-zinc-400">{pr.prefix}{mr.number}</span>
+              <span className="truncate text-zinc-200">{mr.title}</span>
+            </Line>
+            <div className="ml-[26px] flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <span style={{ color: MR_STATE_COLOR[mr.state] }}>{mr.state.charAt(0).toUpperCase() + mr.state.slice(1)}</span>
+              {pipeline && <span className={pipeline.cls}>{pipeline.glyph} {pipeline.label}</span>}
+              <span className="min-w-0 truncate font-mono">{mr.sourceBranch}{mr.targetBranch ? ` → ${mr.targetBranch}` : ''}</span>
+            </div>
+          </button>
         )}
       </div>
 
-      <div className="flex items-center gap-1">
-        {onOpenDiff && <button type="button" className={action} onClick={onOpenDiff}>Changes</button>}
-        {onOpenShell && <button type="button" className={action} onClick={onOpenShell}>New shell</button>}
-        {onOpenSettings && (
-          <button type="button" className={`${action} ml-auto`} onClick={onOpenSettings}>Settings</button>
-        )}
-      </div>
+      {sessions.length === 0 ? (
+        <div className="border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-500">No open sessions</div>
+      ) : (
+        <div className="-mx-1.5 max-h-52 overflow-y-auto border-t border-zinc-800 pt-1">
+          {sessions.map((chip) => {
+            const state = chipStatus(chip);
+            const live = state === 'working' || state === 'waiting';
+            return (
+              <button
+                type="button"
+                key={`${chip.mode}:${chip.sessionId}`}
+                onClick={() => onOpenSession(chip.mode, chip.sessionId)}
+                className="flex w-full items-center gap-2.5 rounded-md px-1.5 py-0.5 text-left text-[12px] leading-5 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${SESSION_COLOR[chip.mode]}`}>
+                  <SessionAvatarIcon chip={chip} />
+                </span>
+                <span className="min-w-0 flex-1 truncate">{displayLabel(chip)}</span>
+                {live && (
+                  <span
+                    data-testid="session-live-dot"
+                    aria-hidden
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      state === 'working' ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'
+                    }`}
+                  />
+                )}
+                {state && <span className={`shrink-0 text-[11px] ${STATUS_TEXT[state]}`}>{state}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>,
     document.body,
   );

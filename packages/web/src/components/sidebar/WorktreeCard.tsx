@@ -1,8 +1,9 @@
-// The worktree card: what a row in the sidebar's Focus looks like. Three
-// lines — the repo it belongs to and when it was last opened, the most human
-// name we have for the work, then the branch with whatever is live on it
-// (PR state, changes, sessions). Behaviour (open, hover card, menus) is the
-// caller's; this is only the shape.
+// The worktree card: what a row in the sidebar's Focus looks like. Two lines,
+// nothing said twice — the most human name for the work with when it was last
+// opened (and who is open in it), then where it lives (repo · branch) with
+// whatever is live on it (PR, changes, run, runner). The surface (glass card,
+// accent bar, waiting edge) is the row's; behaviour (open, hover card, menus)
+// is the caller's; this is only the shape.
 
 /** Palette for repo avatars (tinted like the tab tiles); a repo keeps its colour by a hash of its id. */
 const AVATAR_COLORS = [
@@ -13,6 +14,9 @@ const AVATAR_COLORS = [
   'bg-rose-400/10 ring-rose-400/20 text-rose-200',
   'bg-teal-400/10 ring-teal-400/20 text-teal-200',
 ];
+
+/** The same hues as a solid bar: the open card's left accent, in its repo's colour. */
+const ACCENT_COLORS = ['bg-violet-400', 'bg-sky-400', 'bg-emerald-400', 'bg-amber-400', 'bg-rose-400', 'bg-teal-400'];
 
 function hash(s: string): number {
   let h = 0;
@@ -27,6 +31,11 @@ export function repoInitials(name: string): string {
   return letters.toUpperCase();
 }
 
+/** A repo's accent colour (a bg-* class), stable by its id like its avatar. */
+export function repoAccent(id: string): string {
+  return ACCENT_COLORS[hash(id) % ACCENT_COLORS.length]!;
+}
+
 export function RepoAvatar({ id, name }: { id: string; name: string }) {
   const color = AVATAR_COLORS[hash(id) % AVATAR_COLORS.length]!;
   return (
@@ -37,9 +46,10 @@ export function RepoAvatar({ id, name }: { id: string; name: string }) {
   );
 }
 
-export function WorktreeCard({ repo, title, subtitle, time, active, muted = false, onOpen, label, titleLeading, leading, trailing, titleClassName = '' }: {
+export function WorktreeCard({ repo, title, subtitle, time, active, muted = false, onOpen, label, agents, agentState = null, meta, titleClassName = '' }: {
   repo?: { id: string; name: string } | null;
   title: string;
+  /** The branch: shown (mono) only when it says something the title does not. */
   subtitle: string;
   /** Already short: "5h". Empty hides the slot. */
   time: string;
@@ -49,43 +59,42 @@ export function WorktreeCard({ repo, title, subtitle, time, active, muted = fals
   onOpen: () => void;
   /** Accessible name of the whole card's button. */
   label: string;
-  /** Before the title: the agent's state (working spinner, waiting flag). */
-  titleLeading?: React.ReactNode;
-  /** Before the subtitle: the PR state icon. */
-  leading?: React.ReactNode;
-  /** After the subtitle, right-aligned: changes, sessions, run dot, runner. */
-  trailing?: React.ReactNode;
+  /** Beside the time: who is open here (the session avatars, tinted by state). */
+  agents?: React.ReactNode;
+  /** Said to assistive tech (the avatars' tint says it to the eye). */
+  agentState?: 'working' | 'waiting' | null;
+  /** After repo · branch, right-aligned: PR, changes, run dot, runner. */
+  meta?: React.ReactNode;
   titleClassName?: string;
 }) {
-  // A resting card reads quietly; the one you are in is the bright one.
-  const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-100' : 'text-zinc-400 group-hover:text-zinc-200';
-  // The mono line only when it adds something ("main" under "main" says nothing).
-  const second = subtitle.trim().toLowerCase() === title.trim().toLowerCase() ? '' : subtitle;
+  const titleColor = muted ? 'text-zinc-500' : active ? 'text-zinc-100' : 'text-zinc-200';
+  // The mono branch only when it adds something ("main" under "main" says nothing).
+  const branch = subtitle.trim().toLowerCase() === title.trim().toLowerCase() ? '' : subtitle;
   return (
     // The whole card opens the worktree; the title button carries the
     // accessible name and keyboard focus, and its click bubbles up here.
-    <div onClick={onOpen} className="flex min-w-0 flex-1 cursor-pointer flex-col py-2 pl-2 pr-1.5">
-      {repo && (
-        <div data-card-repo className="mb-1.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
-          <RepoAvatar id={repo.id} name={repo.name} />
-          <span className="min-w-0 flex-1 truncate">{repo.name}</span>
-          {time && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{time}</span>}
-        </div>
-      )}
-      <div className="flex min-w-0 items-center gap-1.5">
-        {titleLeading && <span className="flex h-4 w-3.5 shrink-0 items-center justify-center">{titleLeading}</span>}
+    <div onClick={onOpen} className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 py-2 pl-3 pr-2">
+      <div className="flex min-w-0 items-center gap-2">
         <button type="button" aria-label={label} title={label}
           className={`block min-w-0 flex-1 truncate text-left text-[13px] font-medium leading-5 ${titleColor} ${titleClassName}`}>
           {title}
         </button>
+        {agentState && <span role="status" aria-label={`agent ${agentState}`} className="sr-only">{agentState === 'waiting' ? 'Waiting on you' : 'Working'}</span>}
+        {agents}
+        {time && <span data-card-time className="shrink-0 text-[11px] tabular-nums text-zinc-500">{time}</span>}
       </div>
-      <div className="mt-px flex min-h-4 items-center gap-1.5">
-        {leading}
-        {second && (
-          <span data-card-subtitle className={`min-w-0 flex-1 truncate font-mono text-[11px] ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>{second}</span>
+      <div className={`flex min-h-4 min-w-0 items-center gap-1.5 text-[11px] ${muted ? 'text-zinc-600' : 'text-zinc-500'}`}>
+        {repo && (
+          // The repo's colour as a dot (its identity on every card; the open card is marked by its glass, not a bar).
+          <span data-card-repo className="flex min-w-0 shrink items-center gap-1.5">
+            <span aria-hidden data-testid="card-repo-dot" className={`h-1.5 w-1.5 shrink-0 rounded-full ${repoAccent(repo.id)} ${muted ? 'opacity-40' : 'opacity-80'}`} />
+            <span className="min-w-0 truncate">{repo.name}</span>
+          </span>
         )}
-        {!second && <span className="flex-1" />}
-        {trailing && <span className="flex shrink-0 items-center gap-1.5">{trailing}</span>}
+        {repo && branch && <span aria-hidden>·</span>}
+        {branch && <span data-card-subtitle className="min-w-0 flex-1 truncate font-mono">{branch}</span>}
+        {!branch && <span className="flex-1" />}
+        {meta && <span className="flex shrink-0 items-center gap-1.5">{meta}</span>}
       </div>
     </div>
   );

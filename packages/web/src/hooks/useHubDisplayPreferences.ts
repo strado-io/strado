@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 const SHOW_TIME_KEY = 'strado:hub-show-time';
 const SHOW_STATUS_KEY = 'strado:hub-show-status';
+/** The bottom bar (location + command box). Off, it shows only while ⌘K holds the keyboard. */
+const SHOW_DOCK_KEY = 'strado:show-dock';
 const CHANGE_EVENT = 'strado:hub-display-change';
 
 function readPreference(key: string): boolean {
@@ -11,11 +13,13 @@ function readPreference(key: string): boolean {
 export function useHubDisplayPreferences() {
   const [showTime, setShowTimeState] = useState(() => readPreference(SHOW_TIME_KEY));
   const [showStatus, setShowStatusState] = useState(() => readPreference(SHOW_STATUS_KEY));
+  const [showDock, setShowDockState] = useState(() => readPreference(SHOW_DOCK_KEY));
 
   useEffect(() => {
     const sync = () => {
       setShowTimeState(readPreference(SHOW_TIME_KEY));
       setShowStatusState(readPreference(SHOW_STATUS_KEY));
+      setShowDockState(readPreference(SHOW_DOCK_KEY));
     };
     window.addEventListener(CHANGE_EVENT, sync);
     return () => window.removeEventListener(CHANGE_EVENT, sync);
@@ -33,5 +37,11 @@ export function useHubDisplayPreferences() {
     window.dispatchEvent(new Event(CHANGE_EVENT));
   }, []);
 
-  return { showTime, setShowTime, showStatus, setShowStatus };
+  const setShowDock = useCallback((value: boolean) => {
+    localStorage.setItem(SHOW_DOCK_KEY, String(value));
+    setShowDockState(value);
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  }, []);
+
+  return { showTime, setShowTime, showStatus, setShowStatus, showDock, setShowDock };
 }

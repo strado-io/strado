@@ -60,14 +60,16 @@ export function HoverActions({ active, children }: { active: boolean; children: 
 // The row's leading glyph when a branch has an open/merged/closed PR. The
 // detail (title, checks, branches) belongs to the row's hover card — the icon
 // is the state at a glance and a click into the review.
-export function MergeRequestBadge({ worktree, mr, onOpen, testIdSuffix = worktree.path }: {
+export function MergeRequestBadge({ worktree, mr, onOpen, testIdSuffix = worktree.path, showNumber = false }: {
   worktree: Worktree;
   mr: MergeRequest;
   onOpen?: (w: Worktree, mr: MergeRequest) => void;
   testIdSuffix?: string;
+  /** The number beside the icon (#12, !12), as the sidebar card shows it. */
+  showNumber?: boolean;
 }) {
   const pipeline = mr.pipeline ? PIPELINE_DETAIL[mr.pipeline] : null;
-  const { kind } = prKind(mr);
+  const { kind, prefix } = prKind(mr);
   return (
     <button
       type="button"
@@ -77,10 +79,11 @@ export function MergeRequestBadge({ worktree, mr, onOpen, testIdSuffix = worktre
         event.stopPropagation();
         onOpen?.(worktree, mr);
       }}
-      className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm outline-none ring-offset-zinc-950 focus-visible:ring-1 focus-visible:ring-sky-400"
+      className={`flex h-3.5 shrink-0 items-center justify-center gap-0.5 rounded-sm outline-none ring-offset-zinc-950 focus-visible:ring-1 focus-visible:ring-sky-400 ${showNumber ? '' : 'w-3.5'}`}
       style={{ color: MR_STATE_COLOR[mr.state] }}
     >
       <PrStateIcon state={mr.state} />
+      {showNumber && <span className="font-mono text-[11px] tabular-nums">{prefix}{mr.number}</span>}
     </button>
   );
 }
@@ -200,7 +203,7 @@ export function diffBadge(w: Worktree, testIdSuffix = w.path) {
     <span
       data-testid={`diff-${testIdSuffix}`}
       title={`${d.files} file${d.files === 1 ? '' : 's'} changed · +${d.additions} -${d.deletions}`}
-      className="shrink-0 font-mono text-[10px] tabular-nums"
+      className="shrink-0 font-mono text-[11px] tabular-nums"
     >
       <span className="text-emerald-500/80">+{d.additions}</span>
       <span className="ml-1 text-red-400/80">-{d.deletions}</span>

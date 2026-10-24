@@ -19,9 +19,10 @@ vi.mock('../services/sshSetup/job.js', async (importOriginal) => {
       ctx: { progress(m: string, d?: unknown): void },
       input: { jobId: string; dest: unknown; name: unknown },
       _deps: unknown,
-      run: { ask(ctx: unknown, q: Omit<SshSetupQuestion, 'id'>): Promise<boolean> },
+      run: { ask(ctx: unknown, q: Omit<SshSetupQuestion, 'id'>): Promise<boolean>; transcript: string[] },
     ) => {
       Object.assign(seen, input);
+      run.transcript.push('▸ Connect', 'Connected');
       const yes = await run.ask(ctx, { kind: 'linger', message: 'Linger?', command: 'loginctl enable-linger' });
       return { runnerId: 'r1', name: 'box', sandboxes: yes, warnings: [] };
     },
@@ -120,5 +121,31 @@ describe('answer + cancel', () => {
     expect(job.status).toBe('error');
     expect((job.error as Error).message).toBe('setup cancelled');
     expect((await app.inject({ method: 'POST', url: `/api/runners/ssh-setup/${jobId}/cancel` })).statusCode).toBe(404);
+  });
+});
+
+describe('GET transcript', () => {
+  const transcript = (jobId: string, headers: Record<string, string> = {}) =>
+    app.inject({ method: 'GET', url: `/api/runners/ssh-setup/${jobId}/transcript`, headers });
+
+  it('replays every line so far to a page that attaches late, during the run and after it ends', async () => {
+    const { jobId, q } = await startAndAsk();
+    expect((await transcript(jobId)).json()).toEqual({ lines: ['▸ Connect', 'Connected'] });
+    await app.inject({ method: 'POST', url: `/api/runners/ssh-setup/${jobId}/answer`, payload: { questionId: q.id, yes: true } });
+    await app.deps.jobs.wait(jobId);
+    expect((await transcript(jobId)).json()).toEqual({ lines: ['▸ Connect', 'Connected'] });
+  });
+
+  it('kept after a cancel too (that is when the reason matters)', async () => {
+    const { jobId } = await startAndAsk();
+    await app.inject({ method: 'POST', url: `/api/runners/ssh-setup/${jobId}/cancel` });
+    await app.deps.jobs.wait(jobId);
+    expect((await transcript(jobId)).statusCode).toBe(200);
+  });
+
+  it('unknown job → 404; relayed → 403', async () => {
+    expect((await transcript('missing')).statusCode).toBe(404);
+    const { jobId } = await startAndAsk();
+    expect((await transcript(jobId, { [VIA_RELAY_HEADER]: '1' })).statusCode).toBe(403);
   });
 });

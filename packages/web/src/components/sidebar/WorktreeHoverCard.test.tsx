@@ -141,20 +141,20 @@ describe('WorktreeHoverCard', () => {
         })}
       />,
     );
-    const footer = screen.getByTestId('hover-card-footer');
-    expect(footer).toHaveTextContent('2 files');
-    expect(footer).toHaveTextContent('+12');
-    expect(footer).toHaveTextContent('-3');
-    expect(footer).toHaveTextContent('running :3001');
+    const card = screen.getByRole('dialog');
+    expect(screen.getByTestId('hover-card-diff')).toHaveTextContent('2 files+12-3');
+    expect(screen.getByTestId('hover-card-running')).toHaveTextContent('running :3001');
+    expect(card).toHaveTextContent('running :3001');
   });
 
   it('keeps the footer honest on a clean, stopped worktree', () => {
     render(
       <WorktreeHoverCard {...props()} worktree={worktree({ diffStats: null })} />,
     );
-    const footer = screen.getByTestId('hover-card-footer');
-    expect(footer).toHaveTextContent('No uncommitted changes');
-    expect(footer).not.toHaveTextContent('running');
+    // Clean and stopped says nothing.
+    expect(screen.queryByTestId('hover-card-diff')).toBeNull();
+    expect(screen.queryByTestId('hover-card-running')).toBeNull();
+    expect(screen.getByRole('dialog')).not.toHaveTextContent(/uncommitted/);
   });
 
   it('offers changes, a new shell and settings as quick actions', () => {
@@ -180,9 +180,22 @@ describe('WorktreeHoverCard', () => {
     expect(screen.getByRole('button', { name: 'New shell' })).toBeInTheDocument();
   });
 
+  it('names the worktree once: no second line when the branch is the name', () => {
+    render(<WorktreeHoverCard {...props()} worktree={worktree({ branch: 'testset', meta: {} as Worktree['meta'] })} runnerName="runner-test" />);
+    const card = screen.getByRole('dialog');
+    expect(card.textContent!.match(/testset/g)).toHaveLength(1);
+    expect(card).toHaveTextContent('runner-test');
+    expect(screen.queryByText(/^sessions$/i)).toBeNull(); // no heading over the list
+  });
+
+  it('a repo-named title over main says main once', () => {
+    render(<WorktreeHoverCard {...props()} worktree={worktree({ branch: 'main', meta: { title: 'Strado' } as Worktree['meta'] })} />);
+    expect(screen.getByRole('dialog').textContent!.match(/main/g)).toHaveLength(1);
+  });
+
   it('names the machine for a session that lives on a runner', () => {
     render(<WorktreeHoverCard {...props()} runnerName="runner-dev" />);
-    expect(screen.getByRole('dialog')).toHaveTextContent('on runner-dev');
+    expect(screen.getByRole('dialog')).toHaveTextContent('runner-dev');
   });
 
   it('sits beside the sidebar, and flips to its left when the viewport is too narrow', () => {

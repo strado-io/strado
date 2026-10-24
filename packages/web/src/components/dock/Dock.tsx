@@ -6,13 +6,16 @@ import { FolderIcon } from '../hub/icons';
 /** The Strado Dock: the one row at the bottom of every page.
  * `◎ Focus › 📁 repo › ⑂ worktree·branch  [ command box ]`. The location is a label
  * only: switching is the box's job (type a name, or pick from its list). */
-export function Dock({ worktree, focus = null, bare = false, children }: {
+export function Dock({ worktree, focus = null, bare = false, collapsed = false, children }: {
   /** `repo`: the project folder it belongs to, when known. */
   worktree: { repo?: string | null; name: string; branch: string | null } | null;
   /** The open Focus's name, shown first. */
   focus?: string | null;
   /** Home: no strip (home has its own box). */
   bare?: boolean;
+  /** Settings hid the bar: it stays mounted (so ⌘K still works) and opens only
+   *  while the command box has the keyboard. */
+  collapsed?: boolean;
   /** The command box; absent while the home screen holds it (a spacer keeps the row's shape). */
   children?: ReactNode;
 }) {
@@ -21,7 +24,10 @@ export function Dock({ worktree, focus = null, bare = false, children }: {
   const label = here && worktree?.repo ? `${worktree.repo} / ${here}` : here;
   return (
     // The control panel's bottom row: the same lifted surface as the agent strip above it (no rule between them).
-    <div data-testid="dock" className="dock-panel relative flex min-h-11 shrink-0 items-center gap-3 px-4 pb-2 pt-1">
+    <div data-testid="dock" data-collapsed={collapsed || undefined}
+      className={`dock-panel relative flex shrink-0 items-center gap-3 px-4 ${collapsed
+        ? 'h-0 overflow-hidden focus-within:h-auto focus-within:min-h-11 focus-within:overflow-visible focus-within:pb-2 focus-within:pt-1'
+        : 'min-h-11 pb-2 pt-1'}`}>
       {/* Each part carries its kind's icon (the sidebar's own) and says what it is on hover. */}
       <span data-testid="dock-location" aria-label={label ? `Worktree: ${label}` : 'No worktree open'}
         className="flex max-w-[42%] shrink-0 items-center gap-1.5 pl-1 text-[12px] text-zinc-300">

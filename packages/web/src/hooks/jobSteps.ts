@@ -17,6 +17,8 @@ export type JobProgress = {
   /** Seconds since we started watching — makes a hang legible. */
   elapsed: number;
   done: boolean;
+  /** What the finished job returned (a create's `{ path }`, …). */
+  result?: unknown;
   error: string | null;
 };
 
@@ -25,6 +27,7 @@ export function useJobSteps(jobId: string | null): JobProgress {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [result, setResult] = useState<unknown>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const startedAt = useRef<number>(0);
@@ -35,6 +38,7 @@ export function useJobSteps(jobId: string | null): JobProgress {
     setCurrentId(null);
     setDetail(null);
     setDone(false);
+    setResult(undefined);
     setError(null);
     setElapsed(0);
     startedAt.current = Date.now();
@@ -58,6 +62,9 @@ export function useJobSteps(jobId: string | null): JobProgress {
         return;
       }
       if (evt.type === 'done') {
+        // Live frames wrap it as { result }; a replay of a finished job sends it bare.
+        const data = (evt.data ?? {}) as Record<string, unknown>;
+        setResult('result' in data ? data.result : data);
         setDone(true);
         return;
       }
@@ -71,5 +78,5 @@ export function useJobSteps(jobId: string | null): JobProgress {
   }, [jobId]);
 
   const currentIndex = currentId ? steps.findIndex((s) => s.id === currentId) : -1;
-  return { steps, currentIndex, detail, elapsed, done, error };
+  return { steps, currentIndex, detail, elapsed, done, result, error };
 }

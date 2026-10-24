@@ -73,6 +73,15 @@ describe('AppearanceSection', () => {
     expect(localStorage.getItem('strado:hub-show-status')).toBe('false');
   });
 
+  it('the bottom bar is shown by default and can be hidden', () => {
+    render(<AppearanceSection />);
+    const dock = screen.getByRole('switch', { name: 'Show bottom bar' });
+    expect(dock).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(dock);
+    expect(dock).toHaveAttribute('aria-checked', 'false');
+    expect(localStorage.getItem('strado:show-dock')).toBe('false');
+  });
+
   it('defaults the interface font to Inter until the user picks one', () => {
     localStorage.removeItem('strado:ui-font');
     applyStoredAppearance();

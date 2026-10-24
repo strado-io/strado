@@ -24,6 +24,11 @@ const quietButton = (el: HTMLElement) => {
 describe('sidebar chrome', () => {
   it('bottom nav: quiet 28px buttons with 14px icons; the current page is a tab pill', () => {
     render(<SidebarNav selected={{ kind: 'usage' }} onSelect={vi.fn()} onOpenSettings={vi.fn()} />);
+    // One glass bar, 40px, like a pane card.
+    const nav = screen.getByTestId('sidebar-nav');
+    expect(nav.className).toMatch(/\bglass\b/);
+    expect(nav.className).toMatch(/\bpane-card\b/);
+    expect(nav.className).toMatch(/\bh-10\b/);
     quietButton(screen.getByRole('button', { name: 'Worktrees' }));
     quietButton(screen.getByRole('button', { name: 'Open settings' }));
     const usage = screen.getByRole('button', { name: 'Usage' });
@@ -33,17 +38,23 @@ describe('sidebar chrome', () => {
     expect(screen.getByRole('button', { name: 'Worktrees' }).className).not.toMatch(/tab-pill/);
   });
 
-  it('the Focus row is a tab-bar container: the pill (13px) and the new-worktree button inside', () => {
+  it('the Focus row is a caption, not a box: small caps name and chevron, + at the right', () => {
     const pillRef = createRef<HTMLButtonElement>();
     render(<SidebarToolbar onNewWorktree={vi.fn()} leading={<FocusPill focus={{ id: 'f', name: 'test 2', members: [], createdAt: 't', lastActiveAt: 't' }} open={false} onClick={vi.fn()} pillRef={pillRef} />} />);
     const bar = screen.getByTestId('focus-bar');
-    expect(bar.className).toMatch(/\btab-bar\b/);
-    expect(bar.className).toMatch(/rounded-\[13px\]/);
+    expect(bar.className).not.toMatch(/\btab-bar\b/);
+    expect(bar.className).not.toMatch(/\bborder\b/);
     const pill = screen.getByRole('button', { name: 'Focus: test 2' });
     expect(bar).toContainElement(pill);
-    expect(pill.className).toMatch(/text-\[13px\]/);
-    expect(pill.className).toMatch(/\bh-7\b/);
-    quietButton(screen.getByRole('button', { name: 'New worktree' }));
+    expect(pill.className).toMatch(/text-\[11px\]/);
+    expect(pill.className).toMatch(/\buppercase\b/);
+    expect(pill.className).toMatch(/\btracking-wide\b/);
+    expect(pill.className).toMatch(/\btext-zinc-500\b/);
+    // One chevron, no second edit icon beside it.
+    expect(pill.querySelectorAll('svg')).toHaveLength(1);
+    const add = screen.getByRole('button', { name: 'New worktree' });
+    quietButton(add);
+    expect(bar.querySelectorAll('svg')).toHaveLength(2);
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

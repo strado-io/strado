@@ -34,7 +34,9 @@ const SerializeAddon = serializePkg.SerializeAddon;
 type HeadlessTerm = InstanceType<typeof HeadlessTerminal>;
 type Serialize = InstanceType<typeof SerializeAddon>;
 
-const MAX_MIRROR = 256 * 1024; // chars, same cap as the old in-process buffer
+const MAX_MIRROR = 2 * 1024 * 1024; // chars, same cap as ptyd's buffer
+/** Lines the headless mirror keeps; matches the window's xterm. */
+const TERMINAL_SCROLLBACK = 10_000;
 
 const defaultBuildSpec: BuildSpec = () => ({
   file: defaultShell(),
@@ -68,7 +70,7 @@ type Mirror = {
 export type EmulatorFactory = (cols: number, rows: number) => { emu: HeadlessTerm; serialize: Serialize };
 
 const defaultMakeEmu: EmulatorFactory = (cols, rows) => {
-  const emu = new HeadlessTerminal({ cols, rows, allowProposedApi: true, scrollback: 1000 });
+  const emu = new HeadlessTerminal({ cols, rows, allowProposedApi: true, scrollback: TERMINAL_SCROLLBACK });
   const serialize = new SerializeAddon();
   emu.loadAddon(serialize);
   return { emu, serialize };

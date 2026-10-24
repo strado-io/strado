@@ -186,7 +186,7 @@ describe('Sidebar tree', () => {
     expect(screen.queryByRole('status', { name: 'agent working' })).toBeNull();
   });
 
-  it('cards show no session icons; the selected row is softly filled', () => {
+  it('the selected row is the raised glass pill; cards carry their own session faces, not the board\'s stack', () => {
     const withSession = { ...wt('/r1/FD-1', 'FD-1'), hasShellSession: true };
     const withoutSession = wt('/r1/FD-2', 'FD-2');
     wrap(
@@ -197,8 +197,10 @@ describe('Sidebar tree', () => {
     expect(screen.queryByTestId(`session-stack-${withSession.path}`)).toBeNull();
     expect(screen.queryByTestId(`session-stack-${withoutSession.path}`)).toBeNull();
     const selectedRow = screen.getByRole('button', { name: 'FD-1' }).closest('.group');
-    expect(selectedRow).toHaveClass('tab-pill');
+    expect(selectedRow).toHaveClass('glass-pill');
     expect(selectedRow).not.toHaveClass('ring-1');
+    expect(screen.getByTestId(`card-sessions-${withSession.path}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`card-sessions-${withoutSession.path}`)).toBeNull();
   });
 
   it('shows worktree children with a running dot when the repo is expanded', () => {
@@ -271,12 +273,12 @@ describe('Sidebar tree', () => {
     expect(onOpenWorktree).not.toHaveBeenCalled();
   });
 
-  it('lays a worktree out as a card: repo line, ticket as title, branch underneath, no PR icon without a PR', () => {
+  it('lays a worktree out as a card: name, then repo · branch, no PR icon without a PR', () => {
     wrap(<Sidebar {...base} worktrees={[wt('/r1/FD-1', 'FD-1')]} />);
     const card = screen.getByRole('button', { name: 'FD-1' }).closest('.group') as HTMLElement;
     expect(within(card).getByText('Repo One')).toBeInTheDocument();
-    // Brightness marks the open worktree only; nothing is open here.
-    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('text-zinc-400');
+    // At rest the name is zinc-200; the open worktree's is brighter still.
+    expect(within(card).getByRole('button', { name: 'FD-1' })).toHaveClass('text-zinc-200');
     expect(within(card).getByText('feat/x')).toHaveClass('font-mono');
     expect(card.querySelector('[data-testid^="pr-status-"]')).toBeNull();
     expect(card.querySelector('[data-worktree-icon="branch"]')).toBeNull();
@@ -455,7 +457,7 @@ describe('Sidebar tree', () => {
       act(() => { vi.advanceTimersByTime(250); });
 
       const card = screen.getByRole('dialog');
-      expect(card).toHaveTextContent('on runner-dev');
+      expect(card).toHaveTextContent('runner-dev');
       // No per-session deep link exists for a remote worktree, so a session
       // click opens the worktree itself rather than pretending otherwise.
       fireEvent.click(within(card).getByRole('button', { name: /Shell/ }));
@@ -595,27 +597,44 @@ describe('Sidebar tree', () => {
       expect(screen.queryByRole('menu', { name: 'Workspaces' })).toBeNull();
     });
 
-    it('renders a dot per space without a second settings menu', () => {
+    it('the dots live in the workspace popover, not in a row of their own', () => {
       wrap(<Sidebar {...base} />);
-      expect(screen.getByRole('button', { name: 'Switch to W' })).toHaveAttribute('aria-current', 'true');
-      expect(screen.getByRole('button', { name: 'Switch to Second' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Switch to W' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Switch workspace, current: W' }));
+      const menu = screen.getByRole('menu', { name: 'Workspaces' });
+      expect(within(menu).getByTestId('space-dots-row')).toBeInTheDocument();
+      expect(within(menu).getByRole('button', { name: 'Switch to W' })).toHaveAttribute('aria-current', 'true');
+      expect(within(menu).getByRole('button', { name: 'Switch to Second' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
       expect(screen.getByRole('button', { name: 'Open settings' })).toBeInTheDocument();
     });
 
-    it('switches workspace when a dot with no pane of its own is clicked', () => {
+    it('switches workspace when a dot with no pane of its own is clicked, and closes the popover', () => {
       // ws3 is two spaces away: there is no pane to slide, so it switches
       // straight over instead of animating.
       wrap(<Sidebar {...base} />, [ws, ws2, ws3]);
+      fireEvent.click(screen.getByRole('button', { name: 'Switch workspace, current: W' }));
       fireEvent.click(screen.getByRole('button', { name: 'Switch to Third' }));
       expect(switchTo).toHaveBeenCalledWith('w3');
+      expect(screen.queryByRole('menu', { name: 'Workspaces' })).toBeNull();
     });
 
     it('animates rather than jumping when the neighbouring dot is clicked', async () => {
       wrap(<Sidebar {...base} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Switch workspace, current: W' }));
       fireEvent.click(screen.getByRole('button', { name: 'Switch to Second' }));
       expect(switchTo).not.toHaveBeenCalled(); // the landing commits, not the click
       await waitFor(() => expect(switchTo).toHaveBeenCalledWith('w2'), { timeout: 2000 });
+    });
+
+    it('frame: on the app canvas with no edge, a 14px workspace name, the page icons in one glass bar', () => {
+      wrap(<Sidebar {...base} />);
+      const aside = screen.getByTestId('sidebar');
+      expect(aside.className).toMatch(/\bbg-zinc-950\b/);
+      expect(aside.className).not.toMatch(/\bborder-r\b/);
+      expect(screen.getByTestId('space-name').className).toMatch(/text-\[14px\]/);
+      expect(screen.getByTestId('sidebar-nav').className).toMatch(/\bglass\b/);
+      expect(aside.innerHTML).not.toMatch(/border-t border-white/);
     });
   });
 
@@ -731,6 +750,8 @@ describe('Sidebar tree', () => {
       wrap(<Sidebar {...base} />, [ws]);
       expect(screen.getAllByTestId('carousel-pane')).toHaveLength(1);
       expect(screen.queryByRole('button', { name: 'Switch to W' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Switch workspace, current: W' }));
+      expect(screen.queryByTestId('space-dots-row')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Space actions' })).toBeNull();
     });
   });

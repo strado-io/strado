@@ -46,4 +46,18 @@ describe('Dock', () => {
     render(<Dock worktree={null}><span /></Dock>);
     expect(screen.queryByTestId('dock-focus')).not.toBeInTheDocument();
   });
+
+  it('collapsed (Settings hid it): stays mounted, so ⌘K can still focus the box', () => {
+    render(<Dock worktree={{ name: 'FD-1', branch: null }} collapsed><input aria-label="Global search" /></Dock>);
+    const dock = screen.getByTestId('dock');
+    expect(dock).toHaveAttribute('data-collapsed', 'true');
+    expect(dock.className).toMatch(/\bh-0\b/);
+    expect(dock.className).toMatch(/focus-within:h-auto/);
+    expect(dock).toContainElement(screen.getByLabelText('Global search'));
+  });
+
+  it('shown by default', () => {
+    render(<Dock worktree={null}><span /></Dock>);
+    expect(screen.getByTestId('dock')).not.toHaveAttribute('data-collapsed');
+  });
 });

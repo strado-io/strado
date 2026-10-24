@@ -60,23 +60,31 @@ export type WorktreeRowItemProps = {
   runnerName?: string;
   /** Right-click on the row; the hover card closes first. */
   onContextMenu?: (e: React.MouseEvent) => void;
-  /** Given, the row draws itself as a card like a tab: the open worktree is
-   * the raised pill (.tab-pill), the rest flat with a faint hover. */
+  /** Given, the row draws itself as a glass card: resting cards are the pane
+   * glass (solid pane fill, hairline edge, top highlight), the open one the
+   * raised .glass-pill (like the active tab). */
   active?: boolean;
+  /** An agent here is waiting on the person (marked by the card's amber agent ring, not its edge). */
+  waiting?: boolean;
 };
 
 export function WorktreeRowItem({
-  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active,
+  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active, waiting,
 }: WorktreeRowItemProps) {
+  // Theme colours only: the pane glass and the edge colour (--pane-edge) both
+  // have light-theme values, so the card holds on every preset.
   const look = active === undefined ? ''
-    : `rounded-[11px] border ${active ? 'tab-pill' : 'border-transparent hover:bg-white/[0.04]'} `;
+    : `rounded-xl border transition-colors ${active
+      // The open card has to read at a glance: a clearly lighter sheet and edge (theme-aware via --pane-edge).
+      ? 'glass-pill !border-[rgb(var(--pane-edge)/0.22)] !bg-[rgb(var(--pane-edge)/0.08)]'
+      : 'glass pane-card hover:border-[rgb(var(--pane-edge)/0.12)]'} `;
   const hover = useRowHoverCard();
   const dismiss = useMemo(() => ({ close: hover.close }), [hover.close]);
   // The card floats over the hub, where a native Browser view would otherwise
   // paint straight over it; the hub parks that view while the card is up.
   useRendererOverlay(hover.open);
   return (
-    <div ref={hover.ref} className={`${look}${className}`} data-active={active || undefined} {...hover.triggerProps}
+    <div ref={hover.ref} className={`${look}${className}`} data-active={active || undefined} data-waiting={waiting || undefined} {...hover.triggerProps}
       onContextMenu={onContextMenu ? (e) => { hover.close(); onContextMenu(e); } : undefined}>
       <RowHoverCardContext.Provider value={dismiss}>{children}</RowHoverCardContext.Provider>
       {hover.open && hover.rects && (

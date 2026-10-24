@@ -65,4 +65,11 @@ describe('followRemoteJob progress', () => {
       { type: 'done' },
     ]);
   });
+
+  it("resolves with the runner job's result, live ({ result }) or replayed (bare)", async () => {
+    for (const data of [{ result: { path: '/r/wt' } }, { path: '/r/wt' }]) {
+      const fetchImpl = vi.fn(async () => streamResponse(`event: done\ndata: ${JSON.stringify(data)}\n\n`)) as unknown as typeof fetch;
+      await expect(followRemoteJob('https://runner.test/events/jobs/1', () => {}, { fetchImpl })).resolves.toEqual({ path: '/r/wt' });
+    }
+  });
 });

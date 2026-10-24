@@ -35,23 +35,59 @@ type RunState = {
   /** Bumped by every {terminal} frame: the job reuses one key and respawns it
    * for each interactive step, so each frame is a fresh attach. */
   terminalSeq: number;
+  /** Everything the run printed, in order: step output and headers, then the
+   * error if it stopped. Append-only; the terminal below never clears. */
+  lines: string[];
   result: SshSetupResult | null;
   error: string | null;
 };
-const fresh: RunState = { step: null, detail: null, question: null, terminalKey: null, terminalSeq: 0, result: null, error: null };
+const fresh: RunState = { step: null, detail: null, question: null, terminalKey: null, terminalSeq: 0, lines: [], result: null, error: null };
+
+/** Replayed lines first, then live ones; a line or two may sit on both sides
+ * of the seam, so the live copy of that overlap is dropped. */
+export function joinTranscript(replayed: string[], live: string[]): string[] {
+  for (let k = Math.min(replayed.length, live.length); k > 0; k--) {
+    if (replayed.slice(-k).every((l, i) => l === live[i])) return [...replayed, ...live.slice(k)];
+  }
+  return [...replayed, ...live];
+}
 
 function useSetupJob(jobId: string | null): RunState {
   const [s, set] = useState<RunState>(fresh);
   useEffect(() => {
     set(fresh);
     if (!jobId) return;
-    return subscribeJob(jobId, (evt) => {
+    // Whatever the run printed before we subscribed, fetched once; live lines
+    // that arrive meanwhile wait so the replay goes first.
+    let replayed = false;
+    let gone = false;
+    let early: string[] = [];
+    void Promise.resolve().then(() => api.runners.sshSetup.transcript(jobId))
+      .then(({ lines }) => lines, () => [] as string[])
+      .then((lines) => {
+        if (gone) return;
+        replayed = true;
+        const live = early;
+        early = [];
+        set((c) => ({ ...c, lines: joinTranscript(lines, [...live, ...c.lines]) }));
+      });
+    const addLine = (line: string, unlessLast = false) => {
+      if (!replayed) {
+        if (!(unlessLast && early[early.length - 1] === line)) early.push(line);
+      } else {
+        set((c) => (unlessLast && c.lines[c.lines.length - 1] === line ? c : { ...c, lines: [...c.lines, line] }));
+      }
+    };
+    const off = subscribeJob(jobId, (evt) => {
       if (evt.type === 'progress') {
         const p = ((evt.data ?? {}) as { data?: SshSetupProgress }).data;
         if (!p) return;
         if ('question' in p) set((c) => ({ ...c, question: p.question }));
         else if ('terminal' in p) set((c) => ({ ...c, terminalKey: p.terminal.key, terminalSeq: c.terminalSeq + 1 }));
-        else if ('step' in p) set((c) => (p.step === c.step ? { ...c, detail: p.detail ?? c.detail } : { ...c, step: p.step, detail: p.detail ?? null }));
+        else if ('step' in p) {
+          if (p.detail) addLine(p.detail);
+          set((c) => (p.step === c.step ? { ...c, detail: p.detail ?? c.detail } : { ...c, step: p.step, detail: p.detail ?? null }));
+        }
         return;
       }
       if (evt.type === 'done') {
@@ -60,8 +96,12 @@ function useSetupJob(jobId: string | null): RunState {
         return;
       }
       const d = (evt.data ?? {}) as { message?: string; error?: string };
-      set((c) => ({ ...c, question: null, error: d.message || d.error || 'Setup stopped' }));
+      const error = d.message || d.error || 'Setup stopped';
+      // The job writes "✗ <reason>" as its last line; add it only if it didn't.
+      addLine(`✗ ${error}`, true);
+      set((c) => ({ ...c, question: null, error }));
     });
+    return () => { gone = true; off(); };
   }, [jobId]);
   return s;
 }
@@ -105,8 +145,11 @@ export function SetUpOverSshDialog({ onClose, onAdded, onOpenHost }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [running, onClose]);
 
+  // A new run (Set up or Retry) gets a fresh terminal; nothing else clears it.
+  const [runSeq, setRunSeq] = useState(0);
   const start = async () => {
     if (problem || running) return;
+    setRunSeq((n) => n + 1);
     setStartError(null);
     setStarting(true);
     setJobId(null);
@@ -238,9 +281,13 @@ export function SetUpOverSshDialog({ onClose, onAdded, onOpenHost }: {
           </div>
         )}
 
-        {run.terminalKey && phase !== 'form' && (
-          <div className={`h-[300px] w-full overflow-hidden rounded-lg border border-zinc-800 bg-black p-2 ${phase === 'failed' ? 'opacity-80' : ''}`}>
-            <CommandTerminal key={`${run.terminalKey}#${run.terminalSeq}`} url={`${SSH_SETUP_TERMINAL_PATH}?key=${encodeURIComponent(run.terminalKey)}`} />
+        {phase !== 'form' && (
+          <div className="h-[300px] w-full overflow-hidden rounded-lg border border-zinc-800 bg-black p-2" data-testid="ssh-transcript">
+            <CommandTerminal
+              key={runSeq}
+              lines={startError ? [...run.lines, `✗ ${startError}`] : run.lines}
+              attach={run.terminalKey && running ? { url: `${SSH_SETUP_TERMINAL_PATH}?key=${encodeURIComponent(run.terminalKey)}`, seq: run.terminalSeq } : null}
+            />
           </div>
         )}
 
