@@ -6,9 +6,6 @@ import { z } from 'zod';
 import { AppError } from './errors.js';
 import { assertPathSegment } from './services/worktreeRoot.js';
 
-export const ALLOWED_EDITORS = ['code', 'cursor', 'subl', 'webstorm'] as const;
-export type Editor = (typeof ALLOWED_EDITORS)[number];
-
 export const EnvProfileSchema = z.object({
   name: z.string().min(1),
   envFile: z.string().min(1),
@@ -56,7 +53,9 @@ export const RepoConfigSchema = z.object({
   startCommand: z.string(),
   defaultPort: z.number().int().positive(),
   fixedPort: z.boolean().optional(),
-  editor: z.enum(ALLOWED_EDITORS),
+  // `editor` was removed: files open in the person's own editor, chosen once
+  // per machine (services/editors). Old repos.json files and older clients
+  // still carry the key; zod's default (non-strict) parsing strips it.
   openUrl: z.string().url().nullable().optional(),
   // Run commands; derived from the fields below when absent (deriveRunCommands).
   runCommands: z.array(RunCommandSchema).optional(),

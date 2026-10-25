@@ -4,19 +4,19 @@ import path from 'node:path';
 import { backupBeforeWrite } from './backups.js';
 import { z } from 'zod';
 import { AppError } from './errors.js';
-import { ALLOWED_EDITORS } from './repoConfig.js';
 
 export const WorkspaceSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/, 'id must match ^[a-z0-9-]+$'),
   name: z.string().min(1),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   icon: z.string().min(1).max(2),
-  defaultEditor: z.enum(ALLOWED_EDITORS),
   defaultPortBase: z.number().int().min(1024).max(65535),
   logDir: z.string().nullable(),
   // `worktreeRoot` was removed: worktrees always go under
   // `<home>/worktrees/<repoId>` now. Existing workspaces.json files still
   // carry the key; zod's default (non-strict) parsing strips it on read.
+  // `defaultEditor` went the same way (never used to open anything; the
+  // machine-wide choice lives in editors.json).
 });
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;

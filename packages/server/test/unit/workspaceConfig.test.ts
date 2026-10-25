@@ -15,7 +15,6 @@ const DEFAULT = {
   name: 'Acme',
   color: '#3b82f6',
   icon: 'F',
-  defaultEditor: 'code' as const,
   defaultPortBase: 8080,
   logDir: null,
 };
@@ -25,7 +24,6 @@ const STRADO = {
   name: 'Strado',
   color: '#10b981',
   icon: 'S',
-  defaultEditor: 'code' as const,
   defaultPortBase: 4000,
   logDir: null,
 };
@@ -39,6 +37,11 @@ describe('WorkspaceConfigStore', () => {
     const result = await store.read();
     expect(result.workspaces).toEqual([]);
     expect(result.activeWorkspaceId).toBeNull();
+  });
+
+  it('strips the retired defaultEditor key from an old workspaces.json', async () => {
+    await fs.writeFile(file, JSON.stringify({ activeWorkspaceId: 'default', workspaces: [{ ...DEFAULT, defaultEditor: 'cursor' }] }));
+    expect(await createWorkspaceConfigStore(file).list()).toEqual([DEFAULT]);
   });
 
   it('adds a workspace and persists to disk', async () => {
@@ -113,14 +116,14 @@ describe('WorkspaceConfigStore', () => {
   it('get returns null for unknown id', async () => {
     const store = createWorkspaceConfigStore(file);
     await store.add({ id: 'default', name: 'Acme', color: '#3b82f6', icon: 'F',
-      defaultEditor: 'code', defaultPortBase: 8080, logDir: null });
+      defaultPortBase: 8080, logDir: null });
     expect(await store.get('nope')).toBeNull();
   });
 
   it('patch on unknown id throws NOT_FOUND', async () => {
     const store = createWorkspaceConfigStore(file);
     await store.add({ id: 'default', name: 'Acme', color: '#3b82f6', icon: 'F',
-      defaultEditor: 'code', defaultPortBase: 8080, logDir: null });
+      defaultPortBase: 8080, logDir: null });
     await expect(store.patch('nope', { name: 'X' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

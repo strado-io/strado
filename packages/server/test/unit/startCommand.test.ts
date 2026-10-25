@@ -4,7 +4,7 @@ import type { RepoConfig } from '../../src/repoConfig.js';
 
 const repo = (over: Partial<RepoConfig> = {}): RepoConfig => ({
   id: 'r', name: 'R', path: '/r', projectSubdir: null, startCommand: 'npm run dev',
-  defaultPort: 3000, editor: 'code',
+  defaultPort: 3000,
   runCommands: [{ id: 'web', name: 'web', command: 'npm run dev', envFile: '.env' }, { id: 'api', name: 'api', command: 'node api.js' }],
   ...over,
 } as RepoConfig);

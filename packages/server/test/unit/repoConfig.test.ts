@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRepoConfigStore, RepoConfig } from '../../src/repoConfig';
-import { AppError } from '../../src/errors';
 
 let tmp: string;
 
@@ -23,7 +22,6 @@ function makeRepo(id: string): RepoConfig {
     projectSubdir: null,
     startCommand: 'npm start',
     defaultPort: 8080,
-    editor: 'code',
   };
 }
 
@@ -33,11 +31,12 @@ describe('repo config store', () => {
     expect(await store.list()).toEqual([]);
   });
 
-  it('rejects unsupported editor', () => {
-    const store = createRepoConfigStore(path.join(tmp, 'repos.json'));
-    return expect(
-      store.add({ ...makeRepo('x'), editor: 'evil-thing' as never }),
-    ).rejects.toBeInstanceOf(AppError);
+  it('strips the retired editor key from an old repos.json', async () => {
+    const file = path.join(tmp, 'repos.json');
+    await fs.writeFile(file, JSON.stringify({ repos: [{ ...makeRepo('old'), editor: 'subl' }] }));
+    const [repo] = await createRepoConfigStore(file).list();
+    expect(repo).toMatchObject({ id: 'old' });
+    expect(repo).not.toHaveProperty('editor');
   });
 
   it('persists and reads a repo', async () => {

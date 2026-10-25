@@ -576,7 +576,8 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
               startCommand: localRepo.startCommand,
               defaultPort: localRepo.defaultPort,
               ...(localRepo.fixedPort !== undefined ? { fixedPort: localRepo.fixedPort } : {}),
-              editor: localRepo.editor,
+              // Runners before the editor field was retired require it.
+              editor: 'code',
               ...(localRepo.openUrl !== undefined ? { openUrl: localRepo.openUrl } : {}),
               ...(localRepo.envProfiles !== undefined ? { envProfiles: localRepo.envProfiles } : {}),
               ...(localRepo.defaultEnvProfile !== undefined

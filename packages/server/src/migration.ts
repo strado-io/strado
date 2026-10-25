@@ -21,7 +21,6 @@ type SeedWorkspace = {
   name: string;
   color: string;
   icon: string;
-  defaultEditor: string;
   defaultPortBase: number;
   logDir: string | null;
 };
@@ -32,7 +31,6 @@ function defaultWorkspace(logDir: string | null): SeedWorkspace {
     name: 'Personal',
     color: '#f97f1b',
     icon: 'P',
-    defaultEditor: 'code',
     defaultPortBase: 8080,
     logDir,
   };
@@ -73,7 +71,6 @@ async function existingWorkspaceEntries(configDir: string): Promise<SeedWorkspac
     name: id.charAt(0).toUpperCase() + id.slice(1),
     color: '#10b981',
     icon: id.charAt(0).toUpperCase(),
-    defaultEditor: 'code',
     defaultPortBase: 8080,
     logDir: null,
   }));

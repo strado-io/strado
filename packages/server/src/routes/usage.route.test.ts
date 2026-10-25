@@ -72,7 +72,6 @@ const addRepo = async () => {
     projectSubdir: null,
     startCommand: 'npm run dev',
     defaultPort: 3000,
-    editor: 'code' as const,
   });
 };
 
