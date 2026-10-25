@@ -81,7 +81,7 @@ export function OnboardingWelcome({ onContinue }: { onContinue: () => void }) {
   };
 
   // Only the tools marked required in toolCheck's table gate entry. Blocking on
-  // an optional one trapped anybody without VS Code or Codex on this screen —
+  // an optional one trapped anybody without, say, Codex on this screen —
   // and the amber line below told them, wrongly, that all of them were needed.
   const required = tools?.filter((t) => !t.optional) ?? [];
   const allFound = tools !== null && required.length > 0 && required.every((t) => t.found);

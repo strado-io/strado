@@ -162,7 +162,7 @@ describe('OnboardingWelcome', () => {
 
   // Plenty of developers don't use the GitHub CLI, and Codex is one agent
   // among several. Gating entry on either stranded people on this screen with no way
-  // forward but installing an editor they didn't want.
+  // forward but installing a tool they didn't want.
   it('lets an optional tool stay missing without blocking entry', async () => {
     envCheck.mockResolvedValue([
       { id: 'git', label: 'git', found: true, version: 'git version 2.44.0', optional: false, hint: null, installable: false, installCommand: null },
