@@ -664,6 +664,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerWorktreesRoutes(scoped);
     const { registerGitChangesRoutes } = await import('./routes/gitChanges.js');
     await registerGitChangesRoutes(scoped);
+    const { registerFilesRoutes } = await import('./routes/files.js');
+    await registerFilesRoutes(scoped);
     const { registerKnowledgeBaseRoutes } = await import('./routes/knowledgeBase.js');
     await registerKnowledgeBaseRoutes(scoped);
     const { registerLinkingRoutes } = await import('./routes/linking.js');

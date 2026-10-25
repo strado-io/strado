@@ -191,21 +191,34 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
     return reply.code(204).send();
   });
 
-  const RpcQuery = z.object({ path: z.string().min(1).max(512) });
+  // Room for an encoded worktree path plus a file path (the Files tab).
+  const RpcQuery = z.object({ path: z.string().min(1).max(4096) });
   // The generic proxy never reaches a runner's sandbox-credential routes: they
   // take secrets only from the sealed sync below. Checked on the normalized
-  // path, so `..`, `%2e%2e` and case games land on the same answer; an encoded
-  // slash or backslash has no honest use and might be decoded differently far
-  // side, so it is refused outright.
+  // path, so `..`, `%2e%2e` and case games land on the same answer. An encoded
+  // slash is honest (a worktree path rides in one segment: worktrees/:encodedPath),
+  // but the far side might decode it, so the path is judged twice: as sent, and
+  // fully decoded. An encoded backslash has no honest use and is refused outright.
   const assertRpcPath = (path: string) => {
-    if (/%2f|%5c/i.test(path)) throw new AppError('FORBIDDEN', 'not available through rpc');
-    let p: string;
+    const forbid = () => new AppError('FORBIDDEN', 'not available through rpc');
+    if (/%5c/i.test(path)) throw forbid();
+    const base = 'http://runner.invalid';
+    let raw: string;
+    let decoded: string;
     try {
-      p = new URL(path, 'http://runner.invalid').pathname.toLowerCase();
+      raw = new URL(path, base).pathname;
+      decoded = raw;
+      for (let i = 0; i < 4 && /%[0-9a-f]{2}/i.test(decoded); i++) decoded = decodeURIComponent(decoded);
+      // Still encoded after four rounds, or a decoded backslash: no honest use.
+      if (/%[0-9a-f]{2}/i.test(decoded) || decoded.includes('\\')) throw forbid();
+      // A decoded '?' or '#' must not cut the path short when it is re-read.
+      decoded = new URL(decoded.replace(/[?#]/g, encodeURIComponent), base).pathname;
     } catch {
-      throw new AppError('FORBIDDEN', 'not available through rpc');
+      throw forbid();
     }
-    if (p === '/api/sandbox' || p.startsWith('/api/sandbox/')) throw new AppError('FORBIDDEN', 'not available through rpc');
+    for (const p of [raw.toLowerCase(), decoded.toLowerCase()]) {
+      if (p === '/api/sandbox' || p.startsWith('/api/sandbox/')) throw forbid();
+    }
   };
 
   app.get('/api/runners/:id/rpc', async (req) => {
