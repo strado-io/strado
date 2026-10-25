@@ -525,3 +525,11 @@ body {
 /* The raised piece on glass, on a light theme: a white sheet with a hairline,
    like .tab-pill there (white-on-white glass would vanish). */
 :root[data-theme='light'] .glass-pill { background-color: #fff; border-color: rgb(0 0 0 / 0.12); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+
+/* Tab kind icons (hub/TabTile KIND_ICON): the -300 tints are for dark
+   surfaces; on a light theme use the deeper shade of the same hue. */
+:root[data-theme='light'] [data-testid='tab-tile'] .text-emerald-300 { color: rgb(5 150 105); }
+:root[data-theme='light'] [data-testid='tab-tile'] .text-sky-300 { color: rgb(2 132 199); }
+:root[data-theme='light'] [data-testid='tab-tile'] .text-violet-300 { color: rgb(124 58 237); }
+:root[data-theme='light'] [data-testid='tab-tile'] .text-amber-300 { color: rgb(217 119 6); }
+:root[data-theme='light'] [data-testid='tab-tile'] .text-rose-300 { color: rgb(225 29 72); }

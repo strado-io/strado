@@ -58,6 +58,7 @@ import {
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
 import { PaneCard } from '../components/hub/PaneCard';
+import { KIND_ICON } from '../components/hub/TabTile';
 import { PaneLayout } from '../components/hub/PaneLayout';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
@@ -282,7 +283,7 @@ function groupTabs(
       // it can see (its own filesystem, its own git credentials).
       tab: { path: g.path, mode: 'shell' as const, id: rs.id, remote: rs as RemoteTarget },
       label: rs.runnerId.replace(/-[a-z0-9]{4}$/, ''),
-      icon: <ShellIcon className={IDLE_ICON} />,
+      icon: <ShellIcon className={KIND_ICON.shell} />,
     })),
     ...(browserEmbeds ? [...(g.browserOpen ? ['1'] : []), ...g.browserIds.filter((id) => id !== '1')] : []).map((id) => {
       const meta = browserMeta[previewKey(g.path, id)];
@@ -295,7 +296,7 @@ function groupTabs(
           // keyed by URL so a navigation to a new site retries after a break
           <FaviconIcon key={meta.favicon} src={meta.favicon} />
         ) : (
-          <GlobeIcon className={IDLE_ICON} />
+          <GlobeIcon className={KIND_ICON.browser} />
         ),
       };
     }),
@@ -304,14 +305,14 @@ function groupTabs(
       return {
           tab: { path: g.path, mode: 'kb' as const, id },
           label: kbTitles[key] ?? (id === '1' ? 'Knowledge Base' : `Knowledge Base ${id}`),
-          icon: <BookIcon className={IDLE_ICON} />,
+          icon: <BookIcon className={KIND_ICON.kb} />,
         };
     }),
     ...(g.diffOpen && !g.remote
-      ? [{ tab: { path: g.path, mode: 'diff' as const, id: '1' }, label: 'Changes', icon: <GitIcon className={IDLE_ICON} /> }]
+      ? [{ tab: { path: g.path, mode: 'diff' as const, id: '1' }, label: 'Changes', icon: <GitIcon className={KIND_ICON.diff} /> }]
       : []),
     ...(g.filesOpen
-      ? [{ tab: { path: g.path, mode: 'files' as const, id: '1' }, label: 'Files', icon: <FolderIcon className={IDLE_ICON} size={14} /> }]
+      ? [{ tab: { path: g.path, mode: 'files' as const, id: '1' }, label: 'Files', icon: <FolderIcon className={KIND_ICON.files} size={14} /> }]
       : []),
   ];
   // A remote group's pty tabs all target the runner. The Browser tab is a LOCAL

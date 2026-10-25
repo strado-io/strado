@@ -6,11 +6,20 @@ const TILE: Record<string, string> = {
   codex: 'bg-white/[0.06] ring-white/10',
   opencode: 'bg-white/[0.06] ring-white/10',
   pi: 'bg-white/[0.06] ring-white/10',
-  shell: 'bg-emerald-400/10 ring-emerald-400/20',
-  browser: 'bg-sky-400/10 ring-sky-400/20',
-  kb: 'bg-violet-400/10 ring-violet-400/20',
-  diff: 'bg-amber-400/10 ring-amber-400/20',
-  files: 'bg-indigo-400/15 ring-indigo-400/25',
+  // One clear hue per kind, none shared: green, blue, purple, yellow, pink.
+  shell: 'bg-emerald-400/15 ring-emerald-400/30',
+  browser: 'bg-sky-400/15 ring-sky-400/30',
+  kb: 'bg-violet-400/15 ring-violet-400/30',
+  diff: 'bg-amber-400/15 ring-amber-400/30',
+  files: 'bg-rose-400/15 ring-rose-400/30',
+};
+/** The icon colour of a non-agent kind at rest, matching its tile (agents keep their status colours). */
+export const KIND_ICON: Record<'shell' | 'browser' | 'kb' | 'diff' | 'files', string> = {
+  shell: 'text-emerald-300',
+  browser: 'text-sky-300',
+  kb: 'text-violet-300',
+  diff: 'text-amber-300',
+  files: 'text-rose-300',
 };
 /** A tab's icon on its small rounded tile, tinted by kind (the icon keeps its status colour). Shared with the pane cards. */
 export function TabTile({ mode, icon }: { mode: string; icon: React.ReactNode }) {
@@ -23,7 +32,7 @@ export function TabTile({ mode, icon }: { mode: string; icon: React.ReactNode })
 
 // The edge a member behind the front tile shows: its kind's colour, solid.
 const EDGE: Record<string, string> = {
-  claude: '#b8644a', shell: '#2f8f6a', browser: '#2b7fb3', kb: '#7457c2', diff: '#a8782f', files: '#5b5bd6',
+  claude: '#b8644a', shell: '#2f8f6a', browser: '#2b7fb3', kb: '#7457c2', diff: '#a8782f', files: '#c2536a',
 };
 
 /** A group's members as a deck, like Rex: the first member's tile in front,
