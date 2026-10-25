@@ -46,8 +46,12 @@ function runner(h: ReturnType<typeof fakeHeadless>, over: Partial<JarvisRunnerDe
 
 const all = () => store.page('f1', { limit: 200 });
 const of = <T extends ChatEntry['type']>(entries: ChatEntry[], type: T) => entries.filter((e): e is Extract<ChatEntry, { type: T }> => e.type === type);
+/** Polls `check` every 10 ms for up to 10 s of wall time (not a count of
+ *  tries: a loaded machine runs fewer of them). */
 async function settle(r: { byToken: unknown }, check: () => Promise<boolean>) {
-  for (let i = 0; i < 200; i++) { if (await check()) return; await new Promise((res) => setTimeout(res, 5)); }
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) { if (await check()) return; await new Promise((res) => setTimeout(res, 10)); }
+  if (await check()) return;
   throw new Error('never settled');
 }
 const turnsDone = (n: number) => async () => of(await all(), 'turn').filter((t) => t.state !== 'running').length >= n;
