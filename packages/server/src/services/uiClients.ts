@@ -12,7 +12,8 @@ export const UI_ACK_TIMEOUT_MS = 3000;
  * stream is open), but loses every focus tie-break to one that has. */
 export const UI_STATE_STALE_MS = 60_000;
 
-export type UiOp = 'place' | 'browser.open';
+/** `jarvis.action`: a Focus Jarvis action ({ action, args }), run by the window's own executor. */
+export type UiOp = 'place' | 'browser.open' | 'jarvis.action';
 
 export type UiCommand = { id: string; op: UiOp; args: Record<string, unknown> };
 
@@ -54,7 +55,9 @@ export type UiClients = {
    * so another window writing it to storage would be overwritten), then the
    * most recently focused. */
   pick(wsId: string, preferKey?: string | null, preferWorktree?: string | null): UiClient | null;
-  dispatch(wsId: string, op: UiOp, args: Record<string, unknown>, preferKey?: string | null, preferWorktree?: string | null): Promise<UiDispatchResult>;
+  /** `opts.clientId`: only that window (closed → `window_closed`, no fallback);
+   *  `opts.timeoutMs`: a longer ack wait for commands that do real work. */
+  dispatch(wsId: string, op: UiOp, args: Record<string, unknown>, preferKey?: string | null, preferWorktree?: string | null, opts?: { clientId?: string; timeoutMs?: number }): Promise<UiDispatchResult>;
   list(wsId: string): UiClient[];
 };
 
@@ -150,12 +153,14 @@ export function createUiClients(deps: UiClientsDeps = {}): UiClients {
       return true;
     },
     pick,
-    dispatch(wsId, op, args, preferKey, preferWorktree) {
-      const target = pick(wsId, preferKey, preferWorktree) as Entry | null;
-      if (!target) return Promise.resolve({ applied: false, reason: 'no_window' });
+    dispatch(wsId, op, args, preferKey, preferWorktree, opts = {}) {
+      const target = opts.clientId !== undefined
+        ? clients.get(keyOf(wsId, opts.clientId)) ?? null
+        : pick(wsId, preferKey, preferWorktree) as Entry | null;
+      if (!target) return Promise.resolve({ applied: false, reason: opts.clientId !== undefined ? 'window_closed' : 'no_window' });
       const id = newId();
       return new Promise<UiDispatchResult>((resolve) => {
-        const timer = schedule(() => settle(id, { applied: false, reason: 'timeout', clientId: target.clientId }), ackTimeoutMs);
+        const timer = schedule(() => settle(id, { applied: false, reason: 'timeout', clientId: target.clientId }), opts.timeoutMs ?? ackTimeoutMs);
         pending.set(id, { wsId, clientId: target.clientId, resolve, timer });
         try {
           target.send({ id, op, args });

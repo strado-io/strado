@@ -15,9 +15,9 @@ export function serverFromEnv(env = process.env) {
 /** Resolves { status, json } for ANY HTTP response (json is null for an empty or
  * non-JSON body). Rejects only when no response arrived: connection error,
  * timeout, or the socket closed first. Callers decide what a non-2xx means. */
-export function requestJson({ socketPath, port, method = 'POST', urlPath, body, token, timeoutMs = 1000 }) {
+export function requestJson({ socketPath, port, method = 'POST', urlPath, body, token, headers: extra = {}, timeoutMs = 1000 }) {
   return new Promise((resolve, reject) => {
-    const headers = { 'content-type': 'application/json' };
+    const headers = { 'content-type': 'application/json', ...extra };
     if (token) headers.authorization = `Bearer ${token}`;
     const opts = {
       path: urlPath,

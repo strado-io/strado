@@ -7,6 +7,7 @@ import { serve } from './mcp/rpc.mjs';
 import { previewTools } from './mcp/preview.mjs';
 import { intercomTools } from './mcp/intercom.mjs';
 import { appTools } from './mcp/app.mjs';
+import { toolsFor } from './mcp/jarvis.mjs';
 
 export const VERSION = '0.5.0';
 
@@ -17,4 +18,4 @@ export function allTools(env = process.env) {
 // No top-level await: the packagers bundle this file to CommonJS, which esbuild
 // refuses for top-level await. serve() resolves once stdin ends; exit promptly
 // instead of relying on the event loop to drain on its own.
-void serve({ name: 'strado', version: VERSION, tools: allTools() }).then(() => process.exit(0));
+void toolsFor(process.env, allTools).then((tools) => serve({ name: 'strado', version: VERSION, tools })).then(() => process.exit(0));

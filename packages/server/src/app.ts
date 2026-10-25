@@ -663,6 +663,52 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   const { registerWorkspaceRoutes } = await import('./routes/workspaces.js');
   await registerWorkspaceRoutes(app);
 
+  // Focus Jarvis: the turn runner (unless a test injects one), the tool
+  // gateway its `strado` MCP server calls, and the wakes when its agents
+  // finish or answer. Actions run in the turn's window; a new worktree is the
+  // server's own job.
+  {
+    const { createJarvisExecutor, createJarvisWorktree, registerJarvisToolRoutes, trackAsks } = await import('./routes/jarvisTools.js');
+    const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
+    const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
+    const { appWakeSource, createJarvisWakes } = await import('./services/jarvisChat/wakes.js');
+    const { readProfile } = await import('./services/profileStore.js');
+    const stores = (ws: string) => deps.registry.get(ws);
+    let wakes: ReturnType<typeof createJarvisWakes> | null = null;
+    const execute = trackAsks(
+      createJarvisExecutor({ uiClients: deps.uiClients, createWorktree: createJarvisWorktree(app, stores) }),
+      (ws, focusId, askId) => wakes?.asked(ws, focusId, askId),
+    );
+    deps.jarvis ??= createJarvisRunner({
+      stores,
+      spawnHeadless: (o) => runClaudeHeadless(o),
+      runApproved: async (call) => {
+        const r = await execute(call);
+        return r.ok ? r.text : `It failed: ${r.text}`;
+      },
+    });
+    const runner = deps.jarvis;
+    // A test's runner may not wake.
+    const wake = (runner as { wake?: (ws: string, focusId: string, text: string) => void }).wake?.bind(runner);
+    if (wake) {
+      wakes = createJarvisWakes({
+        ...appWakeSource({ bus: deps.bus, agents: deps.agents, agentControl: deps.agentControl, intercom: deps.intercom }),
+        focuses: async (ws) => (await deps.registry.get(ws)).focuses.list(),
+        chat: async (ws) => (await deps.registry.get(ws)).jarvis,
+        wakesOn: async () => (await readProfile()).jarvisWakes,
+        runner: { wake },
+        log: (m) => app.log.warn(m),
+      });
+      wakes.start();
+      app.addHook('onClose', async () => wakes?.stop());
+    }
+    await registerJarvisToolRoutes(app, {
+      runner: { byToken: (t) => ('byToken' in runner && typeof runner.byToken === 'function' ? runner.byToken(t) : null) },
+      stores,
+      execute,
+    });
+  }
+
   // Per-workspace routes scoped under /api/w/:wsId
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', async (req) => {

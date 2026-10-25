@@ -24,7 +24,7 @@ function harness(opts: { allowRemote?: boolean } = {}) {
     ui.report(s.wsId ?? 'ws', clientId, { focused: s.focused ?? false, worktreePath: null, visibleKeys: s.keys ?? [], layout: null });
   const tick = (ms: number) => { t += ms; };
   const fire = () => { for (const x of timers) if (!x.cancelled) { x.cancelled = true; x.fn(); } };
-  return { ui, sent, open, state, tick, fire };
+  return { ui, sent, open, state, tick, fire, timers };
 }
 
 describe('uiClients', () => {
@@ -82,6 +82,20 @@ describe('uiClients', () => {
     fire();
     expect(await p).toEqual({ applied: false, reason: 'timeout', clientId: 'a' });
     expect(ui.ack('ws', 'a', 'cmd-1', { applied: true })).toBe(false);
+  });
+
+  it('a named window gets it even when another is focused, with its own ack wait; a closed one is window_closed, never another', async () => {
+    const { ui, sent, open, state, timers } = harness();
+    open('a'); open('b');
+    state('a', { focused: true }); state('b');
+    const p = ui.dispatch('ws', 'jarvis.action', { action: 'tab.open', args: {} }, null, null, { clientId: 'b', timeoutMs: 60_000 });
+    expect(sent.get('a')).toEqual([]);
+    expect(sent.get('b')).toEqual([{ id: 'cmd-1', op: 'jarvis.action', args: { action: 'tab.open', args: {} } }]);
+    expect(timers.at(-1)!.ms).toBe(60_000);
+    ui.ack('ws', 'b', 'cmd-1', { applied: true, result: { ok: true } });
+    expect(await p).toEqual({ applied: true, result: { ok: true }, clientId: 'b' });
+    expect(await ui.dispatch('ws', 'jarvis.action', {}, null, null, { clientId: 'gone' })).toEqual({ applied: false, reason: 'window_closed' });
+    expect(sent.get('a')).toEqual([]);
   });
 
   it('settles pending commands when the window closes', async () => {
