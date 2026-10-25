@@ -41,7 +41,6 @@ type FilesTabProps = {
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
   onOpenInEditor?: (path: string, line: number) => void;
-  onOpenWorktreeInEditor?: () => void;
   editorLabel?: string;
 };
 const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null, fileTabOpen: false }));
@@ -193,13 +192,10 @@ describe('Files tab in the hub', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Couldn’t open the editor. Pick one in Settings › Files.');
   });
 
-  it('names the editor it will use, and opens the whole worktree in it', async () => {
-    editorOpen.mockReset().mockResolvedValue(undefined);
+  it('names the editor it will use', async () => {
     render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
     await flush();
     expect(filesTab.last!.editorLabel).toBe('Cursor');
-    act(() => filesTab.last!.onOpenWorktreeInEditor!());
-    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
   });
 
   it('⌘⇧O opens the active worktree in the editor; with a file tab open the Files tab takes it', async () => {
@@ -217,11 +213,11 @@ describe('Files tab in the hub', () => {
     expect(editorOpen).not.toHaveBeenCalled();
   });
 
-  it('a runner worktree offers no editor: no worktree button, and ⌘⇧O does nothing', async () => {
+  it('a runner worktree offers no editor, and ⌘⇧O does nothing', async () => {
     editorOpen.mockReset();
     render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
     await flush();
-    expect(filesTab.last!.onOpenWorktreeInEditor).toBeUndefined();
+    expect(filesTab.last!.onOpenInEditor).toBeUndefined();
     fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
     expect(editorOpen).not.toHaveBeenCalled();
   });
@@ -233,7 +229,6 @@ describe('Files tab in the hub', () => {
       await flush();
       await flush();
       expect(filesTab.last!.onOpenInEditor).toBeUndefined();
-      expect(filesTab.last!.onOpenWorktreeInEditor).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
     }

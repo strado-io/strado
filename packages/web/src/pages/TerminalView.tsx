@@ -3811,7 +3811,6 @@ export function TerminalView({
                     openPath={filesOpenPath[g.path]}
                     onAskAgent={setFileAsk}
                     onOpenInEditor={openInEditor ? (path, line) => openInEditor(g.path, path, line) : undefined}
-                    onOpenWorktreeInEditor={openInEditor ? () => openInEditor(g.path) : undefined}
                     editorLabel={editor?.label}
                   />
                 </div>

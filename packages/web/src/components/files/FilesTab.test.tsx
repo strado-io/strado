@@ -621,14 +621,18 @@ describe('FilesTab', () => {
       expect(onOpenInEditor).toHaveBeenCalledWith('a.ts', 30);
     });
 
-    it('the tree header opens the whole worktree in the named editor', async () => {
-      const onOpenWorktreeInEditor = vi.fn();
-      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+    it('reports the active file and its cursor line for the pane title bar, and null with none', async () => {
+      const onActiveFileChange = vi.fn();
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" onActiveFileChange={onActiveFileChange} />);
       await flush();
-      expect(screen.queryByRole('button', { name: /Open worktree in/ })).toBeNull();
-      rerender(<FilesTab wsId="ws1" worktreePath="/wt" editorLabel="Zed" onOpenWorktreeInEditor={onOpenWorktreeInEditor} />);
-      fireEvent.click(within(screen.getByTestId('files-tree-header')).getByRole('button', { name: 'Open worktree in Zed' }));
-      expect(onOpenWorktreeInEditor).toHaveBeenCalled();
+      expect(onActiveFileChange).toHaveBeenLastCalledWith(null);
+      expect(within(screen.getByTestId('files-tree-header')).queryByRole('button', { name: /Open worktree/ })).toBeNull();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" onActiveFileChange={onActiveFileChange} openPath={{ path: 'a.ts', line: 7, nonce: 1 }} />);
+      expect(onActiveFileChange).toHaveBeenLastCalledWith({ path: 'a.ts', line: 7 });
+      fireEvent.change(screen.getByLabelText('cursor'), { target: { value: '40' } });
+      expect(onActiveFileChange).toHaveBeenLastCalledWith({ path: 'a.ts', line: 40 });
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'w', metaKey: true });
+      expect(onActiveFileChange).toHaveBeenLastCalledWith(null);
     });
   });
 });

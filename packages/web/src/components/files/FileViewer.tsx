@@ -30,7 +30,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   read: (path: string) => Promise<FileContent>;
   marks: (path: string) => Promise<FileMarks>;
   onAskAgent?: (ctx: FileAskContext) => void;
-  /** Hand the file, at the cursor's line, to the person's own editor. */
+  /** The too-large note's "Open in …" (the editor button itself is in the pane's title bar). */
   onOpenInEditor?: (path: string, line: number) => void;
   /** The chosen editor's name ("Cursor", "VS Code"); "editor" when unknown. */
   editorLabel?: string;
@@ -195,13 +195,6 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
           <button type="button" className={`${iconBtn} ${outlineOpen ? 'bg-white/[0.06] text-zinc-100' : ''}`} onClick={() => setOutlineOpen((o) => !o)}
             aria-pressed={outlineOpen} aria-label="Outline" title="Outline">
             Outline
-          </button>
-        )}
-        {onOpenInEditor && (
-          <button type="button" className={iconBtn} onClick={() => onOpenInEditor(path, cursorLine.current)} aria-label={openIn} title={`${openIn} (⌘⇧O)`}>
-            <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" />
-            </svg>
           </button>
         )}
         {headerEnd}

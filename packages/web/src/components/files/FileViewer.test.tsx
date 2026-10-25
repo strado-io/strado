@@ -74,17 +74,6 @@ describe('FileViewer', () => {
     expect(screen.queryByRole('button', { name: /Ask agent/ })).toBeNull();
   });
 
-  it('"Open in editor" opens at the current line', async () => {
-    const { props } = show();
-    await flush();
-    act(() => cm.opts!.onSelection({ from: 9, to: 9, text: 'a' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in editor' }));
-    expect(props.onOpenInEditor).toHaveBeenCalledWith('src/app.ts', 9);
-    fireEvent.click(screen.getByRole('button', { name: 'Next change' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in editor' }));
-    expect(props.onOpenInEditor).toHaveBeenLastCalledWith('src/app.ts', 5);
-  });
-
   it('goes to the asked line once loaded, and again for a new nonce', async () => {
     const { props, rerender } = show({ line: 12, nonce: 1 });
     await flush();
@@ -132,18 +121,18 @@ describe('FileViewer', () => {
     expect(cm.opts).toBeNull();
   });
 
-  it('names the chosen editor on its button', async () => {
+  it('has no editor button of its own (the pane title bar has it)', async () => {
     show({ editorLabel: 'Cursor' });
     await flush();
-    expect(screen.getByRole('button', { name: 'Open in Cursor' })).toHaveAttribute('title', 'Open in Cursor (⌘⇧O)');
+    expect(screen.queryByRole('button', { name: /Open in/ })).toBeNull();
   });
 
-  it('too large: says the size and offers the editor', async () => {
-    const { props } = show({}, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
+  it('too large: says the size and offers the editor by name', async () => {
+    const { props } = show({ editorLabel: 'Zed' }, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
     await flush();
     expect(screen.getByTestId('file-empty')).toHaveTextContent('Too large to show');
     expect(screen.getByTestId('file-empty')).toHaveTextContent('3.0 MB');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Open in editor' }).at(-1)!);
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
     expect(props.onOpenInEditor).toHaveBeenCalledWith('src/app.ts', 1);
   });
 

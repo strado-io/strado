@@ -44,13 +44,13 @@ export type FilesTabProps = {
   onAskAgent?: (ctx: FileAskContext) => void;
   /** The person's own desktop editor, at a file and line (this machine only). */
   onOpenInEditor?: (path: string, line: number) => void;
-  /** The chosen editor's name for its buttons ("Cursor", "VS Code"); "editor" when unknown. */
+  /** The chosen editor's name ("Cursor", "VS Code"), for the too-large note; "editor" when unknown. */
   editorLabel?: string;
-  /** The tree header's button: the whole worktree in the editor. Hidden when undefined. */
-  onOpenWorktreeInEditor?: () => void;
+  /** The active file and its cursor line (1-based), or null with none: for the pane title bar's editor button. */
+  onActiveFileChange?: (file: { path: string; line: number } | null) => void;
 };
 
-export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInEditor, editorLabel, onOpenWorktreeInEditor }: FilesTabProps) {
+export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInEditor, editorLabel, onActiveFileChange }: FilesTabProps) {
   const runnerId = remote?.runnerId;
   const remoteWsId = remote?.remoteWsId;
   const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
@@ -74,6 +74,13 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   }, [scope]);
   useEffect(() => { if (loadedScope.current === scope) saveTabs(scope, tabs); }, [scope, tabs]);
   const selected = activeTab(tabs)?.path ?? null;
+  // The pane's title bar opens the active file at its cursor in the person's editor.
+  const activeLine = activeTab(tabs)?.line ?? null;
+  const reportActive = useRef(onActiveFileChange);
+  reportActive.current = onActiveFileChange;
+  useEffect(() => {
+    reportActive.current?.(selected && activeLine != null ? { path: selected, line: activeLine } : null);
+  }, [selected, activeLine]);
   const [reveal, setReveal] = useState<{ path: string; nonce: number } | null>(openPath ? { path: openPath.path, nonce: 0 } : selected ? { path: selected, nonce: 0 } : null);
   const seq = useRef(0);
   // Where you went, for ⌘[ / ⌘] (or Alt←/→), across tabs and panes. `here` is the last place opened or navigated from.
@@ -335,10 +342,6 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
             className={`${iconBtn} ${searching ? 'glass-pill text-zinc-100' : 'text-zinc-400'}`}><SearchIcon /></button>
           <button type="button" onClick={() => setReloadKey((k) => k + 1)} aria-label="Refresh files" title="Refresh"
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
-          {onOpenWorktreeInEditor && (
-            <button type="button" onClick={onOpenWorktreeInEditor} aria-label={`Open worktree in ${editorLabel ?? 'editor'}`} title={`Open worktree in ${editorLabel ?? 'editor'}`}
-              className={`${iconBtn} text-zinc-400`}><CodeIcon /></button>
-          )}
         </div>
         {searching ? (
           <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h, side) => pickHit(h, fromHere(), side)} />
@@ -512,9 +515,6 @@ function SearchIcon() {
 }
 function SplitIcon() {
   return <svg {...svg}><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" /></svg>;
-}
-function CodeIcon() {
-  return <svg {...svg}><path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" /></svg>;
 }
 function RefreshIcon() {
   return (
