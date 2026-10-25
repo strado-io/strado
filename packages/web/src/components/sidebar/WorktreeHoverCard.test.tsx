@@ -47,6 +47,8 @@ const props = () => ({
   onOpenMr: vi.fn(),
   onOpenDiff: vi.fn(),
   onOpenFiles: vi.fn(),
+  onOpenInEditor: vi.fn(),
+  editorLabel: 'Cursor',
   onOpenShell: vi.fn(),
   onOpenSettings: vi.fn(),
   onClose: vi.fn(),
@@ -164,6 +166,8 @@ describe('WorktreeHoverCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Changes' }));
     fireEvent.click(screen.getByRole('button', { name: 'Files' }));
     expect(p.onOpenFiles).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Cursor' }));
+    expect(p.onOpenInEditor).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'New shell' }));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(p.onOpenDiff).toHaveBeenCalledTimes(1);
@@ -174,8 +178,9 @@ describe('WorktreeHoverCard', () => {
   it('drops quick actions the caller has no handler for', () => {
     const p = props();
     render(
-      <WorktreeHoverCard {...p} onOpenDiff={undefined} onOpenSettings={undefined} onOpenFiles={undefined} />,
+      <WorktreeHoverCard {...p} onOpenDiff={undefined} onOpenSettings={undefined} onOpenFiles={undefined} onOpenInEditor={undefined} />,
     );
+    expect(screen.queryByRole('button', { name: /Open in/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
     // A worktree on a runner has no local diff or settings — a dead button
     // reads as a broken one.
