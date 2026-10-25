@@ -4,7 +4,7 @@ import type { SessionChip } from '../../hooks/sessions';
 import { WorktreeHoverCard, useHoverCard, type HoverCardMode } from './WorktreeHoverCard';
 import { useRendererOverlay } from '../../contexts/RendererOverlay';
 
-export type OpenWorktree = (w: Worktree, mode?: HoverCardMode, sessionId?: string) => void;
+export type OpenWorktree = (w: Worktree, mode?: HoverCardMode | 'files', sessionId?: string) => void;
 
 type Rects = { anchor: DOMRect; sidebarLeft?: number; sidebarRight?: number };
 
@@ -99,6 +99,7 @@ export function WorktreeRowItem({
           onOpenSession={(mode, sessionId) => { hover.close(); onOpen(worktree, mode, sessionId); }}
           onOpenMr={mr && onOpenMr ? () => { hover.close(); onOpenMr(worktree, mr); } : undefined}
           onOpenDiff={onOpenDiff ? () => { hover.close(); onOpenDiff(worktree); } : undefined}
+          onOpenFiles={() => { hover.close(); onOpen(worktree, 'files', undefined); }}
           onOpenShell={() => { hover.close(); onOpen(worktree, 'shell', undefined); }}
           onOpenSettings={onSettings ? () => { hover.close(); onSettings!(worktree); } : undefined}
           onClose={hover.close}

@@ -9,9 +9,10 @@ import { worktreeLabel, worktreeTitle } from './labels';
 import { BranchIcon } from './rowBits';
 
 const icon = { width: 14, height: 14, viewBox: '0 0 24 24', 'aria-hidden': true, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
-// Lucide "laptop", "file-diff", "square-terminal", "settings".
+// Lucide "laptop", "file-diff", "folder-tree", "square-terminal", "settings".
 const LaptopIcon = () => <svg {...icon}><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z" /><path d="M20.054 15.987H3.946" /></svg>;
 const DiffIcon = () => <svg {...icon}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M9 10h6" /><path d="M12 13V7" /><path d="M9 17h6" /></svg>;
+const FilesIcon = () => <svg {...icon}><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z" /><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z" /><path d="M3 5a2 2 0 0 0 2 2h3" /><path d="M3 3v13a2 2 0 0 0 2 2h3" /></svg>;
 const ShellIcon = () => <svg {...icon}><path d="m7 11 2-2-2-2" /><path d="M11 13h4" /><rect width="18" height="18" x="3" y="3" rx="2" /></svg>;
 const GearIcon = () => <svg {...icon}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>;
 
@@ -68,6 +69,8 @@ export type WorktreeHoverCardProps = {
   onOpenSession: (mode: HoverCardMode, sessionId: string) => void;
   onOpenMr?: () => void;
   onOpenDiff?: () => void;
+  /** The worktree's folders and files (the Files tab). */
+  onOpenFiles?: () => void;
   onOpenShell?: () => void;
   onOpenSettings?: () => void;
   onClose: () => void;
@@ -79,7 +82,7 @@ export type WorktreeHoverCardProps = {
 
 export function WorktreeHoverCard({
   worktree, chips, mr = null, anchor, sidebarLeft, sidebarRight, runnerName,
-  onOpenSession, onOpenMr, onOpenDiff, onOpenShell, onOpenSettings, onClose,
+  onOpenSession, onOpenMr, onOpenDiff, onOpenFiles, onOpenShell, onOpenSettings, onClose,
   onPointerEnter, onPointerLeave, onFocus, onBlur,
 }: WorktreeHoverCardProps) {
   useEffect(() => {
@@ -146,6 +149,7 @@ export function WorktreeHoverCard({
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100" title={name}>{name}</span>
         {status && <span className="mr-1 shrink-0 text-[11px] text-zinc-500">{status}</span>}
         {onOpenDiff && <button type="button" aria-label="Changes" title="Changes" className={iconButton} onClick={onOpenDiff}><DiffIcon /></button>}
+        {onOpenFiles && <button type="button" aria-label="Files" title="Files" className={iconButton} onClick={onOpenFiles}><FilesIcon /></button>}
         {onOpenShell && <button type="button" aria-label="New shell" title="New shell" className={iconButton} onClick={onOpenShell}><ShellIcon /></button>}
         {onOpenSettings && <button type="button" aria-label="Settings" title="Settings" className={iconButton} onClick={onOpenSettings}><GearIcon /></button>}
       </div>

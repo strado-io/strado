@@ -31,6 +31,7 @@ vi.mock('@xterm/xterm', () => ({
     dispose = vi.fn();
     // XtermPane registers CSI handlers (2026 sync-output swallow + DECRQM answer)
     parser = { registerCsiHandler: vi.fn() };
+    registerLinkProvider = vi.fn();
     write = termWrite;
     onData(cb: (d: string) => void) {
       onDataHandlers.push(cb);

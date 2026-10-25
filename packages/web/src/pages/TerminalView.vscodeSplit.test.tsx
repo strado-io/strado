@@ -31,6 +31,7 @@ vi.mock('@xterm/xterm', () => ({
     focus = vi.fn();
     dispose = vi.fn();
     parser = { registerCsiHandler: vi.fn() };
+    registerLinkProvider = vi.fn();
     write = vi.fn();
     onData() {
       return { dispose: vi.fn() };

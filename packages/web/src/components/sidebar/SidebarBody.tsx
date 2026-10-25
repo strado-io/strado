@@ -48,7 +48,7 @@ export type SidebarBodyProps = {
   onNewWorktree: (ticket?: FocusTicket) => void;
   onWorktreeSettings: (w: Worktree) => void;
   onDeleteWorktree: (w: Worktree) => void;
-  onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
+  onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
   onRebuildSandbox?: (w: RemoteWorktree) => void;
   /** True until the first runner-worktree fetch for this space settles. */
@@ -73,7 +73,7 @@ activeRow: boolean;
 /** Takes the row out of the Focus; the worktree itself is untouched. */
 onRemove?: () => void;
 removeLabel?: string;
-onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
+onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
 onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
 /** Retry a failed sandbox build; offered only when the row runs unsandboxed on a sandboxing runner. */
 onRebuildSandbox?: (w: RemoteWorktree) => void;
@@ -94,7 +94,8 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
       ? [{ text: 'Delete worktree', danger: true, onClick: () => onDeleteRemoteWorktree(w) }]
       : []),
   ];
-  const open = () => onOpenRemoteWorktree?.(w);
+  // The hover card's Files button is the one tab a runner row opens by name.
+  const open = (_w?: Worktree, mode?: string) => (mode === 'files' ? onOpenRemoteWorktree?.(w, 'files') : onOpenRemoteWorktree?.(w));
   return (
     <WorktreeRowItem
       worktree={w as unknown as Worktree}

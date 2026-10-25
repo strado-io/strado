@@ -465,6 +465,21 @@ describe('Sidebar tree', () => {
       vi.useRealTimers();
     });
 
+    it("a runner worktree's card opens its Files tab by name", () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const onOpenRemoteWorktree = vi.fn();
+      const w = remote();
+      wrap(
+        <Sidebar {...base} remoteWorktrees={[w]}
+          runnerStatuses={statuses(true)} onOpenRemoteWorktree={onOpenRemoteWorktree} />,
+      );
+      fireEvent.pointerEnter(within(screen.getByRole('complementary')).getByText('FD-9').closest('.group')!);
+      act(() => { vi.advanceTimersByTime(250); });
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Files' }));
+      expect(onOpenRemoteWorktree).toHaveBeenCalledWith(w, 'files');
+      vi.useRealTimers();
+    });
+
     it('lists a runner worktree under the repo it belongs to, badged with the machine', () => {
       wrap(
         <Sidebar {...base}
@@ -862,7 +877,7 @@ describe('worktree hover card', () => {
     wrap(<Sidebar {...base} worktrees={[worktree]} onOpenDiff={onOpenDiff}
       onWorktreeSettings={onWorktreeSettings} onOpenWorktree={onOpenWorktree}
       />);
-    for (const action of ['Changes', 'New shell', 'Settings']) {
+    for (const action of ['Changes', 'Files', 'New shell', 'Settings']) {
       hoverRow();
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: action }));
       // acting on the card dismisses it — the work continues in a modal or the hub
@@ -870,6 +885,7 @@ describe('worktree hover card', () => {
     }
     expect(onOpenDiff).toHaveBeenCalledWith(worktree);
     expect(onOpenWorktree).toHaveBeenCalledWith(worktree, 'shell', undefined);
+    expect(onOpenWorktree).toHaveBeenCalledWith(worktree, 'files', undefined);
     expect(onWorktreeSettings).toHaveBeenCalledWith(worktree);
   });
 

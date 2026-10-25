@@ -1,0 +1,206 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The Files tab in the hub: its mount (local and runner worktrees), ⌘P, paths
+// in terminal output, "Ask an agent" and "Open in VS Code". FilesTab itself is
+// stubbed: these tests are about what the hub hands it.
+
+const peers = vi.hoisted(() => ({ list: [] as unknown[] }));
+vi.mock('../contexts/IntercomContext', () => ({
+  useIntercom: () => ({ peers: peers.list, loaded: true, error: null, refresh: vi.fn() }),
+}));
+
+type LinkProvider = { provideLinks(y: number, cb: (links: Array<{ text: string; activate(e: MouseEvent): void }> | undefined) => void): void };
+const term = vi.hoisted(() => ({ providers: [] as unknown[], rows: [] as string[] }));
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    cols = 80;
+    rows = 24;
+    open = vi.fn();
+    loadAddon = vi.fn();
+    attachCustomKeyEventHandler = vi.fn();
+    focus = vi.fn();
+    dispose = vi.fn();
+    parser = { registerCsiHandler: vi.fn() };
+    registerLinkProvider = (p: unknown) => { term.providers.push(p); return { dispose: vi.fn() }; };
+    buffer = { active: { getLine: (i: number) => (term.rows[i] === undefined ? undefined : { translateToString: () => term.rows[i] }) } };
+    write = vi.fn();
+    onData() { return { dispose: vi.fn() }; }
+  },
+}));
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit = vi.fn(); } }));
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class { onContextLoss = vi.fn(); dispose = vi.fn(); } }));
+vi.mock('@xterm/addon-unicode-graphemes', () => ({ UnicodeGraphemesAddon: class { dispose = vi.fn(); } }));
+vi.mock('@xterm/addon-search', () => ({ SearchAddon: class { onDidChangeResults = () => ({ dispose: vi.fn() }); dispose = vi.fn(); } }));
+vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
+vi.mock('../hooks/useWorkspace', () => ({ useWorkspace: () => ({ workspace: { id: 'default' } }) }));
+vi.mock('../eventStream', () => ({ subscribeWorktrees: () => () => {}, subscribeLogs: () => () => {} }));
+
+type FilesTabProps = {
+  wsId: string; worktreePath: string; remote?: { runnerId: string; remoteWsId: string };
+  openPath?: { path: string; line?: number; nonce: number };
+  onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
+  onOpenInVsCode?: (path: string, line: number) => void;
+};
+const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null }));
+vi.mock('../components/files/FilesTab', () => ({
+  FilesTab: (p: FilesTabProps) => {
+    filesTab.last = p;
+    return <div data-testid="files-tab" data-path={p.worktreePath} data-open={p.openPath ? `${p.openPath.path}:${p.openPath.line ?? ''}` : ''} />;
+  },
+}));
+
+const jarvisMessage = vi.hoisted(() => vi.fn(async () => ({})));
+vi.mock('../lib/jarvis/serverPort', () => ({ jarvisServerPort: () => ({ message: jarvisMessage }) }));
+
+const filesList = vi.fn();
+const runnerRpc = vi.fn();
+vi.mock('../api', () => ({
+  ApiClientError: class extends Error {},
+  api: {
+    envCheck: vi.fn().mockResolvedValue([]),
+    activity: { beat: vi.fn().mockResolvedValue({ ok: true }) },
+    kb: { files: vi.fn().mockResolvedValue({ files: [], truncated: false }), file: vi.fn() },
+    files: { list: (...a: unknown[]) => filesList(...a) },
+    worktrees: {
+      killSession: vi.fn().mockResolvedValue(undefined),
+      sessionBusy: vi.fn().mockResolvedValue({ busy: false }),
+      start: vi.fn(), stop: vi.fn(), patch: vi.fn().mockResolvedValue({}),
+      logs: vi.fn().mockResolvedValue({ lines: [] }), upload: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+      mergeRequests: vi.fn().mockResolvedValue({ kind: 'absent' }),
+      git: { changes: vi.fn().mockResolvedValue({ files: [] }), branches: vi.fn().mockResolvedValue({ branches: [] }), remotes: vi.fn().mockResolvedValue({ remotes: [] }) },
+    },
+    repos: { list: vi.fn().mockResolvedValue([]) },
+    runners: {
+      list: vi.fn().mockResolvedValue({ runners: [] }),
+      socketTicket: vi.fn().mockResolvedValue({ ticket: 't'.repeat(48), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), wsBase: 'wss://run1.r.strado.io', httpBase: 'https://run1.r.strado.io' }),
+      rpc: (...a: unknown[]) => runnerRpc(...a),
+      forwards: { list: vi.fn().mockResolvedValue({ forwards: [] }), open: vi.fn(), close: vi.fn() },
+    },
+    vscode: { open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' }), close: vi.fn().mockResolvedValue({ ok: true }) },
+  },
+}));
+
+class FakeWS {
+  static OPEN = 1;
+  readyState = 1;
+  onopen: (() => void) | null = null;
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  send() {}
+  close = vi.fn();
+}
+
+import { TerminalView } from './TerminalView';
+import type { Worktree } from '../types';
+
+const ROOT = '/Users/me/repo.worktrees/FD-1';
+const worktree = {
+  path: ROOT, repoId: 'r', branch: 'FD-1', head: 'abc', prunable: false, tracked: true,
+  meta: { ticketId: 'FD-1', title: 'T', repoId: 'r', linkedFrom: null, linkedAt: null, port: null, env: {}, lastStartedAt: null },
+  process: { status: 'idle', pid: null, startedAt: null, port: null, detectedUrl: null, exitCode: null },
+  hasShellSession: true, shellSessions: ['1'],
+} as unknown as Worktree;
+const remoteWt = {
+  ...worktree, path: '/home/strado/repos/site.worktrees/t1', meta: null,
+  remote: { runnerId: 'run1', runnerName: 'runner-dev', wsBase: 'wss://run1.r.strado.io', wsId: 'rw' },
+} as unknown as Worktree;
+
+const strip = () => within(screen.getByTestId('tab-segments'));
+const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+beforeEach(() => {
+  localStorage.clear();
+  term.providers.length = 0;
+  term.rows = [];
+  filesTab.last = null;
+  peers.list = [];
+  filesList.mockReset().mockResolvedValue({ files: ['src/app.ts', 'README.md'], truncated: false });
+  runnerRpc.mockReset().mockResolvedValue({ worktrees: [], repos: [] });
+  (globalThis as any).WebSocket = FakeWS;
+  (globalThis as any).ResizeObserver = class { observe() {} disconnect() {} };
+  (Element.prototype as any).scrollTo = vi.fn();
+});
+afterEach(() => { vi.clearAllMocks(); });
+
+describe('Files tab in the hub', () => {
+  it('opens from the new-session menu, is a Files tab in the strip, and survives a remount', async () => {
+    const { unmount } = render(<TerminalView worktree={worktree} onClose={() => {}} />);
+    fireEvent.click(screen.getByLabelText('New session'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Files' }));
+    expect(strip().getByText('Files')).toBeInTheDocument();
+    expect(screen.getByTestId('files-tab')).toHaveAttribute('data-path', ROOT);
+    expect(filesTab.last!.remote).toBeUndefined();
+    unmount();
+    render(<TerminalView worktree={worktree} onClose={() => {}} />);
+    expect(strip().getByText('Files')).toBeInTheDocument();
+  });
+
+  it('mode="files" (the hover card) opens it; closing it forgets it', async () => {
+    const { unmount } = render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    expect(screen.getByTestId('files-tab')).toBeInTheDocument();
+    fireEvent.click(strip().getByLabelText(/Close Files/));
+    await flush();
+    expect(strip().queryByText('Files')).toBeNull();
+    unmount();
+    render(<TerminalView worktree={worktree} onClose={() => {}} />);
+    expect(strip().queryByText('Files')).toBeNull();
+  });
+
+  it('a runner worktree gets it too, reading through the runner', async () => {
+    render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
+    await flush();
+    expect(filesTab.last!.remote).toEqual({ runnerId: 'run1', remoteWsId: 'rw' });
+    expect(filesTab.last!.onOpenInVsCode).toBeUndefined();
+  });
+
+  it('⌘P lists the worktree files; Enter opens the pick in the Files tab', async () => {
+    render(<TerminalView worktree={worktree} onClose={() => {}} />);
+    fireEvent.keyDown(window, { key: 'p', metaKey: true });
+    const input = await screen.findByRole('combobox', { name: 'Go to file' });
+    await flush();
+    expect(filesList).toHaveBeenCalledWith('default', ROOT, undefined);
+    fireEvent.change(input, { target: { value: 'app:12' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.queryByRole('combobox', { name: 'Go to file' })).toBeNull();
+    expect(screen.getByTestId('files-tab')).toHaveAttribute('data-open', 'src/app.ts:12');
+  });
+
+  it('a path in terminal output: ⌘-click opens it at its line; a plain click does nothing', async () => {
+    render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
+    const provider = term.providers.at(-1) as LinkProvider;
+    expect(provider).toBeDefined();
+    term.rows = ['src/app.ts:7:2 - error TS2322'];
+    const get = () => new Promise<Array<{ text: string; activate(e: MouseEvent): void }>>((res) => provider.provideLinks(1, (l) => res(l ?? [])));
+    let links = await get();
+    expect(links.map((l) => l.text)).toEqual(['src/app.ts:7:2']);
+    act(() => links[0]!.activate(new MouseEvent('click')));
+    expect(screen.queryByTestId('files-tab')).toBeNull();
+    act(() => links[0]!.activate(new MouseEvent('click', { metaKey: true, ctrlKey: true })));
+    expect(screen.getByTestId('files-tab')).toHaveAttribute('data-open', 'src/app.ts:7');
+    // Once the file list is in, a path that isn't a file in the worktree is no link.
+    await flush();
+    term.rows = ['src/gone.ts:3 and README.md'];
+    links = await get();
+    expect(links.map((l) => l.text)).toEqual(['README.md']);
+  });
+
+  it('Ask an agent: the dialog offers this worktree\'s agent and sends an ask with the lines as context', async () => {
+    peers.list = [{ agentId: 'claude-1@repo', alias: null, mode: 'claude', worktreePath: ROOT, sessionId: '1', lifecycle: 'idle', live: true }];
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    act(() => filesTab.last!.onAskAgent!({ worktreePath: ROOT, path: 'src/app.ts', from: 2, to: 3, snippet: 'a\nb' }));
+    const dialog = screen.getByRole('dialog', { name: 'Ask an agent about these lines' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Question' }), { target: { value: 'why?' } });
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Ask' })); });
+    expect(jarvisMessage).toHaveBeenCalledWith('claude-1@repo', 'why?', {
+      ask: true,
+      context: [
+        { kind: 'file', value: `${ROOT}/src/app.ts:2-3`, label: 'src/app.ts:2-3' },
+        { kind: 'text', value: 'a\nb', label: 'selected lines' },
+      ],
+    });
+    expect(screen.queryByRole('dialog', { name: 'Ask an agent about these lines' })).toBeNull();
+  });
+});

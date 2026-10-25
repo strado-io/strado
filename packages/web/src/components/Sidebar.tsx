@@ -45,7 +45,7 @@ export type Props = {
   runnerStatuses?: RunnerStatus[];
   /** True until the first runner-worktree fetch for this space settles. */
   remoteLoading?: boolean;
-  onOpenRemoteWorktree?: (w: RemoteWorktree) => void;
+  onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
   onRebuildSandbox?: (w: RemoteWorktree) => void;
   /** A workspace switch the server refused — shown on the dashboard's banner. */

@@ -11,6 +11,7 @@ import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
 import { runIdOfTab } from '../lib/runTab';
+import { findFileLinks } from '../lib/fileLinks';
 import { SearchAddon } from '@xterm/addon-search';
 import { TerminalSearchBar, searchKey, type SearchPort } from './TerminalSearchBar';
 import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, ShellIcon } from './hub/icons';
@@ -202,7 +203,7 @@ function answerCapabilityProbes(data: string, ws: WebSocket | null) {
 /** ⌘ is the shortcut modifier: the desktop app on macOS, or a Mac browser. */
 const isMac = () => window.strado?.platform === 'darwin' || /Mac/i.test(navigator.platform);
 
-export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
+export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenFile, knownFiles }: {
   wsId: string;
   tab: PtyTab;
   /** the focused pane receives keyboard focus when it (re)connects */
@@ -211,6 +212,10 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
   visible?: boolean;
   /** pointer went down inside this pane — make it the active one */
   onFocus?: () => void;
+  /** ⌘-click (Ctrl-click off a Mac) on a worktree file path in the output. */
+  onOpenFile?: (link: { path: string; line?: number }) => void;
+  /** The worktree's files, when known: then only paths that exist are links. */
+  knownFiles?: () => Set<string> | undefined;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -237,6 +242,9 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
   const [connecting, setConnecting] = useState<PtyTab['mode'] | null>(null);
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
+  // Read at click/hover time by the link provider, which lives as long as the terminal.
+  const fileLinksRef = useRef({ onOpenFile, knownFiles });
+  fileLinksRef.current = { onOpenFile, knownFiles };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -311,6 +319,25 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus }: {
       } catch (err) {
         console.warn('[terminal] search unavailable', err);
       }
+      // File paths in the output open in the Files tab. One row at a time: a
+      // path the terminal wrapped onto the next row is not a link.
+      term.registerLinkProvider({
+        provideLinks(y, callback) {
+          const { onOpenFile: open, knownFiles: files } = fileLinksRef.current;
+          const row = open ? term.buffer.active.getLine(y - 1)?.translateToString(true) : undefined;
+          if (!open || !row) return callback(undefined);
+          const links = findFileLinks(row, { root: tab.path, files: files?.() });
+          callback(links.length ? links.map((l) => ({
+            range: { start: { x: l.start + 1, y }, end: { x: l.end, y } },
+            text: l.text,
+            decorations: { underline: true, pointerCursor: true },
+            activate: (e: MouseEvent) => {
+              if (!(isMac() ? e.metaKey : e.ctrlKey)) return;
+              fileLinksRef.current.onOpenFile?.({ path: l.path, ...(l.line ? { line: l.line } : {}) });
+            },
+          })) : undefined);
+        },
+      });
       // Grapheme clustering (Unicode 15) so Devanagari spacing matras stay in one
       // cell. Guarded: experimental upstream, and a throw here runs inside render.
       try {
