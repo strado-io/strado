@@ -98,11 +98,11 @@ export function FilePicker({ load, onPick, onClose }: {
           ))}
         </ul>
         {failed ? (
-          <p className="px-3 py-2 text-[12px] text-zinc-500">Couldn&apos;t list this worktree&apos;s files</p>
+          <p className="px-3 py-2 text-[11px] text-zinc-500">Couldn&apos;t list this worktree&apos;s files</p>
         ) : !list ? (
-          <p role="status" className="px-3 py-2 text-[12px] text-zinc-500">Listing files…</p>
+          <p role="status" className="px-3 py-2 text-[11px] text-zinc-500">Listing files…</p>
         ) : matches.length === 0 ? (
-          <p className="px-3 py-2 text-[12px] text-zinc-500">No matching files</p>
+          <p className="px-3 py-2 text-[11px] text-zinc-500">No matching files</p>
         ) : list.truncated ? (
           <p className="border-t border-zinc-800 px-3 py-1.5 text-[11px] text-zinc-500">Showing the first {list.files.length.toLocaleString()} files of a very large worktree</p>
         ) : null}

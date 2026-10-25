@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { lspAdmin, type LspAdminClient, type LspServerStatus } from '../../lib/lspAdmin';
+import { api } from '../../api';
+import type { LspServerId, LspServerStatus } from '../../types';
+
+export type LspAdminClient = {
+  list(): Promise<LspServerStatus[]>;
+  setEnabled(id: LspServerId, enabled: boolean): Promise<void>;
+  stop(id: LspServerId): Promise<void>;
+};
 
 // Settings › Files › Language servers: which ones this Mac has, which are on,
 // what is running and how much memory it takes. Installing never happens in
@@ -35,7 +42,7 @@ function stateText(s: LspServerStatus): string {
   return `Running in ${n} worktree${n === 1 ? '' : 's'}${mem ? ` · ${mb(mem)}` : ''}`;
 }
 
-export function LanguageServersSection({ client = lspAdmin, install }: {
+export function LanguageServersSection({ client = api.lspServers, install }: {
   client?: LspAdminClient;
   /** The worktree an Install opens a shell in; null when none is open on this Mac. */
   install: { label: string; run: (command: string) => void } | null;
@@ -90,7 +97,7 @@ export function LanguageServersSection({ client = lspAdmin, install }: {
             <li key={s.id} role="group" aria-label={s.lang} className="glass pane-card rounded-xl border px-4 py-3">
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14px] text-zinc-100">{s.lang}</div>
+                  <div className="text-[13px] text-zinc-100">{s.lang}</div>
                   <div className="text-[11px] text-zinc-500">{stateText(s)}</div>
                 </div>
                 {s.running.length > 0 && (
@@ -99,7 +106,7 @@ export function LanguageServersSection({ client = lspAdmin, install }: {
                     aria-label={`Stop ${s.lang} language server`}
                     disabled={busy !== null}
                     onClick={() => void act(`stop:${s.id}`, () => client.stop(s.id))}
-                    className="rounded-md border border-zinc-800 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-40"
+                    className="rounded-md border border-zinc-800 px-2 py-1 text-[13px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-40"
                   >
                     Stop
                   </button>
@@ -126,7 +133,7 @@ export function LanguageServersSection({ client = lspAdmin, install }: {
                           title={why ?? (install ? `Type it into a new shell in ${install.label}` : 'Open a worktree on this Mac first')}
                           disabled={!opt.available || !install}
                           onClick={() => install?.run(opt.command)}
-                          className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-40"
+                          className="shrink-0 rounded-md border border-zinc-800 px-2 py-1 text-[13px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-40"
                         >
                           Install
                         </button>

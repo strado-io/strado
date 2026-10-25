@@ -468,3 +468,16 @@ export type OutlineSymbol = { name: string; kind: string; line: number; col: num
 export type OutlineAnswer = { server: LspServerId; symbols: OutlineSymbol[] } | { server: null; symbols: [] };
 export type SearchQuery = { q: string; word?: boolean; case?: boolean; regex?: boolean; glob?: string };
 export type SearchAnswer = { hits: NavHit[]; truncated: boolean; engine: 'rg' | 'git-grep' };
+
+// Settings › Files › Language servers (this machine) — mirrors LspServerStatus in server/src/services/lsp/types.ts.
+export type LspInstall = { command: string; os?: 'darwin' | 'linux'; needs?: string };
+export type LspServerStatus = {
+  id: LspServerId;
+  lang: string;
+  enabled: boolean;
+  installed: boolean;
+  binary?: string;
+  /** Install commands for this machine's OS; `available` = its `needs` tool is present. */
+  install: (LspInstall & { available: boolean })[];
+  running: { worktreePath: string; pid: number; rssBytes: number | null; startedAt: string; lastUsedAt: string }[];
+};

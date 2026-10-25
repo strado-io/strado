@@ -71,7 +71,7 @@ export function FileAskDialog({ ctx, peers, send, onClose }: {
           <>
             <div role="radiogroup" aria-label="Agent" className="flex flex-wrap gap-1.5">
               {agents.map((p) => (
-                <label key={p.agentId} className={`flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12px] ${agentId === p.agentId ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-900'}`}>
+                <label key={p.agentId} className={`flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[13px] ${agentId === p.agentId ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-900'}`}>
                   <input type="radio" name="ask-agent" aria-label={name(p)} className="sr-only" checked={agentId === p.agentId} onChange={() => setAgentId(p.agentId)} />
                   {name(p)}
                   {p.worktreePath === ctx.worktreePath && <span className="text-[11px] text-zinc-500">this worktree</span>}
@@ -88,13 +88,13 @@ export function FileAskDialog({ ctx, peers, send, onClose }: {
               placeholder="What do you want to know? (⌘Enter to send)"
               className="resize-none rounded-md border border-zinc-800 px-2 py-1.5 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600"
             />
-            {failed && <p role="alert" className="text-[12px] text-red-300">Couldn&apos;t send — is the agent still running?</p>}
+            {failed && <p role="alert" className="text-[11px] text-red-300">Couldn&apos;t send — is the agent still running?</p>}
           </>
         )}
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-md px-3 py-1 text-[12px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>
+          <button type="button" onClick={onClose} className="rounded-md px-3 py-1 text-[13px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>
           {agents.length > 0 && (
-            <button type="button" disabled={!canSend} onClick={() => void submit()} className="rounded-md bg-zinc-800 px-3 py-1 text-[12px] text-zinc-100 hover:bg-zinc-700 disabled:opacity-40">Ask</button>
+            <button type="button" disabled={!canSend} onClick={() => void submit()} className="rounded-md bg-zinc-800 px-3 py-1 text-[13px] text-zinc-100 hover:bg-zinc-700 disabled:opacity-40">Ask</button>
           )}
         </div>
       </div>

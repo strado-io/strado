@@ -2419,10 +2419,16 @@ export function TerminalView({
   // if it never takes the command, the command is copied for a paste.
   const runInShellRef = useRef<(req: RunInShellRequest) => void>(() => undefined);
   runInShellRef.current = ({ worktreePath, command }) => {
-    if (remote || worktreePath !== worktree.path) return;
+    if (worktreePath !== worktree.path) return;
     const tab = allocSession('shell');
     if (!tab) return;
     activateTab(tab);
+    // A runner's shell is typed into only by the person: the command is copied for a paste there.
+    if (remote) {
+      navigator.clipboard?.writeText(command).catch(() => undefined);
+      setHubHint(`Copied the install command — paste it into this shell on ${remote.runnerName}`);
+      return;
+    }
     const target = { worktreePath, mode: 'shell' as const, sessionId: tab.id };
     const until = Date.now() + 15_000;
     const attempt = async (): Promise<void> => {

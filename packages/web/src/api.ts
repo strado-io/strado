@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -756,6 +756,15 @@ export const api = {
       filesGet<HoverAnswer>(wsId, worktreePath, 'lsp/hover', at(p), remote, signal, LSP_TIMEOUT_MS),
     outline: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
       filesGet<OutlineAnswer>(wsId, worktreePath, 'lsp/outline', { path }, remote, signal, LSP_TIMEOUT_MS),
+  },
+  /** This machine's language servers (Settings › Files › Language servers). */
+  lspServers: {
+    list: (signal?: AbortSignal) =>
+      request<{ servers: LspServerStatus[] }>('/api/lsp/servers', signal ? { signal } : undefined).then((b) => b.servers),
+    setEnabled: (id: LspServerId, enabled: boolean) =>
+      request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+    stop: (id: LspServerId) =>
+      request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' }),
   },
   kb: {
     files: (wsId: string, p: string) =>

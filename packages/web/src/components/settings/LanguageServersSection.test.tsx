@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LspServerStatus } from '../../lib/lspAdmin';
+import type { LspServerStatus } from '../../types';
 import { LanguageServersSection } from './LanguageServersSection';
 
 const ts: LspServerStatus = {

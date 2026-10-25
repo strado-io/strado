@@ -230,4 +230,16 @@ describe('Files tab in the hub', () => {
     expect(writeText).toHaveBeenCalledWith('brew install gopls');
     expect(screen.getByRole('status')).toHaveTextContent("Couldn't type the command — it's copied; paste it into the shell");
   });
+
+  it('on a runner worktree, Install opens a Shell tab there and copies the command (nothing is typed from this Mac)', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(<TerminalView worktree={remoteWt} mode="shell" sessionId="1" onClose={() => {}} />);
+    await flush();
+    act(() => requestRunInShell({ worktreePath: remoteWt.path, command: 'go install golang.org/x/tools/gopls@latest' }));
+    expect(strip().getByText('Shell 2')).toBeInTheDocument();
+    expect(jarvisRun).not.toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledWith('go install golang.org/x/tools/gopls@latest');
+    expect(screen.getByRole('status')).toHaveTextContent('Copied the install command — paste it into this shell on runner-dev');
+  });
 });
