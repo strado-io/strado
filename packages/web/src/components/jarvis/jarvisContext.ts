@@ -93,7 +93,7 @@ const lastTwo = (path: string) => path.split('/').filter(Boolean).slice(-2).join
  * branch or folder) when only one worktree has it, else "<repo>/<name>" for
  * every worktree sharing it ("Strado/main", "Strado Website/main"); without a
  * repo, or still clashing, the last two path segments. Compared ignoring case. */
-function uniqueWorktreeNames(worktrees: Worktree[], repos: RepoConfig[]): string[] {
+export function uniqueWorktreeNames(worktrees: Worktree[], repos: RepoConfig[]): string[] {
   const clashes = (names: string[]) => {
     const n = new Map<string, number>();
     for (const x of names) n.set(x.toLowerCase(), (n.get(x.toLowerCase()) ?? 0) + 1);

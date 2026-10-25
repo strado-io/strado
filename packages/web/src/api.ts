@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody, ChatEntry, JarvisMeta, JarvisAgent } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -67,6 +67,10 @@ async function request<T>(url: string, init?: RequestInit, opts?: RequestOpts): 
     throw new ApiClientError(body?.error?.code ?? 'UNKNOWN', body?.error?.message ?? res.statusText, body?.error?.details);
   }
   return body as T;
+}
+
+function jarvisBase(wsId: string, focusId: string): string {
+  return `${wsBase(wsId)}/focuses/${encodeURIComponent(focusId)}/jarvis`;
 }
 
 function wsBase(wsId: string): string {
@@ -423,6 +427,26 @@ export const api = {
       request<{ focus: Focus }>(`${wsBase(wsId)}/focuses/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }).then((b) => b.focus),
     remove: (wsId: string, id: string) =>
       request<void>(`${wsBase(wsId)}/focuses/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(() => undefined),
+  },
+  // Focus Jarvis: the Focus's chat. Replies stream over `streamUrl` (SSE
+  // `entry` and `meta`); posts return as soon as the server has the turn.
+  focusJarvis: {
+    log: (wsId: string, focusId: string, page: { before?: string; limit?: number } = {}) => {
+      const q = new URLSearchParams();
+      if (page.before) q.set('before', page.before);
+      if (page.limit) q.set('limit', String(page.limit));
+      const qs = q.toString();
+      return request<{ entries: ChatEntry[]; meta: JarvisMeta }>(`${jarvisBase(wsId, focusId)}${qs ? `?${qs}` : ''}`);
+    },
+    send: (wsId: string, focusId: string, body: { text: string; windowId: string; context: unknown }) =>
+      request<{ entry: ChatEntry }>(`${jarvisBase(wsId, focusId)}/messages`, { method: 'POST', body: JSON.stringify(body) }).then((b) => b.entry),
+    stop: (wsId: string, focusId: string) =>
+      request<void>(`${jarvisBase(wsId, focusId)}/stop`, { method: 'POST' }).then(() => undefined),
+    approve: (wsId: string, focusId: string, entryId: string, body: { approve: boolean; windowId: string; context: unknown }) =>
+      request<unknown>(`${jarvisBase(wsId, focusId)}/approvals/${encodeURIComponent(entryId)}`, { method: 'POST', body: JSON.stringify(body) }).then(() => undefined),
+    setAgent: (wsId: string, focusId: string, agent: JarvisAgent) =>
+      request<JarvisMeta>(`${jarvisBase(wsId, focusId)}/agent`, { method: 'PUT', body: JSON.stringify({ agent }) }),
+    streamUrl: (wsId: string, focusId: string) => `${jarvisBase(wsId, focusId)}/events`,
   },
   repos: {
     list: (wsId: string) =>
