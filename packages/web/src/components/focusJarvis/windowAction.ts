@@ -112,7 +112,9 @@ async function runAction(
   // The tab it opened, else the existing tab it acted on (shell.run, tab.focus…):
   // the server matches that exact tab (a run's output, a wake).
   const opened = run.opened.filter((t): t is TabRef => t != null).pop() ?? run.lastActedOn ?? undefined;
-  const text = [describeRun(plan, run, after), run.recap ?? ''].filter(Boolean).join('\n\n');
+  // A Focus the run renamed or deleted is still named as it was.
+  const named = { ...after, focuses: [...after.focuses, ...ctx.focuses.filter((f) => !after.focuses.some((a) => a.id === f.id))] };
+  const text = [said(describeRun(plan, run, named)), run.recap ?? ''].filter(Boolean).join('\n\n');
   return {
     ok: run.ok,
     text,
@@ -120,6 +122,12 @@ async function runAction(
     ...(run.asks[0] ? { askId: run.asks[0].id } : {}),
   };
 }
+
+/** describeRun's line as the chat says it: "Ran: added main to Demo" → "Added main to Demo". */
+const said = (line: string): string => {
+  const t = line.replace(/^Ran: /, '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
 
 /** The url a browser.open step opened, as the step normalised it. */
 const openedUrl = (steps: Plan['steps']): string => {

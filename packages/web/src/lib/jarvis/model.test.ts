@@ -400,6 +400,17 @@ describe('describeRun', () => {
     expect(describeRun(plan, { done: 1, failed: { index: 1, reason: 'That tab is gone' }, opened: [null, null, null] }, ctx()))
       .toBe('Partly ran: focused shell-1; failed to close shell-1 (That tab is gone); did not run the rest');
   });
+  it('Focus edits say what changed, by name', () => {
+    const run = (args: Record<string, unknown>) => {
+      const plan = planFromModel([{ action: 'focus.edit', args }], ctx());
+      return describeRun(plan, { done: 1, opened: [null] }, ctx());
+    };
+    expect(run({ op: 'add', focus: 'Release', worktrees: ['api', 'app'] })).toBe('Ran: added api and app to Release');
+    expect(run({ op: 'remove', focus: 'Release', worktrees: ['api'] })).toBe('Ran: removed api from Release');
+    expect(run({ op: 'rename', focus: 'Release', name: 'Ship it' })).toBe('Ran: renamed Release to Ship it');
+    expect(run({ op: 'create', name: 'Spike', worktrees: ['api'] })).toBe('Ran: created the Focus Spike with api');
+    expect(run({ op: 'delete', focus: 'Release' })).toBe('Ran: deleted Release');
+  });
 });
 
 describe('planFromModel: a bare kind means the focused one', () => {

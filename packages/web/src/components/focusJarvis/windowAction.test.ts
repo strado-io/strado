@@ -156,7 +156,8 @@ describe('runJarvisAction', () => {
       expect(await runJarvisAction({ action: 'focus.edit', args: { op: 'rename', focus: 'Other', name: 'Mine' }, scope: SCOPE, focusId: 'f1' }, d))
         .toEqual({ ok: false, text: "That Focus isn't this one." });
       expect(focusPort).not.toHaveBeenCalled();
-      expect((await runJarvisAction({ action: 'focus.edit', args: { op: 'rename', focus: 'Billing', name: 'Billing 2' }, scope: SCOPE, focusId: 'f1' }, d)).ok).toBe(true);
+      expect(await runJarvisAction({ action: 'focus.edit', args: { op: 'rename', focus: 'Billing', name: 'Billing 2' }, scope: SCOPE, focusId: 'f1' }, d))
+        .toEqual({ ok: true, text: 'Renamed Billing to Billing 2' });
       expect((await runJarvisAction({ action: 'focus.edit', args: { op: 'create', name: 'Spike' }, scope: SCOPE, focusId: 'f1' }, d)).ok).toBe(true);
       expect(focusPort).toHaveBeenCalledTimes(2);
     });
