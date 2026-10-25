@@ -10,7 +10,7 @@ const TILE: Record<string, string> = {
   browser: 'bg-sky-400/10 ring-sky-400/20',
   kb: 'bg-violet-400/10 ring-violet-400/20',
   diff: 'bg-amber-400/10 ring-amber-400/20',
-  files: 'bg-cyan-400/10 ring-cyan-400/20',
+  files: 'bg-indigo-400/15 ring-indigo-400/25',
 };
 /** A tab's icon on its small rounded tile, tinted by kind (the icon keeps its status colour). Shared with the pane cards. */
 export function TabTile({ mode, icon }: { mode: string; icon: React.ReactNode }) {
@@ -23,7 +23,7 @@ export function TabTile({ mode, icon }: { mode: string; icon: React.ReactNode })
 
 // The edge a member behind the front tile shows: its kind's colour, solid.
 const EDGE: Record<string, string> = {
-  claude: '#b8644a', shell: '#2f8f6a', browser: '#2b7fb3', kb: '#7457c2', diff: '#a8782f', files: '#2a8f9c',
+  claude: '#b8644a', shell: '#2f8f6a', browser: '#2b7fb3', kb: '#7457c2', diff: '#a8782f', files: '#5b5bd6',
 };
 
 /** A group's members as a deck, like Rex: the first member's tile in front,
