@@ -98,10 +98,9 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   const startingKey = startingIds.join(',');
   const startedAt = useRef(new Map<string, number>());
   useEffect(() => {
-    if (!chatOpen || !startingKey) return;
-    const ids = startingKey.split(',');
-    const now = Date.now();
-    for (const id of ids) if (!startedAt.current.has(id)) startedAt.current.set(id, now);
+    const ids = startingKey ? startingKey.split(',') : [];
+    trackStarting(startedAt.current, ids, Date.now());
+    if (!chatOpen || ids.length === 0) return;
     const timer = setInterval(() => {
       if (!ids.some((id) => Date.now() - startedAt.current.get(id)! < STARTING_POLL_CAP_MS)) { clearInterval(timer); return; }
       void refreshPeers().catch(() => {});
@@ -125,6 +124,15 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
 
 const STARTING_POLL_MS = 2_000;
 const STARTING_POLL_CAP_MS = 120_000;
+
+/** When each starting card was first seen starting: new ones from `now`, and
+ * any no longer starting (up, closed, another Focus's) dropped, so the map
+ * only ever holds the cards on screen that are starting. */
+export function trackStarting(startedAt: Map<string, number>, ids: string[], now: number): void {
+  const live = new Set(ids);
+  for (const id of [...startedAt.keys()]) if (!live.has(id)) startedAt.delete(id);
+  for (const id of ids) if (!startedAt.has(id)) startedAt.set(id, now);
+}
 
 const refuseApp = () => { throw new Error('Jarvis does not move the window'); };
 /** W3: Jarvis's Focus edits go straight to the server and refresh the list;
