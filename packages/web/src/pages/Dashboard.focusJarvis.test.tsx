@@ -86,18 +86,22 @@ describe('Dashboard: Focus Jarvis', () => {
     renderDashboard();
     await act(async () => {});
     expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
-    expect(screen.getByTestId('jarvis-card')).toHaveAttribute('data-active', 'true');
+    // The Focus's header is its Jarvis; it reads as selected while the chat shows. A blank Focus says "Ask Jarvis…".
+    expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
+    expect(screen.getByTestId('focus-latest')).toHaveTextContent('Ask Jarvis…');
+    expect(screen.queryByTestId('jarvis-card')).toBeNull();
   });
 
-  it('the card shows needs approval and opens the chat; Open on a tab card selects its worktree and tab', async () => {
+  it('the header shows needs approval and opens the chat; Open on a tab card selects its worktree and tab', async () => {
     focusList.members = ['local:/a/A-1'];
     renderDashboard();
     await act(async () => {});
-    const section = screen.getByRole('region', { name: 'Focus' });
-    const jarvisCard = within(section).getByTestId('jarvis-card');
-    expect(jarvisCard).toHaveTextContent('needs approval');
+    const jarvisCard = screen.getByTestId('focus-header');
+    expect(within(jarvisCard).getByRole('img', { name: 'needs approval' })).toBeInTheDocument();
+    expect(jarvisCard).not.toHaveAttribute('data-selected');
     expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
     fireEvent.click(jarvisCard);
+    expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
     const chat = screen.getByRole('region', { name: 'Jarvis' });
     expect(within(chat).getByTestId('jarvis-user')).toHaveTextContent('open claude');
     fireEvent.click(within(chat).getByRole('button', { name: /^Open / }));
@@ -129,7 +133,7 @@ describe('Dashboard: Focus Jarvis', () => {
     try {
       renderDashboard();
       await act(async () => {});
-      fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+      fireEvent.click(screen.getByTestId('focus-header'));
       expect(screen.getByTestId('tab-card')).toHaveTextContent('A-1 · starting');
       await act(async () => { vi.advanceTimersByTime(2_000); });
       expect(intercom.refresh).toHaveBeenCalled();
@@ -149,7 +153,7 @@ describe('Dashboard: Focus Jarvis', () => {
     focusList.members = ['local:/a/A-1'];
     renderDashboard();
     await act(async () => {});
-    fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     vi.mocked(api.focusJarvis.send).mockRejectedValueOnce(new Error('ENOENT /Users/secret/.strado/jarvis'));
     const box = screen.getByRole('textbox', { name: /message jarvis/i });
     fireEvent.change(box, { target: { value: 'hello' } });
@@ -167,7 +171,7 @@ describe('Dashboard: Focus Jarvis', () => {
     vi.mocked(api.focusJarvis.log).mockResolvedValueOnce({ entries: [pending], meta: metaNow } as never);
     renderDashboard();
     await act(async () => {});
-    fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     const calls = vi.mocked(api.focusJarvis.log).mock.calls.length;
     vi.mocked(api.focusJarvis.approve).mockRejectedValueOnce(Object.assign(new Error('approval ap1 is not pending (superseded by x)'), { code: 'CONFLICT' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Approve' })); });
@@ -199,7 +203,7 @@ describe('Dashboard: Focus Jarvis', () => {
     renderDashboard();
     await act(async () => {});
     expect(JSON.parse(sessionStorage.getItem('strado:jarvis-seen') ?? '{}')['f-a']).toBeUndefined();
-    fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     expect(JSON.parse(sessionStorage.getItem('strado:jarvis-seen') ?? '{}')['f-a']).toBe('r7');
   });
 });

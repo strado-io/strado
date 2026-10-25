@@ -21,7 +21,7 @@ import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWaiting, agent
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
 import { FocusIcon } from './FocusSwitcher';
-import { FocusList, type FocusBadges } from './FocusList';
+import { FocusList, type FocusBadges, type FocusJarvisHeader } from './FocusList';
 import { PlusIcon } from '../hub/icons';
 import { FocusComposer } from '../focus/FocusComposer';
 import { AddWorktreesDialog } from '../focus/AddWorktreesDialog';
@@ -57,8 +57,8 @@ export type SidebarBodyProps = {
   onError?: (message: string) => void;
   /** False for a neighbour space's pane in the carousel: it shows, but does not answer global events. */
   isActivePane?: boolean;
-  /** The active Focus's ✦ Jarvis card: first in the Focus (a blank one too, above its empty actions). */
-  jarvis?: React.ReactNode;
+  /** The open Focus's Jarvis, for its header (Jarvis is the Focus: no card of its own). */
+  jarvis?: FocusJarvisHeader;
   /** Each Focus's Jarvis badges for its collapsed row (approvals waiting, an unread reply). */
   jarvisBadges?: Map<string, { pendingApprovals: number; unread: boolean }>;
   /** A collapsed Focus was clicked: called before it is activated (the Dashboard opens its Jarvis chat). */
@@ -346,11 +346,11 @@ export function SidebarBody({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
-          onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}>
+          onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
+          jarvis={jarvis}>
           <section aria-label="Focus">
             {active && rows.length === 0 ? (
               <div className="flex flex-col gap-1.5">
-                {jarvis}
                 <button type="button" onClick={() => setAddingMembers(true)} className={emptyAction}>
                   <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
                 </button>
@@ -359,7 +359,7 @@ export function SidebarBody({
                 </button>
               </div>
             ) : (
-              <div className="flex flex-col gap-1.5">{jarvis}{rows}</div>
+              <div className="flex flex-col gap-1.5">{rows}</div>
             )}
           </section>
         </FocusList>

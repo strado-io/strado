@@ -15,6 +15,15 @@ const PAGE = 20;
 const PULSE_MIN_MS = 10_000;
 const POLL_MS = 60_000;
 
+/** Jarvis's latest reply, its first line (streaming or finished); '' when none yet. */
+export function latestLine(entries: ChatEntry[]): string {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (e.type === 'jarvis' && e.text.trim()) return e.text.trim().split('\n')[0]!.trim();
+  }
+  return '';
+}
+
 /** The newest finished reply in a page of the log, if any. */
 export function newestReply(entries: ChatEntry[]): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {

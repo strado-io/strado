@@ -1,11 +1,12 @@
-// Every Focus, as an accordion: the active one open (its header, then its ✦
-// Jarvis card and worktree cards in one quiet group), every other one a flat
+// Every Focus, as an accordion: the active one open (its header, which is its
+// Jarvis: status, latest reply, click to open the chat; then its worktree
+// cards in one quiet group), every other one a flat
 // heading row with its name, live badges and when it was last active —
 // headings, not cards, so they never read as worktrees. Clicking a row makes
 // that Focus the active one; at most one is ever open, and it is always the
 // active one. The six most recent show, the active one always, then
 // "Show all (N)". No header: New focus is the + in the workspace row.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { FocusIcon, byLastActive } from './FocusSwitcher';
@@ -21,12 +22,28 @@ export type FocusBadges = {
   unread?: boolean;
 };
 
+/** The open Focus's Jarvis, shown in its header: Jarvis is the Focus itself. */
+export type FocusJarvisHeader = {
+  /** ✦ (dim idle, pulsing while it works) or ⚠ amber while an approval waits. */
+  status: React.ReactNode;
+  /** Line two, Jarvis's latest reply: an element that renders FOCUS_LATEST_CLASS's line, or nothing. */
+  latest: React.ReactNode;
+  /** The chat is what the main area shows: the header reads as selected. */
+  selected: boolean;
+  /** The header row was clicked: open the chat. */
+  onOpen: () => void;
+};
+
 export const FOCUS_LIST_CAP = 6;
+/** The header's second line, aligned under the name. */
+export const FOCUS_LATEST_CLASS = 'truncate pl-[2.4rem] pr-1 text-[11px] leading-4 text-zinc-500';
 
 // A Focus row is a heading: flat, a hover tint only (the theme's edge colour,
 // so white on dark and black on light). The open Focus's contents sit in one
 // very quiet panel under it.
 const ROW = 'flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 hover:bg-[rgb(var(--pane-edge)/0.05)]';
+// The open Focus's header: the same row, two lines (the second, Jarvis's latest reply).
+const HEADER = 'flex min-w-0 flex-col rounded-md px-2 py-1';
 const GROUP = 'flex flex-col gap-1.5 rounded-xl bg-[rgb(var(--pane-edge)/0.02)] p-1.5 ring-1 ring-[rgb(var(--pane-edge)/0.05)]';
 
 const icon = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
@@ -34,7 +51,7 @@ const Chevron = ({ open }: { open: boolean }) => (
   <svg {...icon} width={12} height={12} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}><path d="m9 18 6-6-6-6" /></svg>
 );
 
-export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, children }: {
+export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, jarvis, children }: {
   focuses: Focus[];
   activeId: string | null;
   badges: Map<string, FocusBadges>;
@@ -43,10 +60,15 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   /** The open Focus's ⋯ menu (Rename is added here). */
   activeMenu: MenuItem[];
   onRename: (id: string, name: string) => void;
-  /** The open Focus's contents: its Jarvis card and worktree cards. */
+  /** The open Focus's Jarvis, for its header. */
+  jarvis?: FocusJarvisHeader;
+  /** The open Focus's contents: its worktree cards (or a blank Focus's Add/New rows). */
   children: React.ReactNode;
 }) {
   const [showAll, setShowAll] = useState(false);
+  // The chevron folds the open Focus's cards away; it stays the active one.
+  const [folded, setFolded] = useState(false);
+  useEffect(() => { setFolded(false); }, [activeId]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const sorted = [...focuses].sort(byLastActive);
   const capped = sorted.slice(0, FOCUS_LIST_CAP);
@@ -63,20 +85,32 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
           if (f.id === activeId) {
             return (
               <div key={f.id} data-testid="focus-open" className={`flex flex-col gap-0.5 ${i > 0 ? 'mt-2' : ''} ${i < shown.length - 1 ? 'mb-2' : ''}`}>
-                <div className={`${ROW} group`}>
-                  <span className="text-zinc-400"><Chevron open /></span>
-                  <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
-                  {renaming === f.id ? (
-                    <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
-                  ) : (
-                    <h3 aria-current="true" title={`${f.name}${hint}`} className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100">{f.name}</h3>
-                  )}
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
-                  <Menu label={`${f.name} actions`} alwaysVisible
-                    items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...activeMenu]} />
+                {/* The header is the Focus's Jarvis: clicking it (outside the chevron and ⋯) opens the chat. */}
+                <div data-testid="focus-header" data-selected={jarvis?.selected || undefined}
+                  onClick={jarvis && renaming !== f.id ? jarvis.onOpen : undefined}
+                  className={`${HEADER} group ${jarvis ? 'cursor-pointer' : ''} ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
+                  <div className="flex h-6 min-w-0 items-center gap-1.5">
+                    <button type="button" aria-label={folded ? `Show ${f.name}` : `Fold ${f.name}`} aria-expanded={!folded}
+                      onClick={(e) => { e.stopPropagation(); setFolded((v) => !v); }}
+                      className="-ml-0.5 flex h-5 w-4 shrink-0 items-center justify-center text-zinc-400 hover:text-zinc-200"><Chevron open={!folded} /></button>
+                    <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
+                    {renaming === f.id ? (
+                      <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
+                    ) : (
+                      <h3 aria-current="true" title={`${f.name}${hint}`} className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100">
+                        {jarvis ? <button type="button" aria-label={`Open Jarvis for ${f.name}`} className="max-w-full truncate text-left">{f.name}</button> : f.name}
+                      </h3>
+                    )}
+                    {jarvis?.status}
+                    <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
+                    <Menu label={`${f.name} actions`} alwaysVisible
+                      items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...activeMenu]} />
+                  </div>
+                  {/* Line two: Jarvis's latest reply, aligned under the name (renders nothing when there is none). */}
+                  {jarvis?.latest}
                 </div>
                 {/* What belongs to this Focus, grouped under its heading (no accent line). */}
-                <div data-testid="focus-group" className={GROUP}>{children}</div>
+                {!folded && <div data-testid="focus-group" className={GROUP}>{children}</div>}
               </div>
             );
           }

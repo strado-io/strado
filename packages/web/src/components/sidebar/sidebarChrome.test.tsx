@@ -55,8 +55,9 @@ describe('sidebar chrome', () => {
     expect(row.querySelectorAll('svg')).toHaveLength(2); // chevron, Focus icon
     expect(within(row).getByText('Other').className).toMatch(/text-\[13px\].*font-medium/);
     // The open Focus's header uses the same row; its contents are grouped, no accent line.
-    const header = screen.getByRole('heading', { name: 'Open one' }).parentElement!;
-    expect(header.className.split(/\s+/)).toEqual(expect.arrayContaining(['h-8', 'px-2', 'rounded-md']));
+    const header = screen.getByTestId('focus-header');
+    expect(header).toContainElement(screen.getByRole('heading', { name: 'Open one' }));
+    expect(header.className.split(/\s+/)).toEqual(expect.arrayContaining(['px-2', 'rounded-md']));
     const group = screen.getByTestId('focus-group');
     expect(group).toContainElement(screen.getByTestId('cards'));
     for (const cls of ['rounded-xl', 'p-1.5', 'gap-1.5', 'ring-1', 'bg-[rgb(var(--pane-edge)/0.02)]', 'ring-[rgb(var(--pane-edge)/0.05)]']) expect(group.className.split(/\s+/)).toContain(cls);

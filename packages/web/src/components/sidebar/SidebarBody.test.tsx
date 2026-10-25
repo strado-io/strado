@@ -5,6 +5,7 @@ import type { Focus, RemoteWorktree } from '../../api';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { publishTickets } from '../../hooks/tickets';
 import { SidebarBody, type SidebarBodyProps } from './SidebarBody';
+import type { FocusJarvisHeader } from './FocusList';
 import { resetEditorsCache } from '../../hooks/editors';
 
 vi.mock('../../hooks/mrSummaries', () => ({ useMrSummaries: vi.fn(() => new Map()) }));
@@ -192,25 +193,56 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
 
-  it('the Jarvis card comes first in the Focus, before the worktree cards', () => {
-    withFocus('local:/r1/wt');
-    render(<SidebarBody {...props({ jarvis: <div data-testid="jarvis-slot">Jarvis</div> })} />);
-    const section = screen.getByRole('region', { name: 'Focus' });
-    const slot = within(section).getByTestId('jarvis-slot');
-    const card = within(section).getByRole('button', { name: 'fx-412' });
-    expect(slot.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const header = (over: Partial<FocusJarvisHeader> = {}): FocusJarvisHeader => ({
+    status: <span role="img" aria-label="working">✦</span>, latest: <div data-testid="latest">Here is what we did</div>, selected: false, onOpen: vi.fn(), ...over,
   });
 
-  it('a blank Focus shows its Jarvis card above the empty actions; no Focus, no card', () => {
+  it('the open Focus\'s header is its Jarvis: status and latest reply; no Jarvis card in the panel, only worktree cards', () => {
+    withFocus('local:/r1/wt');
+    render(<SidebarBody {...props({ jarvis: header() })} />);
+    const h = screen.getByTestId('focus-header');
+    expect(within(h).getByRole('img', { name: 'working' })).toBeInTheDocument();
+    expect(within(h).getByTestId('latest')).toHaveTextContent('Here is what we did');
+    const group = screen.getByTestId('focus-group');
+    expect(within(group).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
+    expect(within(group).queryByTestId('latest')).toBeNull();
+  });
+
+  it('clicking the header opens the chat; the chevron only folds the cards; ⋯ only opens its menu', () => {
+    withFocus('local:/r1/wt');
+    const onOpen = vi.fn();
+    render(<SidebarBody {...props({ jarvis: header({ onOpen }) })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fold Billing' }));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('focus-group')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show Billing' }));
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Jarvis for Billing' }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('latest'));
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('while the chat shows, the header reads as selected', () => {
+    withFocus('local:/r1/wt');
+    const { rerender } = render(<SidebarBody {...props({ jarvis: header() })} />);
+    expect(screen.getByTestId('focus-header')).not.toHaveAttribute('data-selected');
+    rerender(<SidebarBody {...props({ jarvis: header({ selected: true }) })} />);
+    expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
+    expect(screen.getByTestId('focus-header').className).toMatch(/bg-\[rgb\(var\(--pane-edge\)\/0\.08\)\]/);
+  });
+
+  it('a blank Focus: the header, and only the Add/New rows in its panel', () => {
     focusMock.focuses = [focus('f1', 'Billing')];
     focusMock.activeId = 'f1';
-    const { unmount } = render(<SidebarBody {...props({ jarvis: <div data-testid="jarvis-slot">Jarvis</div> })} />);
-    expect(screen.getByTestId('jarvis-slot')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add worktrees' })).toBeInTheDocument();
-    unmount();
-    focusMock.activeId = null;
-    render(<SidebarBody {...props({ jarvis: <div data-testid="jarvis-slot">Jarvis</div> })} />);
-    expect(screen.queryByTestId('jarvis-slot')).toBeNull();
+    render(<SidebarBody {...props({ jarvis: header() })} />);
+    expect(screen.getByTestId('focus-header')).toBeInTheDocument();
+    const group = screen.getByTestId('focus-group');
+    expect(within(group).getByRole('button', { name: 'Add worktrees' })).toBeInTheDocument();
+    expect(within(group).getByRole('button', { name: 'New worktree here' })).toBeInTheDocument();
   });
 
   it('the empty Focus offers Add worktrees (a picker that adds the checked ones) and New worktree here (with its ticket)', () => {

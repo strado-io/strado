@@ -13,6 +13,7 @@ import { SpaceDots } from './sidebar/SpaceDots';
 import { SidebarNav } from './sidebar/SidebarNav';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
 import { NEW_FOCUS_EVENT } from '../hooks/focusShortcut';
+import type { FocusJarvisHeader } from './sidebar/FocusList';
 
 export type AddRepoAnchor = { left: number; right: number; bottom: number };
 
@@ -49,8 +50,8 @@ export type Props = {
   onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
   onRebuildSandbox?: (w: RemoteWorktree) => void;
-  /** The active Focus's ✦ Jarvis card, first in its section (this space's pane only). */
-  jarvis?: React.ReactNode;
+  /** The open Focus's Jarvis, for its header (this space's pane only). */
+  jarvis?: FocusJarvisHeader;
   /** Each Focus's Jarvis badges for its collapsed row (this space's pane only). */
   jarvisBadges?: Map<string, { pendingApprovals: number; unread: boolean }>;
   /** A collapsed Focus was clicked, before it is activated. */
