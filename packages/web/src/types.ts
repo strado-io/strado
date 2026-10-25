@@ -416,3 +416,40 @@ export type SandboxList = { sandboxes: SandboxRow[]; runtime: 'podman' | 'docker
 export type LogLine = { ts: number; level: 'info' | 'warn' | 'error' | 'debug'; text: string };
 export type LogQuery = { lines?: number; grep?: string; since?: number };
 export type LogPage = { lines: LogLine[]; source: 'journal' | 'file' | 'none'; nextSince: number | null };
+
+// Files tab — mirrors packages/server/src/services/files/types.ts. Every path
+// is relative to the worktree root, uses '/', and never leaves it.
+export type FileChange = 'M' | 'A' | 'D' | 'R' | '?';
+export type FileTreeEntry = {
+  name: string;
+  /** Relative to the worktree root, e.g. "src/app.ts". */
+  path: string;
+  kind: 'dir' | 'file';
+  size?: number;
+  /** Files: its own change. Dirs: set when anything under it changed. */
+  change?: FileChange;
+  /** Matched by .gitignore (only listed when ignored files were asked for). */
+  ignored?: boolean;
+};
+export type FileTreePage = { dir: string; entries: FileTreeEntry[]; truncated: boolean };
+export type FileList = { files: string[]; truncated: boolean };
+export type FileContent = {
+  path: string;
+  size: number;
+  binary: boolean;
+  tooLarge: boolean;
+  text?: string;
+  /** A CodeMirror language hint, e.g. "typescript"; null = plain. */
+  language: string | null;
+  change?: FileChange;
+};
+/** 1-based lines in the current file where it differs from HEAD. */
+export type FileMarks = {
+  path: string;
+  added: [number, number][];
+  modified: [number, number][];
+  /** Lines AFTER which something was deleted (0 = before the first line). */
+  deletedAfter: number[];
+};
+export const FILES_LIMITS = { treeEntries: 2000, listFiles: 50_000, readBytes: 1024 * 1024 } as const;
+export type FileAskContext = { worktreePath: string; path: string; from: number; to: number; snippet: string };

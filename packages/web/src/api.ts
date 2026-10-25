@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -71,6 +71,20 @@ async function request<T>(url: string, init?: RequestInit, opts?: RequestOpts): 
 
 function wsBase(wsId: string): string {
   return `/api/w/${encodeURIComponent(wsId)}`;
+}
+
+/** A worktree on a runner: its files are read through the runner's own API. */
+export type RemoteFilesTarget = { runnerId: string; remoteWsId: string };
+
+/** One Files-tab GET: on this machine, or on the runner through its rpc proxy. */
+function filesGet<T>(wsId: string, worktreePath: string, route: 'tree' | 'list' | 'read' | 'marks', query: Record<string, string | undefined>, remote?: RemoteFilesTarget): Promise<T> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (v !== undefined) qs.set(k, v);
+  const tail = `/worktrees/${encodeURIComponent(worktreePath)}/files/${route}${qs.toString() ? `?${qs}` : ''}`;
+  if (remote) {
+    return request<T>(`/api/runners/${encodeURIComponent(remote.runnerId)}/rpc?path=${encodeURIComponent(`/api/w/${encodeURIComponent(remote.remoteWsId)}${tail}`)}`);
+  }
+  return request<T>(`${wsBase(wsId)}${tail}`);
 }
 
 export type DetectedRepo = RepoConfig & { warnings: string[] };
@@ -705,6 +719,18 @@ export const api = {
       commit: (wsId: string, p: string, message: string) =>
         request<{ head: string; summary: string }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
     },
+  },
+  /** The Files tab: a read-only view of a worktree's folders and files. Pass
+   * `remote` for a runner's worktree (wsId is then unused). */
+  files: {
+    tree: (wsId: string, worktreePath: string, dir: string, opts: { ignored?: boolean } = {}, remote?: RemoteFilesTarget) =>
+      filesGet<FileTreePage>(wsId, worktreePath, 'tree', { dir, ignored: opts.ignored ? '1' : undefined }, remote),
+    list: (wsId: string, worktreePath: string, remote?: RemoteFilesTarget) =>
+      filesGet<FileList>(wsId, worktreePath, 'list', {}, remote),
+    read: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
+      filesGet<FileContent>(wsId, worktreePath, 'read', { path }, remote),
+    marks: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
+      filesGet<FileMarks>(wsId, worktreePath, 'marks', { path }, remote),
   },
   kb: {
     files: (wsId: string, p: string) =>
