@@ -161,15 +161,18 @@ export class LspClient {
     const waitFor = (done: () => boolean, until: number) =>
       new Promise<void>((resolve) => {
         if (done() || this.exited) return resolve();
-        const timer = setTimeout(finish, Math.max(0, until - Date.now()));
+        const timer = setTimeout(() => finish(), Math.max(0, until - Date.now()));
         const check = () => {
           if (done() || this.exited) finish();
           else this.progressWaiters.push(check);
         };
-        function finish() {
+        // Also on a timeout: a load that never ends must not keep one waiter
+        // per request until the next progress event.
+        const finish = () => {
           clearTimeout(timer);
+          this.progressWaiters = this.progressWaiters.filter((w) => w !== check);
           resolve();
-        }
+        };
         this.progressWaiters.push(check);
       });
     if (this.awaitingFirstLoad) {

@@ -169,15 +169,18 @@ async function wordAt(abs: string, line: number, col: number): Promise<string | 
   return text.slice(from, to);
 }
 
-/** Names that look like a secret, wherever they appear in the name. */
-const SECRET_SHAPED = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_KEY|PRIVATE_KEY|ACCESS_KEY|AUTH/i;
+/** Names that look like a secret. AUTH also drops SSH_AUTH_SOCK: harmless
+ *  (a language server has no business with the ssh agent), and deliberate. */
+const SECRET_SHAPED = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_KEY|PRIVATE_KEY|ACCESS_KEY|AUTH|(^|_)(KEY|DSN)($|_)/i;
+/** A URL carrying credentials: postgres://user:pw@host, redis://:pw@host. */
+const URL_USERINFO = /:\/\/[^/\s:@]*:[^@\s]+@/;
 /** Strado's own identity, and providers whose variables are all credentials or config for them. */
 const DENIED_PREFIX = /^(STRADO_|ANTHROPIC_|OPENAI_|CLAUDE_CODE_|GH_|GITHUB_|GITLAB_|AWS_SECRET|AWS_SESSION|OPENROUTER_|ELEVENLABS_)/i;
 
 /** The user's env reaches the server (toolchains need GOPRIVATE, venvs, …),
  *  minus Strado's identity and anything shaped like a credential. */
-export function envAllowed(name: string): boolean {
-  return name !== 'PORT' && !SECRET_SHAPED.test(name) && !DENIED_PREFIX.test(name);
+export function envAllowed(name: string, value = ''): boolean {
+  return name !== 'PORT' && !SECRET_SHAPED.test(name) && !DENIED_PREFIX.test(name) && !URL_USERINFO.test(value);
 }
 
 type Entry = {
@@ -246,7 +249,7 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
    *  (a server's own `#!/usr/bin/env node` must work from a dock launch). */
   async function serverEnv(binary: string | null): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && envAllowed(k)) env[k] = v;
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && envAllowed(k, v)) env[k] = v;
     // The server's own bin dir first: an nvm-installed server runs on the node it was installed with.
     const first = binary ? [path.dirname(binary)] : [];
     env.PATH = [...new Set([...first, path.dirname(process.execPath), ...(await deps.detect.dirs())])].join(path.delimiter);
@@ -300,6 +303,7 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     entry.ready = entry.client.initialize(limits.startMs, options).then(
       () => {
         entry.state = 'ready';
+        lastError.delete(spec.id);
       },
       (err) => {
         // An exit got here first (onExit runs before the rejection) and said why.
@@ -522,8 +526,10 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
 
     async stop(id) {
       await Promise.all([...entries.values()].filter((e) => e.spec.id === id).map(stopEntry));
-      // A deliberate stop is a clean slate: the next request may start it again.
+      // A deliberate stop is a clean slate (Settings' Retry is a stop): the
+      // next request may start it again.
       for (const k of crashes.keys()) if (k.endsWith(`\0${id}`)) crashes.delete(k);
+      lastError.delete(id);
     },
 
     sweep,

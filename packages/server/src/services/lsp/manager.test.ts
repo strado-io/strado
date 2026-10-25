@@ -280,12 +280,17 @@ describe('review fixes', () => {
   });
 
   it("the server keeps the user's env but never a secret or Strado's identity", async () => {
-    const kept = { GOPATH: '/go', GOPRIVATE: 'x.com/*', VIRTUAL_ENV: '/v', JAVA_HOME: '/jdk', LC_ALL: 'C', RANDOM_THING: 'r' };
+    const kept = {
+      GOPATH: '/go', GOPRIVATE: 'x.com/*', VIRTUAL_ENV: '/v', JAVA_HOME: '/jdk', LC_ALL: 'C', RANDOM_THING: 'r',
+      KEYBOARD_LAYOUT: 'us', DATABASE_HOST: 'localhost', DOCS_URL: 'https://example.com/a@b',
+    };
     const set: Record<string, string> = {
       STRADO_AGENT_TOKEN: 'tok', STRADO_HOME: '/x', PORT: '1234', ANTHROPIC_API_KEY: 'k', OPENAI_BASE: 'u',
       CLAUDE_CODE_OAUTH_TOKEN: 'c', GITHUB_TOKEN: 'g', GH_HOST: 'h', GITLAB_HOST: 'l', MY_SECRET: 's', NPM_TOKEN: 'n',
       AWS_ACCESS_KEY_ID: 'a', AWS_SESSION_X: 'x', DB_PASSWORD: 'p', DB_PASSWD: 'p', GOOGLE_APPLICATION_CREDENTIALS: '/c',
       STRIPE_API_KEY: 'k', SSH_PRIVATE_KEY: 'k', BASIC_AUTH: 'b', OPENROUTER_X: 'o', ELEVENLABS_X: 'e',
+      STRIPE_KEY: 'k', ENCRYPTION_KEY: 'k', KEY_FILE: '/k', SENTRY_DSN: 'https://k@sentry.io/1',
+      DATABASE_URL: 'postgres://user:pw@db:5432/x', REDIS: 'redis://:pw@cache:6379',
       ...kept,
     };
     const prev = { ...process.env };
@@ -426,6 +431,24 @@ describe('typescript-language-server needs a TypeScript', () => {
     // The config changed (a TypeScript appeared): tried again, and it works.
     await tsserverAt(path.join(root, 'dashboard', 'node_modules'));
     expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect((await m.servers())[0]!.lastError).toBeUndefined();
+  });
+
+  it('a stop (the Retry button) and a good start clear the failure', async () => {
+    const m = await make(await fakeBinary('needs-tsserver'));
+    await m.definition(root, 'src/use.ts', 2, 14);
+    await m.definition(root, 'src/use.ts', 2, 14);
+    expect((await m.servers())[0]!.lastError).toBeDefined();
+    await m.stop('typescript');
+    expect((await m.servers())[0]!.lastError).toBeUndefined();
+    await m.definition(root, 'src/use.ts', 2, 14);
+    expect((await received()).filter((x) => x.method === 'initialize')).toHaveLength(3);
+    expect((await m.servers())[0]!.lastError).toBeDefined();
+    // Now a TypeScript is there: the start alone clears it, before any answer.
+    await m.stop('typescript');
+    await fs.mkdir(path.join(root, 'app', 'node_modules', 'typescript', 'lib'), { recursive: true });
+    await fs.writeFile(path.join(root, 'app', 'node_modules', 'typescript', 'lib', 'tsserver.js'), '');
+    await m.outline(root, 'src/def.ts');
     expect((await m.servers())[0]!.lastError).toBeUndefined();
   });
 
