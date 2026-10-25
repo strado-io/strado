@@ -10,6 +10,7 @@ import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/sea
 import { tags as t } from '@lezer/highlight';
 import type { FileMarks } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
+import { createFindPanel } from './findPanel';
 import { renderHover } from './hoverMarkdown';
 
 // Ctrl-click on a Mac is a right-click (context menu), so there only ⌘ navigates.
@@ -28,9 +29,34 @@ const theme = EditorView.theme({
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: v('sky-500', 0.25) },
   '.cm-selectionMatch': { backgroundColor: v('sky-500', 0.12) },
   '.cm-change-gutter': { width: '3px', paddingLeft: '2px' },
-  '.cm-searchMatch': { backgroundColor: v('sky-500', 0.2), outline: `1px solid ${v('sky-500', 0.4)}` },
-  '.cm-panels': { backgroundColor: v('zinc-900'), color: v('zinc-200'), fontSize: '11px' },
-  '.cm-panels input, .cm-panels button': { fontSize: '11px' },
+  '.cm-searchMatch': { backgroundColor: v('sky-500', 0.2), outline: `1px solid ${v('sky-500', 0.4)}`, borderRadius: '2px' },
+  // The current match: the same accent, stronger (there is no amber theme var).
+  '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: v('sky-400', 0.4), outline: `1px solid ${v('sky-300', 0.8)}` },
+  '.cm-panels': { backgroundColor: 'transparent', color: v('zinc-200') },
+  '.cm-panels.cm-panels-top': { borderBottom: `1px solid ${v('zinc-800', 0.8)}` },
+  // The find bar (findPanel.ts): one 32px glass row.
+  '.cm-find': {
+    display: 'flex', alignItems: 'center', gap: '2px', height: '32px', padding: '0 8px',
+    backgroundColor: v('zinc-900', 0.8), backdropFilter: 'blur(12px)', fontSize: '11px',
+  },
+  '.cm-find-input': {
+    flex: '1 1 auto', minWidth: '80px', maxWidth: '320px', height: '22px', padding: '0 8px', marginRight: '6px',
+    fontFamily: 'var(--font-mono)', fontSize: '11px', color: v('zinc-100'),
+    backgroundColor: v('zinc-950', 0.6), border: `1px solid ${v('zinc-800')}`, borderRadius: '6px', outline: 'none',
+  },
+  '.cm-find-input:focus': { borderColor: v('zinc-600') },
+  '.cm-find-input::placeholder': { color: v('zinc-500') },
+  '.cm-find-count': { minWidth: '64px', marginRight: '4px', color: v('zinc-500'), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
+  '.cm-find-count.cm-find-none': { color: v('zinc-300') },
+  '.cm-find-btn': {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '22px', height: '22px', padding: '0 4px',
+    fontSize: '11px', color: v('zinc-400'), background: 'transparent', border: '1px solid transparent', borderRadius: '6px', cursor: 'pointer',
+  },
+  '.cm-find-btn:hover': { color: v('zinc-100'), backgroundColor: v('zinc-50', 0.06) },
+  '.cm-find-btn:focus-visible': { outline: `1px solid ${v('sky-400', 0.6)}` },
+  '.cm-find-toggle': { fontFamily: 'var(--font-mono)' },
+  '.cm-find-toggle.cm-find-on': { color: v('zinc-100') },
+  '.cm-find-sep': { width: '1px', height: '14px', margin: '0 4px', backgroundColor: v('zinc-800') },
   '.cm-tooltip': { backgroundColor: v('zinc-900'), color: v('zinc-200'), border: `1px solid ${v('zinc-700')}`, borderRadius: '8px', overflow: 'hidden' },
   '.cm-tooltip-hover': { maxWidth: '560px', maxHeight: '320px', overflow: 'auto' },
   '.cm-hover-doc': { padding: '6px 8px', fontSize: '11px', lineHeight: '1.5' },
@@ -179,7 +205,7 @@ export async function createCodeView(parent: HTMLElement, o: {
         marksField.init(() => o.marks),
         changeGutter,
         highlightActiveLine(),
-        search({ top: true }),
+        search({ top: true, createPanel: createFindPanel }),
         highlightSelectionMatches(),
         keymap.of([
           // Read-only, so plain letters are free: n/p walk the changes.
