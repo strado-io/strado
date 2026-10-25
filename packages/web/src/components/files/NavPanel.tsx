@@ -11,13 +11,14 @@ const LANG: Record<LspServerId, string> = {
 
 export type NavKind = 'definition' | 'references';
 
-/** The panel's heading: exact answers plainly; a search guess with why it is one. */
-export function navTitle(kind: NavKind, a: NavAnswer): string {
+/** The panel's heading: exact answers plainly; a search guess with why it is one.
+ *  `runner` names the runner when the worktree is on one: its servers are installed there. */
+export function navTitle(kind: NavKind, a: NavAnswer, runner?: string): string {
   const what = kind === 'definition' ? 'definitions' : 'references';
   if (a.source === 'lsp') return kind === 'definition' ? 'Definitions' : `References · ${a.hits.length}`;
   const lang = a.server ? LANG[a.server] : 'language';
   if (a.fallback === 'starting') return `Starting ${lang}… showing search results meanwhile`;
-  const why = a.fallback === 'not-installed' ? `no ${lang} server — install in Settings`
+  const why = a.fallback === 'not-installed' ? (runner ? `no ${lang} server — install it on ${runner} from a Shell tab there` : `no ${lang} server — install in Settings`)
     : a.fallback === 'disabled' ? `${lang} server is off — turn it on in Settings`
     : a.fallback === 'failed' ? `${lang} server failed — showing search results`
     : a.fallback === 'timeout' ? `${lang} server didn’t answer in time`
@@ -32,8 +33,10 @@ export function byFile(hits: NavHit[]): [string, NavHit[]][] {
   return [...groups.entries()];
 }
 
-export function NavPanel({ title, hits, empty, pending, onPick, onClose }: {
+export function NavPanel({ title, hits, empty, pending, action, onPick, onClose }: {
   title: string;
+  /** A button beside the title (Install, when no server is there). */
+  action?: { label: string; run: () => void };
   hits: NavHit[];
   /** Said when there are no hits. */
   empty: string;
@@ -57,7 +60,10 @@ export function NavPanel({ title, hits, empty, pending, onPick, onClose }: {
     <div ref={box} onKeyDown={move} role="region" aria-label={title} data-testid="nav-panel"
       className="flex max-h-56 shrink-0 flex-col border-t border-zinc-800/80">
       <div className="flex h-7 shrink-0 items-center gap-2 px-3">
-        <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-400">{title}{pending ? ' …' : ''}</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-400" title={title}>{title}{pending ? ' …' : ''}</span>
+        {action && (
+          <button type="button" onClick={action.run} className="shrink-0 rounded-md border border-zinc-700 px-1.5 text-[11px] text-zinc-200 hover:bg-white/[0.06]">{action.label}</button>
+        )}
         <button type="button" onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded px-1 text-[11px] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200">×</button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-1.5">

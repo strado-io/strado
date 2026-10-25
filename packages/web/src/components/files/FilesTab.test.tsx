@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const files = vi.hoisted(() => ({ tree: vi.fn(), read: vi.fn(), marks: vi.fn(), list: vi.fn(), search: vi.fn() }));
 const lsp = vi.hoisted(() => ({ definition: vi.fn(), references: vi.fn(), hover: vi.fn(), outline: vi.fn() }));
-vi.mock('../../api', () => ({ api: { files, lsp } }));
+const lspServers = vi.hoisted(() => ({ list: vi.fn() }));
+const runners = vi.hoisted(() => ({ rpc: vi.fn() }));
+const shell = vi.hoisted(() => ({ requestRunInShell: vi.fn() }));
+vi.mock('../../api', () => ({ api: { files, lsp, lspServers, runners } }));
+vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
@@ -25,7 +29,7 @@ const flush = () => act(async () => { for (let i = 0; i < 4; i++) await Promise.
 const page = (dir: string) => ({ dir, truncated: false, entries: dir === '' ? [{ name: 'a.ts', path: 'a.ts', kind: 'file', change: 'M' }, { name: 'b.ts', path: 'b.ts', kind: 'file' }] : [] });
 
 beforeEach(() => {
-  for (const f of [...Object.values(files), ...Object.values(lsp)]) f.mockReset();
+  for (const f of [...Object.values(files), ...Object.values(lsp), lspServers.list, runners.rpc, shell.requestRunInShell]) f.mockReset();
   files.tree.mockImplementation(async (_ws: string, _wt: string, dir: string) => page(dir));
   files.read.mockResolvedValue({});
 });
@@ -261,7 +265,7 @@ describe('FilesTab', () => {
       expect(screen.getByTestId('file-tree')).toBeInTheDocument();
     });
 
-    it('Alt←/→ in a text box moves by word, not back; ⌘[ still goes back', async () => {
+    it('in a text box Alt←/→, ⌘[ and Ctrl- are the box\'s; elsewhere they go back', async () => {
       lsp.definition.mockResolvedValue({ source: 'lsp', server: 'typescript', hits: [hit('lib/util.ts', 40, 7)] });
       render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
       await flush();
@@ -270,7 +274,38 @@ describe('FilesTab', () => {
       fireEvent.keyDown(screen.getByLabelText('cursor'), { key: 'ArrowLeft', altKey: true });
       expect(where()[0]).toBe('lib/util.ts');
       fireEvent.keyDown(screen.getByLabelText('cursor'), { key: '[', metaKey: true });
+      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: '-', code: 'Minus', ctrlKey: true });
+      expect(where()[0]).toBe('lib/util.ts');
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: '[', metaKey: true });
       expect(where()[0]).toBe('a.ts');
+    });
+
+    it('no server installed: Install sends this machine\'s command to a Shell tab', async () => {
+      lsp.definition.mockResolvedValue({ source: 'search', server: 'typescript', fallback: 'not-installed', hits: [hit('x.ts', 3)] });
+      lspServers.list.mockResolvedValue([{ id: 'typescript', install: [{ command: 'brew install x', available: false }, { command: 'npm i -g typescript-language-server typescript', available: true }] }]);
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      fireEvent.click(within(screen.getByTestId('nav-panel')).getByRole('button', { name: 'Install' }));
+      await flush();
+      expect(shell.requestRunInShell).toHaveBeenCalledWith({ worktreePath: '/wt', command: 'npm i -g typescript-language-server typescript' });
+    });
+
+    it('on a runner: the hint names it, and Install asks the runner for its command', async () => {
+      lsp.definition.mockResolvedValue({ source: 'search', server: 'pyright', fallback: 'not-installed', hits: [hit('x.py', 3)] });
+      runners.rpc.mockResolvedValue({ servers: [{ id: 'pyright', install: [{ command: 'pipx install pyright', available: true }] }] });
+      render(<FilesTab wsId="ws1" worktreePath="/home/u/wt" remote={{ runnerId: 'r1', remoteWsId: 'default', name: 'runner-dev' }} openPath={{ path: 'a.py', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      const panel = screen.getByTestId('nav-panel');
+      expect(panel).toHaveTextContent('Possible definitions (no Python server — install it on runner-dev from a Shell tab there)');
+      fireEvent.click(within(panel).getByRole('button', { name: 'Install' }));
+      await flush();
+      expect(runners.rpc).toHaveBeenCalledWith('r1', '/api/lsp/servers');
+      expect(lspServers.list).not.toHaveBeenCalled();
+      expect(shell.requestRunInShell).toHaveBeenCalledWith({ worktreePath: '/home/u/wt', command: 'pipx install pyright' });
     });
 
     it('opening another file drops a definition still being looked up', async () => {

@@ -6,7 +6,8 @@
 // picker), references, ⌘⇧F search, and back/forward through where you went.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, type RemoteFilesTarget } from '../../api';
-import type { FileAskContext, NavAnswer, NavHit, SearchQuery } from '../../types';
+import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
+import { requestRunInShell } from '../../lib/runInShell';
 import { FileTree } from './FileTree';
 import { FileViewer, type FileAt } from './FileViewer';
 import { NavPanel, navTitle, type NavKind } from './NavPanel';
@@ -24,7 +25,8 @@ type NavState = { kind: NavKind; at: FileAt; answer: NavAnswer | null; error: st
 export type FilesTabProps = {
   wsId: string;
   worktreePath: string;
-  remote?: { runnerId: string; remoteWsId: string };
+  /** `name` is the runner's, for "install it on <name>". */
+  remote?: { runnerId: string; remoteWsId: string; name?: string };
   /** Open this file (and line); a new nonce opens it again. */
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: FileAskContext) => void;
@@ -177,12 +179,27 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   useEffect(() => () => navAbort.current?.abort(), []);
   const pickHit = (h: NavHit, from: FileAt | null) => jump(from, { path: h.path, line: h.line, col: h.col });
 
+  // No server for this file here: its install command (this machine's, or the
+  // runner's) goes to a Shell tab, typed in locally, copied with a hint on a runner.
+  const install = async (id: LspServerId) => {
+    const servers = where
+      ? (await api.runners.rpc<{ servers: LspServerStatus[] }>(where.runnerId, '/api/lsp/servers')).servers
+      : await api.lspServers.list();
+    const opts = servers.find((s) => s.id === id)?.install ?? [];
+    const cmd = (opts.find((o) => o.available) ?? opts[0])?.command;
+    if (cmd) requestRunInShell({ worktreePath, command: cmd });
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const mod = e.metaKey || e.ctrlKey;
-    // Alt←/→ moves by word in a text box or the code; only elsewhere is it back/forward.
+    // In a text box every key is the box's. In the code, Alt←/→ moves by word;
+    // ⌘[ ⌘] and Ctrl± still go back/forward there.
     const t = e.target as HTMLElement;
-    const typing = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || !!t.closest?.('.cm-editor');
-    const alt = e.altKey && !typing;
+    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') {
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
+      return;
+    }
+    const alt = e.altKey && !t.closest?.('.cm-editor');
     // Ctrl+- / Ctrl+Shift+- are VS Code's Mac defaults (Shift turns '-' into '_').
     const minus = e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.key === '-' || e.key === '_');
     if ((mod && !e.shiftKey && e.key === '[') || (alt && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
@@ -233,9 +250,12 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         )}
         {nav && (
           <NavPanel
-            title={nav.answer ? navTitle(nav.kind, nav.answer) : nav.error ?? (nav.kind === 'definition' ? 'Finding the definition' : 'Finding references')}
+            title={nav.answer ? navTitle(nav.kind, nav.answer, remote ? remote.name ?? 'the runner' : undefined) : nav.error ?? (nav.kind === 'definition' ? 'Finding the definition' : 'Finding references')}
             hits={nav.answer?.hits ?? []}
             pending={!nav.answer && !nav.error}
+            action={nav.answer?.fallback === 'not-installed' && nav.answer.server
+              ? { label: 'Install', run: () => { void install(nav.answer!.server!).catch((err: unknown) => console.warn('[files] no install command:', err)); } }
+              : undefined}
             empty={nav.error ? '' : nav.kind === 'definition' ? 'No definition found.' : 'No references found.'}
             onPick={(h) => { pickHit(h, nav.at); if (nav.kind === 'definition') setNav(null); }}
             onClose={closeNav}

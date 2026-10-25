@@ -11,6 +11,8 @@ describe('navTitle', () => {
     expect(navTitle('references', { source: 'lsp', server: 'typescript', hits: [h('a', 1), h('b', 2)] })).toBe('References · 2');
     expect(navTitle('definition', { source: 'search', server: 'typescript', fallback: 'not-installed', hits: [] }))
       .toBe('Possible definitions (no TypeScript server — install in Settings)');
+    expect(navTitle('definition', { source: 'search', server: 'typescript', fallback: 'not-installed', hits: [] }, 'runner-dev'))
+      .toBe('Possible definitions (no TypeScript server — install it on runner-dev from a Shell tab there)');
     expect(navTitle('definition', { source: 'search', server: 'typescript', fallback: 'starting', hits: [] }))
       .toBe('Starting TypeScript… showing search results meanwhile');
     expect(navTitle('references', { source: 'search', server: 'gopls', fallback: 'disabled', hits: [] }))
