@@ -27,7 +27,12 @@ const capped = (list: Place[], at: Place) => [...list, at].slice(-HISTORY_CAP);
 /** Narrower than this (px), the tree header's chips show icons only. */
 const COMPACT_BELOW = 220;
 
-type NavState = { kind: NavKind; at: Place; answer: NavAnswer | null; error: string | null };
+type NavState = { kind: NavKind; at: Place; answer: NavAnswer | null; error: string | null; slow?: boolean };
+/** A lookup still going after this long is probably a project loading; say so. */
+export const SLOW_LOOKUP_MS = 800;
+const TS_LIKE = /\.(?:[cm]?[jt]sx?)$/i;
+/** What a slow first lookup is waiting for. */
+const slowWords = (path: string) => `${TS_LIKE.test(path) ? 'Loading TypeScript project' : 'Starting the language server'}… (first lookup takes a while)`;
 
 export type FilesTabProps = {
   wsId: string;
@@ -211,8 +216,11 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     const from: Place = { ...at, pane };
     here.current = from;
     setNav({ kind, at: from, answer: null, error: null });
+    const slow = setTimeout(() => { if (!ac.signal.aborted) setNav((n) => (n && n.at === from && !n.answer && !n.error ? { ...n, slow: true } : n)); }, SLOW_LOOKUP_MS);
+    ac.signal.addEventListener('abort', () => clearTimeout(slow));
     api.lsp[kind](wsId, worktreePath, at, where, ac.signal)
       .then((answer) => {
+        clearTimeout(slow);
         if (ac.signal.aborted) return;
         // One exact definition: go there. A guess, or several, is shown to pick from.
         if (kind === 'definition' && answer.source === 'lsp' && answer.hits.length === 1) {
@@ -223,7 +231,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         }
         setNav({ kind, at: from, answer, error: null });
       })
-      .catch((err: unknown) => { if (!ac.signal.aborted) setNav({ kind, at: from, answer: null, error: filesError(err, 'nav') }); });
+      .catch((err: unknown) => { clearTimeout(slow); if (!ac.signal.aborted) setNav({ kind, at: from, answer: null, error: filesError(err, 'nav') }); });
   };
   /** Back to the code after a panel closes, so the keys keep working. */
   const focusCode = () => requestAnimationFrame(() => root.current?.querySelector<HTMLElement>(`[data-testid="files-pane-${tabsRef.current.focus}"] .cm-content`)?.focus());
@@ -288,7 +296,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   return (
     // data-file-tab-open: the hub's own ⌘W steps aside for ours while a file tab is open.
     <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
-      <aside className="glass pane-card flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border">
+      <aside className="glass pane-card flex w-64 min-w-[11rem] shrink flex-col overflow-hidden rounded-xl border">
         <div ref={header} className="flex h-8 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b border-zinc-800/80 pl-2 pr-1" data-testid="files-tree-header">
           <Chip on={changedOnly} onClick={() => setChangedOnly((v) => !v)} compact={compact} label="Changed"
             title="Changed only — list just the files that differ from HEAD" icon={<FilterIcon />} count={changedCount} />
@@ -348,11 +356,13 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         )}
         {nav && (
           <NavPanel
-            title={nav.answer ? navTitle(nav.kind, nav.answer, remote ? remote.name ?? 'the runner' : undefined) : nav.error ?? (nav.kind === 'definition' ? 'Finding the definition' : 'Finding references')}
+            title={nav.answer ? navTitle(nav.kind, nav.answer, remote ? remote.name ?? 'the runner' : undefined)
+              : nav.error ?? (nav.slow ? slowWords(nav.at.path) : nav.kind === 'definition' ? 'Finding the definition' : 'Finding references')}
             hits={nav.answer?.hits ?? []}
             pending={!nav.answer && !nav.error}
             action={nav.answer?.fallback === 'not-installed' && nav.answer.server
               ? { label: 'Install', run: () => { void install(nav.answer!.server!).catch((err: unknown) => console.warn('[files] no install command:', err)); } }
+              : nav.slow && !nav.answer && !nav.error ? { label: 'Cancel', run: closeNav }
               : undefined}
             empty={nav.error ? '' : nav.kind === 'definition' ? 'No definition found.' : 'No references found.'}
             onPick={(h, side) => { pickHit(h, nav.at, side, nav.at.pane); if (nav.kind === 'definition') setNav(null); }}
@@ -410,13 +420,13 @@ function Chip({ on, onClick, compact, label, title, icon, count }: {
   on: boolean; onClick: () => void; compact: boolean; label: string; title: string; icon: ReactNode; count?: number;
 }) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={on} aria-label={label} title={title}
+    <button type="button" onClick={onClick} aria-pressed={on} aria-label={count ? `${label}, ${count} changed` : label} title={title}
       className={`flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] ${
         on ? 'glass-pill text-zinc-100' : 'border-transparent text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'}`}>
       {icon}
       {!compact && <span>{label}</span>}
       {count != null && count > 0 && (
-        <span className="rounded bg-sky-500/15 px-1 tabular-nums text-sky-300" aria-label={`${count} changed`}>{count}</span>
+        <span className="rounded bg-sky-500/15 px-1 tabular-nums text-sky-300" aria-hidden>{count}</span>
       )}
     </button>
   );

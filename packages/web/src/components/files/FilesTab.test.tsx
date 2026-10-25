@@ -78,9 +78,10 @@ describe('FilesTab', () => {
     const header = screen.getByTestId('files-tree-header');
     expect(header.className).toContain('flex-nowrap');
     expect(header.querySelector('input[type="checkbox"]')).toBeNull();
-    const changed = within(header).getByRole('button', { name: 'Changed' });
+    // The count is in the chip's name, so a screen reader hears it.
+    const changed = within(header).getByRole('button', { name: 'Changed, 3 changed' });
     expect(changed).toHaveAttribute('title', expect.stringMatching(/^Changed only/));
-    expect(within(changed).getByLabelText('3 changed')).toHaveTextContent('3');
+    expect(changed).toHaveTextContent('3');
     expect(within(header).getByRole('button', { name: 'Ignored' })).toHaveAttribute('title', expect.stringMatching(/^Show ignored/));
     expect(within(header).getByRole('button', { name: 'Search files' }).querySelector('svg')).not.toBeNull();
     expect(within(header).getByRole('button', { name: 'Refresh files' }).querySelector('svg')).not.toBeNull();
@@ -93,7 +94,7 @@ describe('FilesTab', () => {
     await flush();
     expect(runners.rpc).toHaveBeenCalledWith('r1', `/api/w/default/worktrees/${encodeURIComponent('/home/u/wt')}/git/changes`);
     expect(git.changes).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('1 changed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Changed, 1 changed' })).toBeInTheDocument();
   });
 
   it('narrow: the chips show icons only instead of wrapping', async () => {
@@ -385,6 +386,36 @@ describe('FilesTab', () => {
       await flush();
       expect(screen.getByTestId('nav-panel')).toHaveTextContent('That took too long — try again.');
     });
+  });
+
+  it('a slow first lookup says the project is loading, with Cancel; the answer clears it', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolve!: (a: unknown) => void;
+      lsp.references.mockReturnValue(new Promise((r) => { resolve = r; }));
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'Shift-F12' }));
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(screen.getByTestId('nav-panel')).not.toHaveTextContent('Loading TypeScript project');
+      act(() => { vi.advanceTimersByTime(400); });
+      const panel = screen.getByTestId('nav-panel');
+      expect(panel).toHaveTextContent('Loading TypeScript project… (first lookup takes a while)');
+      resolve({ source: 'lsp', server: 'typescript', hits: [{ path: 'a.ts', line: 3, col: 1, preview: 'x' }] });
+      await flush();
+      expect(screen.getByTestId('nav-panel')).toHaveTextContent('References · 1');
+      expect(within(screen.getByTestId('nav-panel')).queryByRole('button', { name: 'Cancel' })).toBeNull();
+      // Cancel ends a slow one.
+      lsp.references.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole('button', { name: 'Shift-F12' }));
+      act(() => { vi.advanceTimersByTime(900); });
+      const signal = lsp.references.mock.calls.at(-1)![4] as AbortSignal;
+      fireEvent.click(within(screen.getByTestId('nav-panel')).getByRole('button', { name: 'Cancel' }));
+      expect(signal.aborted).toBe(true);
+      expect(screen.queryByTestId('nav-panel')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   describe('file tabs', () => {
