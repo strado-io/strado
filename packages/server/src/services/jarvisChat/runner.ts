@@ -36,7 +36,8 @@ export type JarvisRunner = {
 };
 
 export type JarvisRunnerDeps = {
-  stores: (ws: string) => WorkspaceStores;
+  /** Sync or async (app.deps.registry.get is async). */
+  stores: (ws: string) => WorkspaceStores | Promise<WorkspaceStores>;
   spawnHeadless: (o: HeadlessOpts) => AsyncIterable<HeadlessEvent>;
   now?: () => Date;
   /** Strado's home (STRADO_HOME or ~/.strado); Jarvis works in <home>/jarvis/<focusId>. */
@@ -55,11 +56,20 @@ type FocusState = { queue: Job[]; draining: boolean; running: { abort: AbortCont
 
 const TURN_CAP = 'Jarvis took longer than 5 minutes and was stopped';
 
+/** How the person's claude tabs log in, which Jarvis must too: an API key or
+ *  token (or `claude setup-token`'s), a gateway, a model, or Bedrock / Vertex with their cloud credentials. */
+const CLAUDE_AUTH = /^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|MODEL)|CLAUDE_CODE_(USE_BEDROCK|USE_VERTEX|OAUTH_TOKEN)|AWS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|CLOUD_ML_[A-Z0-9_]+)$/;
+
+/** The LSP scrub (no Strado identity, nothing credential-shaped), except Claude's own login. */
+export function jarvisEnvAllowed(name: string, value = ''): boolean {
+  return CLAUDE_AUTH.test(name) || envAllowed(name, value);
+}
+
 function defaultEnv(): () => Promise<Record<string, string>> {
   const detect = createDetect();
   return async () => {
     const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && envAllowed(k, v)) out[k] = v;
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && jarvisEnvAllowed(k, v)) out[k] = v;
     out.PATH = (await detect.dirs()).join(':');
     return out;
   };
@@ -81,15 +91,16 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
     if (!s) focuses.set(k, (s = { queue: [], draining: false, running: null, lastContext: null }));
     return s;
   };
-  const store = (ws: string) => deps.stores(ws).jarvis;
+  const store = async (ws: string) => (await deps.stores(ws)).jarvis;
 
   /** Pending approvals in this Focus's log, oldest first. */
   async function pendingApprovals(ws: string, focusId: string): Promise<Extract<ChatEntry, { type: 'approval' }>[]> {
-    if (!(await store(ws).meta(focusId)).pendingApprovals) return [];
+    const st = await store(ws);
+    if (!(await st.meta(focusId)).pendingApprovals) return [];
     const out: Extract<ChatEntry, { type: 'approval' }>[] = [];
     let before: string | undefined;
     for (;;) {
-      const page = await store(ws).page(focusId, { before, limit: JARVIS_LIMITS.pageMax });
+      const page = await st.page(focusId, { before, limit: JARVIS_LIMITS.pageMax });
       for (const e of page) if (e.type === 'approval' && e.state === 'pending') out.push(e);
       if (page.length < JARVIS_LIMITS.pageMax) return out;
       before = page[0]!.id;
@@ -112,7 +123,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
   }
 
   async function runTurn(ws: string, focusId: string, s: FocusState, job: Job): Promise<void> {
-    const st = store(ws);
+    const st = await store(ws);
     const turnId = randomUUID();
     const turnEntryId = `turn-${turnId}`;
     const replyId = `reply-${turnId}`;
@@ -180,14 +191,15 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
     async send(ws, focusId, input) {
       const s = state(ws, focusId);
       s.lastContext = input.context;
-      for (const a of await pendingApprovals(ws, focusId)) await store(ws).upsert(focusId, { ...a, state: 'superseded' });
-      const entry = await store(ws).append(focusId, { type: 'user', text: input.text, windowId: input.windowId });
+      const st = await store(ws);
+      for (const a of await pendingApprovals(ws, focusId)) await st.upsert(focusId, { ...a, state: 'superseded' });
+      const entry = await st.append(focusId, { type: 'user', text: input.text, windowId: input.windowId });
       enqueue(ws, focusId, { input: { kind: 'message', text: input.text, context: input.context }, windowId: input.windowId, wake: false });
       return entry;
     },
 
     async approve(ws, focusId, entryId, input) {
-      const st = store(ws);
+      const st = await store(ws);
       const entry = await st.find(focusId, entryId);
       if (!entry || entry.type !== 'approval') throw new AppError('NOT_FOUND', 'no such approval');
       if (entry.state !== 'pending') throw new AppError('CONFLICT', 'that approval is no longer pending');

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceStores } from '../../workspaceRegistry.js';
 import type { HeadlessEvent, HeadlessOpts } from './claudeHeadless.js';
 import { NOT_INSTALLED } from './claudeHeadless.js';
-import { createJarvisRunner, type JarvisRunnerDeps } from './runner.js';
+import { createJarvisRunner, jarvisEnvAllowed, type JarvisRunnerDeps } from './runner.js';
 import { createJarvisChatStore, type JarvisChatStore } from './store.js';
 import { JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext } from './types.js';
 
@@ -34,7 +34,7 @@ function fakeHeadless(scripts: Script[]) {
 
 function runner(h: ReturnType<typeof fakeHeadless>, over: Partial<JarvisRunnerDeps> = {}) {
   return createJarvisRunner({
-    stores: () => ({ jarvis: store } as unknown as WorkspaceStores),
+    stores: async () => ({ jarvis: store } as unknown as WorkspaceStores),
     spawnHeadless: h.run,
     home: tmp,
     env: async () => ({ PATH: '/bin' }),
@@ -58,6 +58,19 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.useRealTimers();
   await fs.rm(tmp, { recursive: true, force: true });
+});
+
+describe('jarvisEnvAllowed', () => {
+  it('lets Claude\'s own login through (as the person\'s claude tabs get it), and scrubs the rest like LSP', () => {
+    for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_OAUTH_TOKEN',
+      'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_REGION', 'AWS_PROFILE', 'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUD_ML_REGION', 'PATH', 'HOME', 'LANG']) {
+      expect([k, jarvisEnvAllowed(k, 'x')]).toEqual([k, true]);
+    }
+    for (const k of ['STRADO_AGENT_TOKEN', 'STRADO_JARVIS_TOKEN', 'OPENAI_API_KEY', 'GITHUB_TOKEN', 'GH_TOKEN', 'NPM_TOKEN', 'ANTHROPIC_OTHER', 'CLAUDE_CODE_ENTRYPOINT', 'DATABASE_PASSWORD', 'SSH_AUTH_SOCK']) {
+      expect([k, jarvisEnvAllowed(k, 'x')]).toEqual([k, false]);
+    }
+    expect(jarvisEnvAllowed('DATABASE_URL', 'postgres://u:pw@h/db')).toBe(false);
+  });
 });
 
 describe('JarvisRunner', () => {
