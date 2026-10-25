@@ -74,6 +74,9 @@ type MetaFile = { agent: JarvisAgent; sessionId: string | null; lastActiveAt: st
 export function createJarvisChatStore(dir: string): JarvisChatStore {
   const logs = new Map<string, Log>();
   const metas = new Map<string, MetaFile>();
+  /** Focuses whose chat was removed: Focus ids are never reused, and a turn
+   *  that ends after the delete must not write the file back. */
+  const removed = new Set<string>();
   const listeners = new Set<(focusId: string, change: JarvisChatChange) => void>();
   let queue: Promise<void> = Promise.resolve();
 
@@ -88,6 +91,10 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
     });
     queue = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  function writable(focusId: string): void {
+    if (removed.has(focusId)) throw new AppError('NOT_FOUND', `focus ${focusId} was deleted`);
   }
 
   function emit(focusId: string, change: JarvisChatChange): void {
@@ -201,6 +208,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
 
     append: (focusId, input) =>
       enqueue(focusId, async () => {
+        writable(focusId);
         const log = await load(focusId);
         const id = input.id ?? crypto.randomBytes(8).toString('hex');
         if (log.entries.some((e) => e.id === id)) throw new AppError('CONFLICT', `entry ${id} already exists`);
@@ -218,6 +226,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
 
     upsert: (focusId, input) =>
       enqueue(focusId, async () => {
+        writable(focusId);
         const log = await load(focusId);
         const entry = redactEntry(input);
         const i = log.entries.findIndex((e) => e.id === entry.id);
@@ -239,6 +248,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
 
     setMeta: (focusId, patch) =>
       enqueue(focusId, async () => {
+        writable(focusId);
         const m = { ...(await loadMeta(focusId)) };
         if (patch.agent !== undefined) m.agent = patch.agent;
         if (patch.sessionId !== undefined) m.sessionId = patch.sessionId;
@@ -252,6 +262,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
 
     remove: (focusId) =>
       enqueue(focusId, async () => {
+        removed.add(focusId);
         logs.delete(focusId);
         metas.delete(focusId);
         await fs.rm(logPath(focusId), { force: true });

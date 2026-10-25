@@ -11,6 +11,8 @@ let tmp: string;
 let app: Awaited<ReturnType<typeof buildApp>>;
 let calls: Array<[string, ...unknown[]]>;
 let focusId: string;
+/** Runs after runner.stop resolves, as a real turn's last write does. */
+let lateWrite: (() => Promise<unknown>) | null;
 
 const local = { host: '127.0.0.1:4000', origin: 'http://127.0.0.1:4000' };
 const base = () => `/api/w/default/focuses/${focusId}/jarvis`;
@@ -35,6 +37,8 @@ function fakeRunner(): FocusJarvisRunner {
     },
     async stop(ws, id) {
       calls.push(['stop', ws, id]);
+      const late = lateWrite;
+      if (late) setTimeout(() => void late().catch(() => undefined), 0);
     },
   };
 }
@@ -42,6 +46,7 @@ function fakeRunner(): FocusJarvisRunner {
 beforeEach(async () => {
   tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'api-focus-jarvis-')));
   calls = [];
+  lateWrite = null;
   const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
   app = await buildApp({ ...deps, jarvis: fakeRunner() });
   const res = await post('/api/w/default/focuses', { name: 'Login fix' });
@@ -83,6 +88,24 @@ describe('POST message', () => {
     expect(calls).toEqual([['send', 'default', focusId, 'open a shell in api', 'w1']]);
   });
 
+  it('two windows posting at once: both accepted, both handed to the runner (it queues them)', async () => {
+    const [a, b] = await Promise.all([
+      post(`${base()}/messages`, { text: 'first', windowId: 'w1', context }),
+      post(`${base()}/messages`, { text: 'second', windowId: 'w2', context }),
+    ]);
+    expect([a.statusCode, b.statusCode]).toEqual([202, 202]);
+    expect(calls.map((c) => c[3]).sort()).toEqual(['first', 'second']);
+    expect((await app.inject({ method: 'GET', url: base() })).json().entries).toHaveLength(2);
+  });
+
+  it('a secret in a message is redacted in the reply, the log and on disk', async () => {
+    const res = await post(`${base()}/messages`, { text: 'deploy with token=abc123', windowId: 'w1', context });
+    expect(res.json().entry.text).toBe('deploy with token=[redacted]');
+    expect(JSON.stringify((await app.inject({ method: 'GET', url: base() })).json())).not.toContain('abc123');
+    const raw = await fs.readFile(path.join(app.deps.registry.workspaceDir('default'), 'jarvis', `${focusId}.jsonl`), 'utf8');
+    expect(raw).not.toContain('abc123');
+  });
+
   it('bad bodies 400: empty, too long, extra keys, no context', async () => {
     expect((await post(`${base()}/messages`, { text: '', windowId: 'w', context })).statusCode).toBe(400);
     expect((await post(`${base()}/messages`, { text: 'x'.repeat(16 * 1024 + 1), windowId: 'w', context })).statusCode).toBe(400);
@@ -120,6 +143,20 @@ describe('stop, approvals, agent', () => {
     expect((await post(`${base()}/approvals/${done.id}`, { approve: true, windowId: 'w', context })).statusCode).toBe(409);
     expect((await post(`${base()}/approvals/${open.id}`, { approve: false, windowId: 'w', context })).statusCode).toBe(202);
     expect(calls).toEqual([['approve', 'default', focusId, open.id, false]]);
+  });
+
+  it('after a restart mid-turn: the turn reads interrupted, a pending approval is still approvable', async () => {
+    const s = await store();
+    await s.append(focusId, { type: 'turn', turnId: 't1', state: 'running' });
+    const ap = await s.append(focusId, { type: 'approval', turnId: 't1', action: 'shell.run', args: { command: 'ls' }, summary: 'Run ls', state: 'pending' });
+    await app.close();
+    const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
+    app = await buildApp({ ...deps, jarvis: fakeRunner() });
+    const log = (await app.inject({ method: 'GET', url: base() })).json();
+    expect(log.entries[0]).toMatchObject({ type: 'turn', state: 'interrupted' });
+    expect(log.meta).toMatchObject({ running: false, pendingApprovals: 1 });
+    expect((await post(`${base()}/approvals/${ap.id}`, { approve: true, windowId: 'w', context })).statusCode).toBe(202);
+    expect(calls).toEqual([['approve', 'default', focusId, ap.id, true]]);
   });
 
   it('PUT agent: same agent is a no-op; an unknown one 400', async () => {
@@ -176,6 +213,16 @@ describe('SSE', () => {
     expect(got[0]!.data).toMatchObject({ type: 'user', text: 'hi' });
     expect(got[2]!.data).toMatchObject({ running: true });
     ac.abort();
+  });
+
+  it('delete focus mid-turn: the turn\'s late last write does not bring the chat back', async () => {
+    const s = await store();
+    const turn = await s.append(focusId, { type: 'turn', turnId: 't1', state: 'running' });
+    lateWrite = () => s.upsert(focusId, { ...turn, state: 'stopped' } as ChatEntry);
+    expect((await app.inject({ method: 'DELETE', url: `/api/w/default/focuses/${focusId}` })).statusCode).toBe(204);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await fs.readdir(path.join(app.deps.registry.workspaceDir('default'), 'jarvis')).catch(() => [])).toEqual([]);
+    expect((await app.inject({ method: 'GET', url: base() })).statusCode).toBe(404);
   });
 
   it('unknown focus SSE 404', async () => {

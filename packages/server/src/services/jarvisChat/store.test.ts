@@ -171,6 +171,18 @@ describe('jarvis chat store', () => {
     await store.remove('never'); // no-op
   });
 
+  it('writes after remove are refused, so a turn ending late cannot bring the chat back', async () => {
+    const j = await store.append('f1', { type: 'jarvis', turnId: 't', text: 'half', done: false });
+    await store.remove('f1');
+    await expect(store.upsert('f1', { ...j, done: true } as ChatEntry)).rejects.toThrow(/deleted/);
+    await expect(store.append('f1', user('late'))).rejects.toThrow(/deleted/);
+    await expect(store.setMeta('f1', { sessionId: 's' })).rejects.toThrow(/deleted/);
+    expect(await fs.readdir(dir)).toEqual([]);
+    expect(await store.page('f1', {})).toEqual([]);
+    // Other focuses are untouched.
+    await store.append('f2', user('ok'));
+  });
+
   it('refuses a focus id that could leave the directory', async () => {
     for (const bad of ['../x', 'a/b', '', '.', 'x'.repeat(65)]) {
       await expect(store.page(bad, {})).rejects.toThrow(/focus/);
