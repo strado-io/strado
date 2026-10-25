@@ -133,8 +133,9 @@ describe('Dashboard: Focus Jarvis', () => {
       expect(screen.getByTestId('tab-card')).toHaveTextContent('A-1 · starting');
       await act(async () => { vi.advanceTimersByTime(2_000); });
       expect(intercom.refresh).toHaveBeenCalled();
-      // W5: about two minutes per card, then it stops.
-      await act(async () => { vi.advanceTimersByTime(120_000); });
+      // W5: about two minutes per card, then it stops (the clock jumps; one tick sees it).
+      vi.setSystemTime(Date.now() + 121_000);
+      await act(async () => { vi.advanceTimersByTime(2_000); });
       const after = intercom.refresh.mock.calls.length;
       await act(async () => { vi.advanceTimersByTime(10_000); });
       expect(intercom.refresh.mock.calls.length).toBe(after);
