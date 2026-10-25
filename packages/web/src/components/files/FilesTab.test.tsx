@@ -6,7 +6,8 @@ const lsp = vi.hoisted(() => ({ definition: vi.fn(), references: vi.fn(), hover:
 const lspServers = vi.hoisted(() => ({ list: vi.fn() }));
 const runners = vi.hoisted(() => ({ rpc: vi.fn() }));
 const shell = vi.hoisted(() => ({ requestRunInShell: vi.fn() }));
-vi.mock('../../api', () => ({ api: { files, lsp, lspServers, runners } }));
+const git = vi.hoisted(() => ({ changes: vi.fn() }));
+vi.mock('../../api', () => ({ api: { files, lsp, lspServers, runners, worktrees: { git } } }));
 vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown;
@@ -29,7 +30,8 @@ const flush = () => act(async () => { for (let i = 0; i < 4; i++) await Promise.
 const page = (dir: string) => ({ dir, truncated: false, entries: dir === '' ? [{ name: 'a.ts', path: 'a.ts', kind: 'file', change: 'M' }, { name: 'b.ts', path: 'b.ts', kind: 'file' }] : [] });
 
 beforeEach(() => {
-  for (const f of [...Object.values(files), ...Object.values(lsp), lspServers.list, runners.rpc, shell.requestRunInShell]) f.mockReset();
+  for (const f of [...Object.values(files), ...Object.values(lsp), lspServers.list, runners.rpc, shell.requestRunInShell, git.changes]) f.mockReset();
+  git.changes.mockResolvedValue({ files: [] });
   files.tree.mockImplementation(async (_ws: string, _wt: string, dir: string) => page(dir));
   files.read.mockResolvedValue({});
 });
@@ -52,15 +54,62 @@ describe('FilesTab', () => {
     expect(files.tree).toHaveBeenCalledWith('ws1', '/home/u/wt', '', { ignored: false }, { runnerId: 'r1', remoteWsId: 'default' });
   });
 
-  it('"Show ignored" reloads with ignored files; "Changed only" filters without asking again', async () => {
+  it('"Ignored" reloads with ignored files; "Changed" filters without asking again', async () => {
     render(<FilesTab wsId="ws1" worktreePath="/wt" />);
     await flush();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Changed only' }));
+    const changed = screen.getByRole('button', { name: 'Changed' });
+    expect(changed).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(changed);
+    expect(changed).toHaveAttribute('aria-pressed', 'true');
+    expect(changed.className).toContain('glass-pill');
     expect(document.querySelector('[data-path="b.ts"]')).toBeNull();
     expect(files.tree).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Show ignored' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ignored' }));
     await flush();
     expect(files.tree).toHaveBeenLastCalledWith('ws1', '/wt', '', { ignored: true }, undefined);
+  });
+
+  it('the header is one row: chips with titles, a changed-files count, and icon buttons', async () => {
+    git.changes.mockResolvedValue({ files: [{ path: 'a.ts' }, { path: 'c.ts' }, { path: 'd.ts' }] });
+    render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+    await flush();
+    const header = screen.getByTestId('files-tree-header');
+    expect(header.className).toContain('flex-nowrap');
+    expect(header.querySelector('input[type="checkbox"]')).toBeNull();
+    const changed = within(header).getByRole('button', { name: 'Changed' });
+    expect(changed).toHaveAttribute('title', expect.stringMatching(/^Changed only/));
+    expect(within(changed).getByLabelText('3 changed')).toHaveTextContent('3');
+    expect(within(header).getByRole('button', { name: 'Ignored' })).toHaveAttribute('title', expect.stringMatching(/^Show ignored/));
+    expect(within(header).getByRole('button', { name: 'Search files' }).querySelector('svg')).not.toBeNull();
+    expect(within(header).getByRole('button', { name: 'Refresh files' }).querySelector('svg')).not.toBeNull();
+    expect(git.changes).toHaveBeenCalledWith('ws1', '/wt');
+  });
+
+  it('the changed count on a runner comes through its rpc', async () => {
+    runners.rpc.mockResolvedValue({ files: [{ path: 'x' }] });
+    render(<FilesTab wsId="ws1" worktreePath="/home/u/wt" remote={{ runnerId: 'r1', remoteWsId: 'default' }} />);
+    await flush();
+    expect(runners.rpc).toHaveBeenCalledWith('r1', `/api/w/default/worktrees/${encodeURIComponent('/home/u/wt')}/git/changes`);
+    expect(git.changes).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('1 changed')).toBeInTheDocument();
+  });
+
+  it('narrow: the chips show icons only instead of wrapping', async () => {
+    let fire!: () => void;
+    const RO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class { constructor(cb: () => void) { fire = cb; } observe() {} disconnect() {} } as never;
+    try {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      const header = screen.getByTestId('files-tree-header');
+      expect(within(header).getByRole('button', { name: 'Changed' })).toHaveTextContent('Changed');
+      Object.defineProperty(header, 'clientWidth', { configurable: true, value: 180 });
+      act(() => fire());
+      expect(within(header).getByRole('button', { name: 'Changed' })).not.toHaveTextContent('Changed');
+      expect(within(header).getByRole('button', { name: 'Ignored' })).not.toHaveTextContent('Ignored');
+    } finally {
+      globalThis.ResizeObserver = RO;
+    }
   });
 
   it('openPath opens that file at its line, and a new nonce opens it again', async () => {

@@ -4,7 +4,7 @@
 // in this file / what changed here"; VS Code stays one click away.
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
 import { requestRunInShell } from '../../lib/runInShell';
@@ -19,6 +19,9 @@ export const HISTORY_CAP = 50;
 /** A cursor move within this many lines of the current place updates it instead of adding one. */
 export const NEAR_LINES = 10;
 const capped = (list: FileAt[], at: FileAt) => [...list, at].slice(-HISTORY_CAP);
+
+/** Narrower than this (px), the tree header's chips show icons only. */
+const COMPACT_BELOW = 220;
 
 type NavState = { kind: NavKind; at: FileAt; answer: NavAnswer | null; error: string | null };
 
@@ -51,6 +54,16 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   // Refresh: agents change files all the time; re-list the open folders and re-read the open file.
   const [reloadKey, setReloadKey] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  // The tree header never wraps: below this width the chips drop their words.
+  const header = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = header.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setCompact(el.clientWidth < COMPACT_BELOW));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // No polling: re-check when the person comes back — the tab shown again (it
   // was hidden in the hub), the window refocused, or the app visible again.
   // At most once every 2s, so a burst of those is one reload.
@@ -152,6 +165,18 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const search = useCallback((q: SearchQuery, signal: AbortSignal) => api.files.search(wsId, worktreePath, q, where, signal), [wsId, worktreePath, runnerId, remoteWsId]);
 
+  // How many files differ from HEAD, for the Changed chip; re-read with Refresh.
+  const [changedCount, setChangedCount] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const tail = `/worktrees/${encodeURIComponent(worktreePath)}/git/changes`;
+    const ask = where
+      ? api.runners.rpc<{ files: unknown[] }>(where.runnerId, `/api/w/${encodeURIComponent(where.remoteWsId)}${tail}`)
+      : api.worktrees.git.changes(wsId, worktreePath);
+    Promise.resolve(ask).then((r) => { if (live) setChangedCount(r?.files?.length ?? 0); }).catch(() => { if (live) setChangedCount(0); });
+    return () => { live = false; };
+  }, [wsId, worktreePath, runnerId, remoteWsId, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A newer navigation cancels the one in flight.
   const navigate = (kind: NavKind, at: FileAt) => {
     navAbort.current?.abort();
@@ -207,23 +232,20 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
   };
 
-  const toggle = 'flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-zinc-200';
+  const iconBtn = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-white/[0.06] hover:text-zinc-100';
   return (
     <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab" onKeyDown={onKeyDown}>
       <aside className="glass pane-card flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border">
-        <div className="flex h-8 shrink-0 items-center gap-3 border-b border-zinc-800/80 px-3">
-          <label className={toggle}>
-            <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} className="accent-sky-600" />
-            Changed only
-          </label>
-          <label className={toggle}>
-            <input type="checkbox" checked={showIgnored} onChange={(e) => setShowIgnored(e.target.checked)} className="accent-sky-600" />
-            Show ignored
-          </label>
-          <button type="button" onClick={() => setSearching((v) => !v)} aria-pressed={searching} aria-label="Search files" title="Search (⌘⇧F)"
-            className={`ml-auto rounded-md px-1 text-[13px] leading-none hover:bg-white/[0.06] hover:text-zinc-100 ${searching ? 'text-zinc-100' : 'text-zinc-400'}`}>⌕</button>
+        <div ref={header} className="flex h-8 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b border-zinc-800/80 pl-2 pr-1" data-testid="files-tree-header">
+          <Chip on={changedOnly} onClick={() => setChangedOnly((v) => !v)} compact={compact} label="Changed"
+            title="Changed only — list just the files that differ from HEAD" icon={<FilterIcon />} count={changedCount} />
+          <Chip on={showIgnored} onClick={() => setShowIgnored((v) => !v)} compact={compact} label="Ignored"
+            title="Show ignored — also list files .gitignore hides" icon={<EyeOffIcon />} />
+          <span className="flex-1" />
+          <button type="button" onClick={() => setSearching((v) => !v)} aria-pressed={searching} aria-label="Search files" title="Search files (⌘⇧F)"
+            className={`${iconBtn} ${searching ? 'glass-pill text-zinc-100' : 'text-zinc-400'}`}><SearchIcon /></button>
           <button type="button" onClick={() => setReloadKey((k) => k + 1)} aria-label="Refresh files" title="Refresh"
-            className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100">↻</button>
+            className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
           <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h) => pickHit(h, selected ? here.current : null)} />
@@ -263,5 +285,48 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         )}
       </main>
     </div>
+  );
+}
+
+function Chip({ on, onClick, compact, label, title, icon, count }: {
+  on: boolean; onClick: () => void; compact: boolean; label: string; title: string; icon: ReactNode; count?: number;
+}) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={on} aria-label={label} title={title}
+      className={`flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] ${
+        on ? 'glass-pill text-zinc-100' : 'border-transparent text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'}`}>
+      {icon}
+      {!compact && <span>{label}</span>}
+      {count != null && count > 0 && (
+        <span className="rounded bg-sky-500/15 px-1 tabular-nums text-sky-300" aria-label={`${count} changed`}>{count}</span>
+      )}
+    </button>
+  );
+}
+
+// Lucide's filter, eye-off, search and refresh-cw, at 14px.
+const svg = { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
+function FilterIcon() {
+  return <svg {...svg} className="shrink-0"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>;
+}
+function EyeOffIcon() {
+  return (
+    <svg {...svg} className="shrink-0">
+      <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+      <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+      <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+      <path d="m2 2 20 20" />
+    </svg>
+  );
+}
+function SearchIcon() {
+  return <svg {...svg}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>;
+}
+function RefreshIcon() {
+  return (
+    <svg {...svg}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" />
+    </svg>
   );
 }
