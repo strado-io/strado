@@ -286,7 +286,8 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   );
   const fromHere = () => (selected ? here.current : null);
   return (
-    <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab" onKeyDown={onKeyDown}>
+    // data-file-tab-open: the hub's own ⌘W steps aside for ours while a file tab is open.
+    <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
       <aside className="glass pane-card flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border">
         <div ref={header} className="flex h-8 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b border-zinc-800/80 pl-2 pr-1" data-testid="files-tree-header">
           <Chip on={changedOnly} onClick={() => setChangedOnly((v) => !v)} compact={compact} label="Changed"

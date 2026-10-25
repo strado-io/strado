@@ -1976,6 +1976,9 @@ export function TerminalView({
       // Cmd+W closes the active tab (terminal/shell/agent focus lands here;
       // Browser/VS Code focus arrives via the 'close-tab' IPC combo below).
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'w') {
+        // Inside the Files tab with a file tab open, ⌘W closes that file tab
+        // (its own handler); the hub's tab stays.
+        if ((e.target as Element | null)?.closest?.('[data-files-tab][data-file-tab-open]')) return;
         if (e.repeat) return;
         e.preventDefault();
         e.stopPropagation();

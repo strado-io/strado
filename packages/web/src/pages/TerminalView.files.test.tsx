@@ -42,11 +42,17 @@ type FilesTabProps = {
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
   onOpenInVsCode?: (path: string, line: number) => void;
 };
-const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null }));
+const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null, fileTabOpen: false }));
 vi.mock('../components/files/FilesTab', () => ({
   FilesTab: (p: FilesTabProps) => {
     filesTab.last = p;
-    return <div data-testid="files-tab" data-path={p.worktreePath} data-open={p.openPath ? `${p.openPath.path}:${p.openPath.line ?? ''}` : ''} />;
+    // The real FilesTab marks its root, and whether a file tab is open (the hub's ⌘W defers to it).
+    return (
+      <div data-testid="files-tab" data-files-tab="" {...(filesTab.fileTabOpen ? { 'data-file-tab-open': '' } : {})}
+        data-path={p.worktreePath} data-open={p.openPath ? `${p.openPath.path}:${p.openPath.line ?? ''}` : ''}>
+        <button type="button">inside files</button>
+      </div>
+    );
   },
 }));
 
@@ -118,6 +124,7 @@ beforeEach(() => {
   term.providers.length = 0;
   term.rows = [];
   filesTab.last = null;
+  filesTab.fileTabOpen = false;
   peers.list = [];
   filesList.mockReset().mockResolvedValue({ files: ['src/app.ts', 'README.md'], truncated: false });
   runnerRpc.mockReset().mockResolvedValue({ worktrees: [], repos: [] });
@@ -241,5 +248,26 @@ describe('Files tab in the hub', () => {
     expect(jarvisRun).not.toHaveBeenCalled();
     expect(writeText).toHaveBeenCalledWith('go install golang.org/x/tools/gopls@latest');
     expect(screen.getByRole('status')).toHaveTextContent('Copied the install command — paste it into this shell on runner-dev');
+  });
+
+  it('⌘W inside the Files tab is the Files tab\'s (closes its file tab) while one is open; otherwise it closes the hub tab', async () => {
+    filesTab.fileTabOpen = true;
+    const { unmount } = render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    const inside = screen.getByRole('button', { name: 'inside files' });
+    inside.focus();
+    const ev = new KeyboardEvent('keydown', { key: 'w', metaKey: true, bubbles: true, cancelable: true });
+    act(() => { inside.dispatchEvent(ev); });
+    await flush();
+    expect(ev.defaultPrevented).toBe(false); // left for the Files tab's own handler
+    expect(strip().getByText('Files')).toBeInTheDocument();
+    unmount();
+
+    filesTab.fileTabOpen = false;
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    const again = screen.getByRole('button', { name: 'inside files' });
+    again.focus();
+    act(() => { fireEvent.keyDown(again, { key: 'w', metaKey: true }); });
+    await flush();
+    expect(strip().queryByText('Files')).toBeNull();
   });
 });

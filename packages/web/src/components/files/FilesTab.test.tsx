@@ -433,6 +433,8 @@ describe('FilesTab', () => {
       rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 2 }} />);
       rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'c.ts', nonce: 3 }} />);
       expect(strip()).toEqual(['a.ts', 'b.ts', 'c.ts!']);
+      // The hub's ⌘W steps aside while this is set.
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-file-tab-open');
       fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'w', metaKey: true });
       expect(strip()).toEqual(['a.ts', 'b.ts!']);
       fireEvent.click(within(pane(0)).getByRole('button', { name: 'Close b.ts' }));
@@ -440,6 +442,8 @@ describe('FilesTab', () => {
       fireEvent(within(pane(0)).getByRole('tab'), new MouseEvent('auxclick', { bubbles: true, button: 1 }));
       expect(screen.queryByRole('tab')).toBeNull();
       expect(screen.getByText('Pick a file to read it here.')).toBeInTheDocument();
+      // No file tab left: ⌘W is the hub's again.
+      expect(screen.getByTestId('files-tab')).not.toHaveAttribute('data-file-tab-open');
     });
 
     it('⌥-click a reference opens it to the side; both show; Esc closes the side pane', async () => {
