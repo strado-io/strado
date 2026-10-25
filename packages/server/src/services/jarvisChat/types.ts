@@ -20,8 +20,10 @@ export const JARVIS_AGENTS: readonly JarvisAgent[] = ['claude'];
 
 export type CardKind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'run' | 'browser';
 /** A tab Jarvis opened, as the chat's live card finds it again. `tab` is the
- * tab's session name ("claude-1"); `worktree` the worktree name. */
-export type TabCardRef = { kind: CardKind; worktree: string; tab: string; label?: string; url?: string };
+ * tab's session name ("claude-1"); `worktree` the display name; `worktreePath`
+ * the absolute path, which is what matching uses (two repos can both have a
+ * "main" folder). Older cards may lack it. */
+export type TabCardRef = { kind: CardKind; worktree: string; worktreePath?: string; tab: string; label?: string; url?: string };
 
 export type ApprovalState = 'pending' | 'approved' | 'declined' | 'superseded';
 export type TurnState = 'running' | 'done' | 'interrupted' | 'failed' | 'stopped';
