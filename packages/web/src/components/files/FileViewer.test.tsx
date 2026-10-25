@@ -26,7 +26,8 @@ function show(over: Partial<Parameters<typeof FileViewer>[0]> = {}, file: FileCo
   return { ...render(<FileViewer {...props} />), props };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.mocked((await import('./codeView')).createCodeView).mockClear();
   cm.opts = null;
   for (const f of Object.values(cm.view)) f.mockReset();
   cm.view.step.mockReturnValue(5);
@@ -108,10 +109,45 @@ describe('FileViewer', () => {
     expect(props.onOpenInVsCode).toHaveBeenCalledWith('src/app.ts', 1);
   });
 
-  it('a failed read says so; failed marks only lose the gutter', async () => {
-    show({ read: vi.fn(async () => { throw new Error('path outside the worktree'); }) });
+  it('a failed read says so in fixed words by its code, never the relayed message', async () => {
+    const fail = (code: string) => vi.fn(async () => { throw Object.assign(new Error('runner said: /etc/passwd'), { code }); });
+    show({ read: fail('NOT_FOUND') });
     await flush();
-    expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t open src/app.ts: path outside the worktree');
+    expect(screen.getByRole('alert')).toHaveTextContent(/^This file no longer exists\.$/);
+  });
+
+  it('other read failures: outside the worktree, or a plain "couldn\'t read"', async () => {
+    const fail = (code: string) => vi.fn(async () => { throw Object.assign(new Error('raw'), { code }); });
+    const a = show({ read: fail('PATH_FORBIDDEN') });
+    await flush();
+    expect(screen.getByRole('alert')).toHaveTextContent('Outside this worktree.');
+    a.unmount();
+    show({ read: fail('TIMEOUT') });
+    await flush();
+    expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t read this file.');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('raw');
+  });
+
+  it('opening the same file again (new nonce) or Refresh re-reads it; the same text keeps the editor', async () => {
+    let text = TEXT.text!;
+    const read = vi.fn(async () => ({ ...TEXT, text }));
+    const { props, rerender } = show({ read, nonce: 1 });
+    await flush();
+    expect(read).toHaveBeenCalledTimes(1);
+    const { createCodeView } = await import('./codeView');
+    expect(createCodeView).toHaveBeenCalledTimes(1);
+    rerender(<FileViewer {...props} read={read} nonce={2} />);
+    await flush();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(props.marks).toHaveBeenCalledTimes(2);
+    expect(createCodeView).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Loading…')).toBeNull();
+    text = 'changed by an agent\n';
+    rerender(<FileViewer {...props} read={read} nonce={2} reloadKey={1} />);
+    await flush();
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(createCodeView).toHaveBeenCalledTimes(2);
+    expect(cm.opts!.doc).toBe('changed by an agent\n');
   });
 
   it('marks failing still shows the file', async () => {

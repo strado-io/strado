@@ -23,6 +23,8 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   const [showIgnored, setShowIgnored] = useState(false);
   const [selected, setSelected] = useState<string | null>(openPath?.path ?? null);
   const [target, setTarget] = useState<{ line?: number; nonce: number }>({ line: openPath?.line, nonce: openPath?.nonce ?? 0 });
+  // Refresh: agents change files all the time; re-list the open folders and re-read the open file.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!openPath) return;
@@ -54,13 +56,16 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
             <input type="checkbox" checked={showIgnored} onChange={(e) => setShowIgnored(e.target.checked)} className="accent-sky-600" />
             Show ignored
           </label>
+          <button type="button" onClick={() => setReloadKey((k) => k + 1)} aria-label="Refresh files" title="Refresh"
+            className="ml-auto rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100">↻</button>
         </div>
-        <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reveal={openPath?.path ?? null}
+        <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey}
+          reveal={openPath ? { path: openPath.path, nonce: openPath.nonce } : null}
           onSelect={(p) => { setSelected(p); setTarget((t) => ({ line: undefined, nonce: t.nonce })); }} />
       </aside>
       <main className="glass pane-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border">
         {selected ? (
-          <FileViewer key={`${worktreePath}\0${selected}`} worktreePath={worktreePath} path={selected} line={target.line} nonce={target.nonce}
+          <FileViewer key={`${worktreePath}\0${selected}`} worktreePath={worktreePath} path={selected} line={target.line} nonce={target.nonce} reloadKey={reloadKey}
             read={read} marks={marks} onAskAgent={onAskAgent} onOpenInVsCode={onOpenInVsCode} />
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-[11px] text-zinc-500">Pick a file to read it here.</div>

@@ -4,6 +4,7 @@
 // hides everything else.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { FileChange, FileTreeEntry, FileTreePage } from '../../types';
+import { filesError } from './errors';
 
 type Folder = { entries: FileTreeEntry[]; truncated: boolean } | 'loading' | { error: string };
 
@@ -21,17 +22,22 @@ const ancestors = (p: string) => p.split('/').slice(0, -1).map((_, i, parts) => 
 
 type Row = { entry: FileTreeEntry; level: number };
 
-export function FileTree({ load, changedOnly, selected, reveal, onSelect }: {
+export function FileTree({ load, changedOnly, selected, reveal, reloadKey = 0, onSelect }: {
   /** One folder's entries ('' = root). A new function (e.g. ignored toggled) reloads the tree. */
   load: (dir: string) => Promise<FileTreePage>;
   changedOnly: boolean;
   selected: string | null;
-  /** Open every folder above this path (a file opened from elsewhere). */
-  reveal?: string | null;
+  /** Open every folder above this path and focus it (a file opened from
+   *  elsewhere); a new nonce does it again, even for the same path. */
+  reveal?: { path: string; nonce: number } | null;
+  /** A new value re-lists every open folder (Refresh), keeping them open. */
+  reloadKey?: number;
   onSelect: (path: string) => void;
 }) {
   const [folders, setFolders] = useState<Map<string, Folder>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']));
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
   const [focus, setFocus] = useState<string | null>(null);
   const items = useRef(new Map<string, HTMLDivElement>());
   const requested = useRef(new Set<string>());
@@ -42,27 +48,40 @@ export function FileTree({ load, changedOnly, selected, reveal, onSelect }: {
     setFolders((m) => new Map(m).set(dir, 'loading'));
     Promise.resolve().then(() => load(dir))
       .then((page) => setFolders((m) => new Map(m).set(dir, { entries: page.entries, truncated: page.truncated })))
-      .catch((err: Error) => {
+      .catch((err: unknown) => {
         requested.current.delete(dir);
-        setFolders((m) => new Map(m).set(dir, { error: err.message }));
+        setFolders((m) => new Map(m).set(dir, { error: filesError(err, 'folder') }));
       });
   }, [load]);
 
-  // A new loader (ignored files toggled, another worktree) starts over, keeping what is open.
+  // A new loader (ignored files toggled, another worktree) or a Refresh starts
+  // over, keeping what is open. A Refresh keeps the old rows up until the new ones land.
+  const lastLoad = useRef(load);
   useEffect(() => {
     requested.current = new Set();
-    setFolders(new Map());
-  }, [load]);
+    if (lastLoad.current !== load) { lastLoad.current = load; setFolders(new Map()); return; }
+    for (const dir of expandedRef.current) {
+      requested.current.add(dir);
+      Promise.resolve().then(() => load(dir))
+        .then((page) => setFolders((m) => new Map(m).set(dir, { entries: page.entries, truncated: page.truncated })))
+        .catch((err: unknown) => {
+          requested.current.delete(dir);
+          setFolders((m) => new Map(m).set(dir, { error: filesError(err, 'folder') }));
+        });
+    }
+  }, [load, reloadKey]);
   useEffect(() => { for (const dir of expanded) if (!folders.has(dir)) fetchFolder(dir); }, [expanded, folders, fetchFolder]);
 
+  const revealPath = reveal?.path;
+  const revealNonce = reveal?.nonce;
   useEffect(() => {
-    if (!reveal) return;
+    if (!revealPath) return;
     setExpanded((s) => {
-      const add = ancestors(reveal).filter((d) => !s.has(d));
+      const add = ancestors(revealPath).filter((d) => !s.has(d));
       return add.length ? new Set([...s, ...add]) : s;
     });
-    setFocus(reveal);
-  }, [reveal]);
+    setFocus(revealPath);
+  }, [revealPath, revealNonce]);
 
   const rows: Row[] = [];
   const walk = (dir: string, level: number) => {
@@ -120,7 +139,7 @@ export function FileTree({ load, changedOnly, selected, reveal, onSelect }: {
       {root === 'loading' || root === undefined ? (
         <p className="px-3 py-2 text-[11px] text-zinc-500">Loading…</p>
       ) : 'error' in root ? (
-        <p role="alert" className="px-3 py-2 text-[11px] text-red-300">Couldn’t list files: {root.error}</p>
+        <p role="alert" className="px-3 py-2 text-[11px] text-red-300">{root.error}</p>
       ) : rows.length === 0 ? (
         <p className="px-3 py-2 text-[11px] text-zinc-500">{changedOnly ? 'No changed files.' : 'This folder is empty.'}</p>
       ) : null}
@@ -151,8 +170,9 @@ export function FileTree({ load, changedOnly, selected, reveal, onSelect }: {
               <span aria-hidden className={`w-3 shrink-0 text-center text-[11px] text-zinc-500 transition-transform ${isDir ? (open ? 'rotate-90' : '') : 'invisible'}`}>›</span>
               <span className={`min-w-0 flex-1 truncate ${isDir ? 'text-zinc-200' : ''} ${change && !isDir ? change.tone : ''}`}>{entry.name}</span>
               {change && (
-                <span className={`shrink-0 font-mono text-[11px] ${isDir ? 'text-zinc-500' : change.tone}`} aria-label={change.word}>
-                  {isDir ? '•' : change.text}
+                <span className={`shrink-0 font-mono text-[11px] ${isDir ? 'text-zinc-500' : change.tone}`}>
+                  <span aria-hidden>{isDir ? '•' : change.text}</span>
+                  <span className="sr-only">{isDir ? 'has changes' : change.word}</span>
                 </span>
               )}
             </div>

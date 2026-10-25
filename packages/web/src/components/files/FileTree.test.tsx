@@ -36,12 +36,14 @@ describe('FileTree', () => {
     expect(load).toHaveBeenCalledTimes(2); // already loaded: not asked again
   });
 
-  it('change badges in words for assistive tech; untracked reads U', async () => {
+  it('change badges: a letter to the eye, a word to assistive tech; untracked reads U', async () => {
     render(<FileTree load={loader()} changedOnly={false} selected={null} onSelect={vi.fn()} />);
     await flush();
-    expect(within(item('new.txt')).getByLabelText('untracked')).toHaveTextContent('U');
-    expect(within(item('src')).getByLabelText('modified')).toBeInTheDocument();
-    expect(item('README.md').querySelector('[aria-label]')).toBeNull();
+    expect(item('new.txt')).toHaveTextContent(/new\.txtUuntracked$/);
+    expect(within(item('new.txt')).getByText('untracked')).toHaveClass('sr-only');
+    expect(within(item('new.txt')).getByText('U')).toHaveAttribute('aria-hidden');
+    expect(within(item('src')).getByText('has changes')).toHaveClass('sr-only');
+    expect(within(item('README.md')).queryByText(/modified|untracked/)).toBeNull();
   });
 
 
@@ -98,12 +100,35 @@ describe('FileTree', () => {
 
   it('reveal opens every folder above a file opened from elsewhere', async () => {
     const load = loader();
-    render(<FileTree load={load} changedOnly={false} selected="src/lib/util.ts" reveal="src/lib/util.ts" onSelect={vi.fn()} />);
+    const { rerender } = render(<FileTree load={load} changedOnly={false} selected="src/lib/util.ts" reveal={{ path: 'src/lib/util.ts', nonce: 1 }} onSelect={vi.fn()} />);
     await flush();
     await flush();
     expect(load).toHaveBeenCalledWith('src');
     expect(load).toHaveBeenCalledWith('src/lib');
     expect(item('src/lib/util.ts')).toHaveAttribute('aria-selected', 'true');
+    // Folded away, then the same file opened again (new nonce): it opens again.
+    fireEvent.click(item('src'));
+    expect(document.querySelector('[data-path="src/lib/util.ts"]')).toBeNull();
+    rerender(<FileTree load={load} changedOnly={false} selected="src/lib/util.ts" reveal={{ path: 'src/lib/util.ts', nonce: 2 }} onSelect={vi.fn()} />);
+    await flush();
+    expect(item('src/lib/util.ts')).toHaveAttribute('tabindex', '0');
+  });
+
+  it('a new reloadKey re-lists every open folder, keeping the old rows up meanwhile', async () => {
+    const entries = { ...PAGES };
+    const load = vi.fn(async (dir: string): Promise<FileTreePage> => ({ dir, entries: entries[dir] ?? [], truncated: false }));
+    const { rerender } = render(<FileTree load={load} changedOnly={false} selected={null} reloadKey={0} onSelect={vi.fn()} />);
+    await flush();
+    fireEvent.click(item('docs'));
+    await flush();
+    load.mockClear();
+    entries.docs = [f('docs/guide.md', 'M'), f('docs/new.md', '?')];
+    rerender(<FileTree load={load} changedOnly={false} selected={null} reloadKey={1} onSelect={vi.fn()} />);
+    expect(item('docs/guide.md')).toBeInTheDocument();
+    await flush();
+    expect(load.mock.calls.map((c) => c[0]).sort()).toEqual(['', 'docs']);
+    expect(item('docs/new.md')).toBeInTheDocument();
+    expect(item('docs/guide.md')).toHaveAttribute('data-change', 'M');
   });
 
   it('ignored entries are dimmed; a new loader (ignored toggled) reloads, keeping folders open', async () => {
@@ -120,11 +145,17 @@ describe('FileTree', () => {
     expect(item('dist/x.js').className).toMatch(/opacity-50/);
   });
 
-  it('a folder that fails to list says so; an empty Changed-only view says so', async () => {
-    const load = vi.fn(async () => { throw new Error('not a worktree'); });
-    render(<FileTree load={load} changedOnly={false} selected={null} onSelect={vi.fn()} />);
+  it('a folder that fails to list says so in fixed words, never the raw message', async () => {
+    const fail = (code: string) => vi.fn(async () => { throw Object.assign(new Error('relayed: secret detail'), { code }); });
+    const { rerender } = render(<FileTree load={fail('NOT_FOUND')} changedOnly={false} selected={null} onSelect={vi.fn()} />);
     await flush();
-    expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t list files: not a worktree');
+    expect(screen.getByRole('alert')).toHaveTextContent(/^This folder no longer exists\.$/);
+    rerender(<FileTree load={fail('PATH_FORBIDDEN')} changedOnly={false} selected={null} onSelect={vi.fn()} />);
+    await flush();
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Outside this worktree\.$/);
+    rerender(<FileTree load={fail('UNKNOWN')} changedOnly={false} selected={null} onSelect={vi.fn()} />);
+    await flush();
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Couldn’t list this folder\.$/);
   });
 
   it('a truncated folder says how much is shown', async () => {

@@ -5,18 +5,21 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FileAskContext, FileContent, FileMarks } from '../../types';
 import { capSnippet, changeStarts } from './changes';
+import { filesError } from './errors';
 import type { CodeView, Selection } from './codeView';
 
 const loadCodeView = () => import('./codeView');
 
 const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 
-export function FileViewer({ worktreePath, path, line, nonce, read, marks: readMarks, onAskAgent, onOpenInVsCode }: {
+export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
   line?: number;
   nonce?: number;
+  /** A new value re-reads the file and its marks (Refresh). */
+  reloadKey?: number;
   read: (path: string) => Promise<FileContent>;
   marks: (path: string) => Promise<FileMarks>;
   onAskAgent?: (ctx: FileAskContext) => void;
@@ -30,6 +33,7 @@ export function FileViewer({ worktreePath, path, line, nonce, read, marks: readM
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<CodeView | null>(null);
   const cursorLine = useRef(1);
+  const shownPath = useRef<string | null>(null);
   // The latest marks, for an editor that finishes loading after they arrived.
   const marksRef = useRef<FileMarks | null>(null);
   marksRef.current = marks;
@@ -37,15 +41,26 @@ export function FileViewer({ worktreePath, path, line, nonce, read, marks: readM
   // The file, then its marks (a failed marks call only loses the gutter).
   useEffect(() => {
     let live = true;
-    setFile(null); setMarks(null); setError(null); setSelection(null);
+    // A new path starts blank; a re-read of the same one keeps the old copy up until the new one lands.
+    if (shownPath.current !== path) {
+      shownPath.current = path;
+      setFile(null); setMarks(null); setError(null); setSelection(null);
+    }
     Promise.resolve().then(() => read(path))
-      .then((f) => { if (live) setFile(f); })
-      .catch((err: Error) => { if (live) setError(err.message); });
+      .then((f) => {
+        if (!live) return;
+        setError(null);
+        // Same text back: keep the object, so the editor (and its cursor) stays put.
+        setFile((cur) => (cur && cur.path === f.path && cur.text === f.text && cur.binary === f.binary && cur.tooLarge === f.tooLarge ? cur : f));
+      })
+      .catch((err: unknown) => { if (live) setError(filesError(err, 'file')); });
     Promise.resolve().then(() => readMarks(path))
       .then((m) => { if (live) setMarks(m); })
       .catch(() => { /* no gutter */ });
     return () => { live = false; };
-  }, [path, read, readMarks]);
+    // A new nonce (the same file opened again) or reloadKey re-reads: agents
+    // change files all the time and an old copy is worse than a reload.
+  }, [path, read, readMarks, nonce, reloadKey]);
 
   const text = file && !file.binary && !file.tooLarge ? file.text ?? '' : null;
 
@@ -81,9 +96,10 @@ export function FileViewer({ worktreePath, path, line, nonce, read, marks: readM
       viewRef.current = null;
       el.replaceChildren();
     };
-    // `line` is applied by its own effect below; a new line must not rebuild the editor.
+    // `line` is applied by its own effect below; a new line must not rebuild the
+    // editor, and neither must a re-read that brought back the same text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, file]);
+  }, [text, file?.path, file?.language]);
 
   useEffect(() => { viewRef.current?.setMarks(marks); }, [marks, text]);
   useEffect(() => {
@@ -126,7 +142,7 @@ export function FileViewer({ worktreePath, path, line, nonce, read, marks: readM
         )}
       </header>
       {error ? (
-        <p role="alert" className="p-4 text-[13px] text-red-300">Couldn’t open {path}: {error}</p>
+        <p role="alert" className="p-4 text-[13px] text-red-300">{error}</p>
       ) : !file ? (
         <p className="p-4 text-[11px] text-zinc-500">Loading…</p>
       ) : file.binary ? (

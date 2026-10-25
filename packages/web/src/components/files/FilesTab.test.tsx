@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const files = vi.hoisted(() => ({ tree: vi.fn(), read: vi.fn(), marks: vi.fn(), list: vi.fn() }));
 vi.mock('../../api', () => ({ api: { files } }));
 vi.mock('./FileViewer', () => ({
-  FileViewer: (p: { path: string; line?: number; nonce?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown }) => (
-    <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-nonce={p.nonce ?? ''}
+  FileViewer: (p: { path: string; line?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown }) => (
+    <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
       data-ask={String(!!p.onAskAgent)} data-vscode={String(!!p.onOpenInVsCode)}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
     </div>
@@ -61,6 +61,16 @@ describe('FilesTab', () => {
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-nonce', '2');
     rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 3 }} />);
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-path', 'b.ts');
+  });
+
+  it('Refresh re-lists the tree and re-reads the open file', async () => {
+    render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+    await flush();
+    const calls = files.tree.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+    await flush();
+    expect(files.tree.mock.calls.length).toBeGreaterThan(calls);
+    expect(screen.getByTestId('viewer')).toHaveAttribute('data-reload', '1');
   });
 
   it('passes Ask agent and Open in VS Code through', async () => {
