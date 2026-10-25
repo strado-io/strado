@@ -78,31 +78,6 @@ describe('buildSessionMetrics', () => {
     expect(out.sessions[0]).toMatchObject({ pid: null, cpu: 0, rssBytes: 0, processes: 0 });
   });
 
-  it('reports the shared VS Code serve-web tree under app.vscode, null when not running', () => {
-    const procs = parsePsOutput(PS);
-    const withIt = buildSessionMetrics({
-      live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: 100, now: 0,
-    });
-    // 100 → 200 → 201, plus 400
-    expect(withIt.app.vscode).toEqual({ pid: 100, cpu: 14.7, rssBytes: 270000 * 1024, processes: 4 });
-    const without = buildSessionMetrics({ live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: null, now: 0 });
-    expect(without.app.vscode).toBeNull();
-  });
-
-  it('attributes reported VS Code windows to their folder and keeps only the rest under app.vscode', () => {
-    const procs = parsePsOutput(PS);
-    // serve-web root 100 → {200 → 201, 400}; window ext host = 200.
-    const out = buildSessionMetrics({
-      live: [], pidOf: () => null, procs, serverPid: 1, daemonPid: null, vscodePid: 100,
-      vscodeWindows: [{ pid: 200, folder: '/wt/a' }, { pid: 999, folder: '/wt/dead' }], now: 0,
-    });
-    expect(out.vscodeWindows).toEqual([
-      { path: '/wt/a', pid: 200, cpu: 4.2, rssBytes: 100000 * 1024, processes: 2 },
-    ]);
-    // shared = root tree minus attributed windows: 100 + 400
-    expect(out.app.vscode).toEqual({ pid: 100, cpu: 10.5, rssBytes: 170000 * 1024, processes: 2 });
-  });
-
   it('reports the process tree of each requested pid (dev servers), skipping pids not in the sample', () => {
     const out = buildSessionMetrics({
       live: [], pidOf: () => null, procs: parsePsOutput(PS), serverPid: 1, daemonPid: null,

@@ -9,7 +9,7 @@ const Body = z.object({
 });
 
 // Focus heartbeat from the web app: fired while a worktree-scoped view
-// (terminal tab, embedded VS Code, diff view) is open in a focused window.
+// (terminal tab, Files tab, diff view) is open in a focused window.
 // Covers reading/reviewing time that produces no keystrokes or file saves.
 export async function registerActivityRoutes(app: FastifyInstance) {
   // Same lexical-ownership check as /api/claude/status: only paths a

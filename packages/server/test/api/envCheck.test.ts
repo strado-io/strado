@@ -24,7 +24,9 @@ describe('GET /api/env-check', () => {
     expect(res.statusCode).toBe(200);
     const { tools } = res.json();
     const ids = tools.map((t: any) => t.id);
-    expect(ids).toEqual(expect.arrayContaining(['git', 'claude', 'codex', 'vscode']));
+    expect(ids).toEqual(expect.arrayContaining(['git', 'claude', 'codex']));
+    // The embedded VS Code is gone; onboarding no longer checks for `code`.
+    expect(ids).not.toContain('vscode');
     // git exists everywhere this test runs
     const git = tools.find((t: any) => t.id === 'git');
     expect(git.found).toBe(true);
@@ -45,10 +47,8 @@ describe('GET /api/env-check', () => {
     const byId: Record<string, any> = Object.fromEntries(res.json().tools.map((t: any) => [t.id, t]));
     expect(byId.claude.installable).toBe(true);
     expect(byId.claude.installCommand).toBe('npm install -g @anthropic-ai/claude-code');
-    // git comes from Xcode's GUI installer and `code` is installed from inside
-    // VS Code: offering an Install button for either would be a lie.
+    // git comes from Xcode's GUI installer: offering an Install button would be a lie.
     expect(byId.git.installable).toBe(false);
-    expect(byId.vscode.installable).toBe(false);
   });
 });
 

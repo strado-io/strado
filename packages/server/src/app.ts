@@ -27,7 +27,6 @@ import { toResponse, AppError } from './errors.js';
 import { runMigration } from './migration.js';
 import { createWorkspaceConfigStore, WorkspaceConfigStore } from './workspaceConfig.js';
 import { createWorkspaceStoreRegistry, WorkspaceStoreRegistry } from './workspaceRegistry.js';
-import { closeAll as closeVsCodeWeb } from './services/vscodeWeb.js';
 import { detectRuntime, sandboxEnabled, type SandboxRuntime } from './services/sandbox/runtime.js';
 import { createSandboxService, type SandboxService } from './services/sandbox/sandboxes.js';
 import { createSandboxSlugMap, hydrateSandboxSlugs, type SandboxSlugMap } from './services/sandbox/slugMap.js';
@@ -572,7 +571,6 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     deps.activityWatch.close();
     await deps.devProxy.close();
     await deps.activity.flush();
-    await closeVsCodeWeb();
     // Leaves no socket file behind for the next boot to trip over.
     await deps.closeSandboxSocket?.();
     clearInterval(sweepTimer);
@@ -720,10 +718,6 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerAppControlRoutes(app);
   const { registerJarvisRoutes } = await import('./routes/jarvis.js');
   await registerJarvisRoutes(app);
-
-  // VS Code web server control — workspace-agnostic, outside the prefix scope
-  const { registerVsCodeRoutes } = await import('./routes/vscode.js');
-  await registerVsCodeRoutes(app);
 
   // Jira proxy — credentials are per machine (~/.strado/jira.json)
   const { registerJiraRoutes } = await import('./routes/jira.js');

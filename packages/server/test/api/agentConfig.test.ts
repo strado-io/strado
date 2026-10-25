@@ -53,7 +53,6 @@ beforeEach(async () => {
     // Neither installed nor supported.
     toolStatus({ id: 'opencode', label: 'OpenCode', found: false, installable: true, installCommand: 'npm install -g opencode-ai', hint: 'OpenCode needs to be installed to use' }),
     toolStatus({ id: 'pi', label: 'Pi', found: false, installable: true, installCommand: 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent', hint: 'Pi needs to be installed to use' }),
-    toolStatus({ id: 'vscode', found: false }),
   ]);
 
   const deps = await buildDeps({

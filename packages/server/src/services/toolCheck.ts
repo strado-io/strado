@@ -9,8 +9,8 @@ export type ToolStatus = {
   optional: boolean;
   hint: string | null;
   // Whether onboarding can install this itself (see installSpec). git needs
-  // Xcode's GUI installer and the `code` shim comes from inside VS Code, so
-  // neither can be driven from here — those stay copy-the-command.
+  // Xcode's GUI installer, which cannot be driven from here — it stays
+  // copy-the-command.
   installable: boolean;
   // The command as a human would type it: shown next to the Install button,
   // and the fallback to copy when an install fails.
@@ -71,13 +71,6 @@ const TOOLS: ToolSpec[] = [
     // `--ignore-scripts` is what pi's own quick start recommends: it needs no
     // dependency lifecycle scripts for a normal npm install.
     install: { file: 'npm', args: ['install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent'] },
-  },
-  {
-    id: 'vscode',
-    label: 'VS Code (embedded editor)',
-    commands: ['code --version', 'code-insiders --version', 'code-server --version'],
-    optional: true,
-    hint: 'Cmd+Shift+P → "Shell Command: Install \'code\'" — the editor tab hides until installed',
   },
 ];
 

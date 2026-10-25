@@ -1,8 +1,8 @@
 // Liveness + capability advertisement.
 //
 // /api/capabilities exists because a headless runner is NOT the desktop app:
-// VS Code embed and the preview browser are Electron WebContentsView features
-// and simply do not exist there. The client must ask rather than infer from
+// the preview browser is an Electron WebContentsView feature
+// and simply does not exist there. The client must ask rather than infer from
 // "is this remote" — a future desktop-hosted-remotely setup would break that
 // guess, and silently-dead tabs are the worst possible symptom.
 import type { FastifyInstance } from 'fastify';

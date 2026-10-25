@@ -8,8 +8,6 @@
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../errors.js';
 import { readManifest } from '../services/ptyDaemon/supervisor.js';
-import { closeAll as stopVsCodeWeb, vsCodeWebStatus } from '../services/vscodeWeb.js';
-import { vscodeWindows } from '../services/vscodeWindows.js';
 import { buildSessionMetrics, sampleProcesses, sessionKeyOf } from '../services/sessionMetrics.js';
 import type { LspManager } from '../services/lsp/manager.js';
 
@@ -32,18 +30,9 @@ export async function registerSessionRoutes(app: FastifyInstance, lsp?: Pick<Lsp
       procs,
       serverPid: process.pid,
       daemonPid: readManifest(app.deps.homeStateDir)?.pid ?? null,
-      vscodePid: vsCodeWebStatus()?.pid ?? null,
-      vscodeWindows: vscodeWindows.list(),
       extraPids: parsePids(req.query.pids),
       languageServers: lsp?.running() ?? [],
     });
-  });
-
-  // Stop the shared VS Code workbench (every VS Code tab reconnects on next
-  // open). Static path — registered before the :key route on purpose.
-  app.delete('/api/sessions/vscode', async (_req, reply) => {
-    await stopVsCodeWeb();
-    return reply.code(204).send();
   });
 
   app.delete<{ Params: { key: string } }>('/api/sessions/:key', async (req, reply) => {
