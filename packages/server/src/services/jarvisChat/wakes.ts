@@ -58,6 +58,8 @@ export type JarvisWakes = {
   answered(ws: string, focusId: string, from: string, text: string): Promise<void>;
   /** Resolves once every change seen so far is handled (tests). */
   idle(): Promise<void>;
+  /** Focuses with a wake batch held (tests). */
+  pendingBatches(): number;
 };
 
 const RESULT_MAX = 300;
@@ -84,6 +86,7 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
   let queue: Promise<void> = Promise.resolve();
   const asks = new Map<string, string>(); // `${ws}\0${askId}` → focusId
   let off: (() => void) | null = null;
+  let stopped = false;
   let offReplies: (() => void) | null = null;
 
   function run(fn: () => Promise<void>): Promise<void> {
@@ -104,12 +107,16 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
   }
 
   async function flush(ws: string, focusId: string): Promise<void> {
-    const b = batches.get(`${ws}\0${focusId}`);
+    const k = `${ws}\0${focusId}`;
+    const b = batches.get(k);
     if (!b || b.pending.length === 0) return;
     const text = b.pending.join('\n');
     b.pending = [];
+    // Deleted meanwhile: its batch goes. Wakes turned off meanwhile: the
+    // events are already in the chat; no wake.
+    if (!(await deps.focuses(ws)).some((f) => f.id === focusId)) return void batches.delete(k);
+    if (!(await deps.wakesOn())) return;
     b.lastWakeAt = now();
-    if (!(await deps.focuses(ws)).some((f) => f.id === focusId)) return; // deleted meanwhile
     deps.runner.wake(ws, focusId, text);
   }
 
@@ -127,6 +134,7 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
     b.timer = true;
     setTimer(() => {
       b.timer = false;
+      if (stopped) return;
       void run(() => flush(ws, focusId));
     }, wait);
   }
@@ -161,6 +169,7 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
 
   return {
     start() {
+      stopped = false;
       offReplies ??= deps.replies?.((r) => void run(() => replied(r))) ?? null;
       off ??= deps.subscribe((ev) => {
         if ('agentId' in ev) return void run(() => changed(ev.scopeId, ev.agentId));
@@ -172,6 +181,7 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
       });
     },
     stop() {
+      stopped = true;
       off?.();
       off = null;
       offReplies?.();
@@ -183,6 +193,7 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
     },
     answered: (ws, focusId, from, text) => run(() => post(ws, focusId, `${from} answered: ${trim(text)}`)),
     idle: () => queue,
+    pendingBatches: () => batches.size,
   };
 }
 

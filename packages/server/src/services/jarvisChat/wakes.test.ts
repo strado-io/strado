@@ -224,6 +224,36 @@ describe('jarvis wakes', () => {
     expect(await events('f1')).toEqual(['a answered: new']);
   });
 
+  /** Two finishes inside the gap: the first wakes now, the second waits on a timer. */
+  async function twoFinishes(): Promise<void> {
+    await cardFor('f1');
+    await set(agent());
+    await set(agent({ lifecycle: 'idle', lastResult: 'a' }));
+    await set(agent());
+    await set(agent({ lifecycle: 'idle', lastResult: 'b' }));
+    expect(wakes).toHaveLength(1);
+    expect(timers).toHaveLength(1);
+  }
+
+  it('a wake timer does not fire after stop()', async () => {
+    await twoFinishes();
+    w.stop();
+    await advance(30_000);
+    expect(wakes).toHaveLength(1);
+  });
+
+  it('wakes turned off before the timer fires: the batch is dropped', async () => {
+    await twoFinishes();
+    wakesOn = false;
+    await advance(30_000);
+    expect(wakes).toHaveLength(1);
+    // Turned on again later: the dropped batch does not come back.
+    wakesOn = true;
+    await set(agent());
+    await set(agent({ lifecycle: 'idle', lastResult: 'c' }));
+    expect(wakes.at(-1)).toEqual(['ws', 'f1', 'claude-1 finished: c']);
+  });
+
   it('a focus deleted between the finish and the wake is skipped', async () => {
     await cardFor('f1');
     await set(agent());
@@ -234,6 +264,7 @@ describe('jarvis wakes', () => {
     try {
       await advance(30_000);
       expect(wakes).toHaveLength(1);
+      expect(w.pendingBatches()).toBe(0);
     } finally {
       FOCUSES.unshift({ id: 'f1' });
     }
