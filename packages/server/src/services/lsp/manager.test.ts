@@ -335,6 +335,37 @@ describe('review fixes', () => {
   });
 });
 
+describe('project loading ($/progress)', () => {
+  it('the first answer waits for the load that the open started', async () => {
+    const m = await make(await fakeBinary('progress'));
+    const t = Date.now();
+    const ans = await m.definition(root, 'src/use.ts', 2, 14);
+    expect(ans.hits.map((h) => `${h.path}:${h.line}`)).toEqual(['src/def.ts:2']);
+    expect(Date.now() - t).toBeGreaterThan(1000);
+    // Loaded: the next one is immediate.
+    const t2 = Date.now();
+    await m.hover(root, 'src/use.ts', 2, 14);
+    expect(Date.now() - t2).toBeLessThan(1000);
+  });
+
+  it('a load that never ends is waited for at most requestMs, then asked anyway', async () => {
+    const m = await make(await fakeBinary('progress-stuck'), { limits: { requestMs: 1200, startMs: 15000 } });
+    const t = Date.now();
+    const ans = await m.definition(root, 'src/use.ts', 2, 14);
+    expect(ans.source).toBe('lsp');
+    expect(ans.hits.map((h) => `${h.path}:${h.line}`)).toEqual(['src/use.ts:1']);
+    expect(Date.now() - t).toBeLessThan(4000);
+  });
+
+  it('a server that reports no progress is not held up past the grace', async () => {
+    const m = await make(await fakeBinary());
+    const t = Date.now();
+    await m.definition(root, 'src/use.ts', 2, 14);
+    await m.definition(root, 'src/def.ts', 2, 14);
+    expect(Date.now() - t).toBeLessThan(3000);
+  });
+});
+
 describe('lifecycle', () => {
   it('reaps a server idle for idleMs', async () => {
     const m = await make(await fakeBinary(), { limits: { requestMs: 4000, startMs: 15000, idleMs: 60_000 } });

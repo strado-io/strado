@@ -40,6 +40,8 @@ export type LspManagerDeps = {
   specs?: LspServerSpec[];
   search?: SearchFallback;
   limits?: Partial<{ -readonly [K in keyof typeof LSP_LIMITS]: number }>;
+  /** How long the first open waits for a project load to begin (default 300 ms). */
+  progressGraceMs?: number;
   /** Resident memory of a pid in bytes, null when it cannot be read. */
   rss?: (pid: number) => Promise<number | null>;
   now?: () => number;
@@ -302,6 +304,9 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     }
     try {
       const uri = await entry.client.sync(abs, languageId(spec, ext));
+      // A server still loading the project answers wrong, not slowly: wait
+      // (bounded) for it to finish, then ask either way.
+      await entry.client.settle(limits.requestMs, deps.progressGraceMs ?? 300);
       return { entry, abs, uri };
     } catch {
       throw new Fallback('failed', spec);

@@ -45,6 +45,12 @@ export class LspClient {
   private pending = new Map<number, Pending>();
   private buf: Buffer = Buffer.alloc(0);
   private exited = false;
+  /** Work-done progress begun and not yet ended (a project load, indexing). */
+  private progress = new Set<string | number>();
+  private progressSeen = false;
+  /** Set by the first didOpen: a load it starts may begin a moment later. */
+  private awaitingFirstLoad = false;
+  private progressWaiters: (() => void)[] = [];
   /** uri → { version, mtimeMs, size } of what the server was last told. */
   private docs = new Map<string, { version: number; mtimeMs: number; size: number }>();
 
@@ -117,6 +123,7 @@ export class LspClient {
     }
     const text = await fs.readFile(abs, 'utf8');
     if (!known) {
+      if (!this.docs.size && !this.progressSeen) this.awaitingFirstLoad = true;
       this.notify('textDocument/didOpen', { textDocument: { uri, languageId, version: 1, text } });
       this.docs.set(uri, { version: 1, mtimeMs: st.mtimeMs, size: st.size });
     } else {
@@ -130,6 +137,49 @@ export class LspClient {
       this.notify('textDocument/didClose', { textDocument: { uri: oldest } });
     }
     return uri;
+  }
+
+  /** Resolves once no progress is running (a server answers from a half-loaded
+   *  project otherwise: tsserver gives the import line, not the definition),
+   *  or at `maxMs`. After the first open, waits up to `graceMs` for a load to
+   *  begin, since servers start it just after the open, not with it. */
+  async settle(maxMs: number, graceMs: number): Promise<void> {
+    const deadline = Date.now() + maxMs;
+    const waitFor = (done: () => boolean, until: number) =>
+      new Promise<void>((resolve) => {
+        if (done() || this.exited) return resolve();
+        const timer = setTimeout(finish, Math.max(0, until - Date.now()));
+        const check = () => {
+          if (done() || this.exited) finish();
+          else this.progressWaiters.push(check);
+        };
+        function finish() {
+          clearTimeout(timer);
+          resolve();
+        }
+        this.progressWaiters.push(check);
+      });
+    if (this.awaitingFirstLoad) {
+      this.awaitingFirstLoad = false;
+      await waitFor(() => this.progressSeen, Math.min(deadline, Date.now() + graceMs));
+    }
+    await waitFor(() => this.progress.size === 0, deadline);
+  }
+
+  private onProgress(params: unknown): void {
+    const p = params as { token?: string | number; value?: { kind?: string } } | undefined;
+    if (p?.token === undefined || !p.value) return;
+    if (p.value.kind === 'begin') {
+      this.progress.add(p.token);
+      this.progressSeen = true;
+    } else if (p.value.kind === 'end') {
+      this.progress.delete(p.token);
+    } else {
+      return;
+    }
+    const waiters = this.progressWaiters;
+    this.progressWaiters = [];
+    for (const w of waiters) w();
   }
 
   request<T = unknown>(method: string, params: unknown, timeoutMs: number): Promise<T> {
@@ -195,6 +245,9 @@ export class LspClient {
       p.reject(new LspError('language server exited', 'exited'));
     }
     this.pending.clear();
+    const waiters = this.progressWaiters;
+    this.progressWaiters = [];
+    for (const w of waiters) w();
     this.o.onExit?.(code);
   }
 
@@ -226,8 +279,12 @@ export class LspClient {
 
   private onMessage(msg: { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } }): void {
     if (msg.method !== undefined) {
-      // A notification from the server (diagnostics, progress, logs): ignored.
-      if (msg.id === undefined) return;
+      // A notification from the server: progress is tracked, the rest
+      // (diagnostics, logs) ignored.
+      if (msg.id === undefined) {
+        if (msg.method === '$/progress') this.onProgress(msg.params);
+        return;
+      }
       if (!ANSWERED.has(msg.method)) {
         this.write({ jsonrpc: '2.0', id: msg.id, error: { code: METHOD_NOT_FOUND, message: `${msg.method} is not supported` } });
         return;

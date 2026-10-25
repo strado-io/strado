@@ -1,6 +1,8 @@
 // A tiny language server for tests: Content-Length framed JSON-RPC on stdio.
 // FAKE_LSP_LOG: append every message it receives (one JSON per line).
-// FAKE_LSP_MODE: 'normal' | 'slow-init' | 'crash-on-request' | 'hang' | 'exit-at-start' | 'grandchild'.
+// FAKE_LSP_MODE: 'normal' | 'slow-init' | 'crash-on-request' | 'hang' | 'exit-at-start' | 'grandchild'
+//   | 'progress' (the first didOpen starts a project load that ends 1.5s later; until then
+//     definition answers with the import line, as tsserver does) | 'progress-stuck' (never ends).
 // FAKE_LSP_PIDFILE: 'grandchild' writes the pid of a child it leaves running.
 const fs = require('fs');
 
@@ -15,6 +17,8 @@ if (mode === 'grandchild') {
 
 let root = '';
 let nextId = 1000;
+let loading = false;
+let opened = false;
 const send = (m) => {
   const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', ...m }), 'utf8');
   process.stdout.write(`Content-Length: ${body.length}\r\n\r\n`);
@@ -43,11 +47,30 @@ function onMessage(m) {
     case 'exit':
       return process.exit(0);
   }
+  if (m.method === 'textDocument/didOpen' && !opened && mode.startsWith('progress')) {
+    opened = true;
+    loading = true;
+    // Like tsserver: the load starts a moment after the open, not with it.
+    setTimeout(() => {
+      send({ id: nextId++, method: 'window/workDoneProgress/create', params: { token: 'load' } });
+      send({ method: '$/progress', params: { token: 'load', value: { kind: 'begin', title: 'Loading' } } });
+      send({ method: '$/progress', params: { token: 'load', value: { kind: 'report', message: 'half' } } });
+      if (mode === 'progress') {
+        setTimeout(() => {
+          loading = false;
+          send({ method: '$/progress', params: { token: 'load', value: { kind: 'end' } } });
+        }, 1500);
+      }
+    }, 100);
+  }
   if (m.id === undefined) return; // other notifications (didOpen, didChange)
   if (mode === 'crash-on-request') process.exit(7);
   if (mode === 'hang') return;
   switch (m.method) {
     case 'textDocument/definition':
+      if (loading) {
+        return reply([{ uri: uri('src/use.ts'), range: { start: { line: 0, character: 9 }, end: { line: 0, character: 12 } } }]);
+      }
       if (process.env.FAKE_LSP_ESCAPE) {
         return reply([{ uri: uri('link/secret.ts'), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } }]);
       }
