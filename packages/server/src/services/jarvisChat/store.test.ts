@@ -210,6 +210,33 @@ describe('jarvis chat store', () => {
     await store.append('f2', user('ok'));
   });
 
+  it('keeps only the most recently used chats in memory; an evicted one is read back from disk', async () => {
+    const small = createJarvisChatStore(dir, { cacheMax: 2 });
+    await small.append('f1', user('one'));
+    await small.setMeta('f1', { sessionId: 's1' });
+    await small.append('f2', user('two'));
+    await small.append('f3', user('three')); // f1 is evicted now
+    expect(small.cached()).toEqual({ logs: 2, metas: 0 }); // a chat's log and meta go together
+    // Changed on disk behind the store's back: an evicted chat reads it.
+    await fs.appendFile(path.join(dir, 'f1.jsonl'), `${JSON.stringify({ id: 'x', at: new Date().toISOString(), type: 'event', text: 'from disk' })}\n`);
+    await fs.writeFile(path.join(dir, 'f1.json'), JSON.stringify({ agent: 'claude', sessionId: 's-disk', lastActiveAt: null }));
+    expect((await small.page('f1', {})).map((e) => e.id).at(-1)).toBe('x');
+    expect((await small.meta('f1')).sessionId).toBe('s-disk');
+    expect(small.cached().logs).toBeLessThanOrEqual(2);
+  });
+
+  it('a removed chat is never read back, even if its file reappears', async () => {
+    await store.append('f1', user('a'));
+    await store.remove('f1');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'f1.jsonl'), `${JSON.stringify({ id: 'x', at: new Date().toISOString(), type: 'event', text: 'ghost' })}\n`);
+    await fs.writeFile(path.join(dir, 'f1.json'), JSON.stringify({ agent: 'claude', sessionId: 'ghost', lastActiveAt: null }));
+    expect(await store.page('f1', {})).toEqual([]);
+    expect(await store.find('f1', 'x')).toBeNull();
+    expect((await store.meta('f1')).sessionId).toBeNull();
+    expect(store.cached()).toEqual({ logs: 0, metas: 0 });
+  });
+
   it('refuses a focus id that could leave the directory', async () => {
     for (const bad of ['../x', 'a/b', '', '.', 'x'.repeat(65)]) {
       await expect(store.page(bad, {})).rejects.toThrow(/focus/);

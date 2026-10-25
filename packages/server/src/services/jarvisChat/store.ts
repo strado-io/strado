@@ -30,6 +30,8 @@ export type JarvisChatStore = {
   setMeta(focusId: string, patch: Partial<Pick<JarvisMeta, 'agent' | 'sessionId' | 'lastActiveAt'>>): Promise<JarvisMeta>;
   remove(focusId: string): Promise<void>;
   onChange(listener: (focusId: string, change: JarvisChatChange) => void): () => void;
+  /** How many chats are held in memory (tests). */
+  cached(): { logs: number; metas: number };
 };
 
 const R = '[redacted]';
@@ -77,7 +79,12 @@ const lineBytes = (e: ChatEntry) => Buffer.byteLength(JSON.stringify(e)) + 1;
 type Log = { entries: ChatEntry[]; bytes: number };
 type MetaFile = { agent: JarvisAgent; sessionId: string | null; lastActiveAt: string | null };
 
-export function createJarvisChatStore(dir: string): JarvisChatStore {
+/** Chats held in memory; the least recently used beyond it are read back
+ *  from disk when next needed. */
+const CACHE_MAX = 32;
+
+export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } = {}): JarvisChatStore {
+  const cacheMax = opts.cacheMax ?? CACHE_MAX;
   const logs = new Map<string, Log>();
   const metas = new Map<string, MetaFile>();
   /** Focuses whose chat was removed: Focus ids are never reused, and a turn
@@ -99,6 +106,20 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
     return next;
   }
 
+  /** Marks a chat used; past the cap, the least recently used one's log and
+   *  meta leave memory together (the files are the truth). */
+  const order = new Set<string>();
+  function touch(focusId: string): void {
+    order.delete(focusId);
+    order.add(focusId);
+    while (order.size > cacheMax) {
+      const old = order.values().next().value!;
+      order.delete(old);
+      logs.delete(old);
+      metas.delete(old);
+    }
+  }
+
   function writable(focusId: string): void {
     if (removed.has(focusId)) throw new AppError('NOT_FOUND', 'focus was deleted');
   }
@@ -114,6 +135,8 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
   }
 
   async function load(focusId: string): Promise<Log> {
+    if (removed.has(focusId)) return { entries: [], bytes: 0 }; // never read back
+    touch(focusId);
     const hit = logs.get(focusId);
     if (hit) return hit;
     let raw = '';
@@ -142,6 +165,8 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
   }
 
   async function loadMeta(focusId: string): Promise<MetaFile> {
+    if (removed.has(focusId)) return { agent: 'claude', sessionId: null, lastActiveAt: null };
+    touch(focusId);
     const hit = metas.get(focusId);
     if (hit) return hit;
     let m: MetaFile = { agent: 'claude', sessionId: null, lastActiveAt: null };
@@ -280,12 +305,15 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
     remove: (focusId) =>
       enqueue(focusId, async () => {
         removed.add(focusId);
+        order.delete(focusId);
         logs.delete(focusId);
         metas.delete(focusId);
         await fs.rm(logPath(focusId), { force: true });
         await fs.rm(metaPath(focusId), { force: true });
         emit(focusId, { removed: true });
       }),
+
+    cached: () => ({ logs: logs.size, metas: metas.size }),
 
     onChange(listener) {
       listeners.add(listener);
