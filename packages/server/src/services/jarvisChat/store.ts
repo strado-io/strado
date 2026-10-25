@@ -107,18 +107,24 @@ export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } =
   }
 
   /** Marks a chat used; past the cap, the least recently used one's log and
-   *  meta leave memory together (the files are the truth). */
+   *  meta leave memory together (the files are the truth). A chat with a live
+   *  turn stays: the runner is still upserting it. */
   const order = new Set<string>();
+  const live = (id: string) => logs.get(id)?.entries.some((e) => (e.type === 'turn' && e.state === 'running') || (e.type === 'jarvis' && !e.done)) ?? false;
   function touch(focusId: string): void {
     order.delete(focusId);
     order.add(focusId);
-    while (order.size > cacheMax) {
-      const old = order.values().next().value!;
+    for (const old of [...order]) {
+      if (order.size <= cacheMax) break;
+      if (old === focusId || live(old)) continue;
       order.delete(old);
       logs.delete(old);
       metas.delete(old);
     }
   }
+  /** Chats loaded since this server started: only the first load can find a
+   *  turn left running by a server that stopped. */
+  const seen = new Set<string>();
 
   function writable(focusId: string): void {
     if (removed.has(focusId)) throw new AppError('NOT_FOUND', 'focus was deleted');
@@ -155,11 +161,22 @@ export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } =
         continue; // a torn last line from a crash; the rest still counts
       }
       if (!e || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.type !== 'string') continue;
-      if (e.type === 'turn' && e.state === 'running') e = { ...e, state: 'interrupted' };
-      if (e.type === 'jarvis' && !e.done) e = { ...e, done: true };
       entries.push(e);
     }
-    const log = { entries, bytes: entries.reduce((n, e) => n + lineBytes(e), 0) };
+    const log = { entries, bytes: 0 };
+    if (!seen.has(focusId)) {
+      seen.add(focusId);
+      // Left mid-turn by a server that stopped: written back, so a reload
+      // after eviction reads the same.
+      let stale = false;
+      log.entries = entries.map((e) => {
+        if (e.type === 'turn' && e.state === 'running') return (stale = true), { ...e, state: 'interrupted' as const };
+        if (e.type === 'jarvis' && !e.done) return (stale = true), { ...e, done: true };
+        return e;
+      });
+      if (stale) await rewrite(focusId, log);
+    }
+    log.bytes = log.entries.reduce((n, e) => n + lineBytes(e), 0);
     logs.set(focusId, log);
     return log;
   }

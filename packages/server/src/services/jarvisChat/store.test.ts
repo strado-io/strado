@@ -225,6 +225,32 @@ describe('jarvis chat store', () => {
     expect(small.cached().logs).toBeLessThanOrEqual(2);
   });
 
+  it('a chat with a live turn is never evicted, so its turn is not marked interrupted mid-run', async () => {
+    const small = createJarvisChatStore(dir, { cacheMax: 1 });
+    const turn = await small.append('f1', { type: 'turn', turnId: 't1', state: 'running' });
+    const j = await small.append('f1', { type: 'jarvis', turnId: 't1', text: 'He', done: false });
+    for (const f of ['f2', 'f3', 'f4']) await small.append(f, user(f));
+    expect(await small.find('f1', turn.id)).toMatchObject({ state: 'running' });
+    expect(await small.find('f1', j.id)).toMatchObject({ done: false });
+    expect((await small.meta('f1')).running).toBe(true);
+    // Once the turn ends, the chat can leave memory like any other.
+    await small.upsert('f1', { ...j, text: 'Hello', done: true } as ChatEntry);
+    await small.upsert('f1', { ...turn, state: 'done' } as ChatEntry);
+    for (const f of ['f2', 'f3']) await small.append(f, user(f));
+    expect(small.cached().logs).toBe(1);
+    expect(await small.find('f1', turn.id)).toMatchObject({ state: 'done' });
+  });
+
+  it('the first load after a restart writes the interrupted turn back, so later reloads agree', async () => {
+    await store.append('f1', { type: 'turn', turnId: 't1', state: 'running' });
+    await store.append('f1', { type: 'jarvis', turnId: 't1', text: 'half', done: false });
+    const fresh = createJarvisChatStore(dir, { cacheMax: 1 });
+    await fresh.page('f1', {});
+    const disk = (await lines('f1.jsonl')).map((l) => JSON.parse(l));
+    expect(disk[0]).toMatchObject({ state: 'interrupted' });
+    expect(disk[1]).toMatchObject({ done: true });
+  });
+
   it('a removed chat is never read back, even if its file reappears', async () => {
     await store.append('f1', user('a'));
     await store.remove('f1');
