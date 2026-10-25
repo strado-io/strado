@@ -21,6 +21,7 @@ import { createDetect } from './services/lsp/detect.js';
 import { createLspEnabledStore } from './services/lsp/store.js';
 import { createEditors, type Editors } from './services/editors/open.js';
 import { createEditorStore } from './services/editors/store.js';
+import type { FocusJarvisRunner } from './routes/focusJarvis.js';
 import { createActivityTracker, createAgentOutputBeats, ActivityTracker } from './services/activityTracker.js';
 import { createWorktreeWatcher, WorktreeWatcher } from './services/activityWatcher.js';
 import { createDiffStatsCache, DiffStatsCache } from './services/diffStatsCache.js';
@@ -105,6 +106,8 @@ export type Deps = {
   lsp?: LspManager;
   /** Open in editor; built in buildApp unless a test injects one. */
   editors?: Editors;
+  /** Focus Jarvis turn runner; tests inject a fake. */
+  jarvis?: FocusJarvisRunner;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
   // Worktree-list diff badges, cached on file/git changes (see diffStatsCache).
@@ -674,7 +677,9 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const { registerReposRoutes } = await import('./routes/repos.js');
     await registerReposRoutes(scoped);
     const { registerFocusesRoutes } = await import('./routes/focuses.js');
-    await registerFocusesRoutes(scoped);
+    await registerFocusesRoutes(scoped, deps.jarvis ?? null);
+    const { registerFocusJarvisRoutes } = await import('./routes/focusJarvis.js');
+    await registerFocusJarvisRoutes(scoped, deps.jarvis ?? null);
     const { registerWorktreesRoutes } = await import('./routes/worktrees.js');
     await registerWorktreesRoutes(scoped);
     const { registerGitChangesRoutes } = await import('./routes/gitChanges.js');

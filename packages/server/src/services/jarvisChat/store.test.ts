@@ -160,7 +160,10 @@ describe('jarvis chat store', () => {
   it('remove deletes both files', async () => {
     await store.append('f1', user('a'));
     await store.setMeta('f1', { sessionId: 's' });
+    const seen: unknown[] = [];
+    store.onChange((id, c) => seen.push([id, c]));
     await store.remove('f1');
+    expect(seen).toEqual([['f1', { removed: true }]]);
     await expect(fs.stat(path.join(dir, 'f1.jsonl'))).rejects.toThrow();
     await expect(fs.stat(path.join(dir, 'f1.json'))).rejects.toThrow();
     expect(await store.page('f1', {})).toEqual([]);

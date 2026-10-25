@@ -15,7 +15,8 @@ import { AppError } from '../../errors.js';
 import { redact } from '../hostTabs/redact.js';
 import { JARVIS_LIMITS, type ChatEntry, type JarvisAgent, type JarvisMeta, type NewChatEntry } from './types.js';
 
-export type JarvisChatChange = { entry?: ChatEntry; meta?: JarvisMeta };
+/** `removed`: the Focus's chat is gone (the Focus was deleted); streams end. */
+export type JarvisChatChange = { entry?: ChatEntry; meta?: JarvisMeta; removed?: true };
 
 export type JarvisChatStore = {
   /** Oldest first: the `limit` entries just before `before` (or the newest). */
@@ -255,6 +256,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
         metas.delete(focusId);
         await fs.rm(logPath(focusId), { force: true });
         await fs.rm(metaPath(focusId), { force: true });
+        emit(focusId, { removed: true });
       }),
 
     onChange(listener) {

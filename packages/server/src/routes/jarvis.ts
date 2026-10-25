@@ -111,6 +111,9 @@ const PlanBody = z.object({
   thread: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().min(1).max(2000) }).strict()).max(6),
 }).strict();
 
+/** The window's context, as the box sends it; Focus Jarvis takes the same. */
+export const JarvisContextBody = PlanBody.shape.context;
+
 const CALL_BODY_MAX = 500;
 const TASKS_MAX = 20;
 
