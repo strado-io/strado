@@ -36,7 +36,7 @@ export function migrateEditorTabs(): void {
   try { raw = localStorage.getItem(LEGACY_KEY); } catch { return; }
   if (raw === null) return;
   // Each step stands alone: junk in one store must not stop the others. The
-  // legacy key goes last, so a step that couldn't run gets another go.
+  // legacy key goes last, after every step has had its try.
   const step = (f: () => void) => { try { f(); } catch { /* that store stays as it was */ } };
   step(() => {
     const paths = (JSON.parse(raw!) as unknown[]).filter((p): p is string => typeof p === 'string');
