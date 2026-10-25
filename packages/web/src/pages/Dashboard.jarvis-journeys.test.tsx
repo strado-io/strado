@@ -175,8 +175,15 @@ function renderDashboard() {
 const focusPill = (name: string) => {
   const open = screen.queryByLabelText('Open sidebar');
   if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
-  return screen.getByRole('button', { name: `Focus: ${name}` });
+  // The open Focus in the sidebar's list ("none": nothing open, the list still there).
+  if (name === 'none') {
+    expect(screen.queryByTestId('focus-open')).toBeNull();
+    return screen.getByRole('region', { name: 'Focuses' });
+  }
+  return within(screen.getByTestId('focus-open')).getByRole('heading', { name });
 };
+/** A collapsed Focus row in the sidebar's list. */
+const focusRow = (name: string) => screen.getByRole('button', { name: `Switch to ${name}` });
 // Home hides the sidebar; these tests drive it, so show it (idempotent).
 const repoRow = () => {
   const open = screen.queryByLabelText('Open sidebar');
@@ -188,7 +195,7 @@ const home = () => screen.findByRole('heading', { name: 'What do you want to do?
 // The ticket id on the sidebar's Focus card (it lands once the Focus list has loaded).
 // Home hides the sidebar, so open it (⌘B) when it is not there.
 const sidebarRow = async () => {
-  if (!screen.queryByRole('region', { name: 'Focus' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
+  if (!screen.queryByRole('region', { name: 'Focuses' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
   return within(await screen.findByRole('region', { name: 'Focus' })).findByText('FD-9');
 };
 // A Focus holding the one worktree, active on this device.
@@ -405,7 +412,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   describe('the sidebar stays as the user left it', () => {
-    const sidebar = () => screen.queryByRole('region', { name: 'Focus' });
+    const sidebar = () => screen.queryByRole('region', { name: 'Focuses' });
 
     it('open in a worktree whose last session goes away (the hub closes itself): still open on home', async () => {
       localStorage.setItem('strado:sidebar-collapsed:v2', '0');
@@ -568,7 +575,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   describe('the sidebar from the box (as ⌘B does)', () => {
-    const sidebar = () => screen.queryByRole('region', { name: 'Focus' });
+    const sidebar = () => screen.queryByRole('region', { name: 'Focuses' });
     const show = (v: boolean | null) => plan({ action: 'ui.sidebar', args: { show: v } });
 
     it('on home: "open the sidebar" shows it, "hide the sidebar" hides it', async () => {

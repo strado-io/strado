@@ -150,10 +150,10 @@ describe('Sidebar tree', () => {
   });
 
   describe('focus members', () => {
-    it('shows the active Focus in the pill and its worktrees as cards, and opens them', () => {
+    it('shows the active Focus open in the list with its worktrees as cards, and opens them', () => {
       const onOpenWorktree = vi.fn();
       wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} />);
-      expect(activePane().getByRole('button', { name: 'Focus: Working on' })).toBeInTheDocument();
+      expect(within(activePane().getByTestId('focus-open')).getByRole('heading', { name: 'Working on' })).toBeInTheDocument();
       const body = activePane().getByRole('region', { name: 'Focus' });
       fireEvent.click(within(body).getByRole('button', { name: 'FD-1' }));
       expect(onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
@@ -359,10 +359,11 @@ describe('Sidebar tree', () => {
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });
 
-  it('the toolbar button starts a worktree; Add repo lives in the blank-space menu', () => {
+  it('New worktree and Add repo live in the blank-space menu (and the open Focus\'s ⋯ menu)', () => {
     const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
     wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
-    fireEvent.click(activePane().getByRole('button', { name: 'New worktree' }));
+    fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
+    fireEvent.click(screen.getByRole('button', { name: 'New worktree…' }));
     expect(onNewWorktree).toHaveBeenCalled();
     expect(activePane().queryByRole('button', { name: 'Add repo' })).toBeNull();
     fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
@@ -370,9 +371,10 @@ describe('Sidebar tree', () => {
     expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
   });
 
-  it('has no bottom New worktree button', () => {
+  it('has no New worktree button of its own (the Focus header\'s + is New focus)', () => {
     wrap(<Sidebar {...base} />);
-    expect(activePane().getAllByRole('button', { name: 'New worktree' })).toHaveLength(1);
+    expect(activePane().queryByRole('button', { name: 'New worktree' })).toBeNull();
+    expect(within(activePane().getByRole('region', { name: 'Focuses' })).getByRole('button', { name: 'New focus' })).toBeInTheDocument();
   });
 
   describe('many worktrees (> 7)', () => {

@@ -53,6 +53,7 @@ import { useCodeReviews } from '../hooks/codeReviews';
 import { requestRunInShell } from '../lib/runInShell';
 import { worktreeLabel } from '../components/sidebar/labels';
 import { FocusJarvisCard, FocusJarvisMain, FocusJarvisProvider, type OpenCard } from '../components/focusJarvis/FocusJarvisHost';
+import { useFocusJarvisBadges } from '../components/focusJarvis/badges';
 
 type State = {
   repos: RepoConfig[];
@@ -647,6 +648,8 @@ export function Dashboard(props: {
     if (id && restoredForRef.current === id) writeJarvisOpen(id, jarvisOpen);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jarvisOpen]);
+  // The other Focuses' rows: approvals waiting and unread replies, refreshed on the stations feed's events.
+  const jarvisBadges = useFocusJarvisBadges(wsId, focusApi.focuses, focusApi.activeId, stations);
   const openJarvis = () => {
     setSelectedRemote(null);
     setSelectedPath(null);
@@ -1061,6 +1064,9 @@ export function Dashboard(props: {
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
           jarvis={<FocusJarvisCard active={jarvisOpen && !selectedRemote && !selectedWorktree} onSelect={openJarvis} />}
+          jarvisBadges={jarvisBadges}
+          // A Focus opened from its row lands on its Jarvis chat (the restore below reads this).
+          onOpenFocus={(id) => writeJarvisOpen(id, true)}
         />
         </div>
       )}

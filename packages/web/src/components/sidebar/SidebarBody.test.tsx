@@ -46,8 +46,8 @@ function props(over: Partial<SidebarBodyProps> = {}): SidebarBodyProps {
     ...over,
   };
 }
-const pill = () => screen.getByRole('button', { name: /^Focus: / });
-const popover = () => screen.getByRole('dialog', { name: 'Switch focus' });
+const list = () => screen.getByRole('region', { name: 'Focuses' });
+const openHeader = () => within(screen.getByTestId('focus-open')).getByRole('heading');
 
 beforeEach(() => {
   localStorage.clear();
@@ -66,11 +66,10 @@ beforeEach(() => {
 });
 
 describe('SidebarBody: the active Focus', () => {
-  it('names the active Focus in the pill and shows its worktrees as cards, in member order, skipping ids that resolve to nothing', () => {
+  it('opens the active Focus under its name and shows its worktrees as cards, in member order, skipping ids that resolve to nothing', () => {
     withFocus('local:/r2/other', 'local:/gone', 'local:/r1/wt');
     render(<SidebarBody {...props()} />);
-    expect(pill()).toHaveAccessibleName('Focus: Billing');
-    expect(pill()).toHaveTextContent(/^Billing$/); // just the Focus's name
+    expect(openHeader()).toHaveTextContent(/^Billing$/); // just the Focus's name
     const section = screen.getByRole('region', { name: 'Focus' });
     const cards = within(section).getAllByRole('button', { name: 'fx-412' });
     expect(cards).toHaveLength(2);
@@ -186,10 +185,14 @@ describe('SidebarBody: the active Focus', () => {
     expect(focusMock.setMembership).toHaveBeenCalledWith('f1', 'remote:rn1:/srv/wt/FX-77', false);
   });
 
-  it('with no Focus, says so and New focus opens the composer', () => {
+  it('with no Focus, nothing is open and New focus (below the list, or the header\'s +) opens the composer', () => {
     render(<SidebarBody {...props()} />);
-    expect(pill()).toHaveAccessibleName('Focus: none');
-    fireEvent.click(screen.getByRole('button', { name: 'New focus' }));
+    expect(screen.queryByTestId('focus-open')).toBeNull();
+    const [plus, row] = screen.getAllByRole('button', { name: 'New focus' });
+    fireEvent.click(row!);
+    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(plus!);
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
 
@@ -229,13 +232,19 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.queryByRole('dialog', { name: 'Add worktrees to Billing' })).toBeNull();
   });
 
-  it('toolbar: New worktree calls out; no Search or Add repo button', () => {
+  it('the open Focus\'s ⋯ menu: New worktree here (with its ticket) and Add worktrees; no Search or Add repo button', () => {
+    focusMock.focuses = [{ ...focus('f1', 'Billing', ['local:/r1/wt']), ticket: { provider: 'jira', key: 'FD-9' } }];
+    focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
     expect(screen.queryByRole('button', { name: 'Search' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'New worktree' }));
-    expect(onNewWorktree).toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Add repo' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New worktree here…' }));
+    expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add worktrees…' }));
+    expect(screen.getByRole('dialog', { name: 'Add worktrees to Billing' })).toBeInTheDocument();
   });
 
   it('right-clicking a card opens its menu at the cursor; blank space offers New worktree, Add repo and New focus', () => {
@@ -265,7 +274,7 @@ describe('SidebarBody: the active Focus', () => {
   });
 });
 
-describe('SidebarBody: the Focus switcher', () => {
+describe('SidebarBody: the Focus accordion', () => {
   beforeEach(() => {
     focusMock.focuses = [
       focus('f1', 'Billing', ['local:/r1/wt'], '2026-02-01'),
@@ -274,103 +283,84 @@ describe('SidebarBody: the Focus switcher', () => {
     ];
     focusMock.activeId = 'f1';
   });
+  const rowNames = () => within(list()).getAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.replace('Switch to ', ''));
 
-  it('lists Focuses by last use with ⌘ hints and a check on the active one; picking one activates it and closes', () => {
+  it('only the active Focus is open; every other one is a row, by last use', () => {
     render(<SidebarBody {...props()} />);
-    fireEvent.click(pill());
-    const rows = within(popover()).getAllByRole('button').filter((b) => /⌘\d/.test(b.textContent ?? ''));
-    expect(rows.map((b) => b.textContent?.startsWith('Onboarding') ? 'Onboarding' : b.textContent?.startsWith('Billing') ? 'Billing' : 'Perf')).toEqual(['Onboarding', 'Billing', 'Perf']);
-    expect(rows.map((b) => b.textContent?.slice(-1))).toEqual(['1', '2', '3']);
-    expect(within(popover()).getByRole('button', { name: /Billing/ })).toHaveAttribute('aria-current', 'true');
-    expect(within(popover()).getByLabelText('Filter or create')).toHaveFocus();
-    fireEvent.click(within(popover()).getByRole('button', { name: /Perf/ }));
-    expect(focusMock.activate).toHaveBeenCalledWith('f3');
-    expect(screen.queryByRole('dialog', { name: 'Switch focus' })).toBeNull();
+    expect(screen.getAllByTestId('focus-open')).toHaveLength(1);
+    expect(openHeader()).toHaveTextContent('Billing');
+    expect(within(screen.getByTestId('focus-open')).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
+    expect(rowNames()).toEqual(['Onboarding', 'Perf']);
   });
 
-  it('filters by name; Enter picks the highlighted row, or creates when the name is new', () => {
-    render(<SidebarBody {...props()} />);
-    fireEvent.click(pill());
-    const input = within(popover()).getByLabelText('Filter or create');
-    fireEvent.change(input, { target: { value: 'perf' } });
-    expect(within(popover()).queryByRole('button', { name: /Billing/ })).toBeNull();
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(focusMock.activate).toHaveBeenCalledWith('f3');
-    expect(focusMock.create).not.toHaveBeenCalled();
-
-    fireEvent.click(pill());
-    const again = within(popover()).getByLabelText('Filter or create');
-    fireEvent.change(again, { target: { value: 'Checkout flow' } });
-    expect(within(popover()).getByRole('button', { name: 'Create “Checkout flow”' })).toBeInTheDocument();
-    fireEvent.keyDown(again, { key: 'Enter' });
-    expect(focusMock.create).toHaveBeenCalledWith('Checkout flow');
+  it('clicking a row activates that Focus (the Dashboard hears it first, to open its Jarvis)', () => {
+    const calls: string[] = [];
+    focusMock.activate.mockImplementation((id: string) => calls.push(`activate ${id}`));
+    render(<SidebarBody {...props({ onOpenFocus: (id) => calls.push(`open ${id}`) })} />);
+    fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Perf' }));
+    expect(calls).toEqual(['open f3', 'activate f3']);
   });
 
-  it('New focus in the footer opens the composer and closes the popover', () => {
+  it('switching opens the new one and collapses the old', () => {
+    const { rerender } = render(<SidebarBody {...props()} />);
+    focusMock.activeId = 'f3';
+    rerender(<SidebarBody {...props()} />);
+    expect(openHeader()).toHaveTextContent('Perf');
+    expect(rowNames()).toEqual(['Onboarding', 'Billing']);
+  });
+
+  it('badges: agents at work in its worktrees, approvals waiting, an unread reply', () => {
+    const working = { ...wt('/r2/wt', 'r2'), claudeStatus: 'working', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree;
+    render(<SidebarBody {...props({
+      worktrees: [wt('/r1/wt', 'r1'), working, wt('/r2/other', 'r2')],
+      jarvisBadges: new Map([['f2', { pendingApprovals: 2, unread: true }], ['f3', { pendingApprovals: 0, unread: false }]]),
+    })} />);
+    const perf = within(list()).getByRole('button', { name: 'Switch to Perf' });
+    expect(within(perf).getByTestId('focus-agents-f3')).toBeInTheDocument();
+    expect(within(perf).queryByRole('img', { name: /waiting for approval/ })).toBeNull();
+    const onboarding = within(list()).getByRole('button', { name: 'Switch to Onboarding' });
+    expect(within(onboarding).getByRole('img', { name: '2 waiting for approval' })).toBeInTheDocument();
+    expect(within(onboarding).getByRole('img', { name: 'new reply from Jarvis' })).toBeInTheDocument();
+    expect(within(onboarding).queryByTestId('focus-agents-f2')).toBeNull();
+  });
+
+  it('six most recent, then Show all (N); the active one always shows, however old', () => {
+    focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`));
+    focusMock.activeId = 'g8'; // the oldest
     render(<SidebarBody {...props()} />);
-    fireEvent.click(pill());
-    fireEvent.click(within(popover()).getByRole('button', { name: /New focus/ }));
+    expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5']);
+    expect(openHeader()).toHaveTextContent('F8');
+    fireEvent.click(screen.getByRole('button', { name: 'Show all (9)' }));
+    expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7']);
+    fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }));
+    expect(rowNames()).toHaveLength(6);
+  });
+
+  it('+ in the header opens the composer', () => {
+    render(<SidebarBody {...props()} />);
+    fireEvent.click(within(list()).getByRole('button', { name: 'New focus' }));
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'Switch focus' })).toBeNull();
   });
 
-  it('a repo checkout with an old merged PR never makes a Focus Done', () => {
-    focusMock.focuses = [focus('f1', 'Root', ['local:/r1'])];
-    focusMock.activeId = 'f1';
-    const root = { ...wt('/r1', 'r1'), branch: 'main' } as Worktree;
-    vi.mocked(useMrSummaries).mockReturnValue(new Map([['/r1', { state: 'merged', updatedAt: '2026-01-01' }]]) as ReturnType<typeof useMrSummaries>);
-    render(<SidebarBody {...props({ worktrees: [root] })} />);
-    fireEvent.click(pill());
-    expect(within(popover()).getByRole('button', { name: /Root/ })).not.toHaveTextContent('✔');
-    expect(within(popover()).queryByText('Done')).toBeNull();
-  });
-
-  it('rows show a status glyph (no repo initials, no member count), and Done ones sink to a group at the bottom', () => {
-    const worktrees = [
-      { ...wt('/r1/wt', 'r1'), claudeStatus: 'waiting', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree,
-      wt('/r2/wt', 'r2'), wt('/r2/other', 'r2'),
-    ];
-    vi.mocked(useMrSummaries).mockReturnValue(new Map([
-      ['/r2/wt', { state: 'merged', updatedAt: '2026-01-01' }],
-      ['/r2/other', { state: 'closed', updatedAt: '2026-01-01' }],
-    ]) as ReturnType<typeof useMrSummaries>);
-    render(<SidebarBody {...props({ worktrees })} />);
-    fireEvent.click(pill());
-    const billing = within(popover()).getByRole('button', { name: /Billing/ });
-    expect(billing).toHaveTextContent('⚑');
-    expect(within(billing).queryByTitle('api')).toBeNull();
-    const perf = within(popover()).getByRole('button', { name: /Perf/ });
-    expect(perf).toHaveTextContent('✔');
-    expect(within(popover()).getByText('Done')).toBeInTheDocument();
-    expect(within(popover()).getByRole('button', { name: /Onboarding/ })).not.toHaveTextContent('✔');
-    const names = within(popover()).getAllByRole('button').filter((b) => /⌘\d/.test(b.textContent ?? '')).map((b) => b.textContent?.slice(0, 4));
-    expect(names).toEqual(['Onbo', 'Bill', 'Perf']);
-  });
-
-  it('renames inline and deletes from a row\'s right-click menu, confirming when the Focus has members', () => {
+  it('the open Focus renames inline and deletes from its ⋯ menu, confirming when it has members', () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<SidebarBody {...props()} />);
-    fireEvent.click(pill());
-    fireEvent.contextMenu(within(popover()).getByRole('button', { name: /Onboarding/ }), { clientX: 10, clientY: 10 });
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-    const field = within(popover()).getByLabelText('Rename Onboarding');
-    fireEvent.change(field, { target: { value: 'Signup' } });
+    const field = screen.getByLabelText('Rename Billing');
+    fireEvent.change(field, { target: { value: 'Payments' } });
     fireEvent.submit(field.closest('form')!);
-    expect(focusMock.rename).toHaveBeenCalledWith('f2', 'Signup');
-
-    fireEvent.contextMenu(within(popover()).getByRole('button', { name: /Perf/ }), { clientX: 10, clientY: 10 });
+    expect(focusMock.rename).toHaveBeenCalledWith('f1', 'Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete focus' }));
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('2 worktrees stay'));
-    expect(focusMock.remove).toHaveBeenCalledWith('f3');
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('1 worktree stay'));
+    expect(focusMock.remove).toHaveBeenCalledWith('f1');
     confirmSpy.mockRestore();
   });
 
-  it('has no All worktrees row (the bottom nav has the page), and Escape closes', () => {
+  it('the ⇧⌘N event opens the composer', () => {
     render(<SidebarBody {...props()} />);
-    fireEvent.click(pill());
-    expect(within(popover()).queryByRole('button', { name: 'All worktrees' })).toBeNull();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Switch focus' })).toBeNull();
+    act(() => { window.dispatchEvent(new Event('strado:new-focus')); });
+    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
-
 });

@@ -6,6 +6,7 @@ import type { JarvisAppPort, JarvisNavPort } from '../../lib/jarvis/execute';
 import { api } from '../../api';
 import { runJarvisAction } from './windowAction';
 import { storedBrowserTabs } from './storedHub';
+import { markSeen, newestReply } from './badges';
 import { readShellNames } from '../../hooks/shellNames';
 import { buildModelContext } from '../../lib/jarvis/model';
 import { jarvisServerPort } from '../../lib/jarvis/serverPort';
@@ -112,6 +113,11 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
     }, STARTING_POLL_MS);
     return () => clearInterval(timer);
   }, [chatOpen, startingKey, refreshPeers]);
+  // While the chat is on screen, its replies are read (the sidebar's ✦ for this Focus).
+  const newest = newestReply(chat.entries);
+  useEffect(() => {
+    if (chatOpen && focus && newest) markSeen(focus.id, newest);
+  }, [chatOpen, focus, newest]);
   const value = useMemo<Host | null>(() => {
     if (!focus) return null;
     const inFocus = worktrees.filter((w) => focus.members.includes(`local:${w.path}`));

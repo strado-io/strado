@@ -1,8 +1,8 @@
-// One space's sidebar pane: the Focus pill (with Search and New worktree
-// beside it), then the active Focus's worktrees as cards. Nothing else: a
+// One space's sidebar pane: every Focus as an accordion (FocusList), the
+// active one open with its ✦ Jarvis card and worktree cards. Nothing else: a
 // Focus is one task's set of worktrees, and everything else is a ⌘K or a
 // Focus switch away.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FocusTicket, RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
@@ -20,14 +20,13 @@ import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
 import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWaiting, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
-import { FocusIcon, FocusPill, FocusPopover, type FocusRowInfo } from './FocusSwitcher';
+import { FocusIcon } from './FocusSwitcher';
+import { FocusList, type FocusBadges } from './FocusList';
 import { PlusIcon } from '../hub/icons';
 import { FocusComposer } from '../focus/FocusComposer';
 import { AddWorktreesDialog } from '../focus/AddWorktreesDialog';
-import { attentionOf } from '../../hooks/attention';
 export { BranchIcon, RepoIcon, type MenuItem } from './rowBits';
 import { shortRelativeTime } from '../../lib/relativeTime';
-import { SidebarToolbar } from './SidebarToolbar';
 import { localPinId, remotePinId } from './pinIds';
 
 /** Waiting outranks working: it is the one that needs the person. */
@@ -58,8 +57,12 @@ export type SidebarBodyProps = {
   onError?: (message: string) => void;
   /** False for a neighbour space's pane in the carousel: it shows, but does not answer global events. */
   isActivePane?: boolean;
-  /** The active Focus's ✦ Jarvis card, first in the Focus (a blank one too, above its empty actions). */
+  /** The active Focus's ✦ Jarvis card: first in the Focus (a blank one too, above its empty actions). */
   jarvis?: React.ReactNode;
+  /** Each Focus's Jarvis badges for its collapsed row (approvals waiting, an unread reply). */
+  jarvisBadges?: Map<string, { pendingApprovals: number; unread: boolean }>;
+  /** A collapsed Focus was clicked: called before it is activated (the Dashboard opens its Jarvis chat). */
+  onOpenFocus?: (id: string) => void;
 };
 
 /**
@@ -168,19 +171,17 @@ export function SidebarBody({
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
-  remoteLoading = false, onError, isActivePane = true, jarvis,
+  remoteLoading = false, onError, isActivePane = true, jarvis, jarvisBadges, onOpenFocus,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const { focuses, active, activeId, activate, create, rename, remove, setMembership, addMembers } = useFocuses(wsId);
   const report = (what: string) => (err: unknown) => onError?.(`${what}: ${(err as Error).message}`);
-  // The Focus popover (from the pill), the composer (New focus, from the
-  // popover, the empty state, the blank-space menu, ⇧⌘N and the hub gate,
-  // which seeds it with the worktree being opened) and Add worktrees.
-  const [switcher, setSwitcher] = useState(false);
+  // The composer (New focus, from the list's +, the empty state, the
+  // blank-space menu, ⇧⌘N and the hub gate, which seeds it with the worktree
+  // being opened) and Add worktrees.
   const [composer, setComposer] = useState<{ seedPinId: string | null } | null>(null);
   const [addingMembers, setAddingMembers] = useState(false);
-  const pillRef = useRef<HTMLButtonElement>(null);
-  const openComposer = (seedPinId: string | null = null) => { setSwitcher(false); setComposer({ seedPinId }); };
+  const openComposer = (seedPinId: string | null = null) => { setComposer({ seedPinId }); };
   // Only the active pane answers the event: the carousel's neighbour panes
   // would each open one too.
   useEffect(() => {
@@ -308,21 +309,28 @@ export function SidebarBody({
     )];
   });
 
-  const repoRoots = new Set(repos.map((r) => r.path));
-  // What the switcher shows per Focus: whether an agent in it is waiting or
-  // working, or every PR in it is merged/closed.
-  const rowInfo = new Map<string, FocusRowInfo>(focuses.map((f) => {
+  // A collapsed Focus's row: the faces of its agents while one works or
+  // waits (as on the cards), and its Jarvis's own badges.
+  const badges = new Map<string, FocusBadges>(focuses.map((f) => {
     const locals = f.members.flatMap((id) => { const w = localByPinId.get(id); return w ? [w] : []; });
-    const remotes = f.members.flatMap((id) => { const w = remoteByPinId.get(id); return w ? [w] : []; });
-    const attention = locals.map((w) => attentionOf(w, mrByPath.get(w.path)));
-    // A repo's own checkout (main/master) never finishes, whatever PR its
-    // branch once had; Done needs at least one real worktree, all merged or closed.
-    const real = locals.filter((w) => !repoRoots.has(w.path));
-    const done = real.length > 0 && real.length === locals.length && remotes.length === 0
-      && real.every((w) => { const st = mrByPath.get(w.path)?.state; return st === 'merged' || st === 'closed'; });
-    const status = attention.includes('needs-you') ? 'needs-you' : attention.includes('working') ? 'working' : done ? 'done' : null;
-    return [f.id, { status }];
+    const live = locals.some((w) => agentWorking(w) || agentWaiting(w));
+    const j = jarvisBadges?.get(f.id);
+    return [f.id, {
+      ...(live ? { agents: <SessionAvatarStack chips={sessionChips(locals, browserTabs).filter((c) => c.mode !== 'shell' && c.mode !== 'browser')} testId={`focus-agents-${f.id}`} tinted /> } : {}),
+      pendingApprovals: j?.pendingApprovals ?? 0,
+      unread: j?.unread ?? false,
+    }];
   }));
+  const deleteActive = () => {
+    if (!active) return;
+    const n = active.members.length;
+    if (n === 0 || confirm(`Delete "${active.name}"? Its ${n} worktree${n === 1 ? '' : 's'} stay where they are.`)) void remove(active.id).catch(report('Could not delete focus'));
+  };
+  const activeMenu: MenuItem[] = active ? [
+    { text: 'Add worktrees…', onClick: () => setAddingMembers(true) },
+    { text: 'New worktree here…', onClick: () => onNewWorktree(active.ticket) },
+    { text: 'Delete focus', danger: true, onClick: deleteActive },
+  ] : [];
 
   // The empty states' actions: full-width rows, drawn like a place a card will go.
   const emptyAction = 'flex w-full items-center gap-2.5 rounded-lg border border-dashed border-zinc-800 px-3 py-2.5 text-left text-xs text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-200';
@@ -333,59 +341,50 @@ export function SidebarBody({
     </svg>
   );
 
-  const pillRect = () => {
-    const r = pillRef.current?.getBoundingClientRect();
-    return r ? { left: r.left, bottom: r.bottom, width: r.width } : { left: 8, bottom: 40, width: 272 };
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarToolbar onNewWorktree={() => onNewWorktree()}
-        leading={<FocusPill focus={active} open={switcher} pillRef={pillRef} onClick={() => setSwitcher((s) => !s)} />} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
-        <section aria-label="Focus" className="mt-2">
-          {!active ? (
-            <div className="px-1 py-1">
-              <button type="button" onClick={() => openComposer()} className={emptyAction}>
-                <span className="text-zinc-500"><FocusIcon size={14} /></span>New focus
-              </button>
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="flex flex-col gap-1 px-1 py-1">
-              {jarvis && <div className="-mx-1 mb-1">{jarvis}</div>}
-              <button type="button" onClick={() => setAddingMembers(true)} className={emptyAction}>
-                <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
-              </button>
-              <button type="button" onClick={() => onNewWorktree(active.ticket)} className={emptyAction}>
-                <span className="text-zinc-500"><PenIcon /></span>New worktree here
-              </button>
-            </div>
-          ) : (
-            <div className="mb-1.5 flex flex-col gap-1.5">{jarvis}{rows}</div>
-          )}
-          {/* First runner fetch still in flight: say so, quietly. Runner rows
-              appearing a beat after the local ones otherwise looks like a bug. */}
-          {remoteLoading && (
-            <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
-              <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
-              <span className="animate-pulse">Checking runners…</span>
-            </div>
-          )}
-          {runnerStatuses.filter((r) => r.error).map((r) => (
-            <div key={r.runnerId} className="px-2 py-1.5 text-[11px] text-amber-600/80">{r.name}: {r.error}</div>
-          ))}
-        </section>
+        <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
+          onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
+          onNewFocus={() => openComposer()}
+          onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}>
+          <section aria-label="Focus">
+            {active && rows.length === 0 ? (
+              <div className="flex flex-col gap-1 px-1 py-1">
+                {jarvis && <div className="-mx-1 mb-1">{jarvis}</div>}
+                <button type="button" onClick={() => setAddingMembers(true)} className={emptyAction}>
+                  <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
+                </button>
+                <button type="button" onClick={() => onNewWorktree(active.ticket)} className={emptyAction}>
+                  <span className="text-zinc-500"><PenIcon /></span>New worktree here
+                </button>
+              </div>
+            ) : (
+              <div className="mb-1.5 flex flex-col gap-1.5">{jarvis}{rows}</div>
+            )}
+          </section>
+        </FocusList>
+        {/* No active Focus: as before, below the list. */}
+        {!active && (
+          <div className="mt-2 px-1 py-1">
+            <button type="button" onClick={() => openComposer()} className={emptyAction}>
+              <span className="text-zinc-500"><FocusIcon size={14} /></span>New focus
+            </button>
+          </div>
+        )}
+        {/* First runner fetch still in flight: say so, quietly. Runner rows
+            appearing a beat after the local ones otherwise looks like a bug. */}
+        {remoteLoading && (
+          <div className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-zinc-600">
+            <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border border-zinc-800 border-t-zinc-500" />
+            <span className="animate-pulse">Checking runners…</span>
+          </div>
+        )}
+        {runnerStatuses.filter((r) => r.error).map((r) => (
+          <div key={r.runnerId} className="px-2 py-1.5 text-[11px] text-amber-600/80">{r.name}: {r.error}</div>
+        ))}
       </div>
 
-      {switcher && (
-        <FocusPopover anchor={pillRect()} focuses={focuses} activeId={activeId} rowInfo={rowInfo}
-          onActivate={activate}
-          onCreate={(name) => void create(name).catch(report('Could not create focus'))}
-          onNewFocus={() => openComposer()}
-          onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
-          onDelete={(id) => void remove(id).catch(report('Could not delete focus'))}
-          onClose={() => setSwitcher(false)} />
-      )}
       {composer && (
         <FocusComposer repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
           onCreate={(name, members, ticket) => void create(name, members, ticket).catch(report('Could not create focus'))}

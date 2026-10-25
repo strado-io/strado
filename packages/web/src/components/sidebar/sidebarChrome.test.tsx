@@ -1,9 +1,7 @@
 import { render, screen } from '@testing-library/react';
-import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from './SidebarNav';
-import { SidebarToolbar } from './SidebarToolbar';
-import { FocusPill } from './FocusSwitcher';
+import { FocusList } from './FocusList';
 import { SpaceDots } from './SpaceDots';
 import { SidebarToggleButton } from '../SidebarToggle';
 import { UpdateFooter, type UpdateFooterProps } from '../UpdateFooter';
@@ -38,23 +36,18 @@ describe('sidebar chrome', () => {
     expect(screen.getByRole('button', { name: 'Worktrees' }).className).not.toMatch(/tab-pill/);
   });
 
-  it('the Focus row is a caption, not a box: small caps name and chevron, + at the right', () => {
-    const pillRef = createRef<HTMLButtonElement>();
-    render(<SidebarToolbar onNewWorktree={vi.fn()} leading={<FocusPill focus={{ id: 'f', name: 'test 2', members: [], createdAt: 't', lastActiveAt: 't' }} open={false} onClick={vi.fn()} pillRef={pillRef} />} />);
-    const bar = screen.getByTestId('focus-bar');
-    expect(bar.className).not.toMatch(/\btab-bar\b/);
-    expect(bar.className).not.toMatch(/\bborder\b/);
-    const pill = screen.getByRole('button', { name: 'Focus: test 2' });
-    expect(bar).toContainElement(pill);
-    expect(pill.className).toMatch(/text-\[11px\]/);
-    expect(pill.className).toMatch(/\buppercase\b/);
-    expect(pill.className).toMatch(/\btracking-wide\b/);
-    expect(pill.className).toMatch(/\btext-zinc-500\b/);
-    // One chevron, no second edit icon beside it.
-    expect(pill.querySelectorAll('svg')).toHaveLength(1);
-    const add = screen.getByRole('button', { name: 'New worktree' });
-    quietButton(add);
-    expect(bar.querySelectorAll('svg')).toHaveLength(2);
+  it('the Focus list\'s header is a caption, not a box: small caps "Focuses", + (New focus) at the right', () => {
+    const focus = { id: 'f', name: 'test 2', members: [], createdAt: 't', lastActiveAt: 't' };
+    render(<FocusList focuses={[focus]} activeId="f" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onNewFocus={vi.fn()} onRename={vi.fn()}>cards</FocusList>);
+    const caption = screen.getByText('Focuses');
+    expect(caption.className).toMatch(/text-\[11px\]/);
+    expect(caption.className).toMatch(/\buppercase\b/);
+    expect(caption.className).toMatch(/\btracking-wide\b/);
+    expect(caption.className).toMatch(/\btext-zinc-500\b/);
+    const add = screen.getByRole('button', { name: 'New focus' });
+    expect(add.className).toMatch(/\brounded-md\b/);
+    expect(add.className).toMatch(/\btext-zinc-500\b/);
+    expect(svgSize(add)).toBe('14');
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

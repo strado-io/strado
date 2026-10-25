@@ -50,6 +50,10 @@ export type Props = {
   onRebuildSandbox?: (w: RemoteWorktree) => void;
   /** The active Focus's ✦ Jarvis card, first in its section (this space's pane only). */
   jarvis?: React.ReactNode;
+  /** Each Focus's Jarvis badges for its collapsed row (this space's pane only). */
+  jarvisBadges?: Map<string, { pendingApprovals: number; unread: boolean }>;
+  /** A collapsed Focus was clicked, before it is activated. */
+  onOpenFocus?: (id: string) => void;
   /** A workspace switch the server refused — shown on the dashboard's banner. */
   onSwitchError?: (message: string) => void;
 };
@@ -167,6 +171,8 @@ export function Sidebar({
   onOpenDiff,
   onSwitchError,
   jarvis,
+  jarvisBadges,
+  onOpenFocus,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
   // Drag the right edge to resize; pointer capture keeps the drag alive over
@@ -219,6 +225,8 @@ export function Sidebar({
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
         onRebuildSandbox={onRebuildSandbox}
         jarvis={jarvis}
+        jarvisBadges={jarvisBadges}
+        onOpenFocus={onOpenFocus}
       />
     ),
   });

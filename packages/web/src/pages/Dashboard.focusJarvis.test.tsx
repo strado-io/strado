@@ -190,4 +190,16 @@ describe('Dashboard: Focus Jarvis', () => {
       vi.useRealTimers();
     }
   });
+
+  it('the chat on screen marks its replies seen (the sidebar\'s unread ✦)', async () => {
+    const { api } = await import('../api');
+    focusList.members = ['local:/a/A-1'];
+    const metaNow = { focusId: 'f-a', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false };
+    vi.mocked(api.focusJarvis.log).mockResolvedValueOnce({ entries: [{ id: 'r7', at: 't', type: 'jarvis', turnId: 't1', text: 'Done.', done: true }], meta: metaNow } as never);
+    renderDashboard();
+    await act(async () => {});
+    expect(JSON.parse(sessionStorage.getItem('strado:jarvis-seen') ?? '{}')['f-a']).toBeUndefined();
+    fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+    expect(JSON.parse(sessionStorage.getItem('strado:jarvis-seen') ?? '{}')['f-a']).toBe('r7');
+  });
 });

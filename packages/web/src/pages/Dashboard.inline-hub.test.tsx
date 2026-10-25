@@ -138,8 +138,15 @@ function renderDashboard() {
 const focusPill = (name: string) => {
   const open = screen.queryByLabelText('Open sidebar');
   if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
-  return screen.getByRole('button', { name: `Focus: ${name}` });
+  // The open Focus in the sidebar's list ("none": nothing open, the list still there).
+  if (name === 'none') {
+    expect(screen.queryByTestId('focus-open')).toBeNull();
+    return screen.getByRole('region', { name: 'Focuses' });
+  }
+  return within(screen.getByTestId('focus-open')).getByRole('heading', { name });
 };
+/** A collapsed Focus row in the sidebar's list. */
+const focusRow = (name: string) => screen.getByRole('button', { name: `Switch to ${name}` });
 // Home hides the sidebar; these tests drive it, so show it (idempotent).
 const repoRow = () => {
   const open = screen.queryByLabelText('Open sidebar');
@@ -151,7 +158,7 @@ const home = () => screen.findByRole('heading', { name: 'What do you want to do?
 // The ticket id on the sidebar's Focus card (it lands once the Focus list has loaded).
 // Home hides the sidebar, so open it (⌘B) when it is not there.
 const sidebarRow = async () => {
-  if (!screen.queryByRole('region', { name: 'Focus' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
+  if (!screen.queryByRole('region', { name: 'Focuses' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
   return within(await screen.findByRole('region', { name: 'Focus' })).findByText('FD-9');
 };
 // A Focus holding the one worktree, active on this device.
@@ -236,7 +243,7 @@ describe('Dashboard inline hub', () => {
     await home();
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
-    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Focuses' })).not.toBeInTheDocument();
     expect(localStorage.getItem('strado:sidebar-collapsed:v2')).toBe('1');
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
@@ -250,12 +257,9 @@ describe('Dashboard inline hub', () => {
     renderDashboard();
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
-    // From the sidebar's Focus pill: the hub closes and home shows, the sidebar stays under the hand.
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Focus: Working on' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Focus: Working on' }));
-    const dialog = screen.getByRole('dialog', { name: 'Switch focus' });
-    fireEvent.pointerDown(within(dialog).getByRole('button', { name: /Perf/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /Perf/ }));
+    // From the sidebar's Focus list: the hub closes, the sidebar stays under the hand.
+    fireEvent.pointerDown(focusRow('Perf'));
+    fireEvent.click(focusRow('Perf'));
     expect(await screen.findByRole('region', { name: 'Jarvis' })).toHaveTextContent(/what should we do in perf/i);
     expect(screen.queryByTestId('inline-hub')).toBeNull();
     expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
@@ -268,7 +272,7 @@ describe('Dashboard inline hub', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: '‹ Back' }));
     fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
     await home();
-    expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Focuses' })).toBeInTheDocument();
   });
 
   it('the sidebar starts hidden on the first run of this build, even with a stored "open" from before', async () => {
@@ -276,14 +280,14 @@ describe('Dashboard inline hub', () => {
     localStorage.setItem('strado:sidebar-collapsed', '0');
     renderDashboard();
     await screen.findByRole('heading', { name: 'What do you want to do?' });
-    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Focuses' })).not.toBeInTheDocument();
   });
 
   it('first run: the sidebar starts hidden — the big box is all you need; ⌘B brings it back', async () => {
     localStorage.removeItem('strado:sidebar-collapsed:v2');
     renderDashboard();
     await home();
-    expect(screen.queryByRole('region', { name: 'Focus' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Focuses' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Global search')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
@@ -461,13 +465,12 @@ describe('Dashboard inline hub', () => {
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
-    fireEvent.click(screen.getByRole('button', { name: 'Focus: Working on' }));
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Switch focus' })).getByRole('button', { name: /Perf/ }));
+    fireEvent.click(focusRow('Perf'));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
     expect(focusPill('Perf')).toBeInTheDocument();
   });
 
-  it('switching back to a Focus reopens the worktree it had open', async () => {
+  it('switching back by ⌘ number reopens the worktree it had open; by its row, its Jarvis', async () => {
     fakeFocuses.reset([
       { id: 'f1', name: 'Working on', members: ['local:/wt/FD-9'], createdAt: 't', lastActiveAt: '2026-02-01' },
       { id: 'f2', name: 'Perf', members: [], createdAt: 't', lastActiveAt: '2026-01-01' },
@@ -476,15 +479,19 @@ describe('Dashboard inline hub', () => {
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
-    const switchTo = (from: string, to: RegExp) => {
-      fireEvent.click(focusPill(from));
-      fireEvent.click(within(screen.getByRole('dialog', { name: 'Switch focus' })).getByRole('button', { name: to }));
-    };
-    switchTo('Working on', /Perf/);
+    fireEvent.click(focusRow('Perf'));
     await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
-    switchTo('Perf', /Working on/);
+    // Its ⌘ number, as its row's hint says.
+    const n = /⌘(\d)/.exec(focusRow('Working on').getAttribute('title') ?? '')![1]!;
+    fireEvent.keyDown(window, { key: n, metaKey: true });
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
     expect(JSON.parse(localStorage.getItem('strado:selected-by-focus')!)).toEqual({ f1: '/wt/FD-9' });
+    // Its row instead: its Jarvis chat.
+    fireEvent.click(focusRow('Perf'));
+    await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
+    fireEvent.click(focusRow('Working on'));
+    expect(await screen.findByRole('region', { name: 'Jarvis' })).toHaveTextContent(/what should we do in working on|Jarvis/i);
+    expect(screen.queryByTestId('inline-hub')).toBeNull();
   });
 });
 
