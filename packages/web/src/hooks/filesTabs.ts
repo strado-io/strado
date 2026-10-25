@@ -32,33 +32,39 @@ const LEGACY_KEY = 'strado:vscode-tabs';
 const LEGACY = 'vscode:1';
 const FILES = 'files:1';
 export function migrateEditorTabs(): void {
-  try {
-    const raw = localStorage.getItem(LEGACY_KEY);
-    if (raw === null) return;
-    localStorage.removeItem(LEGACY_KEY);
-    const paths = (JSON.parse(raw) as unknown[]).filter((p): p is string => typeof p === 'string');
+  let raw: string | null;
+  try { raw = localStorage.getItem(LEGACY_KEY); } catch { return; }
+  if (raw === null) return;
+  // Each step stands alone: junk in one store must not stop the others. The
+  // legacy key goes last, so a step that couldn't run gets another go.
+  const step = (f: () => void) => { try { f(); } catch { /* that store stays as it was */ } };
+  step(() => {
+    const paths = (JSON.parse(raw!) as unknown[]).filter((p): p is string => typeof p === 'string');
     for (const p of paths) rememberFilesTab(p, true);
-
+  });
+  step(() => {
     const active = JSON.parse(localStorage.getItem('strado.activeTab') ?? '{}') as Record<string, unknown>;
     for (const [p, key] of Object.entries(active)) if (key === LEGACY) active[p] = FILES;
     localStorage.setItem('strado.activeTab', JSON.stringify(active));
-
+  });
+  step(() => {
     const order = JSON.parse(localStorage.getItem('strado.tabOrder') ?? '{}') as Record<string, unknown>;
     for (const [p, keys] of Object.entries(order)) {
       if (!Array.isArray(keys) || !keys.includes(LEGACY)) continue;
       order[p] = keys.includes(FILES) ? keys.filter((k) => k !== LEGACY) : keys.map((k) => (k === LEGACY ? FILES : k));
     }
     localStorage.setItem('strado.tabOrder', JSON.stringify(order));
-
+  });
+  step(() => {
     const layouts = readPaneLayouts();
     for (const [p, nodes] of Object.entries(layouts)) {
+      if (!nodes.some((n) => hasLeaf(n, LEGACY))) continue;
       const hasFiles = nodes.some((n) => hasLeaf(n, FILES));
       const next = nodes
         .map((n) => (!hasLeaf(n, LEGACY) ? n : hasFiles ? removeLeaf(n, LEGACY) : replaceLeaf(n, LEGACY, FILES)))
         .filter((n): n is PaneNode => n !== null);
       rememberPaneLayouts(p, next);
     }
-  } catch {
-    // storage blocked or junk: the old tab simply isn't carried over
-  }
+  });
+  step(() => localStorage.removeItem(LEGACY_KEY));
 }

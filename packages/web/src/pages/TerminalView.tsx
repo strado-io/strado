@@ -219,15 +219,13 @@ function groupTabs(
   shellNames: Record<string, string> = {},
   browserMeta: Record<string, { title?: string; favicon?: string | null }> = {},
   kbTitles: Record<string, string> = {},
-  // Desktop embeds (false for a remote worktree); the Browser default follows it.
-  embeds = true,
   // Shells whose pty lives on a runner. They sit in this worktree's strip
   // alongside local ones — that adjacency is the whole point of the feature.
   remoteShells: RemoteShell[] = [],
   // The Browser preview is rendered by the LOCAL desktop (a WebContentsView
   // pointing at the forwarded 127.0.0.1 URL), not by the worktree's server, so
-  // it IS available for a remote worktree — gated separately from `embeds`.
-  browserEmbeds = embeds,
+  // it IS available for a remote worktree.
+  browserEmbeds = true,
 ): { tab: Tab; label: string; icon: React.ReactNode; hint?: string }[] {
   // saved drag order applies at the end, so every consumer (strip, switcher,
   // hotkeys) sees the same sequence
@@ -1457,7 +1455,7 @@ export function TerminalView({
   }, [groups, worktree.path]);
 
   const activeGroup = ordered.find((g) => g.path === active.path) ?? null;
-  const tabs = activeGroup ? groupTabs(activeGroup, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[activeGroup.path] ?? [], browserEmbeds) : [];
+  const tabs = activeGroup ? groupTabs(activeGroup, shellNames, browserMeta, kbTitles, remoteShells[activeGroup.path] ?? [], browserEmbeds) : [];
 
   // ---------- split panes (Cmd+D / Cmd+Shift+D) ----------
   const isPtyMode = (m: Tab['mode']): m is PtyTab['mode'] =>
@@ -1821,7 +1819,7 @@ export function TerminalView({
     tabMruRef.current[active.path] = [k, ...list.filter((x) => x !== k)].slice(0, 24);
   }, [active]);
   const switcherTabs = (g: Group) => {
-    const base = groupTabs(g, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[g.path] ?? [], browserEmbeds);
+    const base = groupTabs(g, shellNames, browserMeta, kbTitles, remoteShells[g.path] ?? [], browserEmbeds);
     const mru = tabMruRef.current[g.path] ?? [];
     return base
       .map((t, i) => {
@@ -2015,7 +2013,7 @@ export function TerminalView({
       }
     };
     if (activeGroup) {
-      for (const t of groupTabs(activeGroup, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[activeGroup.path] ?? [], browserEmbeds)) {
+      for (const t of groupTabs(activeGroup, shellNames, browserMeta, kbTitles, remoteShells[activeGroup.path] ?? [], browserEmbeds)) {
         loadFor(`${t.tab.mode}:${t.tab.id}`, t.tab, activeGroup.path);
       }
     }
@@ -2249,7 +2247,7 @@ export function TerminalView({
       (t) => t.tab.path === active.path && t.tab.mode === active.mode && t.tab.id === active.id,
     );
     if (exists) return;
-    const fallback = tabs[0] ?? ordered.flatMap((g) => groupTabs(g, shellNames, browserMeta, kbTitles, caps.embeds, remoteShells[g.path] ?? [], browserEmbeds))[0];
+    const fallback = tabs[0] ?? ordered.flatMap((g) => groupTabs(g, shellNames, browserMeta, kbTitles, remoteShells[g.path] ?? [], browserEmbeds))[0];
     if (fallback) setActive(fallback.tab);
     else onCloseRef.current();
   }, [tabs, ordered, active]);

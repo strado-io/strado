@@ -29,6 +29,15 @@ describe('migrateEditorTabs (the removed VS Code embed)', () => {
     expect(localStorage.getItem('strado:vscode-tabs')).toBeNull();
   });
 
+  it('junk in one store doesn\'t stop the others', () => {
+    localStorage.setItem('strado:vscode-tabs', JSON.stringify(['/a']));
+    localStorage.setItem('strado.activeTab', '{corrupt');
+    localStorage.setItem('strado.paneLayout', JSON.stringify({ '/a': [split(leaf('shell:1'), leaf('vscode:1'))] }));
+    migrateEditorTabs();
+    expect(readPaneLayouts()['/a']).toEqual([split(leaf('shell:1'), leaf('files:1'))]);
+    expect([...readFilesTabs()]).toEqual(['/a']);
+  });
+
   it('runs once, and survives junk', () => {
     localStorage.setItem('strado:vscode-tabs', '{not json');
     expect(() => migrateEditorTabs()).not.toThrow();
