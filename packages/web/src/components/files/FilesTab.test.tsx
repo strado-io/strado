@@ -623,5 +623,67 @@ describe('FilesTab', () => {
       fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'w', metaKey: true });
       expect(onActiveFile).toHaveBeenLastCalledWith(null);
     });
+
+  describe('explorer', () => {
+    const explorer = () => screen.getByRole('complementary', { hidden: true, name: 'Explorer' });
+    const shown = () => !explorer().classList.contains('hidden');
+
+    it('hides and shows with the toggle (or ⌘⇧E, even from a box), and stays as left', async () => {
+      const first = render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      expect(shown()).toBe(true);
+      const toggle = screen.getByRole('button', { name: 'Hide explorer' });
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(toggle).toHaveAttribute('title', 'Hide explorer (⌘⇧E)');
+      fireEvent.click(toggle);
+      expect(shown()).toBe(false);
+      expect(screen.queryByTestId('explorer-resize')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Show explorer' })).toHaveAttribute('aria-pressed', 'false');
+      first.unmount();
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      expect(shown()).toBe(false); // remembered, and opening a file doesn't force it open
+      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: 'E', metaKey: true, shiftKey: true });
+      expect(shown()).toBe(true);
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'E', metaKey: true, shiftKey: true });
+      expect(shown()).toBe(false);
+    });
+
+    it('⌘⇧F while hidden shows it for the search; closing the search hides it again', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'Hide explorer' }));
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'F', metaKey: true, shiftKey: true });
+      expect(shown()).toBe(true);
+      expect(screen.getByTestId('search-panel')).toBeInTheDocument();
+      fireEvent.keyDown(screen.getByTestId('search-panel'), { key: 'Escape' });
+      expect(shown()).toBe(false);
+      expect(screen.getByRole('button', { name: 'Show explorer' })).toBeInTheDocument();
+    });
+
+    it('resizes by keys, drag and double-click, within its bounds, and keeps the width', async () => {
+      const first = render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      const handle = screen.getByRole('separator', { name: 'Resize explorer' });
+      expect(handle).toHaveAttribute('aria-valuenow', '256');
+      fireEvent.keyDown(handle, { key: 'ArrowRight' });
+      expect(handle).toHaveAttribute('aria-valuenow', '272');
+      expect(explorer().style.width).toBe('272px');
+      fireEvent.keyDown(handle, { key: 'Home' });
+      expect(handle).toHaveAttribute('aria-valuenow', '176');
+      fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+      expect(handle).toHaveAttribute('aria-valuenow', '176'); // not below the minimum
+      fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1 });
+      fireEvent.pointerMove(handle, { clientX: 220, pointerId: 1 });
+      fireEvent.pointerUp(handle, { clientX: 220, pointerId: 1 });
+      expect(handle).toHaveAttribute('aria-valuenow', '296');
+      first.unmount();
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      expect(screen.getByRole('separator', { name: 'Resize explorer' })).toHaveAttribute('aria-valuenow', '296');
+      fireEvent.doubleClick(screen.getByRole('separator', { name: 'Resize explorer' }));
+      expect(screen.getByRole('separator', { name: 'Resize explorer' })).toHaveAttribute('aria-valuenow', '256');
+    });
+  });
   });
 });

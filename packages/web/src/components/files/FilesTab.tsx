@@ -27,6 +27,10 @@ const capped = (list: Place[], at: Place) => [...list, at].slice(-HISTORY_CAP);
 
 /** Narrower than this (px), the tree header's chips show icons only. */
 const COMPACT_BELOW = 220;
+/** The explorer (tree) pane: its width bounds and the keys that keep it (and hidden) per machine. */
+export const EXPLORER = { min: 176, fallback: 256, maxShare: 0.6, step: 16, widthKey: 'strado:files-explorer-width', hiddenKey: 'strado:files-explorer-hidden' };
+const readStored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
+const store = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* not kept: fine */ } };
 
 type NavState = { kind: NavKind; at: Place; answer: NavAnswer | null; error: string | null; slow?: boolean };
 /** A lookup still going after this long is probably a project loading; say so. */
@@ -91,6 +95,32 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
   const [nav, setNav] = useState<NavState | null>(null);
   const navAbort = useRef<AbortController | null>(null);
   const [searching, setSearching] = useState(false);
+  // The explorer can be hidden (⌘⇧E) for a full-width viewer, and resized.
+  // ⌘⇧F while hidden shows it just for the search; closing the search hides it again.
+  const [explorerHidden, setExplorerHidden] = useState(() => readStored(EXPLORER.hiddenKey) === '1');
+  const [searchPeek, setSearchPeek] = useState(false);
+  const explorerShown = !explorerHidden || searchPeek;
+  const toggleExplorer = () => {
+    const hide = !explorerHidden;
+    setExplorerHidden(hide);
+    store(EXPLORER.hiddenKey, hide ? '1' : '0');
+    setSearchPeek(false);
+    if (hide) setSearching(false);
+  };
+  const [treeWidth, setTreeWidth] = useState(() => {
+    const n = Number(readStored(EXPLORER.widthKey));
+    return n >= EXPLORER.min ? n : EXPLORER.fallback;
+  });
+  const maxTree = () => Math.max(EXPLORER.min, Math.round((root.current?.clientWidth || 0) * EXPLORER.maxShare) || 4000);
+  const sizeTree = (w: number, keep = true) => {
+    const n = Math.min(maxTree(), Math.max(EXPLORER.min, Math.round(w)));
+    setTreeWidth(n);
+    if (keep) store(EXPLORER.widthKey, String(n));
+    return n;
+  };
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const openSearch = () => { if (explorerHidden) setSearchPeek(true); setSearching(true); };
+  const closeSearch = () => { setSearching(false); setSearchPeek(false); focusCode(); };
   // Refresh: agents change files all the time; re-list the open folders and re-read the open file.
   const [reloadKey, setReloadKey] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -283,8 +313,14 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
       if (active) { e.preventDefault(); e.stopPropagation(); closeTab(tabsRef.current.focus, active.path); }
       return;
     }
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+      // ⌘⇧E (VS Code's Explorer key; ⌘B is the app sidebar's): show or hide the tree.
+      e.preventDefault(); e.stopPropagation();
+      toggleExplorer();
+      return;
+    }
     if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') {
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); }
       return;
     }
     const alt = e.altKey && !t.closest?.('.cm-editor');
@@ -292,7 +328,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
     const minus = e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.key === '-' || e.key === '_');
     if ((mod && !e.shiftKey && e.key === '[') || (alt && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
     else if ((mod && !e.shiftKey && e.key === ']') || (alt && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
-    else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
+    else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); }
     else if (e.key === 'Escape' && !e.defaultPrevented && tabs.panes.length > 1 && tabs.focus === 1 && !nav) {
       e.preventDefault();
       dispatch({ type: 'closePane', pane: 1 });
@@ -314,33 +350,68 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
     panel: `${uid}-panel-${paneId}`,
     tab: (path: string) => `${uid}-tab-${paneId}-${encodeURIComponent(path)}`,
   });
+  const explorerId = `${uid}-explorer`;
+  const explorerToggle = (
+    <button type="button" onClick={toggleExplorer} aria-pressed={!explorerHidden} aria-expanded={explorerShown} aria-controls={explorerId}
+      aria-label={explorerHidden ? 'Show explorer' : 'Hide explorer'} title={`${explorerHidden ? 'Show' : 'Hide'} explorer (⌘⇧E)`}
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100">
+      {explorerHidden ? <PanelLeftIcon /> : <PanelLeftCloseIcon />}
+    </button>
+  );
   const fromHere = () => (selected ? here.current : null);
   return (
     // data-file-tab-open: the hub's own ⌘W steps aside for ours while a file tab is open.
-    <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
-      <aside className="glass pane-card flex w-64 min-w-[11rem] shrink flex-col overflow-hidden rounded-xl border">
+    <div ref={root} className="flex h-full min-h-0 p-2" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
+      <aside id={explorerId} aria-label="Explorer" style={{ width: treeWidth }}
+        className={`glass pane-card min-w-[11rem] shrink flex-col overflow-hidden rounded-xl border ${explorerShown ? 'flex' : 'hidden'}`}>
         <div ref={header} className="flex h-8 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b border-zinc-800/80 pl-2 pr-1" data-testid="files-tree-header">
           <Chip on={changedOnly} onClick={() => setChangedOnly((v) => !v)} compact={compact} label="Changed"
             title="Changed only — list just the files that differ from HEAD" icon={<FilterIcon />} count={changedCount} />
           <Chip on={showIgnored} onClick={() => setShowIgnored((v) => !v)} compact={compact} label="Ignored"
             title="Show ignored — also list files .gitignore hides" icon={<EyeOffIcon />} />
           <span className="flex-1" />
-          <button type="button" onClick={() => setSearching((v) => !v)} aria-pressed={searching} aria-label="Search files" title="Search files (⌘⇧F)"
+          <button type="button" onClick={() => (searching ? closeSearch() : openSearch())} aria-pressed={searching} aria-label="Search files" title="Search files (⌘⇧F)"
             className={`${iconBtn} ${searching ? 'glass-pill text-zinc-100' : 'text-zinc-400'}`}><SearchIcon /></button>
           <button type="button" onClick={() => setReloadKey((k) => k + 1)} aria-label="Refresh files" title="Refresh"
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
-          <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h, side) => pickHit(h, fromHere(), side)} />
+          <SearchPanel search={search} onClose={closeSearch} onPick={(h, side) => pickHit(h, fromHere(), side)} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
             onSelect={(p) => jump(fromHere(), { path: p }, 'preview')}
             onPin={(p) => dispatch({ type: 'pin', pane: tabsRef.current.focus, path: p })} />
         )}
       </aside>
-      <main className="glass pane-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border">
+      {explorerShown && (
+        // Drag (or ←/→) to resize; double-click goes back to the default width.
+        <div role="separator" aria-orientation="vertical" aria-label="Resize explorer" aria-controls={explorerId} tabIndex={0}
+          aria-valuenow={treeWidth} aria-valuemin={EXPLORER.min} aria-valuemax={maxTree()}
+          data-testid="explorer-resize" title="Drag to resize · double-click to reset"
+          className="group -mx-1 flex w-2 shrink-0 cursor-col-resize items-stretch justify-center outline-none"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            drag.current = { x: e.clientX, w: treeWidth };
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* jsdom */ }
+          }}
+          onPointerMove={(e) => { if (drag.current) sizeTree(drag.current.w + e.clientX - drag.current.x, false); }}
+          onPointerUp={() => { if (drag.current) { drag.current = null; store(EXPLORER.widthKey, String(treeWidth)); } }}
+          onDoubleClick={() => sizeTree(EXPLORER.fallback)}
+          onKeyDown={(e) => {
+            const d = e.key === 'ArrowLeft' ? -EXPLORER.step : e.key === 'ArrowRight' ? EXPLORER.step : 0;
+            if (d) { e.preventDefault(); sizeTree(treeWidth + d); }
+            else if (e.key === 'Home') { e.preventDefault(); sizeTree(EXPLORER.min); }
+            else if (e.key === 'End') { e.preventDefault(); sizeTree(maxTree()); }
+          }}>
+          <span className="w-1 rounded-full bg-transparent transition-colors group-hover:bg-sky-400/40 group-focus-visible:bg-sky-400/60" />
+        </div>
+      )}
+      <main className={`glass pane-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border ${explorerShown ? 'ml-2' : ''}`}>
         {selected === null && tabs.panes.every((p) => p.tabs.length === 0) ? (
-          <div className="flex flex-1 items-center justify-center p-6 text-[11px] text-zinc-500">Pick a file to read it here.</div>
+          <div className="flex flex-1 flex-col">
+            <div className="flex h-8 shrink-0 items-center border-b border-zinc-800/80 px-1">{explorerToggle}</div>
+            <div className="flex flex-1 items-center justify-center p-6 text-[11px] text-zinc-500">Pick a file to read it here.</div>
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1">
             {tabs.panes.map((pane, i) => {
@@ -350,7 +421,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
                 <section key={pane.id} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
                   className={`flex min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-zinc-800/80' : ''}`}
                   onMouseDownCapture={() => dispatch({ type: 'focus', pane: pi })} onFocusCapture={() => dispatch({ type: 'focus', pane: pi })}>
-                  <TabStrip pane={pane} ids={tabIds(pane.id)} focused={tabs.panes.length > 1 && tabs.focus === pi}
+                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} focused={tabs.panes.length > 1 && tabs.focus === pi}
                     onActivate={(path) => {
                       const tab = pane.tabs.find((x) => x.path === path);
                       if (tab && path !== pane.active) jump(here.current, { path }, 'preview', pi);
@@ -401,8 +472,10 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
 // One pane's open files: the preview tab in italics, × or middle-click closes,
 // double-click keeps a preview tab. Scrolls sideways, never wraps. Keyboard:
 // ←/→ (Home/End) move between tabs, Enter or Space shows one, Delete closes it.
-function TabStrip({ pane, ids, focused, onActivate, onPin, onClose, onClosePane }: {
+function TabStrip({ pane, ids, leading, focused, onActivate, onPin, onClose, onClosePane }: {
   pane: Pane;
+  /** Before the tabs (the first pane's explorer toggle). */
+  leading?: ReactNode;
   ids: { panel: string; tab: (path: string) => string };
   focused: boolean;
   onActivate: (path: string) => void;
@@ -432,6 +505,7 @@ function TabStrip({ pane, ids, focused, onActivate, onPin, onClose, onClosePane 
   };
   return (
     <div className={`flex h-8 shrink-0 items-stretch border-b border-zinc-800/80 ${focused ? 'bg-white/[0.02]' : ''}`}>
+      {leading && <div className="flex shrink-0 items-center px-1">{leading}</div>}
       <div ref={list} role="tablist" aria-label="Open files" className="flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
         {pane.tabs.map((t) => {
           const on = t.path === pane.active;
@@ -499,6 +573,13 @@ function EyeOffIcon() {
 }
 function SearchIcon() {
   return <svg {...svg}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>;
+}
+// Lucide's panel-left and panel-left-close.
+function PanelLeftIcon() {
+  return <svg {...svg}><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></svg>;
+}
+function PanelLeftCloseIcon() {
+  return <svg {...svg}><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /><path d="m16 15-3-3 3-3" /></svg>;
 }
 function SplitIcon() {
   return <svg {...svg}><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" /></svg>;
