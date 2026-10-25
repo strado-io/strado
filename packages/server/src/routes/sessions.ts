@@ -11,8 +11,9 @@ import { readManifest } from '../services/ptyDaemon/supervisor.js';
 import { closeAll as stopVsCodeWeb, vsCodeWebStatus } from '../services/vscodeWeb.js';
 import { vscodeWindows } from '../services/vscodeWindows.js';
 import { buildSessionMetrics, sampleProcesses, sessionKeyOf } from '../services/sessionMetrics.js';
+import type { LspManager } from '../services/lsp/manager.js';
 
-export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
+export async function registerSessionRoutes(app: FastifyInstance, lsp?: Pick<LspManager, 'running'>): Promise<void> {
   // ?pids=1,2 — also measure these process trees. The page passes its
   // worktrees' dev-server pids (it holds the workspace-scoped worktree list;
   // this route is machine-wide).
@@ -34,6 +35,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       vscodePid: vsCodeWebStatus()?.pid ?? null,
       vscodeWindows: vscodeWindows.list(),
       extraPids: parsePids(req.query.pids),
+      languageServers: lsp?.running() ?? [],
     });
   });
 

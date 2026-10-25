@@ -630,7 +630,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   }
   // Machine-wide pty sessions, outside any workspace scope (see the module).
   const { registerSessionRoutes } = await import('./routes/sessions.js');
-  await registerSessionRoutes(app);
+  await registerSessionRoutes(app, lsp);
 
   // Self-hosted runner management (proxies strado-api with the stored token).
   // Returns its runnerFetch client (ticket cache + relay fetch) so a later

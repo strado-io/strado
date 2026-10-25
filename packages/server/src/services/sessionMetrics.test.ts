@@ -111,3 +111,35 @@ describe('buildSessionMetrics', () => {
     expect(out.processes).toEqual([{ pid: 200, cpu: 4.2, rssBytes: 100000 * 1024, processes: 2 }]);
   });
 });
+
+describe('buildSessionMetrics: language servers', () => {
+  it('reports each running language server with its whole process tree (the tsserver / JVM under it)', () => {
+    const procs = parsePsOutput(`
+      100     1   0.5  50000
+      500   100   1.0  60000
+      501   500  20.0 400000
+      502   500   2.0  10000
+      600   100   0.1   9000
+    `);
+    const ls = {
+      id: 'typescript' as const, lang: 'TypeScript and JavaScript', worktreePath: '/wt/a', pid: 500,
+      startedAt: '2026-10-25T10:00:00.000Z', lastUsedAt: '2026-10-25T10:05:00.000Z',
+    };
+    const out = buildSessionMetrics({
+      live: [],
+      pidOf: () => null,
+      procs,
+      serverPid: 100,
+      daemonPid: null,
+      languageServers: [ls, { ...ls, id: 'gopls', lang: 'Go', pid: 999 }],
+    });
+    expect(out.app.languageServers).toEqual([{ ...ls, cpu: 23, rssBytes: 470000 * 1024, processes: 3 }]);
+    // The server row is the server process alone: the language servers under it are not counted twice.
+    expect(out.app.server).toEqual({ pid: 100, cpu: 0.5, rssBytes: 50000 * 1024 });
+  });
+
+  it('none running: an empty list', () => {
+    const out = buildSessionMetrics({ live: [], pidOf: () => null, procs: parsePsOutput(PS), serverPid: 100, daemonPid: null });
+    expect(out.app.languageServers).toEqual([]);
+  });
+});

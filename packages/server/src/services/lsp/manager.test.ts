@@ -65,7 +65,14 @@ async function make(bin: string, over: Partial<Parameters<typeof createLspManage
     search: fakeSearch,
     limits: { requestMs: 4000, startMs: 15000 },
     now: () => clock,
-    rss: async () => 4096,
+    // The server and one child of it, whatever pid it got: rss is the whole tree.
+    sample: async () => {
+      const pids = (await mgr!.running()).map((r) => r.pid);
+      return pids.flatMap((pid) => [
+        { pid, ppid: 1, cpu: 1, rssKb: 3 },
+        { pid: pid + 100000, ppid: pid, cpu: 2, rssKb: 1 },
+      ]);
+    },
     npmRoot: async () => null,
     ...over,
   });
@@ -517,6 +524,12 @@ describe('lifecycle', () => {
       expect.objectContaining({ worktreePath: root, rssBytes: 4096, startedAt: new Date(clock).toISOString() }),
     ]);
     expect(s!.running[0]!.pid).toBeGreaterThan(0);
+    expect(m.running()).toEqual([
+      {
+        id: 'typescript', lang: 'TypeScript and JavaScript', worktreePath: root, pid: s!.running[0]!.pid,
+        startedAt: new Date(clock).toISOString(), lastUsedAt: new Date(clock).toISOString(),
+      },
+    ]);
   });
 
   it('refuses paths outside the worktree', async () => {

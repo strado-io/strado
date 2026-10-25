@@ -63,6 +63,35 @@ describe('GET /api/sessions/metrics', () => {
   }, 20_000);
 });
 
+describe('GET /api/sessions/metrics: language servers', () => {
+  it("lists the LSP manager's running servers with their process-tree usage", async () => {
+    await app.close();
+    const deps = await buildDeps({ configDir: path.join(tmp, 'config2'), homeStateDir: state });
+    const running = [{
+      id: 'typescript' as const, lang: 'TypeScript and JavaScript', worktreePath: '/wt/a', pid: process.pid,
+      startedAt: '2026-10-25T10:00:00.000Z', lastUsedAt: '2026-10-25T10:05:00.000Z',
+    }];
+    const lsp = {
+      running: () => running,
+      definition: async () => ({ source: 'lsp' as const, hits: [] }),
+      references: async () => ({ source: 'lsp' as const, hits: [] }),
+      hover: async () => null,
+      outline: async () => ({ server: null, symbols: [] as [] }),
+      servers: async () => [],
+      setEnabled: async () => {},
+      stop: async () => {},
+      sweep: async () => {},
+      closeAll: async () => {},
+    };
+    app = await buildApp({ ...deps, lsp });
+    const body = (await app.inject({ method: 'GET', url: '/api/sessions/metrics' })).json();
+    expect(body.app.languageServers).toEqual([
+      expect.objectContaining({ ...running[0], processes: expect.any(Number), rssBytes: expect.any(Number), cpu: expect.any(Number) }),
+    ]);
+    expect(body.app.languageServers[0].rssBytes).toBeGreaterThan(0);
+  });
+});
+
 describe('DELETE /api/sessions/:key', () => {
   it('kills a live session by manager key even when no repo owns its path', async () => {
     const orphan = path.join(tmp, 'gone-project');

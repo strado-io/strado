@@ -2,6 +2,7 @@
 // memory of the process tree under each one. One `ps` sample per request;
 // the rollup is pure so it can be pinned in tests.
 import { execFile } from 'node:child_process';
+import type { LspRunning } from './lsp/manager.js';
 import {
   claudeKey,
   codexKey,
@@ -25,6 +26,9 @@ export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
 
 export type VsCodeWindowMetric = { path: string; pid: number } & ProcTotals;
 
+/** A running language server and its whole process tree (tsserver, a JVM). */
+export type LanguageServerMetric = LspRunning & ProcTotals;
+
 export type SessionMetrics = {
   sampledAt: number;
   app: {
@@ -32,6 +36,8 @@ export type SessionMetrics = {
     daemon: AppProcMetric | null;
     /** the shared `code serve-web` workbench, minus the windows attributed below */
     vscode: (AppProcMetric & { processes: number }) | null;
+    /** Files-tab language servers. Started by this server but not counted in `server`, which is its own process only. */
+    languageServers: LanguageServerMetric[];
   };
   sessions: SessionMetric[];
   /** one entry per VS Code window whose extension host reported its folder */
@@ -107,6 +113,7 @@ export function buildSessionMetrics(input: {
   vscodePid?: number | null;
   vscodeWindows?: Array<{ pid: number; folder: string }>;
   extraPids?: number[];
+  languageServers?: LspRunning[];
   now?: number;
 }): SessionMetrics {
   const one = (pid: number): AppProcMetric => {
@@ -131,6 +138,10 @@ export function buildSessionMetrics(input: {
       server: one(input.serverPid),
       daemon: input.daemonPid ? one(input.daemonPid) : null,
       vscode: input.vscodePid ? { pid: input.vscodePid, ...subtreeTotals(input.procs, input.vscodePid, windowPids) } : null,
+      // Gone between the manager's list and the sample: dropped, like dead VS Code windows.
+      languageServers: (input.languageServers ?? [])
+        .filter((l) => known.has(l.pid))
+        .map((l) => ({ ...l, ...subtreeTotals(input.procs, l.pid) })),
     },
     sessions,
     vscodeWindows,

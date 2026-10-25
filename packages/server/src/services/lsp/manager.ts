@@ -4,7 +4,6 @@
 // machine (the least recently used goes first). When there is no server to
 // ask, or it cannot answer in time, the answer comes from a whole-word search
 // and says why.
-import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +12,7 @@ import { FILES_LIMITS } from '../files/types.js';
 import { classifyDefinitions, isDefinition, searchWord } from '../files/search.js';
 import type { SearchAnswer } from './types.js';
 import { redact } from '../hostTabs/redact.js';
+import { sampleProcesses, subtreeTotals, type ProcSample } from '../sessionMetrics.js';
 import { LspClient, LspError } from './client.js';
 import { npmGlobalRoot, tsserverPathFor } from './tsserver.js';
 import { installOptions, type Detect } from './detect.js';
@@ -44,13 +44,24 @@ export type LspManagerDeps = {
   limits?: Partial<{ -readonly [K in keyof typeof LSP_LIMITS]: number }>;
   /** How long the first open waits for a project load to begin (default 300 ms). */
   progressGraceMs?: number;
-  /** Resident memory of a pid in bytes, null when it cannot be read. */
-  rss?: (pid: number) => Promise<number | null>;
+  /** One system-wide `ps` sample; memory is the server's whole process tree
+   *  (tsserver, a JVM), the same figure the Usage page shows. */
+  sample?: () => Promise<ProcSample[]>;
   /** `npm root -g`, for a TypeScript install to hand typescript-language-server. */
   npmRoot?: () => Promise<string | null>;
   /** The server log: a failure's reason, once per change. */
   log?: (line: string) => void;
   now?: () => number;
+};
+
+/** A running server, as the Usage page lists it. */
+export type LspRunning = {
+  id: LspServerId;
+  lang: string;
+  worktreePath: string;
+  pid: number;
+  startedAt: string;
+  lastUsedAt: string;
 };
 
 export type OutlineAnswer = { server: LspServerId; symbols: OutlineSymbol[] } | { server: null; symbols: [] };
@@ -61,6 +72,8 @@ export type LspManager = {
   hover(worktree: string, rel: string, line: number, col: number): Promise<HoverAnswer>;
   outline(worktree: string, rel: string): Promise<OutlineAnswer>;
   servers(): Promise<LspServerStatus[]>;
+  /** Every server process that is up (starting or ready). */
+  running(): LspRunning[];
   setEnabled(id: LspServerId, enabled: boolean): Promise<void>;
   /** Stops every running instance of that server. */
   stop(id: LspServerId): Promise<void>;
@@ -90,14 +103,6 @@ function languageId(spec: LspServerSpec, ext: string): string {
   }
 }
 
-function readRss(pid: number): Promise<number | null> {
-  return new Promise((resolve) => {
-    execFile('ps', ['-o', 'rss=', '-p', String(pid)], { timeout: 2000 }, (err, stdout) => {
-      const kb = Number(String(stdout ?? '').trim());
-      resolve(err || !Number.isFinite(kb) || kb <= 0 ? null : kb * 1024);
-    });
-  });
-}
 
 type Pos = { line: number; character: number };
 type Range = { start: Pos; end: Pos };
@@ -208,7 +213,7 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
   const specs = deps.specs ?? LSP_SERVERS;
   const limits = { ...LSP_LIMITS, ...deps.limits };
   const now = deps.now ?? Date.now;
-  const rss = deps.rss ?? readRss;
+  const sample = deps.sample ?? sampleProcesses;
   const search: SearchFallback = deps.search ?? { searchWord, isDefinition, classifyDefinitions };
   const entries = new Map<string, Entry>();
   /** A start in flight, so concurrent first requests share one server. */
@@ -485,21 +490,32 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       }
     },
 
+    running() {
+      return [...entries.values()]
+        .filter((e) => e.client.pid !== undefined && e.client.alive)
+        .map((e) => ({
+          id: e.spec.id,
+          lang: e.spec.lang,
+          worktreePath: e.root,
+          pid: e.client.pid!,
+          startedAt: new Date(e.startedAt).toISOString(),
+          lastUsedAt: new Date(e.lastUsedAt).toISOString(),
+        }));
+    },
+
     async servers() {
+      const up = this.running();
+      // One sample for all of them; null when ps gave nothing (no ps, or the pid is gone).
+      const procs = up.length ? await sample().catch(() => [] as ProcSample[]) : [];
       return Promise.all(
         specs.map(async (spec): Promise<LspServerStatus> => {
           const binary = await deps.detect.which(spec.cmd[0]!);
-          const running = await Promise.all(
-            [...entries.values()]
-              .filter((e) => e.spec.id === spec.id && e.client.pid !== undefined && e.client.alive)
-              .map(async (e) => ({
-                worktreePath: e.root,
-                pid: e.client.pid!,
-                rssBytes: await rss(e.client.pid!).catch(() => null),
-                startedAt: new Date(e.startedAt).toISOString(),
-                lastUsedAt: new Date(e.lastUsedAt).toISOString(),
-              })),
-          );
+          const running = up
+            .filter((r) => r.id === spec.id)
+            .map(({ worktreePath, pid, startedAt, lastUsedAt }) => {
+              const t = subtreeTotals(procs, pid);
+              return { worktreePath, pid, rssBytes: t.processes ? t.rssBytes : null, startedAt, lastUsedAt };
+            });
           return {
             id: spec.id,
             lang: spec.lang,

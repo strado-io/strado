@@ -17,6 +17,7 @@ const fake = (): LspManager => ({
   hover: async (...a) => (calls.push(['hover', ...a]), { server: 'typescript', markdown: 'x' }),
   outline: async (...a) => (calls.push(['outline', ...a]), { server: null, symbols: [] }),
   servers: async () => [],
+  running: () => [],
   setEnabled: async (...a) => void calls.push(['setEnabled', ...a]),
   stop: async (...a) => void calls.push(['stop', ...a]),
   sweep: async () => {},
