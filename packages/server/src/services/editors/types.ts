@@ -10,7 +10,7 @@
 //   has no local editor, so the web hides the button for remote worktrees.
 
 export type EditorId =
-  | 'vscode' | 'cursor' | 'windsurf' | 'zed' | 'sublime'
+  | 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf' | 'zed' | 'sublime'
   | 'webstorm' | 'idea' | 'pycharm' | 'goland' | 'xcode' | 'system';
 
 export type EditorSpec = {
@@ -29,6 +29,7 @@ export type EditorSpec = {
 // app for the folder or file (macOS `open`, Linux `xdg-open`), with no line.
 export const EDITORS: EditorSpec[] = [
   { id: 'vscode', label: 'VS Code', cli: 'code', macApp: 'Visual Studio Code', goto: 'vscode' },
+  { id: 'vscode-insiders', label: 'VS Code Insiders', cli: 'code-insiders', macApp: 'Visual Studio Code - Insiders', goto: 'vscode' },
   { id: 'cursor', label: 'Cursor', cli: 'cursor', macApp: 'Cursor', goto: 'vscode' },
   { id: 'windsurf', label: 'Windsurf', cli: 'windsurf', macApp: 'Windsurf', goto: 'vscode' },
   { id: 'zed', label: 'Zed', cli: 'zed', macApp: 'Zed', goto: 'zed' },
