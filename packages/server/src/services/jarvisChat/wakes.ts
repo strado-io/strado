@@ -12,7 +12,8 @@ import path from 'node:path';
 import type { EventBus } from '../../events/bus.js';
 import type { AgentControl } from '../agentControl.js';
 import type { AgentLifecycle, AgentRegistry } from '../agentRegistry.js';
-import { INTERCOM_CHANNEL } from '../intercomStore.js';
+import { HUMAN_AGENT_ID } from '../intercomSchema.js';
+import { INTERCOM_CHANNEL, type IntercomStore } from '../intercomStore.js';
 import type { JarvisRunner } from './runner.js';
 import type { JarvisChatStore } from './store.js';
 import { JARVIS_LIMITS, type ChatEntry, type TabCardRef } from './types.js';
@@ -33,6 +34,8 @@ export type JarvisWakesDeps = {
   /** Calls back when an agent may have changed: its station changed or it
    *  came or went (by id), or its worktree's agent status moved (by path). */
   subscribe(cb: (ev: { scopeId: string; agentId: string } | { path: string }) => void): () => void;
+  /** An agent's reply to the human (kind reply), with the id it answers. */
+  replies?(cb: (r: { scopeId: string; replyTo: string; from: string; body: string }) => void): () => void;
   /** null: the agent is gone. */
   agent(scopeId: string, agentId: string): Promise<WakeAgent | null>;
   focuses(ws: string): Promise<Array<{ id: string }>>;
@@ -48,13 +51,19 @@ export type JarvisWakesDeps = {
 export type JarvisWakes = {
   start(): void;
   stop(): void;
-  /** An agent answered Jarvis's ask (the gateway calls this). */
+  /** Jarvis asked an agent (agent.ask, run in the window): the ask's intercom
+   *  message id. The agent's reply to it lands in that Focus's chat. */
+  asked(ws: string, focusId: string, askId: string): void;
+  /** An agent answered Jarvis's ask. */
   answered(ws: string, focusId: string, from: string, text: string): Promise<void>;
   /** Resolves once every change seen so far is handled (tests). */
   idle(): Promise<void>;
 };
 
 const RESULT_MAX = 300;
+/** Pending asks remembered (in memory; a restart forgets them and the answer
+ *  then only shows in the box, as any ask's does). */
+const ASKS_MAX = 500;
 const trim = (s: string) => (s.length <= RESULT_MAX ? s : `${s.slice(0, RESULT_MAX - 1)}…`);
 
 /** The tab a card points at is this agent's. */
@@ -70,7 +79,9 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
   const last = new Map<string, WakeAgent>();
   const batches = new Map<string, { lastWakeAt: number; pending: string[]; timer: boolean }>();
   let queue: Promise<void> = Promise.resolve();
+  const asks = new Map<string, string>(); // `${ws}\0${askId}` → focusId
   let off: (() => void) | null = null;
+  let offReplies: (() => void) | null = null;
 
   function run(fn: () => Promise<void>): Promise<void> {
     const next = queue.then(fn).catch((err) => log(`jarvis wake: ${(err as Error).message}`));
@@ -136,8 +147,18 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
     }
   }
 
+  async function replied(r: { scopeId: string; replyTo: string; from: string; body: string }): Promise<void> {
+    const k = `${r.scopeId}\0${r.replyTo}`;
+    const focusId = asks.get(k);
+    if (focusId === undefined) return; // the box's own ask, or not an ask
+    asks.delete(k);
+    const name = (await deps.agent(r.scopeId, r.from))?.name ?? r.from.split('@')[0]!;
+    await post(r.scopeId, focusId, `${name} answered: ${trim(r.body)}`);
+  }
+
   return {
     start() {
+      offReplies ??= deps.replies?.((r) => void run(() => replied(r))) ?? null;
       off ??= deps.subscribe((ev) => {
         if ('agentId' in ev) return void run(() => changed(ev.scopeId, ev.agentId));
         // A path: every agent seen at that worktree.
@@ -150,6 +171,12 @@ export function createJarvisWakes(deps: JarvisWakesDeps): JarvisWakes {
     stop() {
       off?.();
       off = null;
+      offReplies?.();
+      offReplies = null;
+    },
+    asked(ws, focusId, askId) {
+      asks.set(`${ws}\0${askId}`, focusId);
+      if (asks.size > ASKS_MAX) asks.delete(asks.keys().next().value!);
     },
     answered: (ws, focusId, from, text) => run(() => post(ws, focusId, `${from} answered: ${trim(text)}`)),
     idle: () => queue,
@@ -163,7 +190,8 @@ export function appWakeSource(d: {
   bus: Pick<EventBus, 'on'>;
   agents: Pick<AgentRegistry, 'list'>;
   agentControl: Pick<AgentControl, 'activityOf'>;
-}): Pick<JarvisWakesDeps, 'subscribe' | 'agent'> {
+  intercom: Pick<IntercomStore, 'listScope'>;
+}): Pick<JarvisWakesDeps, 'subscribe' | 'agent'> & Required<Pick<JarvisWakesDeps, 'replies'>> {
   return {
     subscribe(cb) {
       const offIntercom = d.bus.on(INTERCOM_CHANNEL, (evt) => {
@@ -182,6 +210,16 @@ export function appWakeSource(d: {
         offIntercom();
         offWorktrees();
       };
+    },
+    replies(cb) {
+      return d.bus.on(INTERCOM_CHANNEL, (evt) => {
+        const m = evt.data as { id?: unknown; scopeId?: unknown; from?: unknown; to?: unknown; kind?: unknown; replyTo?: unknown } | undefined;
+        if (evt.type !== 'message.queued' || m?.to !== HUMAN_AGENT_ID || m.kind !== 'reply') return;
+        if (typeof m.id !== 'string' || typeof m.scopeId !== 'string' || typeof m.from !== 'string' || typeof m.replyTo !== 'string') return;
+        // Read only: the box still pulls and shows the answer as it always has.
+        const row = d.intercom.listScope(m.scopeId, { agent: m.from, limit: 50 }).find((x) => x.id === m.id);
+        if (row) cb({ scopeId: m.scopeId, replyTo: m.replyTo, from: m.from, body: row.body });
+      });
     },
     async agent(scopeId, agentId) {
       const a = (await d.agents.list(scopeId)).find((x) => x.agentId === agentId);

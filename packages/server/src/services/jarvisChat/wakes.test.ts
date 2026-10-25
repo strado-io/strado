@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createJarvisChatStore, type JarvisChatStore } from './store.js';
 import { createEventBus } from '../../events/bus.js';
 import { INTERCOM_CHANNEL } from '../intercomStore.js';
@@ -16,6 +16,7 @@ let clock: number;
 let timers: Array<{ at: number; fn: () => void }>;
 let trigger: (ev: { scopeId: string; agentId: string } | { path: string }) => void;
 let w: JarvisWakes;
+let reply: (r: { scopeId: string; replyTo: string; from: string; body: string }) => void;
 
 const FOCUSES = [{ id: 'f1' }, { id: 'f2' }];
 
@@ -58,6 +59,10 @@ beforeEach(async () => {
   w = createJarvisWakes({
     subscribe(cb) {
       trigger = cb;
+      return () => undefined;
+    },
+    replies(cb) {
+      reply = cb;
       return () => undefined;
     },
     agent: async (_scope, id) => agents.get(id) ?? null,
@@ -167,6 +172,39 @@ describe('jarvis wakes', () => {
     expect(wakes).toEqual([['ws', 'f1', 'claude-1 answered: The port is 4000.']]);
   });
 
+  it('a reply to a Jarvis ask appends answered and wakes, once', async () => {
+    agents.set('claude-1@x', agent({ agentId: 'claude-1@x', lifecycle: 'idle' }));
+    w.asked('ws', 'f2', 'm1');
+    reply({ scopeId: 'ws', replyTo: 'm1', from: 'claude-1@x', body: 'The port is 4000.' });
+    await w.idle();
+    expect(await events('f2')).toEqual(['claude-1 answered: The port is 4000.']);
+    expect(wakes).toEqual([['ws', 'f2', 'claude-1 answered: The port is 4000.']]);
+    reply({ scopeId: 'ws', replyTo: 'm1', from: 'claude-1@x', body: 'again' });
+    await w.idle();
+    expect(await events('f2')).toHaveLength(1);
+  });
+
+  it("replies to the box's own asks, or from another workspace, are ignored; a gone agent is named by its id", async () => {
+    w.asked('ws', 'f1', 'm1');
+    reply({ scopeId: 'ws', replyTo: 'box-ask', from: 'claude-1@x', body: 'not for jarvis' });
+    reply({ scopeId: 'other', replyTo: 'm1', from: 'claude-1@x', body: 'wrong workspace' });
+    await w.idle();
+    expect(await events('f1')).toEqual([]);
+    reply({ scopeId: 'ws', replyTo: 'm1', from: 'codex-2@y', body: 'x'.repeat(500) });
+    await w.idle();
+    const [text] = await events('f1');
+    expect(text!.startsWith('codex-2 answered: ')).toBe(true);
+    expect(text!.length).toBeLessThanOrEqual('codex-2 answered: '.length + 300);
+  });
+
+  it('remembers only the newest 500 asks', async () => {
+    for (let i = 0; i < 501; i++) w.asked('ws', 'f1', `m${i}`);
+    reply({ scopeId: 'ws', replyTo: 'm0', from: 'a@x', body: 'old' });
+    reply({ scopeId: 'ws', replyTo: 'm500', from: 'a@x', body: 'new' });
+    await w.idle();
+    expect(await events('f1')).toEqual(['a answered: new']);
+  });
+
   it('a focus deleted between the finish and the wake is skipped', async () => {
     await cardFor('f1');
     await set(agent());
@@ -191,6 +229,7 @@ describe('appWakeSource', () => {
       bus,
       agents: { list: async (s) => (s === 'ws' ? [summary, { ...summary, agentId: 'shell-1@x', mode: 'shell' as const }] : []) },
       agentControl: { activityOf: () => ({ activity: null, lastResult: { text: 'done it', at: 1 } }) },
+      intercom: { listScope: () => [] } as never,
     });
     const got: unknown[] = [];
     const off = src.subscribe((ev) => got.push(ev));
@@ -206,6 +245,21 @@ describe('appWakeSource', () => {
       agentId: 'claude-1@x', name: 'claude-1', mode: 'claude', worktreePath: '/r/api', sessionId: '1', lifecycle: 'idle', lastResult: 'done it',
     });
     expect(await src.agent('ws', 'shell-1@x')).toBeNull();
+    // Replies to the human: read from the store, never pulled or acked.
+    const msgs = [
+      { id: 'r1', scopeId: 'ws', from: { agentId: 'claude-1@x', executionId: 'e' }, to: 'human', kind: 'reply', replyTo: 'm1', body: 'four thousand' },
+    ];
+    const listScope = vi.fn((_s: string, _o?: object) => msgs);
+    const src2 = appWakeSource({ bus, agents: { list: async () => [] }, agentControl: { activityOf: () => ({ activity: null, lastResult: null }) }, intercom: { listScope } as never });
+    const replies: unknown[] = [];
+    const offR = src2.replies((r) => replies.push(r));
+    bus.emit(INTERCOM_CHANNEL, { type: 'message.queued', data: { id: 'r1', scopeId: 'ws', from: 'claude-1@x', to: 'human', kind: 'reply', replyTo: 'm1' } });
+    bus.emit(INTERCOM_CHANNEL, { type: 'message.queued', data: { id: 'r2', scopeId: 'ws', from: 'claude-1@x', to: 'claude-2@x', kind: 'reply', replyTo: 'm1' } });
+    bus.emit(INTERCOM_CHANNEL, { type: 'message.queued', data: { id: 'r3', scopeId: 'ws', from: 'claude-1@x', to: 'human', kind: 'message' } });
+    offR();
+    expect(replies).toEqual([{ scopeId: 'ws', replyTo: 'm1', from: 'claude-1@x', body: 'four thousand' }]);
+    expect(listScope).toHaveBeenCalledTimes(1);
+    expect(listScope.mock.calls[0]![1]).toMatchObject({ agent: 'claude-1@x' });
     expect(await src.agent('ws', 'nope')).toBeNull();
   });
 });
