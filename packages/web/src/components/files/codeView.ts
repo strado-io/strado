@@ -45,6 +45,8 @@ const theme = EditorView.theme({
     backgroundColor: v('zinc-950', 0.6), border: `1px solid ${v('zinc-800')}`, borderRadius: '6px', outline: 'none',
   },
   '.cm-find-input:focus': { borderColor: v('zinc-600') },
+  // A regex that's broken or too slow to count: the box says so; nothing is highlighted.
+  '.cm-find-input.cm-find-bad, .cm-find-input.cm-find-bad:focus': { borderColor: 'rgb(248 113 113 / 0.6)' },
   '.cm-find-input::placeholder': { color: v('zinc-500') },
   '.cm-find-count': { minWidth: '64px', marginRight: '4px', color: v('zinc-500'), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
   '.cm-find-count.cm-find-none': { color: v('zinc-300') },

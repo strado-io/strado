@@ -1,15 +1,20 @@
 // The ⌘F find bar with the real CodeMirror: ours, not the default panel.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createCodeView } from './codeView';
+import { countMatches } from './findCount';
+import { COUNT_DEBOUNCE_MS, setFindCounter } from './findPanel';
 
 // jsdom has no layout; CodeMirror measures ranges when it scrolls to a match.
 const rect = { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) };
 Range.prototype.getClientRects ??= (() => Object.assign([], { item: () => null })) as unknown as Range['getClientRects'];
 Range.prototype.getBoundingClientRect ??= (() => rect) as unknown as Range['getBoundingClientRect'];
 
-afterEach(() => { document.body.replaceChildren(); });
+// The worker's job, done in place (jsdom has no Worker).
+beforeEach(() => setFindCounter(async (doc, q) => countMatches(doc, q)));
+afterEach(() => { document.body.replaceChildren(); setFindCounter(null); });
+const settle = () => new Promise((r) => setTimeout(r, COUNT_DEBOUNCE_MS + 30));
 
 const DOC = 'const fetchGroups = 1;\nfetchGroups();\nFetchGroups;\nfetchGroupsAll;\n';
 
@@ -25,7 +30,8 @@ async function setUp() {
 }
 const key = (el: Element, k: string, over: KeyboardEventInit = {}) =>
   el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...over }));
-const type = (input: HTMLInputElement, text: string) => { input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })); };
+const type = async (input: HTMLInputElement, text: string) => { input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })); await settle(); };
+const press = async (b: HTMLButtonElement) => { b.click(); await settle(); };
 const btn = (bar: HTMLElement, name: string) => bar.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
 
 describe('find bar', () => {
@@ -45,9 +51,9 @@ describe('find bar', () => {
     const { bar } = await setUp();
     const input = bar!.querySelector('input')!;
     const count = bar!.querySelector('.cm-find-count')!;
-    type(input, 'nothing-here');
+    await type(input, 'nothing-here');
     expect(count.textContent).toBe('No results');
-    type(input, 'fetchGroups');
+    await type(input, 'fetchGroups');
     expect(count.textContent).toBe('4');
     key(input, 'Enter');
     expect(count.textContent).toBe('1 of 4');
@@ -65,20 +71,58 @@ describe('find bar', () => {
     const { bar } = await setUp();
     const input = bar!.querySelector('input')!;
     const count = bar!.querySelector('.cm-find-count')!;
-    type(input, 'fetchGroups');
-    btn(bar!, 'Match case').click();
+    await type(input, 'fetchGroups');
+    await press(btn(bar!, 'Match case'));
     expect(btn(bar!, 'Match case')).toHaveAttribute('aria-pressed', 'true');
     expect(btn(bar!, 'Match case').classList.contains('glass-pill')).toBe(true);
     expect(count.textContent).toBe('3');
-    btn(bar!, 'Whole word').click();
+    await press(btn(bar!, 'Whole word'));
     expect(count.textContent).toBe('2');
-    btn(bar!, 'Match case').click();
-    btn(bar!, 'Whole word').click();
-    type(input, 'fetch\\w+\\(');
+    await press(btn(bar!, 'Match case'));
+    await press(btn(bar!, 'Whole word'));
+    await type(input, 'fetch\\w+\\(');
     expect(count.textContent).toBe('No results');
-    btn(bar!, 'Regular expression').click();
+    await press(btn(bar!, 'Regular expression'));
     expect(btn(bar!, 'Regular expression')).toHaveAttribute('aria-pressed', 'true');
     expect(count.textContent).toBe('1');
+  });
+
+  it('a regex too slow to count shows "—", marks the box and highlights nothing', async () => {
+    setFindCounter(async (doc, q) => (q.regexp ? 'timeout' : countMatches(doc, q)));
+    const { parent, bar } = await setUp();
+    const input = bar!.querySelector('input')!;
+    const count = bar!.querySelector('.cm-find-count')!;
+    await press(btn(bar!, 'Regular expression'));
+    await type(input, '(a+)+$');
+    expect(count.textContent).toBe('—');
+    expect(count).toHaveAttribute('title', 'Too slow to count');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(parent.querySelector('.cm-searchMatch')).toBeNull();
+    await type(input, 'fetch');
+    await press(btn(bar!, 'Regular expression'));
+    expect(input).toHaveAttribute('aria-invalid', 'false');
+    expect(count.textContent).toBe('4');
+  });
+
+  it('a broken regex says Invalid; the count is debounced and a cursor move doesn\'t recount', async () => {
+    const counter = vi.fn(async (doc: string, q: Parameters<typeof countMatches>[1]) => countMatches(doc, q));
+    setFindCounter(counter);
+    const { bar } = await setUp();
+    const input = bar!.querySelector('input')!;
+    const count = bar!.querySelector('.cm-find-count')!;
+    await press(btn(bar!, 'Regular expression'));
+    counter.mockClear();
+    input.value = 'f'; input.dispatchEvent(new Event('input'));
+    input.value = 'fe'; input.dispatchEvent(new Event('input'));
+    await type(input, 'fetch(');
+    expect(counter).toHaveBeenCalledTimes(1);
+    expect(count.textContent).toBe('Invalid');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    await type(input, 'fetch');
+    counter.mockClear();
+    key(input, 'Enter');
+    expect(count.textContent).toBe('1 of 4');
+    expect(counter).not.toHaveBeenCalled();
   });
 
   it('Esc (and ×) closes it and gives focus back to the code', async () => {

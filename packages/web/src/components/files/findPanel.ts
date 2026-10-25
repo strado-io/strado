@@ -2,34 +2,54 @@
 // panel (white input, grey buttons, raw checkboxes). It drives the search
 // extension's own query and commands, so highlights, F3/⌘G and the rest keep
 // working. Read-only, so no replace and no "all".
+// The person's regex never runs over the whole file on the page's thread: the
+// count happens in a worker with a timeout, and a regex is handed to
+// CodeMirror (which highlights only what's on screen) only once it counted in
+// time. A too-slow or broken one marks the box and highlights nothing.
 import { SearchQuery, closeSearchPanel, findNext, findPrevious, getSearchQuery, setSearchQuery } from '@codemirror/search';
-import type { EditorState } from '@codemirror/state';
+import { countLabel, countMatches, FIND_TIMEOUT_MS, type FindCount, type FindSpec } from './findCount';
 import { runScopeHandlers, type EditorView, type Panel, type ViewUpdate } from '@codemirror/view';
 
-/** Counting stops here; a bigger file says "1000+". */
-export const COUNT_CAP = 1000;
+/** The count waits this long after the last keystroke. */
+export const COUNT_DEBOUNCE_MS = 150;
 
-/** "3 of 12", "12" (cursor not on one), "No results", or "" for an empty box. */
-export function matchCount(state: EditorState, q: SearchQuery): string {
-  if (!q.search) return '';
-  if (!q.valid) return 'No results';
-  const sel = state.selection.main;
-  let total = 0;
-  let at = 0;
-  const cursor = q.getCursor(state);
-  for (let m = cursor.next(); !m.done; m = cursor.next()) {
-    total++;
-    if (m.value.from === sel.from && m.value.to === sel.to) at = total;
-    if (total >= COUNT_CAP) return at ? `${at} of ${COUNT_CAP}+` : `${COUNT_CAP}+`;
-  }
-  if (!total) return 'No results';
-  return at ? `${at} of ${total}` : String(total);
+/** Counts matches without blocking the page; 'timeout' when it took too long. */
+export type FindCounter = (doc: string, q: FindSpec) => Promise<FindCount | 'invalid' | 'timeout'>;
+
+// One worker, ended and replaced when a count runs past the timeout (a
+// runaway regex can't be interrupted any other way).
+function workerCounter(): FindCounter {
+  let worker: Worker | null = null;
+  let seq = 0;
+  return (doc, q) => new Promise((resolve) => {
+    worker ??= new Worker(new URL('./findCount.worker.ts', import.meta.url), { type: 'module' });
+    const w = worker;
+    const id = ++seq;
+    const done = (r: FindCount | 'invalid' | 'timeout') => { clearTimeout(timer); w.removeEventListener('message', onMessage); resolve(r); };
+    const onMessage = (e: MessageEvent<{ id: number; result: FindCount | 'invalid' }>) => { if (e.data.id === id) done(e.data.result); };
+    const timer = setTimeout(() => { w.terminate(); if (worker === w) worker = null; done('timeout'); }, FIND_TIMEOUT_MS);
+    w.addEventListener('message', onMessage);
+    w.postMessage({ id, doc, q });
+  });
 }
+// Without Worker (tests, very old runtimes) a literal search is cheap enough
+// here; a regex is not, so it is refused rather than risked.
+const inlineCounter: FindCounter = async (doc, q) => (q.regexp ? 'timeout' : countMatches(doc, q));
+
+let counter: FindCounter | null = null;
+/** Tests swap the counter; null goes back to the default. */
+export function setFindCounter(c: FindCounter | null) { counter = c; }
+const countIt: FindCounter = (doc, q) => {
+  counter ??= typeof Worker === 'undefined' ? inlineCounter : workerCounter();
+  return counter(doc, q);
+};
 
 const ICON = {
   up: '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>',
   down: '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
 };
+
+const pick = (q: SearchQuery): FindSpec => ({ search: q.search, caseSensitive: q.caseSensitive, regexp: q.regexp, wholeWord: q.wholeWord });
 
 export function createFindPanel(view: EditorView): Panel {
   const dom = document.createElement('div');
@@ -75,33 +95,53 @@ export function createFindPanel(view: EditorView): Panel {
   sep.className = 'cm-find-sep';
   dom.append(input, count, toggles.caseSensitive, toggles.regexp, toggles.wholeWord, sep, prev, next, close);
 
-  let query = getSearchQuery(view.state);
-  const commit = (over: Partial<{ search: string; caseSensitive: boolean; regexp: boolean; wholeWord: boolean }>) => {
-    const q = new SearchQuery({
-      search: over.search ?? query.search,
-      caseSensitive: over.caseSensitive ?? query.caseSensitive,
-      regexp: over.regexp ?? query.regexp,
-      wholeWord: over.wholeWord ?? query.wholeWord,
-      literal: query.literal,
-    });
-    if (!q.eq(query)) view.dispatch({ effects: setSearchQuery.of(q) });
+  // What the box and toggles say; CodeMirror's query follows once it's safe.
+  let draft: FindSpec = { ...pick(getSearchQuery(view.state)) };
+  let result: FindCount | 'invalid' | 'timeout' | null = null;
+  let ours = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let asked = 0;
+  const apply = (q: FindSpec | null) => {
+    const next = new SearchQuery({ ...(q ?? { ...draft, search: '' }), literal: false });
+    if (next.eq(getSearchQuery(view.state))) return;
+    ours++;
+    view.dispatch({ effects: setSearchQuery.of(next) });
   };
-  const flip = (k: 'caseSensitive' | 'regexp' | 'wholeWord') => commit({ [k]: !query[k] });
+  const recount = () => {
+    if (timer) clearTimeout(timer);
+    const q = { ...draft };
+    const id = ++asked;
+    // A literal search is safe to highlight at once; a regex waits for its count.
+    if (!q.regexp) apply(q);
+    if (!q.search) { result = null; apply(q); show(); return; }
+    timer = setTimeout(() => {
+      void countIt(view.state.doc.toString(), q).then((r) => {
+        if (id !== asked) return;
+        result = r;
+        apply(r === 'invalid' || r === 'timeout' ? null : q);
+        show();
+      });
+    }, COUNT_DEBOUNCE_MS);
+  };
+  const flip = (k: 'caseSensitive' | 'regexp' | 'wholeWord') => { draft = { ...draft, [k]: !draft[k] }; recount(); show(); };
 
-  const show = (state: EditorState) => {
-    if (input.value !== query.search) input.value = query.search;
+  const show = () => {
+    if (input.value !== draft.search) input.value = draft.search;
     for (const [k, b] of Object.entries(toggles)) {
-      const on = query[k as keyof typeof toggles];
+      const on = draft[k as keyof typeof toggles];
       b.setAttribute('aria-pressed', String(on));
       b.classList.toggle('glass-pill', on);
       b.classList.toggle('cm-find-on', on);
     }
-    const c = matchCount(state, query);
-    count.textContent = c;
-    count.classList.toggle('cm-find-none', c === 'No results');
+    const bad = result === 'invalid' || result === 'timeout';
+    input.setAttribute('aria-invalid', String(bad));
+    input.classList.toggle('cm-find-bad', bad);
+    count.textContent = !draft.search || !result ? '' : result === 'invalid' ? 'Invalid' : result === 'timeout' ? '—' : countLabel(result, view.state.selection.main);
+    count.title = result === 'timeout' ? 'Too slow to count' : result === 'invalid' ? 'Not a valid regular expression' : '';
+    count.classList.toggle('cm-find-none', count.textContent === 'No results' || bad);
   };
 
-  input.addEventListener('input', () => commit({ search: input.value }));
+  input.addEventListener('input', () => { draft = { ...draft, search: input.value }; recount(); });
   dom.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closeSearchPanel(view); return; }
     if (e.key === 'Enter' && e.target === input) {
@@ -113,14 +153,22 @@ export function createFindPanel(view: EditorView): Panel {
     if (runScopeHandlers(view, e, 'search-panel')) e.preventDefault();
   });
 
-  show(view.state);
+  recount();
   return {
     dom,
     top: true,
     mount: () => { input.focus(); input.select(); },
     update: (u: ViewUpdate) => {
-      for (const tr of u.transactions) for (const ef of tr.effects) if (ef.is(setSearchQuery)) query = ef.value;
-      if (u.docChanged || u.selectionSet || u.transactions.some((tr) => tr.effects.some((ef) => ef.is(setSearchQuery)))) show(u.state);
+      // ⌘F with a selection sets the query from outside: take it as the box's text.
+      for (const tr of u.transactions) for (const ef of tr.effects) {
+        if (!ef.is(setSearchQuery)) continue;
+        if (ours > 0) { ours--; continue; }
+        draft = pick(ef.value);
+        recount();
+      }
+      // A cursor move only re-reads "n of N" from the matches already counted.
+      if (u.selectionSet) show();
     },
+    destroy: () => { if (timer) clearTimeout(timer); asked++; },
   };
 }
