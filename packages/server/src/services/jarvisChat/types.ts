@@ -92,7 +92,14 @@ export type JarvisToolSpec = { name: string; description: string; inputSchema: R
 export const JARVIS_UI_OP = 'jarvis.action';
 export type JarvisUiActionArgs = { action: string; args: Record<string, unknown> };
 /** The window's ack `result` for JARVIS_UI_OP. */
-export type JarvisUiActionResult = { ok: boolean; text: string; card?: TabCardRef };
+export type JarvisUiActionResult = {
+  ok: boolean;
+  text: string;
+  card?: TabCardRef;
+  /** agent.ask only: the intercom message id of the question, so its reply
+   * can land in this Focus's chat (the gateway ties it to the turn's Focus). */
+  askId?: string;
+};
 
 /** Jarvis-only action: a new worktree from a repo, added to the Focus. Not in
  * ACTIONS (the ⌘K box opens the dialog instead); always an approval. */
