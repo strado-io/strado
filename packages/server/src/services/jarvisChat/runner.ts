@@ -31,6 +31,8 @@ export type JarvisRunner = {
   /** Queues a wake turn (wakes.ts batches and rate-limits); events queued together run as one turn. */
   wake(ws: string, focusId: string, eventText: string): void;
   stop(ws: string, focusId: string): Promise<void>;
+  /** The Focus is being deleted: stop its turn, drop what is queued, wait for the turn to end, remove its working dir. */
+  forget(ws: string, focusId: string): Promise<void>;
   /** Gateway lookup: token → the turn it belongs to. */
   byToken(token: string): TurnRef | null;
 };
@@ -52,7 +54,7 @@ export type JarvisRunnerDeps = {
 };
 
 type Job = { input: TurnInput; windowId: string; wake: boolean };
-type FocusState = { queue: Job[]; draining: boolean; running: { abort: AbortController; why: 'stop' | 'cap' | null } | null; lastContext: JarvisContext | null };
+type FocusState = { queue: Job[]; draining: Promise<void> | null; running: { abort: AbortController; why: 'stop' | 'cap' | null } | null; lastContext: JarvisContext | null };
 
 const TURN_CAP = 'Jarvis took longer than 5 minutes and was stopped';
 
@@ -89,7 +91,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
   const state = (ws: string, focusId: string): FocusState => {
     const k = key(ws, focusId);
     let s = focuses.get(k);
-    if (!s) focuses.set(k, (s = { queue: [], draining: false, running: null, lastContext: null }));
+    if (!s) focuses.set(k, (s = { queue: [], draining: null, running: null, lastContext: null }));
     return s;
   };
   const store = async (ws: string) => (await deps.stores(ws)).jarvis;
@@ -171,17 +173,19 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
   }
 
   /** Runs queued jobs one at a time; a no-op while already draining (that loop picks new jobs up). */
-  async function drain(ws: string, focusId: string): Promise<void> {
+  function drain(ws: string, focusId: string): Promise<void> {
     const s = state(ws, focusId);
-    if (s.draining) return;
-    s.draining = true;
-    try {
-      for (let job = s.queue.shift(); job; job = s.queue.shift()) {
-        await runTurn(ws, focusId, s, job).catch(() => { s.running = null; });
+    s.draining ??= (async () => {
+      try {
+        // A write refused because the Focus was deleted ends the turn quietly.
+        for (let job = s.queue.shift(); job; job = s.queue.shift()) {
+          await runTurn(ws, focusId, s, job).catch(() => { s.running = null; });
+        }
+      } finally {
+        s.draining = null;
       }
-    } finally {
-      s.draining = false;
-    }
+    })();
+    return s.draining;
   }
   const enqueue = (ws: string, focusId: string, job: Job) => {
     state(ws, focusId).queue.push(job);
@@ -252,6 +256,17 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       if (!s?.running) return;
       s.running.why = 'stop';
       s.running.abort.abort();
+    },
+
+    async forget(ws, focusId) {
+      const s = focuses.get(key(ws, focusId));
+      if (s) {
+        s.queue.length = 0;
+        if (s.running) { s.running.why = 'stop'; s.running.abort.abort(); }
+        await s.draining;
+        focuses.delete(key(ws, focusId));
+      }
+      if (/^[A-Za-z0-9_-]{1,64}$/.test(focusId)) await fs.rm(path.join(home, 'jarvis', focusId), { recursive: true, force: true });
     },
 
     byToken(token) {
