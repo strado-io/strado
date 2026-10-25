@@ -97,13 +97,17 @@ type GitStatus = {
   dirs: Map<string, Set<FileChange>>;
 };
 
-/** null when the root is not in a git work tree. */
-async function gitStatus(root: string, pathspec?: string): Promise<GitStatus | null> {
+/** null when the root is not in a git work tree. `scope` limits the status
+ *  to one folder or file ('' = the whole worktree): a folder expand in a big
+ *  repo must not cost a whole-repo status. `allUntracked` lists files inside
+ *  untracked folders instead of collapsing them. */
+async function gitStatus(root: string, scope: string, allUntracked = false): Promise<GitStatus | null> {
   const prefix = await runGit(root, ['rev-parse', '--show-prefix']);
   if (prefix.code !== 0) return null;
   const pre = prefix.stdout.trim();
   const args = ['status', '--porcelain=v1', '-z'];
-  if (pathspec !== undefined) args.push('--untracked-files=all', '--', pathspec);
+  if (allUntracked) args.push('--untracked-files=all');
+  if (scope) args.push('--', scope);
   const r = await runGit(root, args);
   if (r.code !== 0) return null;
   const st: GitStatus = { files: new Map(), untrackedDirs: [], dirs: new Map() };
@@ -153,7 +157,12 @@ async function resolveInside(root: string, rel: string): Promise<{ realRoot: str
     throw err;
   }
   const inside = path.relative(realRoot, real);
-  if (inside.startsWith('..') || path.isAbsolute(inside) || inside.split(path.sep).includes('.git')) {
+  if (
+    inside === '..' ||
+    inside.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(inside) ||
+    inside.split(path.sep).includes('.git')
+  ) {
     throw new AppError('PATH_FORBIDDEN', 'path is not under an allowed root');
   }
   return { realRoot, real };
@@ -161,7 +170,7 @@ async function resolveInside(root: string, rel: string): Promise<{ realRoot: str
 
 export async function readTree(root: string, dirIn: string, withIgnored: boolean): Promise<FileTreePage> {
   const dir = safeRel(dirIn);
-  const { real } = await resolveInside(root, dir);
+  const { realRoot, real } = await resolveInside(root, dir);
   if (!(await fs.stat(real)).isDirectory()) throw new AppError('VALIDATION', 'not a folder');
   const dirents = await fs.readdir(real, { withFileTypes: true });
   let entries: FileTreeEntry[] = [];
@@ -170,18 +179,27 @@ export async function readTree(root: string, dirIn: string, withIgnored: boolean
     const rel = dir ? `${dir}/${d.name}` : d.name;
     let isDir = d.isDirectory();
     let size: number | undefined;
-    if (d.isFile() || d.isSymbolicLink()) {
-      // A symlink shows as what it points at; reading it is checked later.
-      const s = await fs.stat(path.join(real, d.name)).catch(() => null);
+    if (d.isSymbolicLink()) {
+      // A symlink shows as what it points at, but only when that stays inside:
+      // the kind and size of something outside the worktree are not ours to
+      // show (and opening it is refused).
+      const target = await resolveInside(realRoot, rel).catch(() => null);
+      const s = target && (await fs.stat(target.real).catch(() => null));
       isDir = !!s?.isDirectory();
-      if (!isDir) size = s?.size ?? 0;
+      if (!isDir && s) size = s.size;
+    } else if (d.isFile()) {
+      size = (await fs.stat(path.join(real, d.name)).catch(() => null))?.size ?? 0;
     } else if (!isDir) {
       continue; // sockets, fifos, devices
     }
-    entries.push(isDir ? { name: d.name, path: rel, kind: 'dir' } : { name: d.name, path: rel, kind: 'file', size });
+    entries.push(
+      isDir
+        ? { name: d.name, path: rel, kind: 'dir' }
+        : { name: d.name, path: rel, kind: 'file', ...(size === undefined ? {} : { size }) },
+    );
   }
 
-  const st = await gitStatus(root);
+  const st = await gitStatus(root, dir);
   if (st) {
     // check-ignore refuses literal pathspecs, so a leading ':' (pathspec
     // magic) is defused with './' instead and stripped from the answer.
@@ -246,7 +264,7 @@ export async function readFile(root: string, relIn: string): Promise<FileContent
   const { real } = await resolveInside(root, rel);
   const stat = await fs.stat(real);
   if (!stat.isFile()) throw new AppError('VALIDATION', 'not a file');
-  const st = await gitStatus(root, rel);
+  const st = await gitStatus(root, rel, true);
   const change = changeFor(st, rel, 'file');
   const base = { path: rel, size: stat.size, language: languageFor(rel), ...(change ? { change } : {}) };
   if (stat.size > FILES_LIMITS.readBytes) return { ...base, binary: false, tooLarge: true };
@@ -297,7 +315,7 @@ export async function readMarks(root: string, relIn: string): Promise<FileMarks>
     const n = isBinary(buf) ? 0 : lineCount(buf);
     return n ? { ...none, added: [[1, n]] } : none;
   };
-  const st = await gitStatus(root, rel);
+  const st = await gitStatus(root, rel, true);
   if (!st) return none;
   if (changeFor(st, rel, 'file') === '?') return allAdded();
   const r = await runGit(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '-U0', 'HEAD', '--', rel]);

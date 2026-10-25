@@ -118,6 +118,31 @@ describe('readTree', () => {
     expect(page.truncated).toBe(true);
   });
 
+  it('a root name starting with ".." is an ordinary name', async () => {
+    await write('..env', 'x=1\n');
+    expect((await readTree(repo, '', false)).entries.some((e) => e.name === '..env')).toBe(true);
+    expect((await readFile(repo, '..env')).text).toBe('x=1\n');
+  });
+
+  it('a symlink out of the worktree is listed without its target\'s kind or size', async () => {
+    await fs.mkdir(path.join(tmp, 'outside'));
+    await fs.writeFile(path.join(tmp, 'big'), 'x'.repeat(50));
+    await fs.symlink(path.join(tmp, 'outside'), path.join(repo, 'outdir'));
+    await fs.symlink(path.join(tmp, 'big'), path.join(repo, 'outfile'));
+    const page = await readTree(repo, '', false);
+    // '?' is the link itself being untracked, which is ours to show.
+    expect(page.entries.find((e) => e.name === 'outdir')).toEqual({ name: 'outdir', path: 'outdir', kind: 'file', change: '?' });
+    expect(page.entries.find((e) => e.name === 'outfile')).toEqual({ name: 'outfile', path: 'outfile', kind: 'file', change: '?' });
+  });
+
+  it('badges a subfolder from a status scoped to it', async () => {
+    await write('src/deep/x.ts', 'changed\n');
+    await write('docs/new.md', 'n');
+    const src = await readTree(repo, 'src', false);
+    expect(src.entries.find((e) => e.name === 'deep')!.change).toBe('M');
+    expect(src.entries.find((e) => e.name === 'app.ts')!.change).toBeUndefined();
+  });
+
   it('refuses a symlinked folder that leaves the worktree', async () => {
     await fs.mkdir(path.join(tmp, 'outside'));
     await fs.symlink(path.join(tmp, 'outside'), path.join(repo, 'out'));
