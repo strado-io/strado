@@ -2,21 +2,28 @@
 // bundle) with line numbers, a change gutter against HEAD, and n/p between
 // changes. Selecting lines offers "Ask agent"; the header opens the file in VS
 // Code at the current line. Binary and over-limit files get a plain note.
-import { useEffect, useRef, useState } from 'react';
-import type { FileAskContext, FileContent, FileMarks } from '../../types';
+// Code navigation: ⌘-click/F12 and ⇧F12 are reported up (the tab runs them and
+// keeps the history); hover and the outline are this file's own.
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { FileAskContext, FileContent, FileMarks, HoverAnswer, OutlineAnswer } from '../../types';
+import { OutlinePanel } from './OutlinePanel';
 import { capSnippet, changeStarts } from './changes';
 import { filesError } from './errors';
-import type { CodeView, Selection } from './codeView';
+import type { CodeView, NavKind, Selection } from './codeView';
 
 const loadCodeView = () => import('./codeView');
 
 const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 
-export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode }: {
+/** A place in a file, 1-based. */
+export type FileAt = { path: string; line: number; col: number };
+
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, hover, outline, headerStart }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
   line?: number;
+  col?: number;
   nonce?: number;
   /** A new value re-reads the file and its marks (Refresh). */
   reloadKey?: number;
@@ -24,6 +31,12 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
   marks: (path: string) => Promise<FileMarks>;
   onAskAgent?: (ctx: FileAskContext) => void;
   onOpenInVsCode?: (path: string, line: number) => void;
+  /** ⌘-click/F12 (definition) and ⇧F12 (references) at a place in this file. */
+  onNavigate?: (kind: NavKind, at: FileAt) => void;
+  hover?: (at: FileAt, signal: AbortSignal) => Promise<HoverAnswer>;
+  outline?: (path: string, signal: AbortSignal) => Promise<OutlineAnswer>;
+  /** Before the path in the header (the tab's back/forward). */
+  headerStart?: ReactNode;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [marks, setMarks] = useState<FileMarks | null>(null);
@@ -36,7 +49,13 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
   // The asked line is a one-time jump per ask (path + line + nonce). A reload
   // that rebuilds the editor goes back to where the person was, not to it.
   const appliedAsk = useRef<string | null>(null);
-  const askKey = line ? `${path}\0${line}\0${nonce ?? ''}` : null;
+  const askKey = line ? `${path}\0${line}\0${col ?? 1}\0${nonce ?? ''}` : null;
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  // The editor is built once per text; it reaches these through refs.
+  const navRef = useRef(onNavigate);
+  navRef.current = onNavigate;
+  const hoverRef = useRef(hover);
+  hoverRef.current = hover;
   const shownPath = useRef<string | null>(null);
   // The latest marks, for an editor that finishes loading after they arrived.
   const marksRef = useRef<FileMarks | null>(null);
@@ -85,6 +104,10 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
           if (s) cursorLine.current = s.from;
           setSelection(s);
         },
+        ...(navRef.current ? { onNavigate: (kind: NavKind, at: { line: number; col: number }) => navRef.current?.(kind, { path: file.path, ...at }) } : {}),
+        ...(hoverRef.current ? {
+          hover: async (at: { line: number; col: number }, signal: AbortSignal) => (await hoverRef.current?.({ path: file.path, ...at }, signal))?.markdown ?? null,
+        } : {}),
       }))
       .then((v) => {
         if (!live) { v.destroy(); return; }
@@ -93,7 +116,7 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
         v.setMarks(marksRef.current);
         if (askKey && appliedAsk.current !== askKey) {
           appliedAsk.current = askKey;
-          v.goToLine(line!);
+          v.goToLine(line!, col);
           cursorLine.current = line!;
         } else if (cursorLine.current > 1) {
           v.goToLine(cursorLine.current);
@@ -115,7 +138,7 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
   useEffect(() => {
     if (!askKey || !viewRef.current || appliedAsk.current === askKey) return;
     appliedAsk.current = askKey;
-    viewRef.current.goToLine(line!);
+    viewRef.current.goToLine(line!, col);
     cursorLine.current = line!;
   }, [askKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -133,6 +156,7 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
   return (
     <section className="flex h-full min-h-0 flex-col" data-testid="file-viewer" aria-label={path}>
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3">
+        {headerStart}
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400" title={path}>{path}</span>
         {selection && onAskAgent && (
           <button type="button" onClick={ask} className="rounded-md bg-sky-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500">
@@ -145,6 +169,12 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
             <button type="button" className={iconBtn} onClick={() => step(-1)} aria-label="Previous change" title="Previous change (p)">↑</button>
             <button type="button" className={iconBtn} onClick={() => step(1)} aria-label="Next change" title="Next change (n)">↓</button>
           </span>
+        )}
+        {outline && text !== null && (
+          <button type="button" className={`${iconBtn} ${outlineOpen ? 'bg-white/[0.06] text-zinc-100' : ''}`} onClick={() => setOutlineOpen((o) => !o)}
+            aria-pressed={outlineOpen} aria-label="Outline" title="Outline">
+            Outline
+          </button>
         )}
         {onOpenInVsCode && (
           <button type="button" className={iconBtn} onClick={() => onOpenInVsCode(path, cursorLine.current)} aria-label="Open in VS Code" title="Open in VS Code">
@@ -166,7 +196,13 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
       ) : editorFailed ? (
         <pre className="min-h-0 flex-1 overflow-auto whitespace-pre p-3 font-mono text-[13px] text-zinc-200" data-testid="plain-text">{text}</pre>
       ) : (
-        <div ref={host} className="min-h-0 flex-1 overflow-hidden" data-testid="code-host" />
+        <div className="flex min-h-0 flex-1">
+          <div ref={host} className="min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="code-host" />
+          {outlineOpen && outline && (
+            <OutlinePanel path={path} load={outline} onClose={() => setOutlineOpen(false)}
+              onPick={(s) => { viewRef.current?.goToLine(s.line, s.col); cursorLine.current = s.line; }} />
+          )}
+        </div>
       )}
     </section>
   );

@@ -34,4 +34,21 @@ describe('codeView (real CodeMirror)', () => {
     view.destroy();
     expect(parent.querySelector('.cm-editor')).toBeNull();
   });
+
+  it('F12 and ⇧F12 report the cursor (1-based) for definition and references; goToLine takes a column', async () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const onNavigate = vi.fn();
+    const view = await createCodeView(parent, { doc: 'const a = 1;\nopen(a);\n', path: 'x.ts', language: null, marks: null, onSelection: vi.fn(), onNavigate });
+    view.goToLine(2, 6);
+    expect(view.cursor()).toEqual({ line: 2, col: 6 });
+    const content = parent.querySelector('.cm-content')!;
+    content.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true, cancelable: true }));
+    expect(onNavigate).toHaveBeenLastCalledWith('definition', { line: 2, col: 6 });
+    content.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', shiftKey: true, bubbles: true, cancelable: true }));
+    expect(onNavigate).toHaveBeenLastCalledWith('references', { line: 2, col: 6 });
+    view.goToLine(99, 99);
+    expect(view.cursor().line).toBe(3);
+    view.destroy();
+  });
 });

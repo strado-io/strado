@@ -88,9 +88,9 @@ describe('FileViewer', () => {
   it('goes to the asked line once loaded, and again for a new nonce', async () => {
     const { props, rerender } = show({ line: 12, nonce: 1 });
     await flush();
-    expect(cm.view.goToLine).toHaveBeenCalledWith(12);
+    expect(cm.view.goToLine).toHaveBeenCalledWith(12, undefined);
     rerender(<FileViewer {...props} line={30} nonce={2} />);
-    expect(cm.view.goToLine).toHaveBeenLastCalledWith(30);
+    expect(cm.view.goToLine).toHaveBeenLastCalledWith(30, undefined);
   });
 
   it('a reload that rebuilds the editor goes back to where the person was, not the old asked line', async () => {
@@ -98,7 +98,7 @@ describe('FileViewer', () => {
     const read = vi.fn(async () => ({ ...TEXT, text }));
     const { props, rerender } = show({ read, line: 12, nonce: 1 });
     await flush();
-    expect(cm.view.goToLine).toHaveBeenLastCalledWith(12);
+    expect(cm.view.goToLine).toHaveBeenLastCalledWith(12, undefined);
     act(() => cm.opts!.onSelection({ from: 40, to: 40, text: 'x' }));
     cm.view.goToLine.mockClear();
     text = 'edited\n';
@@ -106,11 +106,11 @@ describe('FileViewer', () => {
     await flush();
     expect(cm.opts!.doc).toBe('edited\n');
     expect(cm.view.goToLine).toHaveBeenCalledWith(40);
-    expect(cm.view.goToLine).not.toHaveBeenCalledWith(12);
+    expect(cm.view.goToLine).not.toHaveBeenCalledWith(12, undefined);
     // A new ask (new nonce) still jumps.
     rerender(<FileViewer {...props} read={read} line={12} nonce={2} reloadKey={1} />);
     await flush();
-    expect(cm.view.goToLine).toHaveBeenLastCalledWith(12);
+    expect(cm.view.goToLine).toHaveBeenLastCalledWith(12, undefined);
   });
 
   it('a binary file and a too-large one get a note, never the editor', async () => {

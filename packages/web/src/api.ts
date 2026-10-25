@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -77,15 +77,23 @@ function wsBase(wsId: string): string {
 export type RemoteFilesTarget = { runnerId: string; remoteWsId: string };
 
 /** One Files-tab GET: on this machine, or on the runner through its rpc proxy. */
-function filesGet<T>(wsId: string, worktreePath: string, route: 'tree' | 'list' | 'read' | 'marks', query: Record<string, string | undefined>, remote?: RemoteFilesTarget): Promise<T> {
+function filesGet<T>(wsId: string, worktreePath: string, route: string, query: Record<string, string | undefined>, remote?: RemoteFilesTarget, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) if (v !== undefined) qs.set(k, v);
-  const tail = `/worktrees/${encodeURIComponent(worktreePath)}/files/${route}${qs.toString() ? `?${qs}` : ''}`;
+  const tail = `/worktrees/${encodeURIComponent(worktreePath)}/${route}${qs.toString() ? `?${qs}` : ''}`;
+  const init = signal ? { signal } : undefined;
+  const opts = timeoutMs ? { timeoutMs } : undefined;
   if (remote) {
-    return request<T>(`/api/runners/${encodeURIComponent(remote.runnerId)}/rpc?path=${encodeURIComponent(`/api/w/${encodeURIComponent(remote.remoteWsId)}${tail}`)}`);
+    return request<T>(`/api/runners/${encodeURIComponent(remote.runnerId)}/rpc?path=${encodeURIComponent(`/api/w/${encodeURIComponent(remote.remoteWsId)}${tail}`)}`, init, opts);
   }
-  return request<T>(`${wsBase(wsId)}${tail}`);
+  return request<T>(`${wsBase(wsId)}${tail}`, init, opts);
 }
+
+/** A navigation request: where the cursor is, and a way to cancel it when a newer one supersedes it. */
+export type NavAt = { path: string; line: number; col: number };
+/** A language server may take up to a minute to start before its first answer. */
+const LSP_TIMEOUT_MS = 75_000;
+const at = (p: NavAt) => ({ path: p.path, line: String(p.line), col: String(p.col) });
 
 export type DetectedRepo = RepoConfig & { warnings: string[] };
 
@@ -724,13 +732,30 @@ export const api = {
    * `remote` for a runner's worktree (wsId is then unused). */
   files: {
     tree: (wsId: string, worktreePath: string, dir: string, opts: { ignored?: boolean } = {}, remote?: RemoteFilesTarget) =>
-      filesGet<FileTreePage>(wsId, worktreePath, 'tree', { dir, ignored: opts.ignored ? '1' : undefined }, remote),
+      filesGet<FileTreePage>(wsId, worktreePath, 'files/tree', { dir, ignored: opts.ignored ? '1' : undefined }, remote),
     list: (wsId: string, worktreePath: string, remote?: RemoteFilesTarget) =>
-      filesGet<FileList>(wsId, worktreePath, 'list', {}, remote),
+      filesGet<FileList>(wsId, worktreePath, 'files/list', {}, remote),
     read: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
-      filesGet<FileContent>(wsId, worktreePath, 'read', { path }, remote),
+      filesGet<FileContent>(wsId, worktreePath, 'files/read', { path }, remote),
     marks: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
-      filesGet<FileMarks>(wsId, worktreePath, 'marks', { path }, remote),
+      filesGet<FileMarks>(wsId, worktreePath, 'files/marks', { path }, remote),
+    /** ⌘⇧F, and the guess behind a navigation with no language server. */
+    search: (wsId: string, worktreePath: string, q: SearchQuery, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<SearchAnswer>(wsId, worktreePath, 'files/search', {
+        q: q.q, word: q.word ? '1' : undefined, case: q.case ? '1' : undefined, regex: q.regex ? '1' : undefined, glob: q.glob || undefined,
+      }, remote, signal),
+  },
+  /** Code navigation through a language server (search when there is none). Pass
+   * a signal so a newer request cancels the one it supersedes. */
+  lsp: {
+    definition: (wsId: string, worktreePath: string, p: NavAt, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<NavAnswer>(wsId, worktreePath, 'lsp/definition', at(p), remote, signal, LSP_TIMEOUT_MS),
+    references: (wsId: string, worktreePath: string, p: NavAt, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<NavAnswer>(wsId, worktreePath, 'lsp/references', at(p), remote, signal, LSP_TIMEOUT_MS),
+    hover: (wsId: string, worktreePath: string, p: NavAt, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<HoverAnswer>(wsId, worktreePath, 'lsp/hover', at(p), remote, signal, LSP_TIMEOUT_MS),
+    outline: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<OutlineAnswer>(wsId, worktreePath, 'lsp/outline', { path }, remote, signal, LSP_TIMEOUT_MS),
   },
   kb: {
     files: (wsId: string, p: string) =>

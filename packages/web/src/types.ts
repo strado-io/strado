@@ -453,3 +453,18 @@ export type FileMarks = {
 };
 export const FILES_LIMITS = { treeEntries: 2000, listFiles: 50_000, readBytes: 1024 * 1024 } as const;
 export type FileAskContext = { worktreePath: string; path: string; from: number; to: number; snippet: string };
+
+// Code navigation in the Files tab — mirrors packages/server/src/services/lsp/types.ts.
+// Lines and columns are 1-based; paths are relative to the worktree.
+export type LspServerId =
+  | 'typescript' | 'pyright' | 'gopls' | 'rust-analyzer' | 'clangd'
+  | 'jdtls' | 'solargraph' | 'lua' | 'zls' | 'omnisharp' | 'texlab';
+export type NavHit = { path: string; line: number; col: number; endLine?: number; endCol?: number; preview: string };
+/** Why an answer came from search instead of a language server. */
+export type NavFallback = 'no-server' | 'not-installed' | 'disabled' | 'starting' | 'failed' | 'timeout';
+export type NavAnswer = { source: 'lsp' | 'search'; server?: LspServerId; fallback?: NavFallback; hits: NavHit[] };
+export type HoverAnswer = { server: LspServerId; markdown: string } | null;
+export type OutlineSymbol = { name: string; kind: string; line: number; col: number; children?: OutlineSymbol[] };
+export type OutlineAnswer = { server: LspServerId; symbols: OutlineSymbol[] } | { server: null; symbols: [] };
+export type SearchQuery = { q: string; word?: boolean; case?: boolean; regex?: boolean; glob?: string };
+export type SearchAnswer = { hits: NavHit[]; truncated: boolean; engine: 'rg' | 'git-grep' };

@@ -3,13 +3,14 @@
 // the app's theme vars (zinc/sky scales, --pane-card), so every preset —
 // GitHub Light included — holds without a hex in sight.
 import { EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
-import { EditorView, GutterMarker, gutter, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
+import { EditorView, GutterMarker, gutter, highlightActiveLine, hoverTooltip, keymap, lineNumbers } from '@codemirror/view';
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { tags as t } from '@lezer/highlight';
 import type { FileMarks } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
+import { renderHover } from './hoverMarkdown';
 
 const v = (name: string, alpha?: number) => `rgb(var(--${name})${alpha != null ? ` / ${alpha}` : ''})`;
 
@@ -26,6 +27,12 @@ const theme = EditorView.theme({
   '.cm-searchMatch': { backgroundColor: v('sky-500', 0.2), outline: `1px solid ${v('sky-500', 0.4)}` },
   '.cm-panels': { backgroundColor: v('zinc-900'), color: v('zinc-200'), fontSize: '11px' },
   '.cm-panels input, .cm-panels button': { fontSize: '11px' },
+  '.cm-tooltip': { backgroundColor: v('zinc-900'), color: v('zinc-200'), border: `1px solid ${v('zinc-700')}`, borderRadius: '8px', overflow: 'hidden' },
+  '.cm-tooltip-hover': { maxWidth: '560px', maxHeight: '320px', overflow: 'auto' },
+  '.cm-hover-doc': { padding: '6px 8px', fontSize: '11px', lineHeight: '1.5' },
+  '.cm-hover-code': { margin: '0 0 4px', fontFamily: 'var(--font-mono)', fontSize: '11px', whiteSpace: 'pre-wrap', color: v('zinc-100') },
+  '.cm-hover-text': { margin: '0 0 4px', whiteSpace: 'pre-wrap', color: v('zinc-300') },
+  '&.cm-nav-mod .cm-content': { cursor: 'pointer' },
 });
 
 // Only theme scales: keywords and types in the accent, strings and numbers in
@@ -79,9 +86,14 @@ const changeGutter = gutter({
 });
 
 export type Selection = { from: number; to: number; text: string } | null;
+/** 1-based, like the navigation routes. */
+export type Pos = { line: number; col: number };
+export type NavKind = 'definition' | 'references';
 
 export type CodeView = {
-  goToLine(line: number): void;
+  goToLine(line: number, col?: number): void;
+  /** Where the cursor is (1-based). */
+  cursor(): Pos;
   /** Jump to the next/previous change; returns the line it landed on, or null. */
   step(dir: 1 | -1): number | null;
   setMarks(marks: FileMarks | null): void;
@@ -94,6 +106,10 @@ export async function createCodeView(parent: HTMLElement, o: {
   language: string | null;
   marks: FileMarks | null;
   onSelection: (s: Selection) => void;
+  /** ⌘/Ctrl-click or F12 (definition), ⇧F12 (references), at a 1-based position. */
+  onNavigate?: (kind: NavKind, at: Pos) => void;
+  /** The hover's markdown at a position, or null; aborted when a newer hover supersedes it. */
+  hover?: (at: Pos, signal: AbortSignal) => Promise<string | null>;
 }): Promise<CodeView> {
   const desc = (o.language && LanguageDescription.matchLanguageName(languages, o.language, true))
     || LanguageDescription.matchFilename(languages, o.path.split('/').pop() ?? o.path);
@@ -101,10 +117,43 @@ export async function createCodeView(parent: HTMLElement, o: {
 
   let view: EditorView;
   const current = () => view.state.doc.lineAt(view.state.selection.main.head).number;
-  const goToLine = (n: number) => {
-    const line = view.state.doc.line(Math.min(Math.max(1, n), view.state.doc.lines));
-    view.dispatch({ selection: { anchor: line.from }, effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
+  const posOf = (offset: number): Pos => {
+    const line = view.state.doc.lineAt(offset);
+    return { line: line.number, col: offset - line.from + 1 };
   };
+  const goToLine = (n: number, col = 1) => {
+    const line = view.state.doc.line(Math.min(Math.max(1, n), view.state.doc.lines));
+    const anchor = Math.min(line.from + Math.max(0, col - 1), line.to);
+    view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
+  };
+  const navigate = (kind: NavKind) => {
+    if (!o.onNavigate) return false;
+    o.onNavigate(kind, posOf(view.state.selection.main.head));
+    return true;
+  };
+  // One hover in flight: a newer one cancels the older.
+  let hoverAbort: AbortController | null = null;
+  const hoverExt = o.hover ? hoverTooltip(async (_view, pos) => {
+    hoverAbort?.abort();
+    const ac = new AbortController();
+    hoverAbort = ac;
+    const md = await o.hover!(posOf(pos), ac.signal).catch(() => null);
+    if (ac.signal.aborted || !md || !md.trim()) return null;
+    return { pos, above: true, create: () => ({ dom: renderHover(md) }) };
+  }, { hoverTime: 400 }) : [];
+  const modClick = EditorView.domEventHandlers({
+    mousedown(e, v) {
+      if (!o.onNavigate || e.button !== 0 || !(e.metaKey || e.ctrlKey)) return false;
+      const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos == null) return false;
+      e.preventDefault();
+      v.dispatch({ selection: { anchor: pos } });
+      o.onNavigate('definition', posOf(pos));
+      return true;
+    },
+    keydown(e, v) { v.dom.classList.toggle('cm-nav-mod', e.metaKey || e.ctrlKey); return false; },
+    keyup(e, v) { v.dom.classList.toggle('cm-nav-mod', e.metaKey || e.ctrlKey); return false; },
+  });
   const step = (dir: 1 | -1) => {
     const to = stepChange(changeStarts(view.state.field(marksField)), current(), dir);
     if (to != null) goToLine(to);
@@ -127,8 +176,12 @@ export async function createCodeView(parent: HTMLElement, o: {
           // Read-only, so plain letters are free: n/p walk the changes.
           { key: 'n', run: () => step(1) != null },
           { key: 'p', run: () => step(-1) != null },
+          { key: 'F12', run: () => navigate('definition') },
+          { key: 'Shift-F12', run: () => navigate('references') },
           ...searchKeymap,
         ]),
+        hoverExt,
+        modClick,
         syntaxHighlighting(highlight),
         theme,
         EditorView.lineWrapping,
@@ -147,8 +200,9 @@ export async function createCodeView(parent: HTMLElement, o: {
 
   return {
     goToLine,
+    cursor: () => posOf(view.state.selection.main.head),
     step,
     setMarks: (marks) => view.dispatch({ effects: setMarks.of(marks) }),
-    destroy: () => view.destroy(),
+    destroy: () => { hoverAbort?.abort(); view.destroy(); },
   };
 }
