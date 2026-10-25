@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { EditorId, EditorStatus } from '../../types';
+import { ChevronDownIcon } from './icons';
 
-// The pane title bar's "Open in editor": [app icon | ▾]. The icon opens with
+// The hub header's "Open in editor", beside Run and shaped like it: [app icon | ▾]. The icon opens with
 // the chosen editor; the menu opens once with any other installed one, or
 // shows the folder in Finder. Picking from the menu never changes the choice
 // (that is Settings › Files).
@@ -90,12 +91,14 @@ export function OpenInEditorButton({ editors, chosen, onOpen, shortcut = '⌘O' 
     else if (e.key === 'Tab') close(false);
   };
 
-  const seg = 'flex h-6 items-center justify-center text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-zinc-500';
+  // RunButton's shape, so the two sit as a pair.
+  const half = 'flex h-full items-center transition hover:bg-white/5 hover:text-zinc-100';
   return (
-    <span className="mr-1 flex shrink-0 items-center overflow-hidden rounded-md border border-zinc-800/80" onPointerDown={(e) => e.stopPropagation()}>
-      <button type="button" aria-label={mainLabel} title={`${mainLabel} (${shortcut})`} onClick={() => onOpen(chosen.id === 'system' ? 'finder' : chosen.id)} className={`${seg} w-7`}>
+    <div className="relative flex h-7 shrink-0 self-center rounded-md border border-zinc-800 text-zinc-300 hover:border-zinc-600">
+      <button type="button" aria-label={mainLabel} title={`${mainLabel} (${shortcut})`} onClick={() => onOpen(chosen.id === 'system' ? 'finder' : chosen.id)} className={`${half} rounded-l-[5px] px-2`}>
         <EditorAppIcon id={chosen.id} size={15} />
       </button>
+      <span aria-hidden className="my-1 w-px bg-current opacity-20" />
       <button
         ref={caretRef}
         type="button"
@@ -105,9 +108,9 @@ export function OpenInEditorButton({ editors, chosen, onOpen, shortcut = '⌘O' 
         title="Open with…"
         onClick={() => (open ? close(false) : setOpen(true))}
         onKeyDown={(e) => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true); } }}
-        className={`${seg} w-5 border-l border-zinc-800/80`}
+        className={`${half} rounded-r-[5px] px-1 ${open ? 'bg-white/5' : ''}`}
       >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m2.5 4 2.5 2.5L7.5 4" /></svg>
+        <ChevronDownIcon size={12} />
       </button>
       {open && pos && createPortal(
         <>
@@ -138,6 +141,6 @@ export function OpenInEditorButton({ editors, chosen, onOpen, shortcut = '⌘O' 
         </>,
         document.body,
       )}
-    </span>
+    </div>
   );
 }

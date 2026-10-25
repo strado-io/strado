@@ -176,10 +176,15 @@ describe('Files tab in the hub', () => {
     expect(filesTab.last!.remote).toEqual({ runnerId: 'run1', remoteWsId: 'rw', name: 'runner-dev' });
   });
 
-  it('the Files title bar: Open in <editor> opens the open file at its cursor, else the worktree; ⌘O and ⌘⇧O do the same', async () => {
+  it('the hub header: one Open in <editor>, right before Run; it opens the Files tab\'s file at its cursor, else the worktree; ⌘O and ⌘⇧O do the same', async () => {
     editorOpen.mockReset().mockResolvedValue(undefined);
     render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
     await flush();
+    expect(screen.getAllByRole('button', { name: 'Open in Cursor' })).toHaveLength(1);
+    expect(within(screen.getByTestId('pane-header')).queryByRole('button', { name: 'Open in Cursor' })).toBeNull();
+    const pair = screen.getByRole('button', { name: 'Open in Cursor' }).parentElement!;
+    const next = pair.nextElementSibling!;
+    expect(next.matches('button') ? next : next.querySelector('button')).toHaveAccessibleName(/run/i);
     const button = screen.getByRole('button', { name: 'Open in Cursor' });
     fireEvent.click(button);
     expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });

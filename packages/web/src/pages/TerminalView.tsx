@@ -1729,9 +1729,6 @@ export function TerminalView({
         onSplitDown={canSplit ? () => openEmptyPane(tab, 'col') : undefined}
         onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
         onClose={() => { void requestCloseTab(tab); }}
-        actions={editorAnswer && editor && editorTab(tab) ? (
-          <OpenInEditorButton editors={editorAnswer.editors} chosen={editor} onOpen={(e) => openTabInEditor(tab, e)} />
-        ) : undefined}
       />
     );
   };
@@ -2563,12 +2560,10 @@ export function TerminalView({
       setHubHint('Couldn’t open the editor. Pick one in Settings › Files.');
     });
   };
-  // The title bar's Open in editor: on a local worktree's Files, shell and agent tabs.
-  const editorTab = (tab: Tab) =>
-    !!openInEditor && !tab.remote && tab.mode !== 'browser' && tab.mode !== 'kb' && tab.mode !== 'diff';
-  /** A Files tab opens its file at the cursor; anything else, the worktree. Finder shows the file's folder. */
+  /** The header's Open in editor: a Files tab opens its file at the cursor;
+   *  any other tab, the worktree. Finder shows the file's folder. */
   const openTabInEditor = (tab: Tab, use: OpenWith | undefined = editor?.id) => {
-    if (!openInEditor || !editorTab(tab)) return;
+    if (!openInEditor) return;
     const file = tab.mode === 'files' ? activeFileRef.current.get(tab.path) ?? null : null;
     if (use === 'finder') {
       const dir = file ? file.path.split('/').slice(0, -1).join('/') : '';
@@ -3197,6 +3192,9 @@ export function TerminalView({
                       />
                     )}
                   </span>
+                )}
+                {openInEditor && editorAnswer && editor && (
+                  <OpenInEditorButton editors={editorAnswer.editors} chosen={editor} onOpen={(e) => openTabInEditor(active, e)} />
                 )}
                 <RunButton
                   entries={runEntries}
