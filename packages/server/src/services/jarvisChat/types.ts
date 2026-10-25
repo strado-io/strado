@@ -75,12 +75,24 @@ export const JARVIS_ROUTES = {
   approve: '/api/w/:ws/focuses/:id/jarvis/approvals/:entryId', // POST { approve, windowId, context } → 202; 404 unknown, 409 not pending
   agent: '/api/w/:ws/focuses/:id/jarvis/agent', // PUT { agent } → JarvisMeta   (assertLocalHub)
   stream: '/api/w/:ws/focuses/:id/jarvis/events', // GET SSE: event `entry` (ChatEntry, upsert by id), event `meta` (JarvisMeta)
+  tools: '/api/jarvis-tools', // GET, header JARVIS_TOKEN_HEADER → JarvisToolSpec[] (jarvis.mjs reads it at startup)
   tool: '/api/jarvis-tools/:tool', // POST, header JARVIS_TOKEN_HEADER, body = tool args → { text }; 401 unknown token
 } as const;
 
 export const JARVIS_TOKEN_HEADER = 'x-strado-jarvis-token';
 /** Env var the `strado` MCP server reads; when set it serves only the Jarvis tools. */
 export const JARVIS_TOKEN_ENV = 'STRADO_JARVIS_TOKEN';
+
+/** One MCP tool as the gateway describes it, built from ACTIONS[].model. */
+export type JarvisToolSpec = { name: string; description: string; inputSchema: Record<string, unknown> };
+
+/** The ui command the gateway sends to the turn's window (its ui-stream
+ * clientId is the turn's windowId): the window runs it through the same
+ * model-args → Step → runPlan path as the ⌘K box, in the background. */
+export const JARVIS_UI_OP = 'jarvis.action';
+export type JarvisUiActionArgs = { action: string; args: Record<string, unknown> };
+/** The window's ack `result` for JARVIS_UI_OP. */
+export type JarvisUiActionResult = { ok: boolean; text: string; card?: TabCardRef };
 
 /** Jarvis-only action: a new worktree from a repo, added to the Focus. Not in
  * ACTIONS (the ⌘K box opens the dialog instead); always an approval. */
