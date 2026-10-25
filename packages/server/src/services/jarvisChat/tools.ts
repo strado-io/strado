@@ -76,7 +76,7 @@ export function summarize(action: string, a: Record<string, unknown>): string {
     case 'tab.place': return `Move ${a.tab} ${a.split === 'tab' ? 'to its own tab' : `${a.split === 'down' ? 'below' : 'right of'} ${a.anchor ?? 'the focused tab'}`}`;
     case 'tab.focus': return `Bring ${a.tab} to the front`;
     case 'tab.rename': return a.name ? `Rename ${a.tab} to ${q(a.name)}` : `Reset ${a.tab}'s name`;
-    case 'tab.close': return `Close ${a.tab} (stops what runs in it)`;
+    case 'tab.close': return `Close ${a.tab}${(a.target as { kind?: string } | undefined)?.kind === 'browser' ? '' : ' (stops what runs in it)'}`;
     case 'tab.interrupt': return `Press Ctrl-C in ${a.tab}`;
     case 'shell.run': return `Run ${code(a.command)} in ${a.tab ?? 'the focused shell'}`;
     case 'browser.open': return `Open ${a.url} in a Browser tab ${where(a.worktree)}`;

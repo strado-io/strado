@@ -101,6 +101,11 @@ export type JarvisUiActionArgs = {
   /** The turn's Focus id. The window acts on this Focus, not the one it shows
    * (a wake or a late reply can reach a window that has switched Focus). */
   focusId: string;
+  /** "this" / "it" / no tab, resolved by the server to the newest fitting card
+   * in this chat: the action's tab arg (`tab`, `to` or `agent`) is set to
+   * target.tab, and the window acts on exactly the tab at target.worktreePath
+   * with that session name, never the focused one. */
+  target?: TabCardRef;
 };
 /** The window's ack `result` for JARVIS_UI_OP. */
 export type JarvisUiActionResult = {

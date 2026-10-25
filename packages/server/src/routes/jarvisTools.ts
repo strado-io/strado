@@ -20,7 +20,7 @@ import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
 import { approvalFor, checkArgs, jarvisToolSpecs, summarize } from '../services/jarvisChat/tools.js';
 import {
   JARVIS_ROUTES, JARVIS_TOKEN_HEADER, JARVIS_TOOLS, JARVIS_UI_OP, WORKTREE_CREATE,
-  type JarvisContext, type JarvisUiActionArgs, type JarvisUiActionResult, type TabCardRef,
+  JARVIS_LIMITS, type CardKind, type ChatEntry, type JarvisContext, type JarvisUiActionArgs, type JarvisUiActionResult, type TabCardRef,
 } from '../services/jarvisChat/types.js';
 
 export type JarvisCall = TurnRef & { action: string; args: Record<string, unknown> };
@@ -67,6 +67,9 @@ export function createJarvisExecutor(deps: {
 }): JarvisExecutor {
   return async (call) => {
     if (call.action === WORKTREE_CREATE) return deps.createWorktree(call);
+    // The tab "this" resolved to travels beside the args, not in them.
+    const { target, ...args } = call.args as Record<string, unknown> & { target?: TabCardRef };
+    call = { ...call, args };
     // A shell line's output, as the server ran it for the window: Jarvis sees what it printed.
     const command = (call.action === 'shell.run' || call.action === 'tab.open') && typeof call.args.command === 'string' ? call.args.command : null;
     const runs: CommandRun[] = [];
@@ -75,7 +78,7 @@ export function createJarvisExecutor(deps: {
     const off = command ? commandRuns.on((run) => { if (run.command === command) runs.push(run); }) : () => undefined;
     let r: Awaited<ReturnType<UiClients['dispatch']>>;
     try {
-      const ui: JarvisUiActionArgs = { action: call.action, args: call.args, scope, focusId: call.focusId };
+      const ui: JarvisUiActionArgs = { action: call.action, args: call.args, scope, focusId: call.focusId, ...(target ? { target } : {}) };
       r = await deps.uiClients.dispatch(call.ws, JARVIS_UI_OP, ui, null, null, {
         ...(call.windowId ? { clientId: call.windowId } : {}),
         timeoutMs: deps.timeoutMs ?? JARVIS_ACTION_TIMEOUT_MS,
@@ -191,6 +194,44 @@ export function createJarvisWorktree(
   };
 }
 
+export const WHICH_TAB = 'Which tab? Name it, or open one first.';
+
+const AGENT_KINDS: CardKind[] = ['claude', 'codex', 'opencode', 'pi'];
+/** The arg that names a tab, per action, and the card kinds it may be. */
+const TAB_ARGS: Record<string, { arg: string; kinds: CardKind[] | null }> = {
+  'tab.close': { arg: 'tab', kinds: null },
+  'tab.focus': { arg: 'tab', kinds: null },
+  'tab.interrupt': { arg: 'tab', kinds: null },
+  'tab.rename': { arg: 'tab', kinds: null },
+  'shell.run': { arg: 'tab', kinds: ['shell'] },
+  'agent.message': { arg: 'to', kinds: AGENT_KINDS },
+  'agent.ask': { arg: 'to', kinds: AGENT_KINDS },
+  'agent.interrupt': { arg: 'agent', kinds: AGENT_KINDS },
+  'agent.steer': { arg: 'agent', kinds: AGENT_KINDS },
+};
+const DEICTIC = /^\s*(this|it|that)\s*$/i;
+
+/** How a resolved tab reads in a summary: "the Browser tab google.com in master". */
+const tabWords = (c: TabCardRef) =>
+  c.kind === 'browser' ? `the Browser tab ${c.label ?? c.url ?? c.tab} in ${c.worktree}` : `${c.tab} in ${c.worktree}`;
+
+/** In the chat, "this" / "it" / "that" (or no tab) mean the newest card in
+ *  this chat of a kind the action takes. Returns the args with that tab and
+ *  its card as `target`, the args unchanged when a tab is named, or null when
+ *  no card fits (refused before any approval: one that cannot run is never made). */
+export function resolveTab(action: string, args: Record<string, unknown>, entries: ChatEntry[]): Record<string, unknown> | null {
+  const spec = TAB_ARGS[action];
+  if (!spec) return args;
+  const v = args[spec.arg];
+  if (!(v == null || v === '' || (typeof v === 'string' && DEICTIC.test(v)))) return args;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (e.type !== 'action' || !e.card?.worktreePath || (spec.kinds && !spec.kinds.includes(e.card.kind))) continue;
+    return { ...args, [spec.arg]: e.card.tab, target: e.card };
+  }
+  return null;
+}
+
 export const OUT_OF_FOCUS = "That worktree isn't in this Focus.";
 export const OTHER_FOCUS = 'Jarvis only edits this Focus (or creates a new one).';
 
@@ -284,16 +325,21 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
     } catch (err) {
       throw new AppError('VALIDATION', (err as Error).message);
     }
+    const log = (await deps.stores(ref.ws)).jarvis;
+    const resolved = resolveTab(action, args, await log.page(ref.focusId, { limit: JARVIS_LIMITS.pageMax }));
+    if (!resolved) return { text: WHICH_TAB };
+    args = resolved;
     const outside = outsideFocus(action, args, await deps.scope(ref.ws, ref.focusId).catch(() => null));
     if (outside) return { text: outside };
     const t = Date.now();
     for (const [id, at] of waiting) if (t - at > WAITING_MS) waiting.delete(id);
     if (waiting.has(ref.turnId)) return { text: 'An approval is already waiting. End your turn now.' };
-    const summary = summarize(action, args);
+    const target = args.target as TabCardRef | undefined;
+    const spec = TAB_ARGS[action];
+    const summary = summarize(action, target && spec ? { ...args, [spec.arg]: tabWords(target) } : args);
     const gate = approvalFor(action, args, { wake: ref.wake });
     // Claimed before any await: two parallel gated calls make one card, not two.
     if (gate) waiting.set(ref.turnId, t);
-    const log = (await deps.stores(ref.ws)).jarvis;
     if (gate) {
       const entry = await log.append(ref.focusId, { type: 'approval', turnId: ref.turnId, action, args, summary, ...gate, state: 'pending' });
       deps.approvalArgs.hold(entry.id, args);

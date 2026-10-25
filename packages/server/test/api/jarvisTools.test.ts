@@ -9,6 +9,7 @@ import { sessionKeyFor } from '../../src/services/terminalManager';
 import type { FastifyInstance } from 'fastify';
 import type { AgentSummary } from '../../src/services/agentRegistry';
 import { exec } from '../../src/shell';
+import { JARVIS_CHAT_SYSTEM } from '../../src/services/jarvisChat/prompt';
 import type { JarvisRunner, TurnRef } from '../../src/services/jarvisChat/runner';
 import { createUiClients, type UiCommand } from '../../src/services/uiClients';
 import { JARVIS_TOKEN_HEADER, JARVIS_TOOLS, type ChatEntry, type JarvisContext, type JarvisToolSpec } from '../../src/services/jarvisChat/types';
@@ -247,6 +248,55 @@ describe('jarvis tool gateway', () => {
     ack = () => ({ ok: true, text: 'Opened', card: { kind: 'evil', worktree: 'api', tab: 'x' } });
     await call('jarvis_open_tab', { mode: 'shell', worktree: 'api' });
     expect(of(await log(), 'action')[0]!.card).toBeUndefined();
+  });
+});
+
+describe('"this" in the chat: the newest card', () => {
+  const card = (kind: string, tab: string, extra: object = {}) => ({ kind, worktree: 'master', worktreePath: '/w/api', tab, ...extra });
+  const acted = async (c: object) => (await app.deps.registry.get('default')).jarvis.append(FOCUS, { type: 'action', turnId: 't0', action: 'tab.open', summary: 'Opened', ok: true, card: c as never });
+
+  it('"close this" right after a Browser tab: an approval naming that tab, which runs on exactly it', async () => {
+    await acted(card('shell', 'shell-1'));
+    await acted(card('browser', 'browser-1', { url: 'google.com' }));
+    const res = await call('jarvis_close_tab', { tab: 'this' });
+    expect(res.json().text).toMatch(/^Waiting for the person's approval/);
+    const [approval] = of(await log(), 'approval');
+    expect(approval).toMatchObject({ summary: 'Close the Browser tab google.com in master', args: { tab: 'browser-1', target: { kind: 'browser', tab: 'browser-1', worktreePath: '/w/api' } } });
+  });
+
+  it('no fitting card: refused before any approval', async () => {
+    expect((await call('jarvis_close_tab', { tab: 'it' })).json()).toEqual({ text: 'Which tab? Name it, or open one first.' });
+    await acted(card('shell', 'shell-1'));
+    expect((await call('jarvis_message_agent', { to: 'this', text: 'hi' })).json()).toEqual({ text: 'Which tab? Name it, or open one first.' });
+    expect(of(await log(), 'approval')).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('the kind must fit: a shell line skips a newer Browser card; the window gets the card as target, not in args', async () => {
+    openWindow('win1');
+    await acted(card('claude', 'claude-1'));
+    await acted(card('shell', 'shell-2'));
+    await acted(card('browser', 'browser-1'));
+    await call('jarvis_run_in_shell', { tab: null, command: 'ls' });
+    expect(of(await log(), 'approval')[0]).toMatchObject({ summary: 'Run `ls` in shell-2 in master', args: { tab: 'shell-2' } });
+    turns.set('d'.repeat(64), { ...turns.get(TOKEN)!, turnId: 't9' });
+    await call('jarvis_focus_tab', { tab: 'that' }, 'd'.repeat(64));
+    expect(sent).toEqual([expect.objectContaining({ args: expect.objectContaining({
+      action: 'tab.focus', args: { tab: 'browser-1' }, target: expect.objectContaining({ kind: 'browser', tab: 'browser-1', worktreePath: '/w/api' }),
+    }) })]);
+  });
+
+  it('a named tab is passed as named; the model cannot send a target itself', async () => {
+    openWindow('win1');
+    await acted(card('shell', 'shell-1'));
+    await call('jarvis_focus_tab', { tab: 'shell-9' });
+    expect(sent[0]!.args).toMatchObject({ args: { tab: 'shell-9' } });
+    expect((sent[0]!.args as { target?: unknown }).target).toBeUndefined();
+    expect((await call('jarvis_focus_tab', { tab: 'this', target: card('shell', 'shell-1') })).statusCode).toBe(400);
+  });
+
+  it('the system prompt says what "this" means', () => {
+    expect(JARVIS_CHAT_SYSTEM).toContain('"this", "it" and "that" mean the most recent tab in this chat');
   });
 });
 
