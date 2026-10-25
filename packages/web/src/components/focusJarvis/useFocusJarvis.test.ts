@@ -24,9 +24,13 @@ import { useFocusJarvis, upsertEntry } from './useFocusJarvis';
 type Listener = (e: MessageEvent) => void;
 class FakeSource {
   static last: FakeSource | null = null;
+  static count = 0;
   listeners = new Map<string, Listener>();
   closed = false;
-  constructor(public url: string) { FakeSource.last = this; }
+  readyState = 0;
+  constructor(public url: string) { FakeSource.last = this; FakeSource.count++; }
+  /** The server went away and the browser gave up on this source. */
+  die() { this.readyState = 2; this.listeners.get('error')?.({} as MessageEvent); }
   addEventListener(name: string, fn: Listener) { this.listeners.set(name, fn); }
   removeEventListener() {}
   close() { this.closed = true; }
@@ -98,5 +102,73 @@ describe('useFocusJarvis', () => {
     const { result } = renderHook(() => useFocusJarvis('ws1', null, () => ({})));
     expect(FakeSource.last).toBeNull();
     expect(result.current.entries).toEqual([]);
+  });
+
+  describe('a dead stream comes back', () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+    const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    it('closed for good (a server restart): reopened with backoff, and the latest page reloaded', async () => {
+      renderHook(() => useFocusJarvis('ws1', 'f1', () => ({})));
+      await flush();
+      const first = FakeSource.last!;
+      const loads = log.mock.calls.length;
+      act(() => first.die());
+      expect(first.closed).toBe(true);
+      expect(FakeSource.last).toBe(first); // backoff: not yet
+      await act(async () => { vi.advanceTimersByTime(1_000); });
+      const second = FakeSource.last!;
+      expect(second).not.toBe(first);
+      // It dies again before opening: the wait doubles.
+      act(() => second.die());
+      await act(async () => { vi.advanceTimersByTime(1_000); });
+      expect(FakeSource.last).toBe(second);
+      await act(async () => { vi.advanceTimersByTime(1_000); });
+      const third = FakeSource.last!;
+      expect(third).not.toBe(second);
+      log.mockResolvedValue({ entries: [user('e1', 'hi'), reply('e2', 'missed while down', true)], meta });
+      act(() => third.listeners.get('open')?.({} as MessageEvent));
+      await flush();
+      expect(log.mock.calls.length).toBeGreaterThan(loads);
+    });
+
+    it('open but silent past 30 s after heartbeats: reopened and reloaded', async () => {
+      const { result } = renderHook(() => useFocusJarvis('ws1', 'f1', () => ({})));
+      await flush();
+      const first = FakeSource.last!;
+      act(() => first.emit('heartbeat', {}));
+      await act(async () => { vi.advanceTimersByTime(20_000); });
+      expect(FakeSource.last).toBe(first); // quiet, not dead yet
+      act(() => first.emit('heartbeat', {}));
+      await act(async () => { vi.advanceTimersByTime(36_000); });
+      expect(first.closed).toBe(true);
+      const second = FakeSource.last!;
+      expect(second).not.toBe(first);
+      log.mockResolvedValue({ entries: [user('e1', 'hi'), reply('e2', 'after the restart', true)], meta });
+      act(() => second.listeners.get('open')?.({} as MessageEvent));
+      await flush();
+      expect(result.current.entries.map((e) => e.id)).toEqual(['e1', 'e2']);
+    });
+
+    it('a server that sends no named heartbeat is never judged silent', async () => {
+      renderHook(() => useFocusJarvis('ws1', 'f1', () => ({})));
+      await flush();
+      const first = FakeSource.last!;
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      expect(FakeSource.last).toBe(first);
+      expect(first.closed).toBe(false);
+    });
+  });
+
+  it('send and approve re-fetch the latest page (the stream may be down)', async () => {
+    send.mockResolvedValue(user('e3', 'x'));
+    approve.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useFocusJarvis('ws1', 'f1', () => ({})));
+    await waitFor(() => expect(result.current.meta).not.toBeNull());
+    const before = log.mock.calls.length;
+    await act(() => result.current.send('x'));
+    await act(() => result.current.approve('a1', true));
+    expect(log.mock.calls.length).toBe(before + 2);
   });
 });

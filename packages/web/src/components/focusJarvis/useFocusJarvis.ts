@@ -26,6 +26,12 @@ export type FocusJarvis = {
 };
 
 const PAGE = 100;
+// The server sends a heartbeat every 15 s; twice that with no event at all means the stream is dead.
+const STREAM_SILENT_MS = 30_000;
+const STREAM_CHECK_MS = 5_000;
+const STREAM_BACKOFF_MS = 1_000;
+const STREAM_BACKOFF_MAX_MS = 30_000;
+const CLOSED = 2; // EventSource.CLOSED (the test stub may not define it)
 
 /** A Focus's Jarvis chat: the log, then live `entry`/`meta` events over SSE.
  * `getContext` is read at send time, so Jarvis sees this window as it is now;
@@ -39,10 +45,15 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
   const onLiveRef = useRef(onLive);
   onLiveRef.current = onLive;
 
+  // The latest page, again: after a reconnect, and after a send or approval
+  // (a safety net when the stream is down). Replaced per Focus by the effect.
+  const reloadRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     setEntries([]);
     setMeta(null);
     setHasOlder(false);
+    reloadRef.current = () => {};
     if (!focusId) return;
     let live = true;
     const load = () => api.focusJarvis.log(wsId, focusId, { limit: PAGE }).then((page) => {
@@ -51,32 +62,79 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
       setMeta(page.meta);
       setHasOlder(page.entries.length >= PAGE);
     }).catch(() => { /* the stream's reconnect reloads */ });
+    reloadRef.current = () => { void load(); };
     void load();
-    const es = new EventSource(api.focusJarvis.streamUrl(wsId, focusId));
-    let opened = false;
-    // A reconnect may have missed entries: reload the latest page.
-    es.addEventListener('open', () => { if (opened) void load(); opened = true; });
-    es.addEventListener('entry', ((e: MessageEvent) => {
-      let entry: ChatEntry;
-      try { entry = JSON.parse(e.data) as ChatEntry; } catch { return; /* ignore malformed */ }
-      setEntries((cur) => upsertEntry(cur, entry));
-      onLiveRef.current?.(entry);
-    }) as EventListener);
-    es.addEventListener('meta', ((e: MessageEvent) => {
-      try { setMeta(JSON.parse(e.data) as JarvisMeta); } catch { /* ignore malformed */ }
-    }) as EventListener);
-    return () => { live = false; es.close(); };
+
+    // The stream, kept alive. A server restart can leave an EventSource
+    // CLOSED for good (its retry met an error page), or open but silent:
+    // either way it is replaced, with backoff, and the latest page reloaded.
+    let es: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let lastEvent = Date.now();
+    // Only a server that sends named heartbeats can be judged silent.
+    let beats = false;
+    const connect = (initial = false) => {
+      retry = null;
+      const source = new EventSource(api.focusJarvis.streamUrl(wsId, focusId));
+      es = source;
+      lastEvent = Date.now();
+      const alive = () => { lastEvent = Date.now(); };
+      let openedBefore = false;
+      source.addEventListener('open', () => {
+        alive();
+        // A reopen, or the browser's own reconnect: anything said meanwhile is in the log.
+        if (openedBefore || !initial) void load();
+        openedBefore = true;
+        attempts = 0;
+      });
+      source.addEventListener('error', () => {
+        if (source.readyState === CLOSED) reopen();
+      });
+      source.addEventListener('heartbeat', () => { beats = true; alive(); });
+      source.addEventListener('entry', ((e: MessageEvent) => {
+        alive();
+        let entry: ChatEntry;
+        try { entry = JSON.parse(e.data) as ChatEntry; } catch { return; /* ignore malformed */ }
+        setEntries((cur) => upsertEntry(cur, entry));
+        onLiveRef.current?.(entry);
+      }) as EventListener);
+      source.addEventListener('meta', ((e: MessageEvent) => {
+        alive();
+        try { setMeta(JSON.parse(e.data) as JarvisMeta); } catch { /* ignore malformed */ }
+      }) as EventListener);
+      return source;
+    };
+    const reopen = () => {
+      if (!live || retry) return;
+      es?.close();
+      const wait = Math.min(STREAM_BACKOFF_MAX_MS, STREAM_BACKOFF_MS * 2 ** attempts);
+      attempts++;
+      retry = setTimeout(() => { if (live) connect(); }, wait);
+    };
+    connect(true);
+    const watchdog = setInterval(() => {
+      if (beats && !retry && Date.now() - lastEvent > STREAM_SILENT_MS) reopen();
+    }, STREAM_CHECK_MS);
+    return () => {
+      live = false;
+      clearInterval(watchdog);
+      if (retry) clearTimeout(retry);
+      es?.close();
+    };
   }, [wsId, focusId]);
 
   const send = useCallback(async (text: string) => {
     if (!focusId) return;
     const entry = await api.focusJarvis.send(wsId, focusId, { text, windowId: uiClientId(), context: contextRef.current() });
     setEntries((cur) => upsertEntry(cur, entry));
+    reloadRef.current();
   }, [wsId, focusId]);
 
   const approve = useCallback(async (entryId: string, yes: boolean) => {
     if (!focusId) return;
     await api.focusJarvis.approve(wsId, focusId, entryId, { approve: yes, windowId: uiClientId(), context: contextRef.current() });
+    reloadRef.current();
   }, [wsId, focusId]);
 
   const stop = useCallback(async () => {
