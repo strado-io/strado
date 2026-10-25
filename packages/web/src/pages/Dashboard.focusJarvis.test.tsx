@@ -12,19 +12,20 @@ vi.mock('../contexts/IntercomContext', () => ({
 }));
 
 const focusList = vi.hoisted(() => ({ members: [] as string[] }));
+const wtList = vi.hoisted(() => ({ extra: [] as unknown[] }));
 const card = { id: 'e2', at: 't', type: 'action', turnId: 't1', action: 'tab.open', summary: 'Opened Claude in A-1', ok: true, card: { kind: 'claude', worktree: 'A-1', tab: 'claude-1' } };
 vi.mock('../api', () => ({
   api: {
     focusJarvis: {
       log: vi.fn(async () => ({ entries: [{ id: 'e1', at: 't', type: 'user', text: 'open claude', windowId: 'w' }, card], meta: { focusId: 'f-a', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 1, running: false } })),
-      send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/jarvis/events',
+      send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/api/w/ws-a/focuses/f-a/jarvis/events',
     },
     focuses: {
       list: async () => [{ id: 'f-a', name: 'Billing', members: focusList.members, createdAt: 't', lastActiveAt: 't' }],
       create: vi.fn(), update: vi.fn(async () => ({})), remove: vi.fn(),
     },
     repos: { list: vi.fn().mockResolvedValue([{ id: 'ra', name: 'Repo A' }]) },
-    worktrees: { list: vi.fn().mockResolvedValue([{ path: '/a/A-1', repoId: 'ra', branch: 'a-1', meta: { ticketId: 'A-1' }, process: { status: 'idle' }, tracked: true }]) },
+    worktrees: { list: vi.fn(async () => [{ path: '/a/A-1', repoId: 'ra', branch: 'a-1', meta: { ticketId: 'A-1' }, process: { status: 'idle' }, tracked: true }, ...wtList.extra]) },
     jira: { status: vi.fn().mockResolvedValue({ configured: false, baseUrl: null }) },
     tickets: { providers: vi.fn().mockResolvedValue([]), issues: vi.fn().mockResolvedValue({ issues: {}, missing: [], errors: {} }) },
     reviews: { list: vi.fn().mockResolvedValue({ reviews: [], repositories: [], counts: { open: 0, merged: 0, closed: 0 }, page: 1, pageSize: 20, hasMore: false, pageLimit: null }) },
@@ -41,6 +42,19 @@ vi.mock('./TerminalView', () => ({
 }));
 
 import { Dashboard } from './Dashboard';
+
+// The chat's stream, driven by the test (other EventSources stay inert).
+type Listener = (e: MessageEvent) => void;
+const streams = vi.hoisted(() => ({ jarvis: null as null | { emit: (name: string, data: unknown) => void } }));
+class FakeSource {
+  listeners = new Map<string, Listener>();
+  constructor(public url: string) { if (url.includes('/jarvis/')) streams.jarvis = this; }
+  addEventListener(name: string, fn: Listener) { this.listeners.set(name, fn); }
+  removeEventListener() {}
+  close() {}
+  emit(name: string, data: unknown) { this.listeners.get(name)?.({ data: JSON.stringify(data) } as MessageEvent); }
+}
+(globalThis as unknown as { EventSource: unknown }).EventSource = FakeSource;
 import { __resetFocuses } from '../hooks/useFocuses';
 import { showSidebarOnHome } from './dashboardTestHome';
 
@@ -85,5 +99,22 @@ describe('Dashboard: Focus Jarvis', () => {
     fireEvent.click(within(chat).getByRole('button', { name: /^Open / }));
     expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
     expect(hubProps.last).toEqual({ path: '/a/A-1', mode: 'claude', sessionId: '1' });
+  });
+
+  it('a worktree Jarvis creates shows in the Focus at once (focuses and worktrees refetch)', async () => {
+    focusList.members = ['local:/a/A-1'];
+    wtList.extra = [];
+    renderDashboard();
+    await act(async () => {});
+    const section = screen.getByRole('region', { name: 'Focus' });
+    expect(within(section).queryByText('B-2')).toBeNull();
+    // The server made the worktree and added it to the Focus; nothing pushed that.
+    focusList.members = ['local:/a/A-1', 'local:/a/B-2'];
+    wtList.extra = [{ path: '/a/B-2', repoId: 'ra', branch: 'b-2', meta: { ticketId: 'B-2' }, process: { status: 'idle' }, tracked: true }];
+    await act(async () => {
+      streams.jarvis!.emit('entry', { id: 'e9', at: 't', type: 'action', turnId: 't2', action: 'worktree.create', summary: 'Created B-2', ok: true });
+    });
+    await act(async () => {});
+    expect(within(screen.getByRole('region', { name: 'Focus' })).getByText('B-2')).toBeInTheDocument();
   });
 });

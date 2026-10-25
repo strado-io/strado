@@ -1021,7 +1021,12 @@ export function Dashboard(props: {
     <UiControlProvider wsId={wsId} openWorktree={openWorktreeForAgent}>
     <RendererOverlayContext.Provider value={overlays.report}>
     <FocusJarvisProvider wsId={wsId} focus={focusApi.active ?? null} focuses={focusApi.focuses} worktrees={state.worktrees} repos={state.repos}
-      workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed} app={appPort}>
+      workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed} app={appPort}
+      onTreeChanged={() => {
+        void Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)])
+          .then(([repos, worktrees]) => { if (wsRef.current === wsId) commitTree(repos, worktrees); })
+          .catch(() => { /* the 15 s re-sync catches up */ });
+      }}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
       {!sidebarHidden && (

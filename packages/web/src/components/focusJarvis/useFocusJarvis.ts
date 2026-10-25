@@ -28,13 +28,16 @@ export type FocusJarvis = {
 const PAGE = 100;
 
 /** A Focus's Jarvis chat: the log, then live `entry`/`meta` events over SSE.
- * `getContext` is read at send time, so Jarvis sees this window as it is now. */
-export function useFocusJarvis(wsId: string, focusId: string | null, getContext: () => unknown): FocusJarvis {
+ * `getContext` is read at send time, so Jarvis sees this window as it is now;
+ * `onLive` hears each streamed entry (not the loaded log). */
+export function useFocusJarvis(wsId: string, focusId: string | null, getContext: () => unknown, onLive?: (entry: ChatEntry) => void): FocusJarvis {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [meta, setMeta] = useState<JarvisMeta | null>(null);
   const [hasOlder, setHasOlder] = useState(false);
   const contextRef = useRef(getContext);
   contextRef.current = getContext;
+  const onLiveRef = useRef(onLive);
+  onLiveRef.current = onLive;
 
   useEffect(() => {
     setEntries([]);
@@ -54,7 +57,10 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
     // A reconnect may have missed entries: reload the latest page.
     es.addEventListener('open', () => { if (opened) void load(); opened = true; });
     es.addEventListener('entry', ((e: MessageEvent) => {
-      try { const entry = JSON.parse(e.data) as ChatEntry; setEntries((cur) => upsertEntry(cur, entry)); } catch { /* ignore malformed */ }
+      let entry: ChatEntry;
+      try { entry = JSON.parse(e.data) as ChatEntry; } catch { return; /* ignore malformed */ }
+      setEntries((cur) => upsertEntry(cur, entry));
+      onLiveRef.current?.(entry);
     }) as EventListener);
     es.addEventListener('meta', ((e: MessageEvent) => {
       try { setMeta(JSON.parse(e.data) as JarvisMeta); } catch { /* ignore malformed */ }

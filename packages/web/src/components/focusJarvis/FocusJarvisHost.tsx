@@ -15,6 +15,12 @@ import { resolveCard, type ResolvedCard } from './cards';
 import { FocusJarvisView } from './FocusJarvisView';
 import { JarvisSidebarCard, latestLine } from './JarvisSidebarCard';
 import { useFocusJarvis, type FocusJarvis } from './useFocusJarvis';
+import { refreshFocuses } from '../../hooks/useFocuses';
+import type { ChatEntry } from '../../types';
+
+/** Actions that change the Focus or the worktrees on the server, which push nothing to the window. */
+const CHANGES_TREE = new Set(['worktree.create', 'focus.edit']);
+export const changesTree = (e: ChatEntry): boolean => e.type === 'action' && e.ok && CHANGES_TREE.has(e.action);
 
 export type OpenCard = (r: Extract<ResolvedCard, { open: true }>) => void;
 
@@ -24,7 +30,7 @@ const HostContext = createContext<Host | null>(null);
 /** One Jarvis chat per window, for the active Focus, shared by its sidebar
  * card and its main view. Sends carry this window's context, built exactly
  * as the ⌘K bar builds it. */
-export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, app, children }: {
+export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, app, onTreeChanged, children }: {
   wsId: string;
   focus: Focus | null;
   focuses: Focus[];
@@ -35,6 +41,8 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   lastActedOn: MutableRefObject<TabRef | null>;
   /** The app's pages and Focus edits (focus.edit); Jarvis never navigates. */
   app?: JarvisAppPort;
+  /** Reload the worktree list: a Jarvis action made one on the server. */
+  onTreeChanged?: () => void;
   children: ReactNode;
 }) {
   const hub = useUiHub();
@@ -72,7 +80,12 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
       ...(app ? { app } : {}),
     }),
   }));
-  const chat = useFocusJarvis(wsId, focus?.id ?? null, getContext);
+  // A new worktree or a Focus edit lands in the sidebar now, not on the next reload.
+  const chat = useFocusJarvis(wsId, focus?.id ?? null, getContext, (entry) => {
+    if (!changesTree(entry)) return;
+    void refreshFocuses(wsId);
+    onTreeChanged?.();
+  });
   const value = useMemo<Host | null>(() => {
     if (!focus) return null;
     const inFocus = worktrees.filter((w) => focus.members.includes(`local:${w.path}`));
