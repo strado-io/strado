@@ -480,4 +480,6 @@ export type LspServerStatus = {
   /** Install commands for this machine's OS; `available` = its `needs` tool is present. */
   install: (LspInstall & { available: boolean })[];
   running: { worktreePath: string; pid: number; rssBytes: number | null; startedAt: string; lastUsedAt: string }[];
+  /** Why it last failed to start or answer (cleared by a Stop or a good start). */
+  lastError?: string;
 };

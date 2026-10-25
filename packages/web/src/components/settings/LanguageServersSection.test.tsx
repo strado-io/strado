@@ -94,4 +94,29 @@ describe('LanguageServersSection', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(c.list.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('a failing server says Failed with its error (one line, expandable) and offers Retry', async () => {
+    const err = 'spawn typescript-language-server: Cannot find module "typescript" from /w/a\n  at resolve (node:internal)';
+    const failing: LspServerStatus = { ...ts, running: [], lastError: err };
+    const c = await open(client([failing]));
+    const r = within(row('TypeScript and JavaScript'));
+    expect(r.getByText('Failed')).toBeInTheDocument();
+    const detail = r.getByTestId('lsp-error-typescript');
+    expect(detail).toHaveTextContent('Cannot find module');
+    expect(detail.tagName).toBe('DETAILS');
+    expect(detail).not.toHaveAttribute('open');
+    await act(async () => { fireEvent.click(r.getByRole('button', { name: 'Retry TypeScript and JavaScript language server' })); });
+    expect(c.stop).toHaveBeenCalledWith('typescript');
+    expect(c.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('the binary path truncates in the middle, the full path in its title', async () => {
+    const long = '/Users/someone/.local/share/fnm/node-versions/v22.11.0/installation/bin/typescript-language-server';
+    await open(client([{ ...ts, binary: long }]));
+    const p = within(row('TypeScript and JavaScript')).getByTitle(long);
+    expect(p).toHaveTextContent('/Users/someone/.local/share/fnm');
+    expect(p).toHaveTextContent('typescript-language-server');
+    expect(p.textContent!.length).toBeLessThan(long.length);
+    expect(p.textContent).toContain('…');
+  });
 });

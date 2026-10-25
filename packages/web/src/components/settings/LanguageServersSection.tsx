@@ -33,9 +33,18 @@ function Toggle({ label, checked, disabled, onChange }: { label: string; checked
 
 const mb = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
+/** A long path cut in the middle, keeping its start and the binary's name. */
+function middleTruncate(p: string, max = 64): string {
+  if (p.length <= max) return p;
+  const slash = p.lastIndexOf('/');
+  const tail = slash >= 0 && p.length - slash <= max / 2 ? p.slice(slash) : p.slice(-Math.floor(max / 2));
+  return `${p.slice(0, max - tail.length - 1)}…${tail}`;
+}
+
 function stateText(s: LspServerStatus): string {
   if (!s.installed) return 'Not installed';
   if (!s.enabled) return 'Off';
+  if (s.lastError) return 'Failed';
   const n = s.running.length;
   if (!n) return 'Installed · starts when you navigate';
   const mem = s.running.reduce((sum, r) => sum + (r.rssBytes ?? 0), 0);
@@ -100,6 +109,18 @@ export function LanguageServersSection({ client = api.lspServers, install }: {
                   <div className="text-[13px] text-zinc-100">{s.lang}</div>
                   <div className="text-[11px] text-zinc-500">{stateText(s)}</div>
                 </div>
+                {s.enabled && s.lastError && (
+                  <button
+                    type="button"
+                    aria-label={`Retry ${s.lang} language server`}
+                    disabled={busy !== null}
+                    // A stop clears the failure count, so the next navigation starts it afresh.
+                    onClick={() => void act(`retry:${s.id}`, () => client.stop(s.id))}
+                    className="rounded-md border border-zinc-800 px-2 py-1 text-[13px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-40"
+                  >
+                    Retry
+                  </button>
+                )}
                 {s.running.length > 0 && (
                   <button
                     type="button"
@@ -118,7 +139,13 @@ export function LanguageServersSection({ client = api.lspServers, install }: {
                   onChange={(v) => void act(`enable:${s.id}`, () => client.setEnabled(s.id, v))}
                 />
               </div>
-              {s.binary && <div className="mt-1 truncate font-mono text-[11px] text-zinc-500" title={s.binary}>{s.binary}</div>}
+              {s.binary && <div className="mt-1 overflow-hidden whitespace-nowrap font-mono text-[11px] text-zinc-500" title={s.binary}>{middleTruncate(s.binary)}</div>}
+              {s.enabled && s.lastError && (
+                <details data-testid={`lsp-error-${s.id}`} className="mt-1.5 min-w-0">
+                  <summary className="cursor-pointer truncate font-mono text-[11px] text-red-300">{s.lastError.split('\n')[0]}</summary>
+                  <pre className="mt-1 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-400">{s.lastError}</pre>
+                </details>
+              )}
               {!s.installed && s.install.length > 0 && (
                 <ul className="mt-2 flex flex-col gap-1.5">
                   {s.install.map((opt) => {
