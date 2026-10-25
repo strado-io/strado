@@ -244,6 +244,24 @@ describe('SSE', () => {
     expect(await fs.readdir(path.join(app.deps.registry.workspaceDir('default'), 'jarvis')).catch(() => [])).toEqual([]);
   });
 
+  it('a Focus deleted while the stream is opening: 404, never a stream that waits forever', async () => {
+    const st = await app.deps.registry.get('default');
+    const realList = st.focuses.list;
+    // The chat is removed between the Focus check's read and the subscribe.
+    st.focuses.list = async () => {
+      const l = await realList();
+      await st.jarvis.remove(focusId);
+      return l;
+    };
+    try {
+      const { res, ac } = await open(`${base()}/events`);
+      expect(res.status).toBe(404);
+      ac.abort();
+    } finally {
+      st.focuses.list = realList;
+    }
+  });
+
   it('unknown focus SSE 404', async () => {
     const { res, ac } = await open('/api/w/default/focuses/nope/jarvis/events');
     expect(res.status).toBe(404);

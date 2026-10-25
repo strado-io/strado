@@ -6,7 +6,8 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
-import { JARVIS_AGENTS, JARVIS_LIMITS, type ChatEntry, type JarvisAgent, type JarvisContext } from '../services/jarvisChat/types.js';
+import type { JarvisChatChange } from '../services/jarvisChat/store.js';
+import { JARVIS_AGENTS, JARVIS_LIMITS, type ChatEntry, type JarvisAgent, type JarvisContext, type JarvisMeta } from '../services/jarvisChat/types.js';
 import { JarvisContextBody } from './jarvis.js';
 import { assertLocalHub } from './profile.js';
 
@@ -105,9 +106,28 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
   // `meta` first, then `entry` (upsert by id) and `meta` as they change, and
   // `heartbeat` every 15 s. The stream ends when the Focus is deleted.
   app.get<{ Params: Params }>('/focuses/:id/jarvis/events', async (req, reply) => {
-    const id = await focusOf(req);
     const { jarvis } = req.workspace!.stores;
-    const meta = await jarvis.meta(id);
+    // Subscribe before checking the Focus, so a delete in between is seen:
+    // changes are held until the stream is open, and a removal means 404.
+    let gone = false;
+    let held: JarvisChatChange[] | null = [];
+    let send = (_c: JarvisChatChange): void => undefined;
+    const off = jarvis.onChange((focusId, change) => {
+      if (focusId !== req.params.id) return;
+      if (change.removed) gone = true;
+      if (held) held.push(change);
+      else send(change);
+    });
+    let id: string;
+    let meta: JarvisMeta;
+    try {
+      id = await focusOf(req);
+      meta = await jarvis.meta(id);
+      if (gone) throw new AppError('NOT_FOUND', 'focus not found');
+    } catch (err) {
+      off();
+      throw err;
+    }
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     reply.raw.flushHeaders();
     writeEvent(reply, 'meta', meta);
@@ -116,17 +136,19 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
     const heartbeat = () => writeEvent(reply, 'heartbeat', {});
     heartbeat();
     const beat = setInterval(heartbeat, HEARTBEAT_MS);
-    const off = jarvis.onChange((focusId, change) => {
-      if (focusId !== id) return;
-      if (change.removed) return close();
-      if (change.entry) writeEvent(reply, 'entry', change.entry);
-      if (change.meta) writeEvent(reply, 'meta', change.meta);
-    });
     function close(): void {
       clearInterval(beat);
       off();
       reply.raw.end();
     }
+    send = (change) => {
+      if (change.removed) return close();
+      if (change.entry) writeEvent(reply, 'entry', change.entry);
+      if (change.meta) writeEvent(reply, 'meta', change.meta);
+    };
+    const early = held;
+    held = null;
+    for (const c of early) send(c);
     req.raw.on('close', close);
     return reply;
   });
