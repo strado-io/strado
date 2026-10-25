@@ -51,6 +51,11 @@ function hasRg(): Promise<boolean> {
   return rgOnPath;
 }
 
+/** For tests: ask again (after PATH changed). */
+export function resetRgProbe(): void {
+  rgOnPath = null;
+}
+
 function validate(q: SearchQuery): void {
   const bad = () => new AppError('VALIDATION', 'bad search');
   if (!q.q || q.q.length > QUERY_MAX || /[\r\n\0]/.test(q.q)) throw bad();

@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { exec } from '../../shell.js';
-import { classifyDefinitions, isDefinition, searchFiles, searchWord } from './search.js';
+import { classifyDefinitions, isDefinition, resetRgProbe, searchFiles, searchWord } from './search.js';
 import type { NavHit } from '../lsp/types.js';
 
 let tmp: string;
@@ -45,7 +46,14 @@ afterEach(async () => {
 
 const where = (hits: NavHit[]) => hits.map((h) => `${h.path}:${h.line}:${h.col}`);
 
+// The service's own probe (`rg --version`); CI's macOS runner has no ripgrep.
+const rgAvailable = spawnSync('rg', ['--version'], { stdio: 'ignore' }).status === 0;
+
 describe.each(['rg', 'git-grep'] as const)('searchFiles (%s)', (engine) => {
+  if (engine === 'rg' && !rgAvailable) {
+    it.skip('ripgrep is not on PATH here', () => {});
+    return;
+  }
   it('literal by default, case-insensitive, sorted by path then line; skips ignored, binary, .git and symlinks out', async () => {
     const r = await searchFiles(repo, { q: 'loaduser' }, { engine });
     expect(r.engine).toBe(engine);
@@ -104,8 +112,31 @@ describe('searchFiles input', () => {
     await expect(searchFiles(repo, q)).rejects.toMatchObject({ httpStatus: 400 });
   });
 
-  it('defaults to rg when it is on PATH', async () => {
-    expect((await searchFiles(repo, { q: 'Account' })).engine).toBe('rg');
+  describe('which engine', () => {
+    const PATH = process.env.PATH;
+    afterEach(() => {
+      process.env.PATH = PATH;
+      resetRgProbe();
+    });
+
+    it('defaults to rg when it is on PATH (a stand-in rg, so it never depends on the machine)', async () => {
+      const bin = path.join(tmp, 'bin');
+      await fs.mkdir(bin);
+      // --version answers; a search finds nothing (rg's exit 1).
+      await fs.writeFile(path.join(bin, 'rg'), '#!/bin/sh\n[ "$1" = "--version" ] && exit 0\nexit 1\n', { mode: 0o755 });
+      process.env.PATH = `${bin}:/usr/bin:/bin`;
+      resetRgProbe();
+      expect((await searchFiles(repo, { q: 'Account' })).engine).toBe('rg');
+    });
+
+    it('falls back to git grep without rg, and a bad regex there is the same fixed 400', async () => {
+      process.env.PATH = '/usr/bin:/bin';
+      resetRgProbe();
+      const r = await searchFiles(repo, { q: 'Account' });
+      expect(r.engine).toBe('git-grep');
+      expect(r.hits.length).toBeGreaterThan(0);
+      await expect(searchFiles(repo, { q: 'a(', regex: true })).rejects.toMatchObject({ httpStatus: 400, message: 'bad search pattern' });
+    });
   });
 });
 
