@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoConfig, Worktree } from '../../types';
-import { recentWorktrees } from './recent';
+import { recentInFocus, recentWorktrees } from './recent';
 
 const wt = (path: string, over: Partial<Worktree> = {}) => ({ path, repoId: 'r1', branch: path.split('/').pop(), meta: {}, ...over }) as unknown as Worktree;
 const repos = [{ id: 'r1', name: 'Strado' }, { id: 'r2', name: 'Fleetx' }] as RepoConfig[];
@@ -19,5 +19,17 @@ describe('recentWorktrees', () => {
 
   it('a path that is no longer a worktree here is skipped', () => {
     expect(recentWorktrees([wt('/wt/a')], repos, { '/wt/gone': 9, '/wt/a': 1 }).map((r) => r.worktree.path)).toEqual(['/wt/a']);
+  });
+});
+
+describe('recentInFocus', () => {
+  it('only the Focus\'s own local worktrees: opened ones newest first, then the never-opened in member order; at most five', () => {
+    const ws = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((n) => wt(`/wt/${n}`));
+    const members = ['local:/wt/g', 'local:/wt/a', 'remote:x:/wt/b', 'local:/wt/gone', 'local:/wt/c', 'local:/wt/d', 'local:/wt/e', 'local:/wt/f'];
+    const lru = { '/wt/b': 9, '/wt/c': 2, '/wt/e': 5 };
+    const got = recentInFocus(members, ws, repos, lru);
+    expect(got.map((r) => r.worktree.path)).toEqual(['/wt/e', '/wt/c', '/wt/g', '/wt/a', '/wt/d']);
+    expect(got[0]).toEqual(expect.objectContaining({ name: 'e', repo: 'Strado', openedAt: 5 }));
+    expect(got[2]!.openedAt).toBeNull();
   });
 });

@@ -16,7 +16,7 @@ import { readWorktreeLru } from '../../lib/worktreeLru';
 import type { RepoConfig, Workspace, Worktree } from '../../types';
 import { buildParseContext } from '../jarvis/jarvisContext';
 import { resolveCard, type ResolvedCard } from './cards';
-import { FocusJarvisView } from './FocusJarvisView';
+import { FocusJarvisView, type JarvisStart } from './FocusJarvisView';
 import { useFocusJarvis, type FocusJarvis } from './useFocusJarvis';
 import { refreshFocuses } from '../../hooks/useFocuses';
 import type { ChatEntry } from '../../types';
@@ -214,13 +214,13 @@ export function FocusJarvisLatest() {
 }
 
 /** The chat in the main area. */
-export function FocusJarvisMain({ onOpenCard }: { onOpenCard: OpenCard }) {
+export function FocusJarvisMain({ onOpenCard, start }: { onOpenCard: OpenCard; start?: JarvisStart }) {
   const host = useContext(HostContext);
   if (!host) return null;
-  return <MainView host={host} onOpenCard={onOpenCard} />;
+  return <MainView host={host} onOpenCard={onOpenCard} start={start} />;
 }
 
-function MainView({ host, onOpenCard }: { host: Host; onOpenCard: OpenCard }) {
+function MainView({ host, onOpenCard, start }: { host: Host; onOpenCard: OpenCard; start?: JarvisStart }) {
   const { chat } = host;
   const [error, setError] = useState<string | null>(null);
   // W2: fixed words per operation; the server's own text never reaches the page.
@@ -238,6 +238,6 @@ function MainView({ host, onOpenCard }: { host: Host; onOpenCard: OpenCard }) {
       onSend={(text) => report(chat.send(text), ERRORS.send)}
       onStop={() => quiet(report(chat.stop(), ERRORS.stop))}
       onLoadOlder={() => quiet(report(chat.loadOlder(), ERRORS.older))}
-      agents={host.agents} worktrees={host.worktrees} />
+      agents={host.agents} worktrees={host.worktrees} start={start} />
   );
 }

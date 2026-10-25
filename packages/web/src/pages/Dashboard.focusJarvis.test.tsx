@@ -60,6 +60,8 @@ import { __resetFocuses } from '../hooks/useFocuses';
 import { showSidebarOnHome } from './dashboardTestHome';
 
 const noop = vi.fn();
+/** The Focus was left on this worktree (stored per Focus, across launches). */
+const leftOn = (path: string) => localStorage.setItem('strado:selected-by-focus', JSON.stringify({ 'f-a': path }));
 function renderDashboard() {
   render(
     <Dashboard onNewWorktree={noop} onShowLogs={noop} onMenu={noop} onOpenNote={noop} onOpenDiff={noop} onCloseOverlays={noop} onDeleteWorktree={noop}
@@ -82,6 +84,74 @@ describe('Dashboard: Focus Jarvis', () => {
     intercom.refresh.mockClear();
   });
 
+  it('app open with a Focus active and no saved view: its Jarvis chat, never the global home', async () => {
+    focusList.members = ['local:/a/A-1'];
+    renderDashboard();
+    await act(async () => {});
+    expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).toBeNull();
+    expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
+    expect(hubProps.last).toBeNull();
+  });
+
+  it('app open restores the worktree the Focus had open', async () => {
+    focusList.members = ['local:/a/A-1'];
+    leftOn('/a/A-1');
+    renderDashboard();
+    await act(async () => {});
+    expect(hubProps.last).toEqual(expect.objectContaining({ path: '/a/A-1' }));
+    expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
+    expect(screen.getByTestId('focus-header')).not.toHaveAttribute('data-selected');
+  });
+
+  it('app open restores the chat when this window left the Focus on it, over a saved worktree', async () => {
+    focusList.members = ['local:/a/A-1'];
+    leftOn('/a/A-1');
+    sessionStorage.setItem('strado:jarvis-by-focus', JSON.stringify(['f-a']));
+    renderDashboard();
+    await act(async () => {});
+    expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
+    expect(hubProps.last).toBeNull();
+  });
+
+  it('no Focus active: the global home, no Jarvis', async () => {
+    focusList.members = ['local:/a/A-1'];
+    localStorage.removeItem('strado:active-focus-by-ws');
+    renderDashboard();
+    await act(async () => {});
+    expect(screen.getByRole('heading', { name: 'What do you want to do?' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
+  });
+
+  it('the empty chat lists this Focus\'s recent worktrees; one opens on click', async () => {
+    const { api } = await import('../api');
+    focusList.members = ['local:/a/A-1'];
+    vi.mocked(api.focusJarvis.log).mockResolvedValueOnce({ entries: [], meta: { focusId: 'f-a', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false } } as never);
+    localStorage.setItem('strado:worktree-lru', JSON.stringify({ '/a/A-1': Date.now() - 120_000 }));
+    renderDashboard();
+    await act(async () => {});
+    const recent = within(screen.getByRole('region', { name: 'Jarvis' })).getByRole('list', { name: 'Recent in this Focus' });
+    expect(recent).toHaveTextContent('A-1· Repo A2m');
+    fireEvent.click(within(recent).getByRole('button', { name: /A-1/ }));
+    expect(hubProps.last).toEqual(expect.objectContaining({ path: '/a/A-1' }));
+    expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
+  });
+
+  it('a blank Focus\'s empty chat offers Add worktrees (the picker) and New worktree here', async () => {
+    const { api } = await import('../api');
+    focusList.members = [];
+    vi.mocked(api.focusJarvis.log).mockResolvedValueOnce({ entries: [], meta: { focusId: 'f-a', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false } } as never);
+    noop.mockClear();
+    renderDashboard();
+    await act(async () => {});
+    const chat = within(screen.getByRole('region', { name: 'Jarvis' }));
+    expect(chat.queryByRole('list', { name: 'Recent in this Focus' })).toBeNull();
+    fireEvent.click(chat.getByRole('button', { name: 'New worktree here' }));
+    expect(noop).toHaveBeenCalledWith(undefined, undefined);
+    fireEvent.click(chat.getByRole('button', { name: 'Add worktrees' }));
+    expect(screen.getByRole('dialog', { name: /add worktrees/i })).toBeInTheDocument();
+  });
+
   it('a blank Focus opens on its Jarvis', async () => {
     focusList.members = [];
     renderDashboard();
@@ -95,6 +165,7 @@ describe('Dashboard: Focus Jarvis', () => {
 
   it('the header shows needs approval and opens the chat; Open on a tab card selects its worktree and tab', async () => {
     focusList.members = ['local:/a/A-1'];
+    leftOn('/a/A-1');
     renderDashboard();
     await act(async () => {});
     const jarvisCard = screen.getByTestId('focus-header');
@@ -183,6 +254,7 @@ describe('Dashboard: Focus Jarvis', () => {
 
   it('W5: with the chat closed, a starting card is not polled for', async () => {
     focusList.members = ['local:/a/A-1'];
+    leftOn('/a/A-1');
     intercom.peer = { ...intercom.peer, lifecycle: 'starting' };
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
@@ -201,6 +273,7 @@ describe('Dashboard: Focus Jarvis', () => {
     focusList.members = ['local:/a/A-1'];
     const metaNow = { focusId: 'f-a', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false };
     vi.mocked(api.focusJarvis.log).mockResolvedValueOnce({ entries: [{ id: 'r7', at: 't', type: 'jarvis', turnId: 't1', text: 'Done.', done: true }], meta: metaNow } as never);
+    leftOn('/a/A-1');
     renderDashboard();
     await act(async () => {});
     expect(JSON.parse(sessionStorage.getItem('strado:jarvis-seen') ?? '{}')['f-a']).toBeUndefined();

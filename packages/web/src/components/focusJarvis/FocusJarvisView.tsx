@@ -2,6 +2,17 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { ChatEntry, JarvisMeta } from '../../types';
 import { ChatEntryView, type EntryHandlers } from './ChatEntryView';
 import { JarvisComposer, type AgentChip, type WorktreeChip } from './JarvisComposer';
+import type { RecentWorktree } from '../../lib/home/recent';
+import type { Worktree } from '../../types';
+import { shortRelativeTime } from '../../lib/relativeTime';
+
+/** What the empty chat offers: the Focus's recent worktrees, or, for a blank Focus, ways to fill it. */
+export type JarvisStart = {
+  recent: RecentWorktree[];
+  onOpenRecent: (w: Worktree) => void;
+  onAddWorktrees: () => void;
+  onNewWorktree: () => void;
+};
 
 /** The log as read: within each run of one turn's entries, Jarvis's text
  * first, then what it did (approvals, actions, cards) in their order. Runs
@@ -22,8 +33,10 @@ export function displayOrder(entries: ChatEntry[]): ChatEntry[] {
 
 /** A Focus's Jarvis in the main area, T3 Code style: one centred column, the
  * chat scrolling above, the composer pinned below. */
-export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onLoadOlder, agents, worktrees, ...handlers }: {
+export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onLoadOlder, agents, worktrees, start, ...handlers }: {
   focusName: string;
+  /** The empty chat's starting points (none in tests that don't need them). */
+  start?: JarvisStart;
   entries: ChatEntry[];
   meta: JarvisMeta | null;
   hasOlder: boolean;
@@ -61,6 +74,7 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
               <div aria-hidden className="text-2xl text-[#e8906f]">✦</div>
               <div className="mt-2 text-[15px] text-zinc-200">What should we do in {focusName}?</div>
               <div className="mt-1 text-[12px] text-zinc-500">Jarvis can open worktrees and tabs, run scripts and talk to your agents.</div>
+              {start && <JarvisStartList start={start} />}
             </div>
           )}
           {displayOrder(entries).map((e) => <ChatEntryView key={e.id} entry={e} {...handlers} />)}
@@ -72,5 +86,35 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
         <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
       </div>
     </section>
+  );
+}
+
+// The home screen's Recent rows, for this Focus only.
+const START_ACTION = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-300 hover:bg-[rgb(var(--pane-edge)/0.05)]';
+function JarvisStartList({ start }: { start: JarvisStart }) {
+  return (
+    <div className="mt-8 text-left">
+      {start.recent.length > 0 ? (
+        <>
+          <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-wide text-zinc-600">Recent in this Focus</div>
+          <ul aria-label="Recent in this Focus">
+            {start.recent.map((r) => (
+              <li key={r.worktree.path}>
+                <button type="button" onClick={() => start.onOpenRecent(r.worktree)} className={START_ACTION}>
+                  <span className="truncate text-zinc-200">{r.name}</span>
+                  {r.repo && <span className="truncate text-xs text-zinc-500">· {r.repo}</span>}
+                  <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(r.openedAt)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <div className="flex flex-col">
+          <button type="button" onClick={start.onAddWorktrees} className={START_ACTION}>Add worktrees</button>
+          <button type="button" onClick={start.onNewWorktree} className={START_ACTION}>New worktree here</button>
+        </div>
+      )}
+    </div>
   );
 }

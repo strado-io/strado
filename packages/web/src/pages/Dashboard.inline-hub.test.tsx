@@ -136,8 +136,7 @@ function renderDashboard() {
 // name, so waiting on it means the tree has loaded.
 // The Focus pill lives in the sidebar, which home hides: show it first.
 const focusPill = (name: string) => {
-  const open = screen.queryByLabelText('Open sidebar');
-  if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
+  if (!screen.queryByRole('region', { name: 'Focuses' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
   // The open Focus in the sidebar's list ("none": nothing open, the list still there).
   if (name === 'none') {
     expect(screen.queryByTestId('focus-open')).toBeNull();
@@ -149,12 +148,15 @@ const focusPill = (name: string) => {
 const focusRow = (name: string) => screen.getByRole('button', { name: `Switch to ${name}` });
 // Home hides the sidebar; these tests drive it, so show it (idempotent).
 const repoRow = () => {
-  const open = screen.queryByLabelText('Open sidebar');
-  if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
+  if (!screen.queryByRole('region', { name: 'Focuses' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
   return screen.getAllByText('Repo One')[0]!;
 };
-// Home with nothing open: the start screen's question means the tree has loaded.
+// With a Focus active and nothing open, the main area is its Jarvis chat.
+const chat = () => screen.findByRole('region', { name: 'Jarvis' });
+// No Focus active: the global home; its question means the tree has loaded.
 const home = () => screen.findByRole('heading', { name: 'What do you want to do?' });
+/** No Focus active on this device: the global home. */
+const noActiveFocus = () => localStorage.removeItem('strado:active-focus-by-ws');
 // The ticket id on the sidebar's Focus card (it lands once the Focus list has loaded).
 // Home hides the sidebar, so open it (⌘B) when it is not there.
 const sidebarRow = async () => {
@@ -180,8 +182,9 @@ describe('Dashboard inline hub', () => {
     seedFocus();
   });
 
-  it('home: one question and the big command box, no Dock strip; Recent opens a worktree, and the box goes back to the Dock', async () => {
+  it('home (no Focus active): one question and the big command box, no Dock strip; Recent opens a worktree (into a Focus), and the box goes back to the Dock', async () => {
     localStorage.setItem('strado:worktree-lru', JSON.stringify({ '/wt/FD-9': Date.now() - 60_000 }));
+    noActiveFocus();
     renderDashboard();
     expect(await screen.findByRole('heading', { name: 'What do you want to do?' })).toBeInTheDocument();
     const boxes = screen.getAllByLabelText('Global search');
@@ -189,12 +192,15 @@ describe('Dashboard inline hub', () => {
     expect(boxes[0]).toHaveAttribute('placeholder', 'Tell Strado…  e.g. open master and run dev   ⌘K');
     expect(screen.queryByTestId('dock')).not.toBeInTheDocument(); // one command area on home
     fireEvent.click(within(screen.getByRole('list', { name: 'Recent' })).getByRole('button', { name: /FD-9/ }));
+    // No Focus active: the open asks for one first.
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'New focus' })).getByRole('button', { name: 'Create & switch' }));
     await screen.findByTestId('inline-hub');
     expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).not.toBeInTheDocument();
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toHaveAttribute('placeholder', 'Tell Strado what to do…  ⌘K');
   });
 
   it('home: "All worktrees →" shows the full list; "⚑ N waiting" selects the agent that needs you', async () => {
+    noActiveFocus();
     renderDashboard();
     await screen.findByRole('heading', { name: 'What do you want to do?' });
     fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
@@ -205,6 +211,7 @@ describe('Dashboard inline hub', () => {
 
   it('home: typing "add repo <path>" in the big box asks the model, whose nav.addRepo opens the Add repo dialog on that path', async () => {
     askModel.mockResolvedValueOnce({ kind: 'plan', steps: [{ action: 'nav.addRepo', args: { path: '/code/x' } }], model: 'm', ms: 1 });
+    noActiveFocus();
     renderDashboard();
     await screen.findByRole('heading', { name: 'What do you want to do?' });
     const box = screen.getByLabelText('Global search');
@@ -214,13 +221,14 @@ describe('Dashboard inline hub', () => {
     expect(askModel).toHaveBeenCalledWith('default', expect.objectContaining({ text: 'add repo /code/x' }), expect.anything());
   });
 
-  it('home: a plan for a worktree opens it first, then its new tab appears there; the box moves to the Dock', async () => {
+  it('from the Focus\'s chat: a plan for a worktree opens it first, then its new tab appears there; the box stays in the Dock', async () => {
     spawn.mockResolvedValue({ tab: { worktreePath: '/wt/FD-9', mode: 'claude', sessionId: '3' } });
     hubPlace.mockResolvedValue({ ok: true });
     askModel.mockResolvedValueOnce({ kind: 'plan', steps: [{ action: 'tab.open', args: { mode: 'claude', worktree: 'FD-9', place: { split: 'right' } } }], model: 'm', ms: 1 });
     renderDashboard();
-    await home();
+    await chat();
     const box = screen.getByLabelText('Global search');
+    act(() => box.focus()); // the Dock's box: the chat's composer has the keyboard until ⌘K or a click
     fireEvent.change(box, { target: { value: 'open claude in FD-9' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
@@ -231,6 +239,7 @@ describe('Dashboard inline hub', () => {
   });
 
   it('home has no Dock location (Recent and "All worktrees →" list them); on the Worktrees page the Dock names none, as a label', async () => {
+    noActiveFocus();
     renderDashboard();
     await home();
     expect(screen.queryByLabelText('No worktree open')).not.toBeInTheDocument();
@@ -240,14 +249,15 @@ describe('Dashboard inline hub', () => {
   });
 
   it('home shows the sidebar as the user left it (stored open stays open); ⌘B toggles it there and remembers', async () => {
+    noActiveFocus();
     renderDashboard(); // beforeEach stored the sidebar open
     await home();
-    expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Focuses' })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
     expect(screen.queryByRole('region', { name: 'Focuses' })).not.toBeInTheDocument();
     expect(localStorage.getItem('strado:sidebar-collapsed:v2')).toBe('1');
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
-    expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Focuses' })).toBeInTheDocument();
   });
 
   it('a sidebar Focus switch to a blank Focus lands on its Jarvis, the sidebar kept', async () => {
@@ -266,13 +276,14 @@ describe('Dashboard inline hub', () => {
     expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 
-  it('Back from the hub lands on home with the sidebar as it was (open stays open)', async () => {
+  it('Back from the hub lands on the Focus\'s chat with the sidebar as it was (open stays open)', async () => {
     renderDashboard();
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
     fireEvent.pointerDown(screen.getByRole('button', { name: '‹ Back' }));
     fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
-    await home();
+    await chat();
+    expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).toBeNull();
     expect(screen.getByRole('region', { name: 'Focuses' })).toBeInTheDocument();
   });
 
@@ -286,18 +297,18 @@ describe('Dashboard inline hub', () => {
 
   it('first run: the sidebar starts hidden — the big box is all you need; ⌘B brings it back', async () => {
     localStorage.removeItem('strado:sidebar-collapsed:v2');
+    noActiveFocus();
     renderDashboard();
     await home();
     expect(screen.queryByRole('region', { name: 'Focuses' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Global search')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'b', metaKey: true });
-    expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Focuses' })).toBeInTheDocument();
   });
 
   it('the Dock follows the open worktree: its location names it (with its project)', async () => {
     renderDashboard();
-    await home();
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' })); // the Dock (home has none)
+    await chat();
     expect(await screen.findByLabelText('No worktree open')).toBeInTheDocument();
     fireEvent.click(await sidebarRow());
     await screen.findByTestId('inline-hub');
@@ -344,8 +355,7 @@ describe('Dashboard inline hub', () => {
 
   it('opens the workspace-level code reviews page from the sidebar', async () => {
     renderDashboard();
-    await home();
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+    await chat();
     await waitFor(() => expect(repoRow()).toBeInTheDocument());
     // No intercom drawer: Mission Control (the strip and the box) is where an agent asks for you.
     expect(screen.queryByRole('button', { name: /open intercom/i })).not.toBeInTheDocument();
@@ -355,6 +365,7 @@ describe('Dashboard inline hub', () => {
   });
 
   it('the command bar is always docked at the bottom; ⌘K puts the cursor in it (no modal)', async () => {
+    noActiveFocus();
     renderDashboard();
     // Home: the box is the page, already focused.
     await home();
@@ -408,7 +419,7 @@ describe('Dashboard inline hub', () => {
     fakeFocuses.reset([{ id: 'f1', name: 'Billing', members: [], createdAt: 't', lastActiveAt: 't' }]);
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ default: 'f1' }));
     renderDashboard();
-    await home();
+    await chat();
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-9' } });
     fireEvent.keyDown(screen.getByLabelText('Global search'), { key: 'Enter' });
@@ -451,7 +462,7 @@ describe('Dashboard inline hub', () => {
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ default: 'f1' }));
     localStorage.setItem('strado:selected-by-focus', JSON.stringify({ f1: '/wt/FD-9' }));
     renderDashboard();
-    await home();
+    await chat();
     await waitFor(() => focusPill('Billing'));
     expect(screen.queryByTestId('inline-hub')).toBeNull();
     expect(JSON.parse(localStorage.getItem('strado:selected-by-focus')!)).toEqual({ f1: '/wt/FD-9' });

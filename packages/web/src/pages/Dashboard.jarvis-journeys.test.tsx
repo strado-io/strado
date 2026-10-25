@@ -173,8 +173,7 @@ function renderDashboard() {
 // name, so waiting on it means the tree has loaded.
 // The Focus pill lives in the sidebar, which home hides: show it first.
 const focusPill = (name: string) => {
-  const open = screen.queryByLabelText('Open sidebar');
-  if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
+  if (!screen.queryByRole('region', { name: 'Focuses' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
   // The open Focus in the sidebar's list ("none": nothing open, the list still there).
   if (name === 'none') {
     expect(screen.queryByTestId('focus-open')).toBeNull();
@@ -187,11 +186,15 @@ const focusRow = (name: string) => screen.getByRole('button', { name: `Switch to
 // Home hides the sidebar; these tests drive it, so show it (idempotent).
 const repoRow = () => {
   const open = screen.queryByLabelText('Open sidebar');
-  if (open && screen.queryByRole('heading', { name: 'What do you want to do?' })) fireEvent.click(open);
+  if (open) fireEvent.click(open);
   return screen.getAllByText('Repo One')[0]!;
 };
 // Home with nothing open: the start screen's question means the tree has loaded.
-const home = () => screen.findByRole('heading', { name: 'What do you want to do?' });
+// The start view: with a Focus active, its Jarvis chat (the global home is only for no active Focus).
+const home = () => screen.findByRole('region', { name: 'Jarvis' });
+const globalHome = () => screen.findByRole('heading', { name: 'What do you want to do?' });
+/** No Focus active on this device: the global home. */
+const noActiveFocus = () => localStorage.removeItem('strado:active-focus-by-ws');
 // The ticket id on the sidebar's Focus card (it lands once the Focus list has loaded).
 // Home hides the sidebar, so open it (⌘B) when it is not there.
 const sidebarRow = async () => {
@@ -220,7 +223,7 @@ async function say(text: string) {
 const plan = (...steps: { action: string; args: Record<string, unknown> }[]) => ({ kind: 'plan' as const, steps, model: 'typesafe/jev-1.14', ms: 300 });
 async function openFd9FromHome() {
   await home();
-  fireEvent.click(within(screen.getByRole('list', { name: 'Recent' })).getByRole('button', { name: /FD-9/ }));
+  fireEvent.click(within(await screen.findByRole('list', { name: 'Recent in this Focus' })).getByRole('button', { name: /FD-9/ }));
   await screen.findByTestId('inline-hub');
 }
 
@@ -442,21 +445,29 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   describe('home has one command area (no Dock strip)', () => {
-    it('home: no Dock; opening a worktree brings the Dock and its bar back; going home hides it again', async () => {
+    it('home (no Focus active): no Dock, one box', async () => {
+      noActiveFocus();
       renderDashboard();
-      await home();
+      await globalHome();
       expect(screen.queryByTestId('dock')).toBeNull();
       expect(screen.getAllByLabelText('Global search')).toHaveLength(1);
+    });
+
+    it('a Focus\'s chat has the Dock and its bar; a worktree keeps it; Back lands on the chat again', async () => {
+      renderDashboard();
+      await home();
+      expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toBeInTheDocument();
       await openFd9FromHome();
       expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
       await home();
-      expect(screen.queryByTestId('dock')).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).toBeNull();
     });
 
     it('home: "⚑ 1 waiting" selects the agent that needs you (no Dock strip comes with it)', async () => {
+      noActiveFocus();
       renderDashboard();
-      await home();
+      await globalHome();
       fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
       expect(await screen.findByTestId('agent-line')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /No worktree open/ })).toBeNull();
@@ -465,8 +476,9 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
 
   it('home "⚑ 1 waiting" selects the agent that needs you; typing answers its call (no drawer)', async () => {
     const { api } = await import('../api');
+    noActiveFocus();
     renderDashboard();
-    await home();
+    await globalHome();
     fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
     expect(await screen.findByTestId('agent-line-note')).toHaveTextContent('asks: Which database? — type to reply');
     await waitFor(() => expect(document.activeElement).toBe(box()));
@@ -530,9 +542,19 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       expect(worktreesNav()).toHaveAttribute('aria-current', 'page');
     });
 
-    it('app start with nothing open: home', async () => {
+    it('app start with a Focus active and no saved view: its Jarvis chat, the header selected, never the global home', async () => {
+      localStorage.setItem('strado:sidebar-collapsed:v2', '0');
       renderDashboard();
-      expect(await screen.findByRole('heading', { name: 'What do you want to do?' })).toBeInTheDocument();
+      expect(await home()).toHaveTextContent(/what should we do in working on/i);
+      expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).toBeNull();
+      await waitFor(() => expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true'));
+    });
+
+    it('app start with no Focus active: the global home', async () => {
+      noActiveFocus();
+      renderDashboard();
+      expect(await globalHome()).toBeInTheDocument();
+      expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
     });
 
     it('the sidebar\'s Worktrees shows the list, not home; "go home" shows home', async () => {
@@ -565,7 +587,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     it('Back from a hub goes where you came from: the list → the list', async () => {
       renderDashboard();
       await home();
-      fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+      fireEvent.click(sidebarWorktrees());
       await waitFor(() => expect(hero()).toBeNull());
       fireEvent.click(screen.getAllByText('FD-9')[0]!);
       await screen.findByTestId('inline-hub');
