@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
-import { createJarvisExecutor, trackAsks } from '../../src/routes/jarvisTools';
+import { createJarvisExecutor, createJarvisWorktree, trackAsks } from '../../src/routes/jarvisTools';
+import { exec } from '../../src/shell';
 import type { JarvisRunner, TurnRef } from '../../src/services/jarvisChat/runner';
 import { createUiClients, type UiCommand } from '../../src/services/uiClients';
 import { JARVIS_TOKEN_HEADER, JARVIS_TOOLS, type ChatEntry, type JarvisToolSpec } from '../../src/services/jarvisChat/types';
@@ -172,6 +173,29 @@ describe('createJarvisExecutor', () => {
     expect(got).toEqual(['win2']);
     expect(await execute({ ws: 'w', focusId: 'f', turnId: 't', windowId: 'win1', wake: false, action: 'worktree.create', args: {} })).toEqual({ ok: true, text: 'wt' });
     expect(got).toEqual(['win2']);
+  });
+});
+
+describe('worktree.create (approved)', () => {
+  it('creates the worktree from the repo\'s branch, trusts it in Claude Code, and adds it to the Focus', async () => {
+    const repo = path.join(tmp, 'repo');
+    await fs.mkdir(repo);
+    for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'x@y.z'], ['config', 'user.name', 'x'], ['commit', '-q', '--allow-empty', '-m', 'i']]) await exec('git', a, { cwd: repo });
+    const r = await app.inject({ method: 'POST', url: '/api/w/default/repos', payload: { id: 'web', name: 'Web', path: repo, projectSubdir: null, startCommand: 'true', defaultPort: 9100 } });
+    expect(r.statusCode).toBeLessThan(300);
+    const stores = (ws: string) => app.deps.registry.get(ws);
+    const focus = await (await stores('default')).focuses.create({ name: 'Login' });
+    const trusted: string[] = [];
+    const run = createJarvisWorktree(app, stores, async (p) => { trusted.push(p); });
+    const res = await run({ ws: 'default', focusId: focus.id, turnId: 't', windowId: 'w', wake: false, action: 'worktree.create', args: { repo: 'web', branch: 'fix-login' } });
+    expect(res).toMatchObject({ ok: true });
+    expect(trusted).toHaveLength(1);
+    expect(path.basename(trusted[0]!)).toBe('fix_login');
+    expect((await fs.stat(trusted[0]!)).isDirectory()).toBe(true);
+    const after = (await (await stores('default')).focuses.list()).find((f) => f.id === focus.id)!;
+    expect(after.members).toContain(`local:${trusted[0]}`);
+    expect(await run({ ws: 'default', focusId: focus.id, turnId: 't', windowId: 'w', wake: false, action: 'worktree.create', args: { repo: 'nope', branch: 'x' } })).toEqual({ ok: false, text: 'No repo named nope' });
+    expect(trusted).toHaveLength(1);
   });
 });
 

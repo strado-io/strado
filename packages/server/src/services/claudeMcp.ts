@@ -31,6 +31,34 @@ let chain: Promise<unknown> = Promise.resolve();
  * (recognised by its script name). Never touches anything else. Returns what
  * happened; never throws for a malformed file — that is the user's file. */
 export function installClaudeMcp(worktreePath: string, opts: { file?: string } = {}): Promise<'written' | 'unchanged' | 'skipped'> {
+  return editClaudeJson((root) => {
+    const projects = isObject(root.projects) ? root.projects : (root.projects = {});
+    const project = isObject(projects[worktreePath]) ? (projects[worktreePath] as Json) : (projects[worktreePath] = {});
+    const servers = isObject(project.mcpServers) ? (project.mcpServers as Json) : (project.mcpServers = {});
+    const existing = servers.strado;
+    const ours = existing === undefined || scriptBase(existing) === 'strado-mcp.mjs' || scriptBase(existing) === 'strado-mcp.cjs';
+    if (ours) servers.strado = claudeMcpEntry();
+
+    if (isObject(root.mcpServers) && scriptBase(root.mcpServers['strado-preview']) === 'preview-mcp.cjs') {
+      delete root.mcpServers['strado-preview'];
+    }
+  }, opts);
+}
+
+/** Mark `folderPath` trusted in Claude Code, as its own trust dialog does
+ * (projects[path].hasTrustDialogAccepted). Only for a folder the person just
+ * approved creating (a Focus Jarvis new worktree): trusting is their call. */
+export function trustClaudeFolder(folderPath: string, opts: { file?: string } = {}): Promise<'written' | 'unchanged' | 'skipped'> {
+  return editClaudeJson((root) => {
+    const projects = isObject(root.projects) ? root.projects : (root.projects = {});
+    const project = isObject(projects[folderPath]) ? (projects[folderPath] as Json) : (projects[folderPath] = {});
+    project.hasTrustDialogAccepted = true;
+  }, opts);
+}
+
+/** One serialized read-modify-write of ~/.claude.json: `mutate` edits the
+ * parsed root in place; nothing else in the file changes. */
+function editClaudeJson(mutate: (root: Json) => void, opts: { file?: string }): Promise<'written' | 'unchanged' | 'skipped'> {
   const run = async (): Promise<'written' | 'unchanged' | 'skipped'> => {
     const file = opts.file ?? defaultFile();
     let raw: string | null = null;
@@ -44,18 +72,7 @@ export function installClaudeMcp(worktreePath: string, opts: { file?: string } =
       root = parsed;
     }
     const before = JSON.stringify(root);
-
-    const projects = isObject(root.projects) ? root.projects : (root.projects = {});
-    const project = isObject(projects[worktreePath]) ? (projects[worktreePath] as Json) : (projects[worktreePath] = {});
-    const servers = isObject(project.mcpServers) ? (project.mcpServers as Json) : (project.mcpServers = {});
-    const existing = servers.strado;
-    const ours = existing === undefined || scriptBase(existing) === 'strado-mcp.mjs' || scriptBase(existing) === 'strado-mcp.cjs';
-    if (ours) servers.strado = claudeMcpEntry();
-
-    if (isObject(root.mcpServers) && scriptBase(root.mcpServers['strado-preview']) === 'preview-mcp.cjs') {
-      delete root.mcpServers['strado-preview'];
-    }
-
+    mutate(root);
     if (JSON.stringify(root) === before) return 'unchanged';
     const indent = raw !== null && /^\{\n(\s+)"/.test(raw) ? (/^\{\n(\s+)"/.exec(raw)?.[1]?.length ?? 2) : 2;
 

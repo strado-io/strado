@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { claudeMcpEntry, installClaudeMcp } from '../../src/services/claudeMcp';
+import { claudeMcpEntry, installClaudeMcp, trustClaudeFolder } from '../../src/services/claudeMcp';
 
 let tmp: string; let file: string;
 const read = async () => JSON.parse(await fs.readFile(file, 'utf8'));
@@ -137,5 +137,26 @@ describe('installClaudeMcp', () => {
     await expect(installClaudeMcp('/w/one', { file: badFile })).rejects.toThrow();
     const entries = await fs.readdir(tmp);
     expect(entries.filter((e) => e.includes('.tmp'))).toEqual([]);
+  });
+});
+
+describe('trustClaudeFolder', () => {
+  it('marks only that folder trusted, keeping its entry and every other one; serialized with installClaudeMcp', async () => {
+    const before = { oauthAccount: { emailAddress: 'x@y.z' }, projects: { '/w/other': { hasTrustDialogAccepted: false }, '/w/new': { allowedTools: ['Read'] } } };
+    await fs.writeFile(file, JSON.stringify(before, null, 2) + '\n', { mode: 0o600 });
+    const [a, b] = await Promise.all([trustClaudeFolder('/w/new', { file }), installClaudeMcp('/w/new', { file })]);
+    expect([a, b]).toEqual(['written', 'written']);
+    const after = await read();
+    expect(after.oauthAccount).toEqual(before.oauthAccount);
+    expect(after.projects['/w/other']).toEqual({ hasTrustDialogAccepted: false });
+    expect(after.projects['/w/new']).toEqual({ allowedTools: ['Read'], hasTrustDialogAccepted: true, mcpServers: { strado: claudeMcpEntry() } });
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    expect(await trustClaudeFolder('/w/new', { file })).toBe('unchanged');
+  });
+
+  it('a malformed file is left alone', async () => {
+    await fs.writeFile(file, '{ not json');
+    expect(await trustClaudeFolder('/w/new', { file })).toBe('skipped');
+    expect(await fs.readFile(file, 'utf8')).toBe('{ not json');
   });
 });

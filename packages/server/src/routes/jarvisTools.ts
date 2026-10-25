@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { AppError } from '../errors.js';
 import type { WorkspaceStores } from '../workspaceRegistry.js';
 import { exec } from '../shell.js';
+import { trustClaudeFolder } from '../services/claudeMcp.js';
 import type { UiClients } from '../services/uiClients.js';
 import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
 import { approvalFor, checkArgs, jarvisToolSpecs, summarize } from '../services/jarvisChat/tools.js';
@@ -74,8 +75,13 @@ export function trackAsks(execute: JarvisExecutor, asked: (ws: string, focusId: 
 }
 
 /** worktree.create: the same job the New worktree dialog starts (from the
- *  repo's current branch), then the new worktree joins the turn's Focus. */
-export function createJarvisWorktree(app: FastifyInstance, stores: (ws: string) => Promise<WorkspaceStores>): JarvisExecutor {
+ *  repo's current branch), then the new worktree is trusted in Claude Code and
+ *  joins the turn's Focus. */
+export function createJarvisWorktree(
+  app: FastifyInstance,
+  stores: (ws: string) => Promise<WorkspaceStores>,
+  trust: (folder: string) => Promise<unknown> = trustClaudeFolder,
+): JarvisExecutor {
   return async ({ ws, focusId, args }) => {
     const repoName = String(args.repo ?? '');
     const branch = String(args.branch ?? '');
@@ -93,6 +99,9 @@ export function createJarvisWorktree(app: FastifyInstance, stores: (ws: string) 
     const job = await app.deps.jobs.wait<{ path?: string }>(jobId);
     const wtPath = job.status === 'done' ? job.result?.path : undefined;
     if (!wtPath) return { ok: false, text: 'Creating the worktree failed' };
+    // The person approved this exact folder from their own repo: a Claude tab
+    // Jarvis opens there must not sit on Claude's trust question off screen.
+    await trust(wtPath).catch(() => undefined);
     await focuses.update(focusId, { addMembers: [`local:${wtPath}`] });
     return { ok: true, text: `Created the worktree ${wtPath.split('/').pop()} from ${repo.name} and added it to this Focus` };
   };
