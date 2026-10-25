@@ -33,6 +33,10 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<CodeView | null>(null);
   const cursorLine = useRef(1);
+  // The asked line is a one-time jump per ask (path + line + nonce). A reload
+  // that rebuilds the editor goes back to where the person was, not to it.
+  const appliedAsk = useRef<string | null>(null);
+  const askKey = line ? `${path}\0${line}\0${nonce ?? ''}` : null;
   const shownPath = useRef<string | null>(null);
   // The latest marks, for an editor that finishes loading after they arrived.
   const marksRef = useRef<FileMarks | null>(null);
@@ -87,7 +91,13 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
         view = v;
         viewRef.current = v;
         v.setMarks(marksRef.current);
-        if (line) { v.goToLine(line); cursorLine.current = line; }
+        if (askKey && appliedAsk.current !== askKey) {
+          appliedAsk.current = askKey;
+          v.goToLine(line!);
+          cursorLine.current = line!;
+        } else if (cursorLine.current > 1) {
+          v.goToLine(cursorLine.current);
+        }
       })
       .catch(() => { if (live) setEditorFailed(true); });
     return () => {
@@ -103,8 +113,11 @@ export function FileViewer({ worktreePath, path, line, nonce, reloadKey, read, m
 
   useEffect(() => { viewRef.current?.setMarks(marks); }, [marks, text]);
   useEffect(() => {
-    if (line && viewRef.current) { viewRef.current.goToLine(line); cursorLine.current = line; }
-  }, [line, nonce]);
+    if (!askKey || !viewRef.current || appliedAsk.current === askKey) return;
+    appliedAsk.current = askKey;
+    viewRef.current.goToLine(line!);
+    cursorLine.current = line!;
+  }, [askKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const starts = changeStarts(marks);
   const step = (dir: 1 | -1) => {

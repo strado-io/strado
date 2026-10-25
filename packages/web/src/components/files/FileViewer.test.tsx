@@ -93,6 +93,26 @@ describe('FileViewer', () => {
     expect(cm.view.goToLine).toHaveBeenLastCalledWith(30);
   });
 
+  it('a reload that rebuilds the editor goes back to where the person was, not the old asked line', async () => {
+    let text = TEXT.text!;
+    const read = vi.fn(async () => ({ ...TEXT, text }));
+    const { props, rerender } = show({ read, line: 12, nonce: 1 });
+    await flush();
+    expect(cm.view.goToLine).toHaveBeenLastCalledWith(12);
+    act(() => cm.opts!.onSelection({ from: 40, to: 40, text: 'x' }));
+    cm.view.goToLine.mockClear();
+    text = 'edited\n';
+    rerender(<FileViewer {...props} read={read} line={12} nonce={1} reloadKey={1} />);
+    await flush();
+    expect(cm.opts!.doc).toBe('edited\n');
+    expect(cm.view.goToLine).toHaveBeenCalledWith(40);
+    expect(cm.view.goToLine).not.toHaveBeenCalledWith(12);
+    // A new ask (new nonce) still jumps.
+    rerender(<FileViewer {...props} read={read} line={12} nonce={2} reloadKey={1} />);
+    await flush();
+    expect(cm.view.goToLine).toHaveBeenLastCalledWith(12);
+  });
+
   it('a binary file and a too-large one get a note, never the editor', async () => {
     show({}, { ...TEXT, binary: true, text: undefined });
     await flush();
