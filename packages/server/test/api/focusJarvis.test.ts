@@ -40,6 +40,11 @@ function fakeRunner(): FocusJarvisRunner {
       const late = lateWrite;
       if (late) setTimeout(() => void late().catch(() => undefined), 0);
     },
+    /** Like the real one: the turn's last writes land before it resolves. */
+    async forget(ws, id) {
+      calls.push(['forget', ws, id]);
+      if (lateWrite) await lateWrite();
+    },
   };
 }
 
@@ -219,10 +224,21 @@ describe('SSE', () => {
     const s = await store();
     const turn = await s.append(focusId, { type: 'turn', turnId: 't1', state: 'running' });
     lateWrite = () => s.upsert(focusId, { ...turn, state: 'stopped' } as ChatEntry);
+    // A runner without forget: stop, and the store refuses the late write.
+    delete (app.deps.jarvis as Partial<FocusJarvisRunner>).forget;
     expect((await app.inject({ method: 'DELETE', url: `/api/w/default/focuses/${focusId}` })).statusCode).toBe(204);
     await new Promise((r) => setTimeout(r, 20));
     expect(await fs.readdir(path.join(app.deps.registry.workspaceDir('default'), 'jarvis')).catch(() => [])).toEqual([]);
     expect((await app.inject({ method: 'GET', url: base() })).statusCode).toBe(404);
+  });
+
+  it("delete focus mid-turn: forget lets the turn's last write land first, then the chat is removed", async () => {
+    const s = await store();
+    const turn = await s.append(focusId, { type: 'turn', turnId: 't1', state: 'running' });
+    lateWrite = () => s.upsert(focusId, { ...turn, state: 'stopped' } as ChatEntry);
+    expect((await app.inject({ method: 'DELETE', url: `/api/w/default/focuses/${focusId}` })).statusCode).toBe(204);
+    expect(calls).toEqual([['forget', 'default', focusId]]);
+    expect(await fs.readdir(path.join(app.deps.registry.workspaceDir('default'), 'jarvis')).catch(() => [])).toEqual([]);
   });
 
   it('unknown focus SSE 404', async () => {
@@ -239,7 +255,7 @@ describe('SSE', () => {
     await events(res, 1);
     const del = await app.inject({ method: 'DELETE', url: `/api/w/default/focuses/${focusId}` });
     expect(del.statusCode).toBe(204);
-    expect(calls).toEqual([['stop', 'default', focusId]]);
+    expect(calls).toEqual([['forget', 'default', focusId]]);
     // The open stream ends; the files are gone; later reads 404.
     expect(await events(res, 1)).toEqual([]);
     const dir = path.join(app.deps.registry.workspaceDir('default'), 'jarvis');

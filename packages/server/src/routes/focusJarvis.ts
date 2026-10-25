@@ -16,6 +16,9 @@ export type FocusJarvisRunner = {
   send(ws: string, focusId: string, input: { text: string; windowId: string; context: JarvisContext }): Promise<ChatEntry>;
   approve(ws: string, focusId: string, entryId: string, input: { approve: boolean; windowId: string; context: JarvisContext }): Promise<void>;
   stop(ws: string, focusId: string): Promise<void>;
+  /** The Focus is gone: stop, drop its queue, wait for the turn's last
+   *  writes, remove its working dir. Without it, delete falls back to stop. */
+  forget?(ws: string, focusId: string): Promise<void>;
 };
 
 const HEARTBEAT_MS = 15_000;
@@ -125,12 +128,14 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
   });
 }
 
-/** Focus deleted: stop its Jarvis and delete its chat. Never fails the delete. */
+/** Focus deleted: forget its Jarvis (its last writes land first), then
+ *  delete its chat. Never fails the delete. */
 export async function dropFocusJarvis(
   req: FastifyRequest,
   runner: FocusJarvisRunner | null,
   focusId: string,
 ): Promise<void> {
-  await runner?.stop(req.workspace!.id, focusId).catch((err) => req.log.warn({ err }, 'jarvis stop on focus delete failed'));
+  const ws = req.workspace!.id;
+  await (runner?.forget ? runner.forget(ws, focusId) : runner?.stop(ws, focusId))?.catch((err) => req.log.warn({ err }, 'jarvis forget on focus delete failed'));
   await req.workspace!.stores.jarvis.remove(focusId).catch((err) => req.log.warn({ err }, 'jarvis chat remove failed'));
 }
