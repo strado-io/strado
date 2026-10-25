@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
 import { createJarvisExecutor, createJarvisWorktree, outputText, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
 import { commandRuns } from '../../src/services/tabOps';
+import { sessionKeyFor } from '../../src/services/terminalManager';
 import type { FastifyInstance } from 'fastify';
 import type { AgentSummary } from '../../src/services/agentRegistry';
 import { exec } from '../../src/shell';
@@ -132,6 +133,33 @@ describe('jarvis tool gateway', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('an argument carrying a secret is refused: nothing runs, no card, Jarvis is told to leave it to the person', async () => {
+    openWindow('win1');
+    const res = await call('jarvis_run_in_shell', { tab: 'shell-1', command: 'export API_KEY=sk-live-123456 && npm run deploy' });
+    expect(res.json().text).toMatch(/contains a secret/);
+    const open = await call('jarvis_open_tab', { mode: 'claude', worktree: 'api', prompt: 'use password: hunter2' });
+    expect(open.json().text).toMatch(/contains a secret/);
+    expect(sent).toEqual([]);
+    expect(await log()).toEqual([]);
+  });
+
+  it('two gated calls at once in one turn make one approval card', async () => {
+    const [a, b] = await Promise.all([
+      call('jarvis_run_in_shell', { tab: 'shell-1', command: 'ls' }),
+      call('jarvis_close_tab', { tab: 'shell-1' }),
+    ]);
+    expect([a.json().text, b.json().text].filter((t: string) => t.startsWith('Waiting'))).toHaveLength(1);
+    expect(of(await log(), 'approval')).toHaveLength(1);
+  });
+
+  it('what comes back to Jarvis is redacted (a recap can quote a key an agent printed)', async () => {
+    openWindow('win1');
+    ack = () => ({ ok: true, text: 'claude-1 printed ANTHROPIC_API_KEY=sk-ant-abcdef123456 earlier' });
+    const res = await call('jarvis_recap', { agent: 'claude-1', focus: null });
+    expect(res.json().text).not.toContain('sk-ant-abcdef123456');
+    expect(res.json().text).toContain('[redacted]');
+  });
+
   it('bad arguments are a 400 with a fixed message; an unknown tool is a 404', async () => {
     const bad = await call('jarvis_open_tab', { mode: 'shell', secret: 'token=abc123' });
     expect(bad.statusCode).toBe(400);
@@ -247,18 +275,26 @@ describe('a Claude tab on the folder-trust question', () => {
 });
 
 describe('shell output for Jarvis', () => {
-  it('a shell line the window ran comes back with its output tail; other runs are not mixed in', async () => {
+  it('a shell line the window ran comes back with its output tail; the same line run elsewhere is never taken', async () => {
     const ui = createUiClients();
+    let card: Record<string, unknown> | undefined;
     ui.connect({ clientId: 'win1', wsId: 'w', remote: false, send: (cmd) => {
-      commandRuns.emit({ key: 'other', command: 'npm test', result: { output: 'NOT THIS', settled: true, durationMs: 1 } });
-      commandRuns.emit({ key: 'shell:/w/api:1', command: 'ls', result: { output: '\x1b[1mREADME.md\x1b[0m\nsrc\n\n', settled: true, durationMs: 5 } });
-      queueMicrotask(() => ui.ack('w', 'win1', cmd.id, { applied: true, result: { ok: true, text: 'Ran ls in shell-1' } }));
+      commandRuns.emit({ key: sessionKeyFor('shell', '/other/ws/repo', '1'), command: 'ls', result: { output: 'OTHER WORKSPACE', settled: true, durationMs: 1 } });
+      commandRuns.emit({ key: sessionKeyFor('shell', '/w/api', '1'), command: 'ls', result: { output: '\x1b[1mREADME.md\x1b[0m\nsrc\n\n', settled: true, durationMs: 5 } });
+      commandRuns.emit({ key: sessionKeyFor('shell', '/w/api', '2'), command: 'ls', result: { output: 'OTHER TAB', settled: true, durationMs: 1 } });
+      queueMicrotask(() => ui.ack('w', 'win1', cmd.id, { applied: true, result: { ok: true, text: 'Ran ls in shell-1', ...(card ? { card } : {}) } }));
     } });
+    const ref = { ws: 'w', focusId: 'f', turnId: 't', windowId: 'win1', wake: false };
+    // The window named the tab: exactly that tab's run.
+    card = { kind: 'shell', worktree: 'api', worktreePath: '/w/api', tab: 'shell-1' };
     const execute = createJarvisExecutor({ uiClients: ui, createWorktree: async () => ({ ok: true, text: '' }) });
-    const r = await execute({ ws: 'w', focusId: 'f', turnId: 't', windowId: 'win1', wake: false, action: 'shell.run', args: { tab: 'shell-1', command: 'ls' } });
+    const r = await execute({ ...ref, action: 'shell.run', args: { tab: 'shell-1', command: 'ls' } });
     expect(r.text).toBe('Ran ls in shell-1\n\nOutput of `ls`:\nREADME.md\nsrc');
-    // Nothing is captured once the action is over.
-    commandRuns.emit({ key: 'x', command: 'ls', result: { output: 'late', settled: true, durationMs: 1 } });
+    // No card: only a run in one of this Focus's worktrees; none at all without that list.
+    card = undefined;
+    const scoped = createJarvisExecutor({ uiClients: ui, createWorktree: async () => ({ ok: true, text: '' }), focusPaths: async () => ['/w/web'] });
+    expect((await scoped({ ...ref, action: 'shell.run', args: { tab: 'this', command: 'ls' } })).text).toBe('Ran ls in shell-1');
+    expect((await execute({ ...ref, action: 'shell.run', args: { tab: 'this', command: 'ls' } })).text).toBe('Ran ls in shell-1');
   });
 
   it('the tail: last 40 lines, at most 4 KB, secrets redacted; still running and errors say so', () => {

@@ -12,6 +12,7 @@ import { trustClaudeFolder } from '../services/claudeMcp.js';
 import { trustAttention } from '../services/claudeTrust.js';
 import { commandRuns, type CommandResult, type CommandRun } from '../services/tabOps.js';
 import { stripAnsi, tailBytes } from '../services/terminalText.js';
+import { parseSessionKey, sessionKeyFor } from '../services/terminalManager.js';
 import { redactChat } from '../services/jarvisChat/store.js';
 import type { UiClients } from '../services/uiClients.js';
 import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
@@ -56,7 +57,13 @@ function resultOf(raw: unknown): JarvisUiActionResult | null {
 
 /** Runs an action in a window: the turn's own (or, for a wake, the most
  *  recently focused one). A new worktree is the server's own job. */
-export function createJarvisExecutor(deps: { uiClients: UiClients; createWorktree: JarvisExecutor; timeoutMs?: number }): JarvisExecutor {
+export function createJarvisExecutor(deps: {
+  uiClients: UiClients;
+  createWorktree: JarvisExecutor;
+  /** The Focus's local worktree paths: a shell line's output is only taken from a tab there. */
+  focusPaths?: (ws: string, focusId: string) => Promise<string[]>;
+  timeoutMs?: number;
+}): JarvisExecutor {
   return async (call) => {
     if (call.action === WORKTREE_CREATE) return deps.createWorktree(call);
     // A shell line's output, as the server ran it for the window: Jarvis sees what it printed.
@@ -74,8 +81,20 @@ export function createJarvisExecutor(deps: { uiClients: UiClients; createWorktre
     }
     if (!r.applied) return { ok: false, text: WINDOW_REASONS[r.reason ?? ''] ?? 'The Strado window could not do it' };
     const out = resultOf(r.result) ?? { ok: false, text: 'The Strado window could not do it' };
-    const run = runs.at(-1);
-    return run && command ? { ...out, text: `${out.text}\n\n${outputText(command, run.result)}` } : out;
+    // Which run was this one: the card's own tab when the window named it,
+    // else a run of that line in one of this Focus's worktrees. Never another
+    // workspace's or Focus's run of the same line.
+    let mine: CommandRun | undefined;
+    const card = out.card as (TabCardRef & { worktreePath?: string }) | undefined;
+    const shellId = card?.kind === 'shell' && card.worktreePath ? /^shell-(\d+)$/.exec(card.tab)?.[1] : undefined;
+    if (shellId && card?.worktreePath) {
+      const key = sessionKeyFor('shell', card.worktreePath, shellId);
+      mine = runs.filter((x) => x.key === key).at(-1);
+    } else if (runs.length && deps.focusPaths) {
+      const paths = new Set(await deps.focusPaths(call.ws, call.focusId).catch(() => []));
+      mine = runs.filter((x) => paths.has(parseSessionKey(x.key).path)).at(-1);
+    }
+    return mine && command ? { ...out, text: `${out.text}\n\n${outputText(command, mine.result)}` } : out;
   };
 }
 
@@ -168,6 +187,7 @@ export function createJarvisWorktree(
   };
 }
 
+const SECRET_ARGS = 'That contains a secret (a token, key or password). Jarvis never passes secrets: tell the person to run it themselves.';
 const waitText = (id: string) => `Waiting for the person's approval (approval ${id}). End your turn now.`;
 
 export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
@@ -202,14 +222,18 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
     } catch (err) {
       throw new AppError('VALIDATION', (err as Error).message);
     }
+    // A secret in an argument would be redacted in the log, and an approved
+    // action runs what the log holds: the person runs such a line themselves.
+    if (redactChat(JSON.stringify(args)) !== JSON.stringify(args)) return { text: SECRET_ARGS };
     const t = Date.now();
     for (const [id, at] of waiting) if (t - at > WAITING_MS) waiting.delete(id);
     if (waiting.has(ref.turnId)) return { text: 'An approval is already waiting. End your turn now.' };
-    const log = (await deps.stores(ref.ws)).jarvis;
     const summary = summarize(action, args);
     const gate = approvalFor(action, args, { wake: ref.wake });
+    // Claimed before any await: two parallel gated calls make one card, not two.
+    if (gate) waiting.set(ref.turnId, t);
+    const log = (await deps.stores(ref.ws)).jarvis;
     if (gate) {
-      waiting.set(ref.turnId, t);
       const entry = await log.append(ref.focusId, { type: 'approval', turnId: ref.turnId, action, args, summary, ...gate, state: 'pending' });
       return { text: waitText(entry.id) };
     }
@@ -218,6 +242,7 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
       type: 'action', turnId: ref.turnId, action, summary, ok: r.ok,
       ...(r.ok ? {} : { error: r.text }), ...(r.card ? { card: r.card } : {}),
     });
-    return { text: r.ok ? r.text || `Done: ${summary}` : `Failed: ${r.text}` };
+    // What comes back (an agent's recap, a window's words) is redacted like the prompt.
+    return { text: redactChat(r.ok ? r.text || `Done: ${summary}` : `Failed: ${r.text}`) };
   });
 }

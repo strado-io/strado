@@ -676,7 +676,12 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const stores = (ws: string) => deps.registry.get(ws);
     let wakes: ReturnType<typeof createJarvisWakes> | null = null;
     const execute = trackAsks(
-      watchTrust(createJarvisExecutor({ uiClients: deps.uiClients, createWorktree: createJarvisWorktree(app, stores) }), trustWatcher(app)),
+      watchTrust(createJarvisExecutor({
+        uiClients: deps.uiClients,
+        createWorktree: createJarvisWorktree(app, stores),
+        focusPaths: async (ws, focusId) => ((await (await stores(ws)).focuses.list()).find((f) => f.id === focusId)?.members ?? [])
+          .filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length)),
+      }), trustWatcher(app)),
       (ws, focusId, askId) => wakes?.asked(ws, focusId, askId),
     );
     deps.jarvis ??= createJarvisRunner({

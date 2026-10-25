@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { claudeArgv, createStreamParser, runClaudeHeadless, type HeadlessEvent, type HeadlessSpawn } from './claudeHeadless.js';
 import { jarvisAllowedTools } from './types.js';
 
@@ -118,6 +118,32 @@ describe('runClaudeHeadless', () => {
     const fake = fakeChild(['{"type":"system","subtype":"init","session_id":"s"}', 'Error: token=abc123 leaked'], 1);
     const events = await collect(runClaudeHeadless({ ...base, prompt: 'x', signal: new AbortController().signal }, () => fake.child));
     expect(events).toEqual([{ type: 'session', sessionId: 's' }, { type: 'error', message: 'Claude Code exited unexpectedly' }]);
+  });
+
+  it('a process that ignores SIGTERM gets SIGKILL, and the turn ends only once it is gone', async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter() as ChildProcess & EventEmitter;
+      const signals: string[] = [];
+      Object.assign(child, {
+        stdout: new PassThrough(), stdin: new PassThrough(), pid: 7, exitCode: null, signalCode: null,
+        kill: (sig: string) => { signals.push(sig); if (sig === 'SIGKILL') { (child as any).signalCode = 'SIGKILL'; setTimeout(() => child.emit('close', null), 0); } return true; },
+      });
+      const ac = new AbortController();
+      let ended = false;
+      const run = collect(runClaudeHeadless({ ...base, prompt: 'x', signal: ac.signal }, () => child)).then((e) => { ended = true; return e; });
+      await vi.advanceTimersByTimeAsync(10);
+      ac.abort();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(signals).toEqual(['SIGTERM']);
+      expect(ended).toBe(false);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await run).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('abort kills the process and ends quietly', async () => {

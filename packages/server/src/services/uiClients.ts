@@ -154,8 +154,9 @@ export function createUiClients(deps: UiClientsDeps = {}): UiClients {
     },
     pick,
     dispatch(wsId, op, args, preferKey, preferWorktree, opts = {}) {
+      const named = opts.clientId !== undefined ? clients.get(keyOf(wsId, opts.clientId)) ?? null : null;
       const target = opts.clientId !== undefined
-        ? clients.get(keyOf(wsId, opts.clientId)) ?? null
+        ? (named && (!named.remote || allowRemote()) ? named : null)
         : pick(wsId, preferKey, preferWorktree) as Entry | null;
       if (!target) return Promise.resolve({ applied: false, reason: opts.clientId !== undefined ? 'window_closed' : 'no_window' });
       const id = newId();

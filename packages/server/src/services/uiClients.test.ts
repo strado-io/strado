@@ -98,6 +98,13 @@ describe('uiClients', () => {
     expect(sent.get('a')).toEqual([]);
   });
 
+  it('a named remote window is not a target unless remote windows are allowed', async () => {
+    const { ui, sent, open } = harness();
+    open('r', { remote: true });
+    expect(await ui.dispatch('ws', 'jarvis.action', {}, null, null, { clientId: 'r' })).toEqual({ applied: false, reason: 'window_closed' });
+    expect(sent.get('r')).toEqual([]);
+  });
+
   it('settles pending commands when the window closes', async () => {
     const { ui, open, state } = harness();
     const close = open('a'); state('a', { focused: true });

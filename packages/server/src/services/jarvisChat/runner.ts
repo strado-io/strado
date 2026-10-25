@@ -55,17 +55,25 @@ export type JarvisRunnerDeps = {
 
 /** `prepare`: work that must finish before the turn (an approved action), run in queue order. */
 type Job = { input: TurnInput; windowId: string; wake: boolean; prepare?: () => Promise<TurnInput> };
-type FocusState = { queue: Job[]; draining: Promise<void> | null; running: { abort: AbortController; why: 'stop' | 'cap' | null } | null; lastContext: JarvisContext | null };
+/** `stopNext`: Stop came while no turn was running (an approved action ran, or a turn was starting): the next turn stops at once. */
+type FocusState = { queue: Job[]; draining: Promise<void> | null; running: { abort: AbortController; why: 'stop' | 'cap' | null } | null; stopNext: boolean; lastContext: JarvisContext | null };
 
 const TURN_CAP = 'Jarvis took longer than 5 minutes and was stopped';
 
 /** How the person's claude tabs log in, which Jarvis must too: an API key or
  *  token (or `claude setup-token`'s), a gateway, a model, or Bedrock / Vertex with their cloud credentials. */
-const CLAUDE_AUTH = /^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|MODEL)|CLAUDE_CODE_(USE_BEDROCK|USE_VERTEX|OAUTH_TOKEN)|AWS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|CLOUD_ML_[A-Z0-9_]+)$/;
+const CLAUDE_AUTH = /^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|MODEL)|CLAUDE_CODE_(USE_BEDROCK|USE_VERTEX|OAUTH_TOKEN))$/;
+/** Cloud credentials, only when Claude is set to use that cloud. */
+const BEDROCK = /^AWS_[A-Z0-9_]+$/;
+const VERTEX = /^(GOOGLE_[A-Z0-9_]+|CLOUD_ML_[A-Z0-9_]+)$/;
 
 /** The LSP scrub (no Strado identity, nothing credential-shaped), except Claude's own login. */
-export function jarvisEnvAllowed(name: string, value = ''): boolean {
-  return CLAUDE_AUTH.test(name) || envAllowed(name, value);
+export function jarvisEnvAllowed(name: string, value = '', env: NodeJS.ProcessEnv = process.env): boolean {
+  const on = (v: string | undefined) => !!v && v !== '0' && v.toLowerCase() !== 'false';
+  return CLAUDE_AUTH.test(name)
+    || (BEDROCK.test(name) && on(env.CLAUDE_CODE_USE_BEDROCK))
+    || (VERTEX.test(name) && on(env.CLAUDE_CODE_USE_VERTEX))
+    || envAllowed(name, value);
 }
 
 function defaultEnv(): () => Promise<Record<string, string>> {
@@ -92,7 +100,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
   const state = (ws: string, focusId: string): FocusState => {
     const k = key(ws, focusId);
     let s = focuses.get(k);
-    if (!s) focuses.set(k, (s = { queue: [], draining: null, running: null, lastContext: null }));
+    if (!s) focuses.set(k, (s = { queue: [], draining: null, running: null, stopNext: false, lastContext: null }));
     return s;
   };
   const store = async (ws: string) => (await deps.stores(ws)).jarvis;
@@ -134,6 +142,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
     const token = randomBytes(32).toString('hex');
     const abort = new AbortController();
     s.running = { abort, why: null };
+    if (s.stopNext) { s.stopNext = false; s.running.why = 'stop'; abort.abort(); }
     const at = () => now().toISOString();
     const turn = (state: 'running' | 'done' | 'failed' | 'stopped', extra: { error?: string; fix?: string } = {}) =>
       st.upsert(focusId, { id: turnEntryId, at: at(), type: 'turn', turnId, state, ...(job.wake ? { wake: true } : {}), ...extra });
@@ -149,7 +158,8 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       mcpFile = await writeMcpConfig(cwd, token);
       tokens.set(token, { ws, focusId, turnId, windowId: job.windowId, wake: job.wake });
       const meta = await st.meta(focusId);
-      for await (const e of deps.spawnHeadless({
+      // Stopped before it started: no process at all.
+      if (!abort.signal.aborted) for await (const e of deps.spawnHeadless({
         cwd, prompt: turnPrompt(job.input), resume: meta.sessionId, systemPrompt: JARVIS_CHAT_SYSTEM,
         mcpConfigPath: mcpFile, env: await env(), signal: abort.signal,
       })) {
@@ -189,6 +199,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
         }
       } finally {
         s.draining = null;
+        s.stopNext = false;
       }
     })();
     return s.draining;
@@ -259,9 +270,9 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
 
     async stop(ws, focusId) {
       const s = focuses.get(key(ws, focusId));
-      if (!s?.running) return;
-      s.running.why = 'stop';
-      s.running.abort.abort();
+      if (!s) return;
+      if (s.running) { s.running.why = 'stop'; s.running.abort.abort(); }
+      else if (s.draining) s.stopNext = true;
     },
 
     async forget(ws, focusId) {

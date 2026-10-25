@@ -35,6 +35,8 @@ export type HeadlessSpawn = (cmd: string, args: string[], opts: { cwd: string; e
 
 export const NOT_INSTALLED: HeadlessEvent = { type: 'error', message: 'Claude Code is not installed', fix: 'Install Claude Code, or pick another agent' };
 export const NOT_LOGGED_IN: HeadlessEvent = { type: 'error', message: 'Claude Code is not logged in', fix: 'Run claude and log in' };
+const KILL_GRACE_MS = 3_000;
+const EXIT_WAIT_MS = 5_000;
 const FAILED: HeadlessEvent = { type: 'error', message: 'Claude Code stopped with an error' };
 const EXITED: HeadlessEvent = { type: 'error', message: 'Claude Code exited unexpectedly' };
 const API_ERRORS: Record<string, HeadlessEvent> = {
@@ -117,7 +119,17 @@ export async function* runClaudeHeadless(o: HeadlessOpts, spawn: HeadlessSpawn =
   let pending = '';
   let spawnError: HeadlessEvent | null = null;
 
-  const kill = () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); };
+  const alive = () => child.exitCode === null && child.signalCode === null;
+  const exited = new Promise<void>((r) => child.once('close', () => r()));
+  // SIGTERM, then SIGKILL if it lingers: a resumed turn must never overlap it.
+  let terminated = false;
+  const kill = () => {
+    if (!alive() || terminated) return;
+    terminated = true;
+    child.kill('SIGTERM');
+    const hard = setTimeout(() => { if (alive()) child.kill('SIGKILL'); }, KILL_GRACE_MS);
+    hard.unref?.();
+  };
   const onAbort = () => { kill(); push('eof'); };
   o.signal.addEventListener('abort', onAbort, { once: true });
 
@@ -155,7 +167,10 @@ export async function* runClaudeHeadless(o: HeadlessOpts, spawn: HeadlessSpawn =
     }
   } finally {
     o.signal.removeEventListener('abort', onAbort);
-    // A finished turn exits on its own (and saves its session); anything else is stopped.
+    // A finished turn exits on its own (and saves its session); anything else is
+    // stopped. Either way the turn is over only once the process is gone.
     if (!finished) kill();
+    if (child.pid !== undefined) await Promise.race([exited, new Promise((r) => setTimeout(r, EXIT_WAIT_MS).unref?.())]);
+    if (alive()) child.kill('SIGKILL');
   }
 }

@@ -62,14 +62,21 @@ afterEach(async () => {
 
 describe('jarvisEnvAllowed', () => {
   it('lets Claude\'s own login through (as the person\'s claude tabs get it), and scrubs the rest like LSP', () => {
-    for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_OAUTH_TOKEN',
-      'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_REGION', 'AWS_PROFILE', 'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUD_ML_REGION', 'PATH', 'HOME', 'LANG']) {
-      expect([k, jarvisEnvAllowed(k, 'x')]).toEqual([k, true]);
+    for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_OAUTH_TOKEN', 'PATH', 'HOME', 'LANG']) {
+      expect([k, jarvisEnvAllowed(k, 'x', {})]).toEqual([k, true]);
     }
     for (const k of ['STRADO_AGENT_TOKEN', 'STRADO_JARVIS_TOKEN', 'OPENAI_API_KEY', 'GITHUB_TOKEN', 'GH_TOKEN', 'NPM_TOKEN', 'ANTHROPIC_OTHER', 'CLAUDE_CODE_ENTRYPOINT', 'DATABASE_PASSWORD', 'SSH_AUTH_SOCK']) {
-      expect([k, jarvisEnvAllowed(k, 'x')]).toEqual([k, false]);
+      expect([k, jarvisEnvAllowed(k, 'x', {})]).toEqual([k, false]);
     }
-    expect(jarvisEnvAllowed('DATABASE_URL', 'postgres://u:pw@h/db')).toBe(false);
+    expect(jarvisEnvAllowed('DATABASE_URL', 'postgres://u:pw@h/db', {})).toBe(false);
+  });
+
+  it('cloud credentials only when Claude is set to use that cloud', () => {
+    for (const k of ['AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'GOOGLE_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS']) expect([k, jarvisEnvAllowed(k, 'x', {})]).toEqual([k, false]);
+    expect(jarvisEnvAllowed('AWS_SECRET_ACCESS_KEY', 'x', { CLAUDE_CODE_USE_BEDROCK: '1' })).toBe(true);
+    expect(jarvisEnvAllowed('GOOGLE_API_KEY', 'x', { CLAUDE_CODE_USE_BEDROCK: '1' })).toBe(false);
+    expect(jarvisEnvAllowed('CLOUD_ML_REGION', 'x', { CLAUDE_CODE_USE_VERTEX: 'true' })).toBe(true);
+    expect(jarvisEnvAllowed('AWS_SESSION_TOKEN', 'x', { CLAUDE_CODE_USE_BEDROCK: '0' })).toBe(false);
   });
 });
 
@@ -146,6 +153,20 @@ describe('JarvisRunner', () => {
     await settle(r, turnsDone(1));
     expect(h.calls[0]!.signal.aborted).toBe(true);
     expect(of(await all(), 'turn')[0]).toMatchObject({ state: 'stopped' });
+  });
+
+  it('Stop while the approved action runs (no turn yet): the resumed turn stops at once', async () => {
+    const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'tab.open', args: { mode: 'shell', command: 'npm i' }, summary: 'x', state: 'pending' });
+    let finish!: (r: { ok: boolean; text: string }) => void;
+    const h = fakeHeadless([{ events: [], hang: true }]);
+    const r = runner(h, { runApproved: () => new Promise((res) => (finish = res)) });
+    await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'a', context: ctx() });
+    await settle(r, async () => typeof finish === 'function');
+    await r.stop('w', 'f1');
+    finish({ ok: true, text: 'done' });
+    await settle(r, turnsDone(1));
+    expect(of(await all(), 'turn')[0]).toMatchObject({ state: 'stopped' });
+    expect(h.calls).toHaveLength(0);
   });
 
   it('context is escaped: a tab name with </context> cannot close the block', async () => {
