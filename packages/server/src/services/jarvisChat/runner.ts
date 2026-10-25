@@ -18,12 +18,12 @@ import { createDetect } from '../lsp/detect.js';
 import { envAllowed } from '../lsp/manager.js';
 import type { HeadlessEvent, HeadlessOpts } from './claudeHeadless.js';
 import { JARVIS_CHAT_SYSTEM, turnPrompt, type TurnInput } from './prompt.js';
-import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext } from './types.js';
+import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext, type JarvisUiActionResult } from './types.js';
 
 export type TurnRef = { ws: string; focusId: string; turnId: string; windowId: string; wake: boolean };
 
 /** Runs an approved action (the tool gateway's executor): one line for the log and the next turn. */
-export type ApprovedRun = (call: TurnRef & { action: string; args: Record<string, unknown> }) => Promise<string>;
+export type ApprovedRun = (call: TurnRef & { action: string; args: Record<string, unknown> }) => Promise<JarvisUiActionResult>;
 
 export type JarvisRunner = {
   send(ws: string, focusId: string, input: { text: string; windowId: string; context: JarvisContext }): Promise<ChatEntry>;
@@ -83,6 +83,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
   const turnMs = deps.turnMs ?? JARVIS_LIMITS.turnMs;
   const focuses = new Map<string, FocusState>();
   const tokens = new Map<string, TurnRef>();
+  const deciding = new Set<string>();
 
   const key = (ws: string, focusId: string) => `${ws}\0${focusId}`;
   const state = (ws: string, focusId: string): FocusState => {
@@ -200,23 +201,37 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
 
     async approve(ws, focusId, entryId, input) {
       const st = await store(ws);
-      const entry = await st.find(focusId, entryId);
-      if (!entry || entry.type !== 'approval') throw new AppError('NOT_FOUND', 'no such approval');
-      if (entry.state !== 'pending') throw new AppError('CONFLICT', 'that approval is no longer pending');
-      state(ws, focusId).lastContext = input.context;
+      // One decision per approval, even from two windows at once: the second gets 409.
+      const claim = key(ws, focusId) + '\0' + entryId;
+      if (deciding.has(claim)) throw new AppError('CONFLICT', 'that approval is no longer pending');
+      deciding.add(claim);
       let result: string | undefined;
+      let entry: Extract<ChatEntry, { type: 'approval' }>;
+      try {
+        const found = await st.find(focusId, entryId);
+        if (!found || found.type !== 'approval') throw new AppError('NOT_FOUND', 'no such approval');
+        if (found.state !== 'pending') throw new AppError('CONFLICT', 'that approval is no longer pending');
+        entry = found;
+        if (input.approve && !deps.runApproved) throw new AppError('UNAVAILABLE', 'Jarvis cannot run actions yet');
+        await st.upsert(focusId, { ...entry, state: input.approve ? 'approved' : 'declined' });
+      } finally {
+        deciding.delete(claim);
+      }
+      state(ws, focusId).lastContext = input.context;
       if (input.approve) {
-        if (!deps.runApproved) throw new AppError('UNAVAILABLE', 'Jarvis cannot run actions yet');
-        // Mark it first: a second click (another window) gets 409, not a second run.
-        await st.upsert(focusId, { ...entry, state: 'approved' });
+        let r: JarvisUiActionResult;
         try {
-          result = await deps.runApproved({ ws, focusId, turnId: entry.turnId, windowId: input.windowId, wake: false, action: entry.action, args: entry.args });
+          r = await deps.runApproved!({ ws, focusId, turnId: entry.turnId, windowId: input.windowId, wake: false, action: entry.action, args: entry.args });
         } catch {
-          result = 'It failed.';
+          r = { ok: false, text: 'It failed' };
         }
+        result = r.ok ? r.text : `It failed: ${r.text}`;
+        // What it did, with its card, under the approval.
+        await st.append(focusId, {
+          type: 'action', turnId: entry.turnId, action: entry.action, summary: entry.summary, ok: r.ok,
+          ...(r.ok ? {} : { error: r.text }), ...(r.card ? { card: r.card } : {}),
+        });
         await st.upsert(focusId, { ...entry, state: 'approved', result });
-      } else {
-        await st.upsert(focusId, { ...entry, state: 'declined' });
       }
       enqueue(ws, focusId, {
         input: { kind: 'approval', approvalId: entry.id, approved: input.approve, ...(result ? { result } : {}), context: input.context },

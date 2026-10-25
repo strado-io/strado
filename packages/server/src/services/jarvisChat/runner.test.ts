@@ -191,12 +191,15 @@ describe('JarvisRunner', () => {
   it('approve runs the action and resumes with its result; decline resumes with declined', async () => {
     const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'shell.run', args: { tab: 'shell-1', command: 'ls' }, summary: 'Run ls in shell-1', state: 'pending' });
     const a2 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'tab.close', args: { tab: 'shell-1' }, summary: 'Close shell-1', state: 'pending' });
-    const runApproved = vi.fn(async () => 'README.md src');
+    const runApproved = vi.fn(async () => ({ ok: true, text: 'README.md src', card: { kind: 'shell' as const, worktree: 'api', tab: 'shell-1' } }));
     const h = fakeHeadless([{ events: [{ type: 'done' }] }, { events: [{ type: 'done' }] }]);
     const r = runner(h, { runApproved });
     await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'win1', context: ctx() });
     expect(runApproved).toHaveBeenCalledWith(expect.objectContaining({ ws: 'w', focusId: 'f1', windowId: 'win1', action: 'shell.run', args: { tab: 'shell-1', command: 'ls' } }));
     expect(await store.find('f1', a1.id)).toMatchObject({ state: 'approved', result: 'README.md src' });
+    expect(of(await all(), 'action')).toEqual([expect.objectContaining({
+      turnId: 't0', action: 'shell.run', summary: 'Run ls in shell-1', ok: true, card: { kind: 'shell', worktree: 'api', tab: 'shell-1' },
+    })]);
     await r.approve('w', 'f1', a2.id, { approve: false, windowId: 'win1', context: ctx() });
     expect(await store.find('f1', a2.id)).toMatchObject({ state: 'declined' });
     await settle(r, turnsDone(2));
@@ -205,6 +208,30 @@ describe('JarvisRunner', () => {
     await expect(r.approve('w', 'f1', a1.id, { approve: true, windowId: 'win1', context: ctx() })).rejects.toMatchObject({ httpStatus: 409 });
     await expect(r.approve('w', 'f1', 'nope', { approve: true, windowId: 'win1', context: ctx() })).rejects.toMatchObject({ httpStatus: 404 });
     expect(runApproved).toHaveBeenCalledTimes(1);
+  });
+
+  it('two windows deciding one approval at once: one runs it, the other gets 409', async () => {
+    const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'tab.close', args: { tab: 'shell-1' }, summary: 'Close shell-1', state: 'pending' });
+    const runApproved = vi.fn(async () => ({ ok: true, text: 'closed' }));
+    const r = runner(fakeHeadless([{ events: [{ type: 'done' }] }]), { runApproved });
+    const both = await Promise.allSettled([
+      r.approve('w', 'f1', a1.id, { approve: true, windowId: 'a', context: ctx() }),
+      r.approve('w', 'f1', a1.id, { approve: false, windowId: 'b', context: ctx() }),
+    ]);
+    expect(both.map((x) => x.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect((both.find((x) => x.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ httpStatus: 409 });
+    await settle(r, turnsDone(1));
+  });
+
+  it('a failed approved action is logged and told to Jarvis in fixed words', async () => {
+    const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'server.stop', args: {}, summary: 'Stop the dev server in api', state: 'pending' });
+    const h = fakeHeadless([{ events: [{ type: 'done' }] }]);
+    const r = runner(h, { runApproved: async () => ({ ok: false, text: 'No Strado window is open' }) });
+    await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'a', context: ctx() });
+    expect(await store.find('f1', a1.id)).toMatchObject({ state: 'approved', result: 'It failed: No Strado window is open' });
+    expect(of(await all(), 'action')[0]).toMatchObject({ ok: false, error: 'No Strado window is open' });
+    await settle(r, turnsDone(1));
+    expect(h.calls[0]!.prompt).toContain('Result: It failed: No Strado window is open');
   });
 
   it('wake runs a wake turn with the events; events queued behind a turn run together', async () => {

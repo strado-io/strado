@@ -682,10 +682,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     deps.jarvis ??= createJarvisRunner({
       stores,
       spawnHeadless: (o) => runClaudeHeadless(o),
-      runApproved: async (call) => {
-        const r = await execute(call);
-        return r.ok ? r.text : `It failed: ${r.text}`;
-      },
+      runApproved: execute,
     });
     const runner = deps.jarvis;
     // A test's runner may not wake.
