@@ -44,9 +44,13 @@ export type FilesTabProps = {
   onAskAgent?: (ctx: FileAskContext) => void;
   /** The person's own desktop editor, at a file and line (this machine only). */
   onOpenInEditor?: (path: string, line: number) => void;
+  /** The chosen editor's name for its buttons ("Cursor", "VS Code"); "editor" when unknown. */
+  editorLabel?: string;
+  /** The tree header's button: the whole worktree in the editor. Hidden when undefined. */
+  onOpenWorktreeInEditor?: () => void;
 };
 
-export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInEditor }: FilesTabProps) {
+export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInEditor, editorLabel, onOpenWorktreeInEditor }: FilesTabProps) {
   const runnerId = remote?.runnerId;
   const remoteWsId = remote?.remoteWsId;
   const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
@@ -269,6 +273,16 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     // In a text box every key is the box's. In the code, Alt←/→ moves by word;
     // ⌘[ ⌘] and Ctrl± still go back/forward there.
     const t = e.target as HTMLElement;
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
+      // ⌘⇧O: the open file, at its cursor, in the person's editor (the hub opens
+      // the worktree when no file tab is open, so only claim it with one).
+      const active = activeTab(tabsRef.current);
+      if (active && onOpenInEditor) {
+        e.preventDefault(); e.stopPropagation();
+        onOpenInEditor(active.path, active.line);
+      }
+      return;
+    }
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
       // ⌘W closes the file tab, not the app's tab, while focus is in Files (the find bar too).
       const active = activeTab(tabsRef.current);
@@ -321,6 +335,10 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
             className={`${iconBtn} ${searching ? 'glass-pill text-zinc-100' : 'text-zinc-400'}`}><SearchIcon /></button>
           <button type="button" onClick={() => setReloadKey((k) => k + 1)} aria-label="Refresh files" title="Refresh"
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
+          {onOpenWorktreeInEditor && (
+            <button type="button" onClick={onOpenWorktreeInEditor} aria-label={`Open worktree in ${editorLabel ?? 'editor'}`} title={`Open worktree in ${editorLabel ?? 'editor'}`}
+              className={`${iconBtn} text-zinc-400`}><CodeIcon /></button>
+          )}
         </div>
         {searching ? (
           <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h, side) => pickHit(h, fromHere(), side)} />
@@ -353,7 +371,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
                   <div role="tabpanel" id={tabIds(pane.id).panel} aria-labelledby={t ? tabIds(pane.id).tab(t.path) : undefined} className="flex min-h-0 flex-1 flex-col">
                   {t ? (
                     <FileViewer key={`${worktreePath}\0${t.path}`} onMissing={t.restored ? () => dispatch({ type: 'close', pane: pi, path: t.path }) : undefined} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
-                      read={read} marks={marks} onAskAgent={onAskAgent} onOpenInEditor={onOpenInEditor}
+                      read={read} marks={marks} onAskAgent={onAskAgent} onOpenInEditor={onOpenInEditor} editorLabel={editorLabel}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
                       headerStart={historyButtons}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (
@@ -494,6 +512,9 @@ function SearchIcon() {
 }
 function SplitIcon() {
   return <svg {...svg}><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" /></svg>;
+}
+function CodeIcon() {
+  return <svg {...svg}><path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" /></svg>;
 }
 function RefreshIcon() {
   return (

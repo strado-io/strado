@@ -18,7 +18,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInEditor, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInEditor, editorLabel, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -32,6 +32,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   onAskAgent?: (ctx: FileAskContext) => void;
   /** Hand the file, at the cursor's line, to the person's own editor. */
   onOpenInEditor?: (path: string, line: number) => void;
+  /** The chosen editor's name ("Cursor", "VS Code"); "editor" when unknown. */
+  editorLabel?: string;
   /** ⌘-click/F12 (definition) and ⇧F12 (references) at a place in this file. */
   onNavigate?: (kind: NavKind, at: FileAt) => void;
   /** The person moved the cursor here (click, keys, an outline pick) — for back/forward. */
@@ -170,6 +172,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     onAskAgent({ worktreePath, path, from: selection.from, to: selection.to, snippet: capSnippet(selection.text) });
   };
 
+  const openIn = `Open in ${editorLabel ?? 'editor'}`;
   const iconBtn = 'rounded-md px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40';
   return (
     <section className="flex h-full min-h-0 flex-col" data-testid="file-viewer" aria-label={path}>
@@ -195,7 +198,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
           </button>
         )}
         {onOpenInEditor && (
-          <button type="button" className={iconBtn} onClick={() => onOpenInEditor(path, cursorLine.current)} aria-label="Open in editor" title="Open in editor">
+          <button type="button" className={iconBtn} onClick={() => onOpenInEditor(path, cursorLine.current)} aria-label={openIn} title={`${openIn} (⌘⇧O)`}>
             <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" />
             </svg>
@@ -211,7 +214,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         <Empty title="Binary file" body={`${path} isn’t text, so it isn’t shown here.`} />
       ) : file.tooLarge ? (
         <Empty title="Too large to show" body={`${path} is ${mb(file.size)}; the viewer shows files up to 1 MB.`}
-          action={onOpenInEditor ? { label: 'Open in editor', run: () => onOpenInEditor(path, 1) } : undefined} />
+          action={onOpenInEditor ? { label: openIn, run: () => onOpenInEditor(path, 1) } : undefined} />
       ) : editorFailed ? (
         <pre className="min-h-0 flex-1 overflow-auto whitespace-pre p-3 font-mono text-[13px] text-zinc-200" data-testid="plain-text">{text}</pre>
       ) : (

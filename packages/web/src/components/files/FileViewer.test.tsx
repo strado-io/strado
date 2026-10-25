@@ -132,6 +132,12 @@ describe('FileViewer', () => {
     expect(cm.opts).toBeNull();
   });
 
+  it('names the chosen editor on its button', async () => {
+    show({ editorLabel: 'Cursor' });
+    await flush();
+    expect(screen.getByRole('button', { name: 'Open in Cursor' })).toHaveAttribute('title', 'Open in Cursor (⌘⇧O)');
+  });
+
   it('too large: says the size and offers the editor', async () => {
     const { props } = show({}, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
     await flush();

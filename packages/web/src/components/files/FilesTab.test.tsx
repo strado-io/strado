@@ -606,5 +606,29 @@ describe('FilesTab', () => {
       await flush();
       expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
     });
+
+    it('⌘⇧O opens the active file at its cursor in the editor (from a box too); with no file it is left alone', async () => {
+      const onOpenInEditor = vi.fn();
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" onOpenInEditor={onOpenInEditor} />);
+      await flush();
+      const ev = new KeyboardEvent('keydown', { key: 'O', metaKey: true, shiftKey: true, bubbles: true, cancelable: true });
+      screen.getByTestId('files-tab').dispatchEvent(ev);
+      expect(onOpenInEditor).not.toHaveBeenCalled();
+      expect(ev.defaultPrevented).toBe(false); // the hub opens the worktree instead
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" onOpenInEditor={onOpenInEditor} openPath={{ path: 'a.ts', line: 7, nonce: 1 }} />);
+      fireEvent.change(screen.getByLabelText('cursor'), { target: { value: '30' } });
+      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: 'O', metaKey: true, shiftKey: true });
+      expect(onOpenInEditor).toHaveBeenCalledWith('a.ts', 30);
+    });
+
+    it('the tree header opens the whole worktree in the named editor', async () => {
+      const onOpenWorktreeInEditor = vi.fn();
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      expect(screen.queryByRole('button', { name: /Open worktree in/ })).toBeNull();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" editorLabel="Zed" onOpenWorktreeInEditor={onOpenWorktreeInEditor} />);
+      fireEvent.click(within(screen.getByTestId('files-tree-header')).getByRole('button', { name: 'Open worktree in Zed' }));
+      expect(onOpenWorktreeInEditor).toHaveBeenCalled();
+    });
   });
 });
