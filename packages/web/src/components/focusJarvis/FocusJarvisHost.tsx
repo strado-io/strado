@@ -2,7 +2,6 @@ import { createContext, useContext, useMemo, useRef, useState, type MutableRefOb
 import type { Focus, StationDto } from '../../api';
 import { useIntercom } from '../../contexts/IntercomContext';
 import { useJarvisActionHandler, useUiHub } from '../../contexts/UiControlContext';
-import { api } from '../../api';
 import type { JarvisAppPort, JarvisNavPort } from '../../lib/jarvis/execute';
 import { runJarvisAction } from './windowAction';
 import { readShellNames } from '../../hooks/shellNames';
@@ -71,7 +70,6 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
       server: jarvisServerPort(wsId),
       nav: NO_NAV,
       ...(app ? { app } : {}),
-      shellIdle: async (ref) => !(await api.worktrees.sessionBusy(wsId, ref.worktreePath, 'shell', ref.sessionId)).busy,
     }),
   }));
   const chat = useFocusJarvis(wsId, focus?.id ?? null, getContext);

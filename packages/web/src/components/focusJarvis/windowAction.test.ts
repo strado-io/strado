@@ -3,13 +3,22 @@ import { runJarvisAction } from './windowAction';
 import { buildParseContext } from '../jarvis/jarvisContext';
 import type { JarvisPorts, JarvisServerPort } from '../../lib/jarvis/execute';
 import type { Worktree } from '../../types';
+import { readActiveTab } from '../../hooks/tabOrder';
+import { readBrowserUrls, previewKey } from '../../hooks/browserTabs';
+import { readPaneLayouts, leafKeys } from '../../hooks/paneLayout';
+import { beforeEach, afterEach } from 'vitest';
 
 const wt = (path: string, branch: string): Worktree => ({ path, branch } as Worktree);
-const ctx = () => buildParseContext({
-  hub: null, lastActedOn: null, focuses: [], workspaces: [], repos: [], scripts: null,
-  worktrees: [wt('/w/api', 'fleetx-api')],
-  peers: [{ agentId: 'claude-1@a', alias: 'rev', mode: 'claude', worktreePath: '/w/api', sessionId: '1', executionId: 'E', lifecycle: 'idle', live: true }],
+const focus = (members: string[]) => ({ id: 'f1', name: 'Billing', members, createdAt: 't', lastActiveAt: 't' });
+const ctxWith = (members: string[] = ['local:/w/api']) => () => buildParseContext({
+  hub: null, lastActedOn: null, focuses: [focus(members)], activeFocusId: 'f1', workspaces: [], repos: [], scripts: null,
+  worktrees: [wt('/w/api', 'fleetx-api'), wt('/w/web', 'web')],
+  peers: [
+    { agentId: 'claude-1@a', alias: 'rev', mode: 'claude', worktreePath: '/w/api', sessionId: '1', executionId: 'E', lifecycle: 'idle', live: true },
+    { agentId: 'shell-3@a', alias: null, mode: 'shell', worktreePath: '/w/api', sessionId: '3', executionId: 'S', lifecycle: 'idle', live: true },
+  ],
 });
+const ctx = ctxWith();
 function server(over: Partial<JarvisServerPort> = {}): JarvisServerPort {
   return {
     spawn: vi.fn(async ({ mode, worktreePath }) => ({ tab: { mode, worktreePath, sessionId: '3' } })),
@@ -56,5 +65,39 @@ describe('runJarvisAction', () => {
     const r = await runJarvisAction({ action: 'nav.worktree', args: { worktree: 'fleetx-api' } }, { context: ctx, ports: () => p });
     expect(r.ok).toBe(false);
     expect(p.nav.worktree).not.toHaveBeenCalled();
+  });
+
+  describe('off screen (the chat is showing, no hub)', () => {
+    beforeEach(() => { localStorage.clear(); (window as unknown as { strado?: unknown }).strado = {}; });
+    afterEach(() => { delete (window as unknown as { strado?: unknown }).strado; });
+
+    it('browser.open stores a Browser tab in that worktree, active, and the card carries the url', async () => {
+      const r = await runJarvisAction({ action: 'browser.open', args: { url: 'http://localhost:3000', worktree: 'fleetx-api' } }, { context: ctx, ports: () => ports(server()) });
+      expect(r).toMatchObject({ ok: true, card: { kind: 'browser', worktree: 'fleetx-api', tab: 'browser-1', url: 'http://localhost:3000/' } });
+      expect(readBrowserUrls()[previewKey('/w/api', '1')]).toMatch(/^http:\/\/localhost:3000/);
+      expect(readActiveTab('/w/api')).toEqual({ mode: 'browser', id: '1' });
+    });
+
+    it('tab.focus makes the tab its worktree\'s active one; nothing navigates', async () => {
+      const p = ports(server());
+      const r = await runJarvisAction({ action: 'tab.focus', args: { tab: 'fleetx-api/rev' } }, { context: ctx, ports: () => p });
+      expect(r.ok).toBe(true);
+      expect(readActiveTab('/w/api')).toEqual({ mode: 'claude', id: '1' });
+      expect(p.nav.worktree).not.toHaveBeenCalled();
+    });
+
+    it('tab.place updates the stored layout', async () => {
+      const r = await runJarvisAction({ action: 'tab.place', args: { tab: 'fleetx-api/shell-3', split: 'down', anchor: 'fleetx-api/rev' } }, { context: ctx, ports: () => ports(server()) });
+      expect(r.ok).toBe(true);
+      expect(leafKeys(readPaneLayouts()['/w/api']![0]!)).toEqual(['claude:1', 'shell:3']);
+    });
+
+    it('no worktree named: the Focus\'s only one; with several, which?', async () => {
+      const s = server();
+      expect(await runJarvisAction({ action: 'tab.open', args: { mode: 'claude' } }, { context: ctx, ports: () => ports(s) })).toMatchObject({ ok: true, card: { worktree: 'fleetx-api' } });
+      expect(s.spawn).toHaveBeenCalledWith({ mode: 'claude', worktreePath: '/w/api' });
+      const two = await runJarvisAction({ action: 'browser.open', args: { url: 'http://x.dev' } }, { context: ctxWith(['local:/w/api', 'local:/w/web']), ports: () => ports(server()) });
+      expect(two).toEqual({ ok: false, text: 'Which worktree? fleetx-api, web' });
+    });
   });
 });
