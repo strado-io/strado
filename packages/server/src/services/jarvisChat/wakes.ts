@@ -68,7 +68,10 @@ const trim = (s: string) => (s.length <= RESULT_MAX ? s : `${s.slice(0, RESULT_M
 
 /** The tab a card points at is this agent's. */
 function isCardOf(card: TabCardRef | undefined, a: WakeAgent): boolean {
-  if (!card || card.worktree !== path.basename(a.worktreePath)) return false;
+  if (!card) return false;
+  // The exact path when the card has it (two repos can both have a "main");
+  // older cards only had the folder name.
+  if (card.worktreePath ? card.worktreePath !== a.worktreePath : card.worktree !== path.basename(a.worktreePath)) return false;
   return card.tab === a.name || card.tab === `${a.mode}-${a.sessionId}`;
 }
 

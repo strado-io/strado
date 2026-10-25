@@ -141,6 +141,25 @@ describe('jarvis wakes', () => {
     expect(wakes).toEqual([]);
   });
 
+  it('a card with worktreePath matches that exact path, not another repo\'s folder of the same name', async () => {
+    const card = (worktreePath: string, worktree = 'Strado/main') =>
+      chat.append('f1', { type: 'action', turnId: 't', action: 'tab.open', summary: 'Opened claude', ok: true, card: { kind: 'claude', worktree, worktreePath, tab: 'claude-1' } });
+    await card('/repos/a/main');
+    // Same basename, different repo: no match.
+    await set(agent({ worktreePath: '/repos/b/main' }));
+    await set(agent({ worktreePath: '/repos/b/main', lifecycle: 'idle', lastResult: 'wrong' }));
+    expect(await events('f1')).toEqual([]);
+    // The exact path matches even though the display name is not the basename.
+    await set(agent({ worktreePath: '/repos/a/main' }));
+    await set(agent({ worktreePath: '/repos/a/main', lifecycle: 'idle', lastResult: 'right' }));
+    expect(await events('f1')).toEqual(['claude-1 finished: right']);
+    // An old card without worktreePath still matches by basename.
+    await cardFor('f2', 'claude-1', 'main');
+    await set(agent({ worktreePath: '/repos/b/main' }));
+    await set(agent({ worktreePath: '/repos/b/main', lifecycle: 'idle', lastResult: 'old card' }));
+    expect(await events('f2')).toEqual(['claude-1 finished: old card']);
+  });
+
   it('only working → idle/offline counts: a fresh idle agent, or idle → idle, is not a finish', async () => {
     await cardFor('f1');
     await set(agent({ lifecycle: 'ready' }));
