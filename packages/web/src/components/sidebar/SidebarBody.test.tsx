@@ -52,6 +52,7 @@ const openHeader = () => within(screen.getByTestId('focus-open')).getByRole('hea
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1'])); // these tests read the cards: expanded
   focusMock.focuses = [];
   focusMock.activeId = null;
   for (const fn of [focusMock.activate, focusMock.create, focusMock.rename, focusMock.setMembership, focusMock.addMembers, focusMock.remove]) fn.mockReset();
@@ -329,12 +330,87 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(calls).toEqual(['open f3', 'activate f3']);
   });
 
-  it('switching opens the new one and collapses the old', () => {
+  // Each Focus's own panel (its worktree cards), or null while it is folded.
+  const panelOf = (name: string) => {
+    const header = screen.queryByRole('button', { name: `Switch to ${name}` }) ?? screen.getByRole('heading', { name });
+    return within(header.closest('[data-testid^="focus-"][class*="flex-col gap-0.5"]') as HTMLElement).queryByTestId('focus-group');
+  };
+
+  it('switching changes the header, not what is expanded: the old one stays open, the new one stays folded', () => {
     const { rerender } = render(<SidebarBody {...props()} />);
     focusMock.activeId = 'f3';
     rerender(<SidebarBody {...props()} />);
     expect(openHeader()).toHaveTextContent('Perf');
     expect(rowNames()).toEqual(['Onboarding', 'Billing']);
+    expect(panelOf('Perf')).toBeNull();
+    expect(panelOf('Billing')).not.toBeNull();
+  });
+
+  it('clicking a row activates it and opens its chat, and does not expand it', () => {
+    sessionStorage.setItem('strado:focus-expanded', '[]');
+    const onOpenFocus = vi.fn();
+    render(<SidebarBody {...props({ onOpenFocus })} />);
+    fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Perf' }));
+    expect(onOpenFocus).toHaveBeenCalledWith('f3');
+    expect(focusMock.activate).toHaveBeenCalledWith('f3');
+    expect(panelOf('Perf')).toBeNull();
+    expect(screen.queryAllByTestId('focus-group')).toHaveLength(0);
+  });
+
+  it('the chevron expands a Focus and does not activate it; several can be expanded at once', () => {
+    const onOpenFocus = vi.fn();
+    render(<SidebarBody {...props({ onOpenFocus })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
+    expect(focusMock.activate).not.toHaveBeenCalled();
+    expect(onOpenFocus).not.toHaveBeenCalled();
+    expect(within(panelOf('Perf')!).getAllByRole('button', { name: 'fx-412' })).toHaveLength(2);
+    expect(panelOf('Billing')).not.toBeNull();
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Fold Perf' }));
+    expect(panelOf('Perf')).toBeNull();
+    expect(focusMock.activate).not.toHaveBeenCalled();
+  });
+
+  it('what is expanded survives a reload, per window', () => {
+    const { unmount } = render(<SidebarBody {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Onboarding' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fold Billing' }));
+    unmount();
+    render(<SidebarBody {...props()} />);
+    expect(panelOf('Onboarding')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
+    expect(panelOf('Perf')).toBeNull();
+  });
+
+  it('a Focus never toggled starts folded', () => {
+    sessionStorage.removeItem('strado:focus-expanded');
+    render(<SidebarBody {...props()} />);
+    expect(screen.queryAllByTestId('focus-group')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Show Billing' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('the active Focus folded is still clearly the current one: its two-line header, with status and latest reply', () => {
+    sessionStorage.setItem('strado:focus-expanded', '[]');
+    render(<SidebarBody {...props({ jarvis: { status: <span role="img" aria-label="needs approval">⚠</span>, latest: <div data-testid="latest">Approve the deploy?</div>, selected: true, onOpen: vi.fn() } })} />);
+    const h = screen.getByTestId('focus-header');
+    expect(h).toHaveAttribute('data-selected', 'true');
+    expect(within(h).getByRole('img', { name: 'needs approval' })).toBeInTheDocument();
+    expect(within(h).getByTestId('latest')).toHaveTextContent('Approve the deploy?');
+    expect(panelOf('Billing')).toBeNull();
+  });
+
+  it('a card in an expanded Focus that is not the active one activates that Focus, then opens', async () => {
+    const calls: string[] = [];
+    focusMock.activate.mockImplementation((id: string) => calls.push(`activate ${id}`));
+    const onOpenWorktree = vi.fn((w: Worktree) => calls.push(`open ${w.path}`));
+    render(<SidebarBody {...props({ onOpenWorktree })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
+    fireEvent.click(within(panelOf('Perf')!).getAllByRole('button', { name: 'fx-412' })[0]!);
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(calls).toEqual(['activate f3', 'open /r2/wt']);
+    // In the active Focus, a card just opens.
+    fireEvent.click(within(panelOf('Billing')!).getByRole('button', { name: 'fx-412' }));
+    expect(calls).toEqual(['activate f3', 'open /r2/wt', 'open /r1/wt']);
   });
 
   it('badges: agents at work in its worktrees, approvals waiting, an unread reply', () => {

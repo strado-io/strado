@@ -1,12 +1,13 @@
-// Every Focus, as an accordion: the active one open (its header, which is its
-// Jarvis: status, latest reply, click to open the chat; then its worktree
-// cards in one quiet group), every other one a flat
-// heading row with its name, live badges and when it was last active —
-// headings, not cards, so they never read as worktrees. Clicking a row makes
-// that Focus the active one; at most one is ever open, and it is always the
-// active one. The six most recent show, the active one always, then
-// "Show all (N)". No header: New focus is the + in the workspace row.
-import { useEffect, useState } from 'react';
+// Every Focus, as an accordion. Each row's chevron, and only it, shows or
+// folds that Focus's worktree cards; any number can be open, remembered per
+// window, and a Focus never toggled starts folded. Clicking a row anywhere
+// else makes it the active Focus and opens its Jarvis chat, folded or not.
+// The active row is its Jarvis: two lines (status, latest reply), selected
+// while the chat shows. The others are flat one-line headings with their
+// live badges — headings, not cards, so they never read as worktrees. The
+// six most recent show, the active one always, then "Show all (N)". No
+// header: New focus is the + in the workspace row.
+import { useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { FocusIcon, byLastActive } from './FocusSwitcher';
@@ -35,6 +36,7 @@ export type FocusJarvisHeader = {
 };
 
 export const FOCUS_LIST_CAP = 6;
+const EXPANDED_KEY = 'strado:focus-expanded';
 /** The header's second line, aligned under the name. */
 export const FOCUS_LATEST_CLASS = 'truncate pl-[2.4rem] pr-1 text-[11px] leading-4 text-zinc-500';
 
@@ -55,20 +57,18 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   focuses: Focus[];
   activeId: string | null;
   badges: Map<string, FocusBadges>;
-  /** A collapsed row was clicked: make that Focus the active one. */
+  /** An inactive row was clicked: make that Focus the active one. */
   onOpen: (id: string) => void;
-  /** The open Focus's ⋯ menu (Rename is added here). */
+  /** The active Focus's ⋯ menu (Rename is added here). */
   activeMenu: MenuItem[];
   onRename: (id: string, name: string) => void;
-  /** The open Focus's Jarvis, for its header. */
+  /** The active Focus's Jarvis, for its header. */
   jarvis?: FocusJarvisHeader;
-  /** The open Focus's contents: its worktree cards (or a blank Focus's Add/New rows). */
-  children: React.ReactNode;
+  /** An expanded Focus's contents: its worktree cards (or a blank Focus's Add/New rows). */
+  children: (f: Focus) => React.ReactNode;
 }) {
   const [showAll, setShowAll] = useState(false);
-  // The chevron folds the open Focus's cards away; it stays the active one.
-  const [folded, setFolded] = useState(false);
-  useEffect(() => { setFolded(false); }, [activeId]);
+  const [expanded, toggle] = useExpanded();
   const [renaming, setRenaming] = useState<string | null>(null);
   const sorted = [...focuses].sort(byLastActive);
   const capped = sorted.slice(0, FOCUS_LIST_CAP);
@@ -82,17 +82,24 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
         {shown.map((f, i) => {
           const n = sorted.indexOf(f) + 1;
           const hint = n <= 9 ? ` (⌘${n})` : '';
-          if (f.id === activeId) {
-            return (
-              <div key={f.id} data-testid="focus-open" className={`flex flex-col gap-0.5 ${i > 0 ? 'mt-2' : ''} ${i < shown.length - 1 ? 'mb-2' : ''}`}>
-                {/* The header is the Focus's Jarvis: clicking it (outside the chevron and ⋯) opens the chat. */}
+          const isActive = f.id === activeId;
+          const open = expanded.has(f.id);
+          const chevron = (
+            <button type="button" aria-label={open ? `Fold ${f.name}` : `Show ${f.name}`} aria-expanded={open}
+              onClick={(e) => { e.stopPropagation(); toggle(f.id); }}
+              className="-ml-0.5 flex h-5 w-4 shrink-0 items-center justify-center text-zinc-500 hover:text-zinc-200"><Chevron open={open} /></button>
+          );
+          const b = badges.get(f.id) ?? {};
+          return (
+            <div key={f.id} data-testid={isActive ? 'focus-open' : 'focus-row'} data-expanded={open || undefined}
+              className={`flex flex-col gap-0.5 ${open && i > 0 ? 'mt-2' : ''} ${open && i < shown.length - 1 ? 'mb-2' : ''}`}>
+              {isActive ? (
+                // The active Focus's header is its Jarvis: clicking it (outside the chevron and ⋯) opens the chat.
                 <div data-testid="focus-header" data-selected={jarvis?.selected || undefined}
                   onClick={jarvis && renaming !== f.id ? jarvis.onOpen : undefined}
                   className={`${HEADER} group ${jarvis ? 'cursor-pointer' : ''} ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
                   <div className="flex h-6 min-w-0 items-center gap-1.5">
-                    <button type="button" aria-label={folded ? `Show ${f.name}` : `Fold ${f.name}`} aria-expanded={!folded}
-                      onClick={(e) => { e.stopPropagation(); setFolded((v) => !v); }}
-                      className="-ml-0.5 flex h-5 w-4 shrink-0 items-center justify-center text-zinc-400 hover:text-zinc-200"><Chevron open={!folded} /></button>
+                    {chevron}
                     <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
                     {renaming === f.id ? (
                       <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
@@ -101,6 +108,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                         {jarvis ? <button type="button" aria-label={`Open Jarvis for ${f.name}`} className="max-w-full truncate text-left">{f.name}</button> : f.name}
                       </h3>
                     )}
+                    {b.agents}
                     {jarvis?.status}
                     <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                     <Menu label={`${f.name} actions`} alwaysVisible
@@ -109,27 +117,27 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                   {/* Line two: Jarvis's latest reply, aligned under the name (renders nothing when there is none). */}
                   {jarvis?.latest}
                 </div>
-                {/* What belongs to this Focus, grouped under its heading (no accent line). */}
-                {!folded && <div data-testid="focus-group" className={GROUP}>{children}</div>}
-              </div>
-            );
-          }
-          const b = badges.get(f.id) ?? {};
-          return (
-            <button key={f.id} type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
-              className={`${ROW} text-left`}>
-              <span className="text-zinc-500"><Chevron open={false} /></span>
-              <span className="shrink-0 text-zinc-500"><FocusIcon size={15} /></span>
-              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-400">{f.name}</span>
-              {b.agents}
-              {(b.pendingApprovals ?? 0) > 0 && (
-                <span role="img" aria-label={`${b.pendingApprovals} waiting for approval`} title="Jarvis is waiting for your approval" className="shrink-0 text-[11px] text-amber-400">⚠</span>
+              ) : (
+                <div className={ROW}>
+                  {chevron}
+                  <button type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
+                    className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left">
+                    <span className="shrink-0 text-zinc-500"><FocusIcon size={15} /></span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-400">{f.name}</span>
+                    {b.agents}
+                    {(b.pendingApprovals ?? 0) > 0 && (
+                      <span role="img" aria-label={`${b.pendingApprovals} waiting for approval`} title="Jarvis is waiting for your approval" className="shrink-0 text-[11px] text-amber-400">⚠</span>
+                    )}
+                    {b.unread && (
+                      <span role="img" aria-label="new reply from Jarvis" title="Jarvis replied" className="shrink-0 text-[11px] text-[#e8906f]">✦</span>
+                    )}
+                    <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
+                  </button>
+                </div>
               )}
-              {b.unread && (
-                <span role="img" aria-label="new reply from Jarvis" title="Jarvis replied" className="shrink-0 text-[11px] text-[#e8906f]">✦</span>
-              )}
-              <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
-            </button>
+              {/* What belongs to this Focus, grouped under its heading (no accent line). */}
+              {open && <div data-testid="focus-group" className={GROUP}>{children(f)}</div>}
+            </div>
           );
         })}
         {(hidden > 0 || (showAll && sorted.length > FOCUS_LIST_CAP)) && (
@@ -141,6 +149,21 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
       </div>
     </section>
   );
+}
+
+// Which Focuses are expanded, per window (sessionStorage): another window keeps its own.
+function readExpanded(): Set<string> {
+  try { return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_KEY) || '[]') as string[]); } catch { return new Set(); }
+}
+function useExpanded(): [Set<string>, (id: string) => void] {
+  const [expanded, setExpanded] = useState(readExpanded);
+  const toggle = (id: string) => setExpanded((cur) => {
+    const next = new Set(cur);
+    if (!next.delete(id)) next.add(id);
+    try { sessionStorage.setItem(EXPANDED_KEY, JSON.stringify([...next])); } catch { /* storage off: this render only */ }
+    return next;
+  });
+  return [expanded, toggle];
 }
 
 function RenameField({ name, onDone }: { name: string; onDone: (name: string | null) => void }) {

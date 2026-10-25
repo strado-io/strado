@@ -43,6 +43,7 @@ vi.mock('../api', async (importOriginal) => {
 const PANE_WIDTH = 300;
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1'])); // these tests read the cards: expanded
   seedFocus();
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(PANE_WIDTH);
   vi.mocked(useMrSummaries).mockReturnValue(new Map());

@@ -3,7 +3,7 @@
 // Focus is one task's set of worktrees, and everything else is a ⌘K or a
 // Focus switch away.
 import { useEffect, useState } from 'react';
-import type { FocusTicket, RemoteWorktree, RunnerStatus } from '../../api';
+import type { Focus, FocusTicket, RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { sessionChips } from '../../hooks/sessions';
@@ -210,8 +210,17 @@ export function SidebarBody({
   const browserTabs = useBrowserTabs();
   const runnerOnline = (runnerId: string) =>
     runnerStatuses.find((r) => r.runnerId === runnerId)?.online ?? false;
-  const removeFromFocus = (pinId: string) => {
-    if (active) void setMembership(active.id, pinId, false).catch(report('Could not remove from focus'));
+  const removeFromFocus = (f: Focus, pinId: string) => {
+    void setMembership(f.id, pinId, false).catch(report('Could not remove from focus'));
+  };
+  // A card in a Focus that is not the active one: that Focus becomes active
+  // first, then the card opens in it. The open waits a tick, until the
+  // Dashboard has restored the newly active Focus's view, or that restore
+  // would replace it.
+  const inFocus = <A extends unknown[]>(f: Focus, open: (...args: A) => void) => (...args: A) => {
+    if (f.id === activeId) { open(...args); return; }
+    activate(f.id);
+    setTimeout(() => open(...args), 0);
   };
 
   // "Open in <editor>": a local worktree, in the person's own editor. A UI a
@@ -224,8 +233,8 @@ export function SidebarBody({
       }
     : undefined;
 
-  const localRow = (w: Worktree, repoName: string) => {
-    const open: OpenWorktree = onOpenWorktree;
+  const localRow = (f: Focus, w: Worktree, repoName: string) => {
+    const open: OpenWorktree = inFocus(f, onOpenWorktree);
     const activeRow = w.path === activeWorktreePath;
     const chips = sessionChips([w], browserTabs);
     const mr = mrByPath.get(w.path);
@@ -234,7 +243,7 @@ export function SidebarBody({
     const menuItems: MenuItem[] = [
       ...(openWorktreeInEditor && editor ? [{ text: `Open in ${editor.label}`, onClick: () => openWorktreeInEditor(w) }] : []),
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
-      { text: `Remove from ${active?.name ?? 'focus'}`, onClick: () => removeFromFocus(pinId) },
+      { text: `Remove from ${f.name}`, onClick: () => removeFromFocus(f, pinId) },
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];
     const ticketId = w.meta?.ticketId?.trim();
@@ -296,16 +305,16 @@ export function SidebarBody({
   const remoteByPinId = new Map(remoteWorktrees.map((w) => [remotePinId(w), w]));
   // Members that resolve to nothing (deleted worktree, runner offline) render
   // nothing; they are not pruned here so a runner coming back brings its row back.
-  const rows = (active?.members ?? []).flatMap((pinId) => {
+  const rowsOf = (f: Focus) => f.members.flatMap((pinId) => {
     const local = localByPinId.get(pinId);
-    if (local) return [localRow(local, repos.find((r) => r.id === local.repoId)?.name ?? '')];
+    if (local) return [localRow(f, local, repos.find((r) => r.id === local.repoId)?.name ?? '')];
     const remote = remoteByPinId.get(pinId);
     if (!remote) return [];
     return [(
       <RemoteRow key={pinId} w={remote} repoName={repos.find((r) => r.id === remote.localRepoId)?.name ?? remote.remoteRepoName ?? ''}
         reachable={runnerOnline(remote.runnerId)} activeRow={remote.path === activeWorktreePath}
-        onRemove={() => removeFromFocus(pinId)} removeLabel={`Remove from ${active?.name ?? 'focus'}`}
-        onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree} onDeleteRemoteWorktree={onDeleteRemoteWorktree} onRebuildSandbox={onRebuildSandbox} />
+        onRemove={() => removeFromFocus(f, pinId)} removeLabel={`Remove from ${f.name}`}
+        onContextMenu={openContextMenu} onOpenRemoteWorktree={onOpenRemoteWorktree && inFocus(f, onOpenRemoteWorktree)} onDeleteRemoteWorktree={onDeleteRemoteWorktree} onRebuildSandbox={onRebuildSandbox} />
     )];
   });
 
@@ -348,20 +357,25 @@ export function SidebarBody({
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
           jarvis={jarvis}>
-          <section aria-label="Focus">
-            {active && rows.length === 0 ? (
-              <div className="flex flex-col gap-1.5">
-                <button type="button" onClick={() => setAddingMembers(true)} className={emptyAction}>
-                  <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
-                </button>
-                <button type="button" onClick={() => onNewWorktree(active.ticket)} className={emptyAction}>
-                  <span className="text-zinc-500"><PenIcon /></span>New worktree here
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">{rows}</div>
-            )}
-          </section>
+          {(f) => {
+            const rows = rowsOf(f);
+            return (
+              <section aria-label={f.id === activeId ? 'Focus' : f.name}>
+                {rows.length === 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    <button type="button" onClick={() => { if (f.id !== activeId) activate(f.id); setAddingMembers(true); }} className={emptyAction}>
+                      <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
+                    </button>
+                    <button type="button" onClick={() => { if (f.id !== activeId) activate(f.id); onNewWorktree(f.ticket); }} className={emptyAction}>
+                      <span className="text-zinc-500"><PenIcon /></span>New worktree here
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">{rows}</div>
+                )}
+              </section>
+            );
+          }}
         </FocusList>
         {/* No active Focus: as before, below the list. */}
         {!active && (

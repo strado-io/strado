@@ -173,6 +173,7 @@ describe('Dashboard inline hub', () => {
     wsMock.all = [];
     wsMock.switchTo = () => {};
     localStorage.clear();
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1', 'f2'])); // these tests read the cards: expanded
     // These tests drive the sidebar; it starts hidden on a first run (the Dock is enough).
     localStorage.setItem('strado:sidebar-collapsed:v2', '0');
     __resetFocuses();

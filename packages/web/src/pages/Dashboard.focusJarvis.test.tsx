@@ -72,6 +72,7 @@ describe('Dashboard: Focus Jarvis', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f-a'])); // these tests read the cards: expanded
     localStorage.setItem('strado:sidebar-collapsed:v2', '0');
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ 'ws-a': 'f-a' }));
     __resetFocuses();

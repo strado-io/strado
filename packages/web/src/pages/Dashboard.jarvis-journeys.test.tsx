@@ -230,6 +230,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     wsMock.all = [];
     wsMock.switchTo = () => {};
     localStorage.clear();
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1'])); // these tests read the cards: expanded
     localStorage.setItem('strado:worktree-lru', JSON.stringify({ '/wt/FD-9': Date.now() - 60_000 }));
     __resetFocuses();
     seedFocus();
@@ -355,6 +356,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     await waitFor(() => expect(fakeFocuses.api.create).toHaveBeenCalledWith('default', expect.objectContaining({ name: 'release', members: ['local:/wt/master'] })));
     // Created and switched to, as the sidebar's own "New focus" does.
     await waitFor(() => expect(focusPill('release')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Show release' })); // a new Focus starts folded
     expect(await focusSection().findAllByText('master')).not.toHaveLength(0);
     expect(focusSection().queryAllByText('FD-9')).toHaveLength(0);
 

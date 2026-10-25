@@ -95,6 +95,7 @@ describe('Dashboard poll vs workspace switch', () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f-ws-a', 'f-ws-b'])); // these tests read the cards: expanded
     __resetFocuses();
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ 'ws-a': 'f-ws-a', 'ws-b': 'f-ws-b' }));
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };
