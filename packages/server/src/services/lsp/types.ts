@@ -39,7 +39,7 @@ export type LspServerSpec = {
 export const LSP_SERVERS: LspServerSpec[] = [
   { id: 'typescript', lang: 'TypeScript and JavaScript', cmd: ['typescript-language-server', '--stdio'],
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'],
-    install: [{ command: 'npm install -g typescript-language-server typescript', needs: 'npm' }] },
+    install: [{ command: 'npm install -g typescript-language-server typescript@5', needs: 'npm' }] },
   { id: 'pyright', lang: 'Python', cmd: ['pyright-langserver', '--stdio'], extensions: ['.py', '.pyi'],
     install: [{ command: 'npm install -g pyright', needs: 'npm' }, { command: 'pipx install pyright', needs: 'pipx' }] },
   { id: 'gopls', lang: 'Go', cmd: ['gopls'], extensions: ['.go'],

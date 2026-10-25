@@ -14,7 +14,7 @@ import type { SearchAnswer } from './types.js';
 import { redact } from '../hostTabs/redact.js';
 import { sampleProcesses, subtreeTotals, type ProcSample } from '../sessionMetrics.js';
 import { LspClient, LspError } from './client.js';
-import { npmGlobalRoot, tsserverPathFor } from './tsserver.js';
+import { npmGlobalRoot, TS7_ONLY, tsserverPathFor } from './tsserver.js';
 import { installOptions, type Detect } from './detect.js';
 import type { LspEnabledStore } from './store.js';
 import {
@@ -261,11 +261,17 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     return env;
   }
 
-  /** Server-specific initializationOptions, or undefined. */
+  /** Server-specific initializationOptions, or undefined. Throws a Fallback
+   *  when the server cannot run at all (only a TypeScript 7 around). */
   async function initOptions(spec: LspServerSpec, root: string, binary: string): Promise<unknown> {
     if (spec.id !== 'typescript') return undefined;
     const tsserver = await tsserverPathFor(root, binary, npmRoot);
-    return tsserver ? { tsserver: { path: tsserver } } : undefined;
+    if (tsserver.onlyTs7) {
+      // Not started: it would only fail with a less useful message.
+      recordError(spec.id, TS7_ONLY);
+      throw new Fallback('failed', spec);
+    }
+    return tsserver.path ? { tsserver: { path: tsserver.path } } : undefined;
   }
 
   /** Counts one failure (crash or failed initialize) and frees the slot at

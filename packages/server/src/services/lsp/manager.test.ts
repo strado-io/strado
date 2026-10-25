@@ -417,6 +417,50 @@ describe('typescript-language-server needs a TypeScript', () => {
     expect(await initOptions()).toEqual({ tsserver: { path: p } });
   });
 
+  /** A global install the way npm lays it out, with TypeScript 7 (native: no tsserver.js) beside it. */
+  async function globalWithTs7(): Promise<string> {
+    const prefix = path.join(tmp, 'nvm', 'v22');
+    const pkgBin = path.join(prefix, 'lib', 'node_modules', 'typescript-language-server', 'lib', 'cli.mjs');
+    await fs.mkdir(path.dirname(pkgBin), { recursive: true });
+    await fs.copyFile(await fakeBinary('needs-tsserver'), pkgBin);
+    await fs.chmod(pkgBin, 0o755);
+    await fs.mkdir(path.join(prefix, 'bin'));
+    await fs.symlink(pkgBin, path.join(prefix, 'bin', 'typescript-language-server'));
+    const ts7 = path.join(prefix, 'lib', 'node_modules', 'typescript', 'lib');
+    await fs.mkdir(ts7, { recursive: true });
+    for (const f of ['tsc.js', 'getExePath.js', 'version.cjs']) await fs.writeFile(path.join(ts7, f), '');
+    return path.join(prefix, 'bin', 'typescript-language-server');
+  }
+
+  it('only a TypeScript 7 (no tsserver): not started, and Settings says what to install', async () => {
+    const logged: string[] = [];
+    const m = await make(await globalWithTs7(), { log: (l) => logged.push(l) });
+    expect(await m.definition(root, 'src/use.ts', 2, 14)).toMatchObject({ source: 'search', fallback: 'failed', server: 'typescript' });
+    expect((await received()).some((x) => x.method === 'initialize')).toBe(false);
+    const err = (await m.servers())[0]!.lastError!;
+    expect(err).toBe(
+      'TypeScript 7 has no tsserver — install typescript@5 globally (npm install -g typescript@5) or add typescript to the project',
+    );
+    expect(logged).toEqual([`language server typescript: ${err}`]);
+  });
+
+  it("a TypeScript 7 at the root is passed over for one that has a tsserver", async () => {
+    await fs.mkdir(path.join(root, 'node_modules', 'typescript', 'lib'), { recursive: true });
+    await fs.writeFile(path.join(root, 'node_modules', 'typescript', 'lib', 'tsc.js'), '');
+    const p = await tsserverAt(path.join(tmp, 'npmroot'));
+    const m = await make(await globalWithTs7(), { npmRoot: async () => path.join(tmp, 'npmroot') });
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect(await initOptions()).toEqual({ tsserver: { path: p } });
+  });
+
+  it('TypeScript 7 globally, TypeScript 5 in the project: the project one, and it works', async () => {
+    const p = await tsserverAt(path.join(root, 'web', 'node_modules'));
+    const m = await make(await globalWithTs7());
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect(await initOptions()).toEqual({ tsserver: { path: p } });
+    expect((await m.servers())[0]!.lastError).toBeUndefined();
+  });
+
   it('npm root -g as the last resort', async () => {
     const p = await tsserverAt(path.join(tmp, 'npmroot'));
     const m = await make(await fakeBinary('needs-tsserver'), { npmRoot: async () => path.join(tmp, 'npmroot') });
