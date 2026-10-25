@@ -6,12 +6,14 @@ const lsp = vi.hoisted(() => ({ definition: vi.fn(), references: vi.fn(), hover:
 vi.mock('../../api', () => ({ api: { files, lsp } }));
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown;
-    onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode }) => (
+    onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
+    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
       data-ask={String(!!p.onAskAgent)} data-vscode={String(!!p.onOpenInVsCode)}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
       <button type="button" onClick={() => p.onNavigate?.('definition', { path: p.path, line: 2, col: 4 })}>F12</button>
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
+      <input aria-label="cursor" onChange={(e) => p.onCursor?.({ path: p.path, line: Number(e.target.value), col: 1 })} />
       {p.headerStart}
     </div>
   ),
@@ -145,6 +147,47 @@ describe('FilesTab', () => {
       fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'ArrowRight', altKey: true });
       fireEvent.keyDown(screen.getByTestId('files-tab'), { key: '[', metaKey: true });
       expect(where()).toEqual(['a.ts', '2', '4']);
+    });
+
+    it('cursor moves: far ones are recorded, near ones move the current place; Ctrl+- / Ctrl+Shift+- walk them', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      const cursor = (line: number) => fireEvent.change(screen.getByLabelText('cursor'), { target: { value: String(line) } });
+      const tab = screen.getByTestId('files-tab');
+      cursor(5); // near line 1: no entry
+      expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+      cursor(30); // far: 5 is recorded
+      cursor(35); // near 30: 30 becomes 35
+      cursor(80); // far: 35 is recorded
+      fireEvent.keyDown(tab, { key: '-', code: 'Minus', ctrlKey: true });
+      expect(where()).toEqual(['a.ts', '35', '1']);
+      fireEvent.keyDown(tab, { key: '-', code: 'Minus', ctrlKey: true });
+      expect(where()).toEqual(['a.ts', '5', '1']);
+      expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+      fireEvent.keyDown(tab, { key: '_', code: 'Minus', ctrlKey: true, shiftKey: true });
+      expect(where()).toEqual(['a.ts', '35', '1']);
+      fireEvent.keyDown(tab, { key: '_', code: 'Minus', ctrlKey: true, shiftKey: true });
+      expect(where()).toEqual(['a.ts', '80', '1']);
+      expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+      // A new far move after going back drops the forward list.
+      fireEvent.keyDown(tab, { key: '[', metaKey: true });
+      cursor(200);
+      expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+    });
+
+    it('switching files records the place left, including an open from elsewhere; history keeps 50', async () => {
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', line: 9, nonce: 2 }} />);
+      expect(where()).toEqual(['b.ts', '9', '1']);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(where()).toEqual(['a.ts', '1', '1']);
+      const cursor = (line: number) => fireEvent.change(screen.getByLabelText('cursor'), { target: { value: String(line) } });
+      for (let i = 1; i <= 60; i++) cursor(i * 100);
+      let backs = 0;
+      while (!screen.getByRole('button', { name: 'Back' }).hasAttribute('disabled')) { fireEvent.click(screen.getByRole('button', { name: 'Back' })); backs++; }
+      expect(backs).toBe(50);
+      expect(where()).toEqual(['a.ts', '1000', '1']);
     });
 
     it('several definitions, or a search guess, are offered to pick from with why', async () => {

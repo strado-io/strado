@@ -13,6 +13,12 @@ import { NavPanel, navTitle, type NavKind } from './NavPanel';
 import { SearchPanel } from './SearchPanel';
 import { filesError } from './errors';
 
+/** Back/forward keep this many places each way. */
+export const HISTORY_CAP = 50;
+/** A cursor move within this many lines of the current place updates it instead of adding one. */
+export const NEAR_LINES = 10;
+const capped = (list: FileAt[], at: FileAt) => [...list, at].slice(-HISTORY_CAP);
+
 type NavState = { kind: NavKind; at: FileAt; answer: NavAnswer | null; error: string | null };
 
 export type FilesTabProps = {
@@ -83,17 +89,27 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   }, []);
   /** A jump you can come back from. */
   const jump = useCallback((from: FileAt | null, to: FileAt) => {
-    if (from) setBack((b) => [...b, from].slice(-100));
+    if (from) setBack((b) => capped(b, from));
     setForward([]);
     open(to);
   }, [open]);
+  // The cursor moved in the open file (VS Code's rule): far from the current
+  // place, that place goes into the history; near it, the place just moves, so
+  // arrow keys and nearby clicks don't fill the history.
+  const moved = useCallback((at: FileAt) => {
+    const cur = here.current;
+    here.current = at;
+    if (!cur || (cur.path === at.path && Math.abs(cur.line - at.line) <= NEAR_LINES)) return;
+    setBack((b) => capped(b, cur));
+    setForward([]);
+  }, []);
   const goBack = () => {
     const prev = back[back.length - 1];
     if (!prev) return;
     // Read where we are before open() moves it.
     const from = here.current;
     setBack(back.slice(0, -1));
-    if (from) setForward((f) => [...f, from]);
+    if (from) setForward((f) => capped(f, from));
     open(prev);
   };
   const goForward = () => {
@@ -101,13 +117,16 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     if (!next) return;
     const from = here.current;
     setForward(forward.slice(0, -1));
-    if (from) setBack((b) => [...b, from]);
+    if (from) setBack((b) => capped(b, from));
     open(next);
   };
 
   useEffect(() => {
     if (!openPath) return;
-    open({ path: openPath.path, line: openPath.line });
+    // Opening from elsewhere (a chat link, the picker) is a file switch you can come back from.
+    const from = here.current;
+    if (from && (from.path !== openPath.path || Math.abs(from.line - (openPath.line ?? 1)) > NEAR_LINES)) jump(from, { path: openPath.path, line: openPath.line ?? 1, col: 1 });
+    else open({ path: openPath.path, line: openPath.line });
   }, [openPath?.path, openPath?.line, openPath?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runnerId = remote?.runnerId;
@@ -154,8 +173,10 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const mod = e.metaKey || e.ctrlKey;
-    if ((mod && !e.shiftKey && e.key === '[') || (e.altKey && e.key === 'ArrowLeft')) { e.preventDefault(); goBack(); }
-    else if ((mod && !e.shiftKey && e.key === ']') || (e.altKey && e.key === 'ArrowRight')) { e.preventDefault(); goForward(); }
+    // Ctrl+- / Ctrl+Shift+- are VS Code's Mac defaults (Shift turns '-' into '_').
+    const minus = e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.key === '-' || e.key === '_');
+    if ((mod && !e.shiftKey && e.key === '[') || (e.altKey && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
+    else if ((mod && !e.shiftKey && e.key === ']') || (e.altKey && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
   };
 
@@ -188,7 +209,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         {selected ? (
           <FileViewer key={`${worktreePath}\0${selected}`} worktreePath={worktreePath} path={selected} line={target.line} col={target.col} nonce={target.nonce} reloadKey={reloadKey}
             read={read} marks={marks} onAskAgent={onAskAgent} onOpenInVsCode={onOpenInVsCode}
-            onNavigate={navigate} hover={hover} outline={outline}
+            onNavigate={navigate} onCursor={moved} hover={hover} outline={outline}
             headerStart={(
               <span className="flex shrink-0 items-center">
                 <button type="button" onClick={goBack} disabled={back.length === 0} aria-label="Back" title="Back (⌘[)"

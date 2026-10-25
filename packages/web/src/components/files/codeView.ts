@@ -110,6 +110,8 @@ export async function createCodeView(parent: HTMLElement, o: {
   onNavigate?: (kind: NavKind, at: Pos) => void;
   /** The hover's markdown at a position, or null; aborted when a newer hover supersedes it. */
   hover?: (at: Pos, signal: AbortSignal) => Promise<string | null>;
+  /** The person moved the cursor (click, keys, find) — not goToLine. */
+  onCursor?: (at: Pos) => void;
 }): Promise<CodeView> {
   const desc = (o.language && LanguageDescription.matchLanguageName(languages, o.language, true))
     || LanguageDescription.matchFilename(languages, o.path.split('/').pop() ?? o.path);
@@ -189,6 +191,10 @@ export async function createCodeView(parent: HTMLElement, o: {
         EditorView.updateListener.of((u) => {
           if (!u.selectionSet) return;
           const sel = u.state.selection.main;
+          if (o.onCursor && u.transactions.some((tr) => tr.isUserEvent('select'))) {
+            const line = u.state.doc.lineAt(sel.head);
+            o.onCursor({ line: line.number, col: sel.head - line.from + 1 });
+          }
           if (sel.empty) return o.onSelection(null);
           const from = u.state.doc.lineAt(sel.from).number;
           const to = u.state.doc.lineAt(sel.to).number;

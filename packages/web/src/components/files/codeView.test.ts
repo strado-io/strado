@@ -1,6 +1,7 @@
 // A smoke test with the real CodeMirror in jsdom: the lazy module builds a
 // read-only view with line numbers, the change gutter, and n/p navigation.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EditorView } from '@codemirror/view';
 import { createCodeView } from './codeView';
 
 afterEach(() => { document.body.replaceChildren(); });
@@ -49,6 +50,19 @@ describe('codeView (real CodeMirror)', () => {
     expect(onNavigate).toHaveBeenLastCalledWith('references', { line: 2, col: 6 });
     view.goToLine(99, 99);
     expect(view.cursor().line).toBe(3);
+    view.destroy();
+  });
+
+  it('reports cursor moves the person makes, not goToLine', async () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const onCursor = vi.fn();
+    const view = await createCodeView(parent, { doc: 'a\nbb\nccc\n', path: 'x.ts', language: null, marks: null, onSelection: vi.fn(), onCursor });
+    view.goToLine(3, 2);
+    expect(onCursor).not.toHaveBeenCalled();
+    const cm = EditorView.findFromDOM(parent.querySelector('.cm-editor') as HTMLElement)!;
+    cm.dispatch({ selection: { anchor: 3 }, userEvent: 'select.pointer' });
+    expect(onCursor).toHaveBeenLastCalledWith({ line: 2, col: 2 });
     view.destroy();
   });
 });

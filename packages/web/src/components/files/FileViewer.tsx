@@ -18,7 +18,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, hover, outline, headerStart }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, onCursor, hover, outline, headerStart }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -33,6 +33,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   onOpenInVsCode?: (path: string, line: number) => void;
   /** ⌘-click/F12 (definition) and ⇧F12 (references) at a place in this file. */
   onNavigate?: (kind: NavKind, at: FileAt) => void;
+  /** The person moved the cursor here (click, keys, an outline pick) — for back/forward. */
+  onCursor?: (at: FileAt) => void;
   hover?: (at: FileAt, signal: AbortSignal) => Promise<HoverAnswer>;
   outline?: (path: string, signal: AbortSignal) => Promise<OutlineAnswer>;
   /** Before the path in the header (the tab's back/forward). */
@@ -54,6 +56,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   // The editor is built once per text; it reaches these through refs.
   const navRef = useRef(onNavigate);
   navRef.current = onNavigate;
+  const cursorRef = useRef(onCursor);
+  cursorRef.current = onCursor;
   const hoverRef = useRef(hover);
   hoverRef.current = hover;
   const shownPath = useRef<string | null>(null);
@@ -104,6 +108,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
           if (s) cursorLine.current = s.from;
           setSelection(s);
         },
+        onCursor: (at: { line: number; col: number }) => cursorRef.current?.({ path: file.path, ...at }),
         ...(navRef.current ? { onNavigate: (kind: NavKind, at: { line: number; col: number }) => navRef.current?.(kind, { path: file.path, ...at }) } : {}),
         ...(hoverRef.current ? {
           hover: async (at: { line: number; col: number }, signal: AbortSignal) => (await hoverRef.current?.({ path: file.path, ...at }, signal))?.markdown ?? null,
@@ -200,7 +205,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
           <div ref={host} className="min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="code-host" />
           {outlineOpen && outline && (
             <OutlinePanel path={path} load={outline} onClose={() => setOutlineOpen(false)}
-              onPick={(s) => { viewRef.current?.goToLine(s.line, s.col); cursorLine.current = s.line; }} />
+              onPick={(s) => { viewRef.current?.goToLine(s.line, s.col); cursorLine.current = s.line; onCursor?.({ path, line: s.line, col: s.col }); }} />
           )}
         </div>
       )}
