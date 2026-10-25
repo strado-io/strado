@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from './SidebarNav';
 import { FocusList } from './FocusList';
@@ -42,6 +42,28 @@ describe('sidebar chrome', () => {
     expect(screen.queryByText(/^Focuses$/i)).toBeNull();
     expect(screen.queryByRole('button', { name: 'New focus' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'test 2' })).toBeInTheDocument();
+  });
+
+  it('Focus rows are headings, not cards: flat with a theme-aware hover tint; the open one\'s contents sit in one quiet group', () => {
+    const f = (id: string, name: string, at: string) => ({ id, name, members: [], createdAt: 't', lastActiveAt: at });
+    render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-02-01')]} activeId="a" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>
+      <div data-testid="cards">cards</div>
+    </FocusList>);
+    const row = screen.getByRole('button', { name: 'Switch to Other' });
+    for (const cls of ['glass', 'pane-card', 'border', 'rounded-xl']) expect(row.className.split(/\s+/)).not.toContain(cls);
+    for (const cls of ['h-8', 'px-2', 'rounded-md', 'hover:bg-[rgb(var(--pane-edge)/0.05)]']) expect(row.className.split(/\s+/)).toContain(cls);
+    expect(row.querySelectorAll('svg')).toHaveLength(2); // chevron, Focus icon
+    expect(within(row).getByText('Other').className).toMatch(/text-\[13px\].*font-medium/);
+    // The open Focus's header uses the same row; its contents are grouped, no accent line.
+    const header = screen.getByRole('heading', { name: 'Open one' }).parentElement!;
+    expect(header.className.split(/\s+/)).toEqual(expect.arrayContaining(['h-8', 'px-2', 'rounded-md']));
+    const group = screen.getByTestId('focus-group');
+    expect(group).toContainElement(screen.getByTestId('cards'));
+    for (const cls of ['rounded-xl', 'p-1.5', 'gap-1.5', 'ring-1', 'bg-[rgb(var(--pane-edge)/0.02)]', 'ring-[rgb(var(--pane-edge)/0.05)]']) expect(group.className.split(/\s+/)).toContain(cls);
+    expect(group.className).not.toMatch(/border-l/);
+    // A gap between the open group and the rows below; the rows stack tightly.
+    expect(screen.getByTestId('focus-open').className.split(/\s+/)).toContain('mb-2');
+    expect(row.parentElement!.className.split(/\s+/)).toContain('gap-0.5');
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

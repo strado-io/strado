@@ -1,13 +1,14 @@
 // Every Focus, as an accordion: the active one open (its header, then its ✦
-// Jarvis card and worktree cards), every other one a single glass row with
-// its name, live badges and when it was last active. Clicking a row makes
+// Jarvis card and worktree cards in one quiet group), every other one a flat
+// heading row with its name, live badges and when it was last active —
+// headings, not cards, so they never read as worktrees. Clicking a row makes
 // that Focus the active one; at most one is ever open, and it is always the
 // active one. The six most recent show, the active one always, then
 // "Show all (N)". No header: New focus is the + in the workspace row.
 import { useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
-import { byLastActive } from './FocusSwitcher';
+import { FocusIcon, byLastActive } from './FocusSwitcher';
 import { Menu, type MenuItem } from './rowBits';
 
 /** What a collapsed row says about its Focus, beyond its name. */
@@ -21,6 +22,12 @@ export type FocusBadges = {
 };
 
 export const FOCUS_LIST_CAP = 6;
+
+// A Focus row is a heading: flat, a hover tint only (the theme's edge colour,
+// so white on dark and black on light). The open Focus's contents sit in one
+// very quiet panel under it.
+const ROW = 'flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 hover:bg-[rgb(var(--pane-edge)/0.05)]';
+const GROUP = 'flex flex-col gap-1.5 rounded-xl bg-[rgb(var(--pane-edge)/0.02)] p-1.5 ring-1 ring-[rgb(var(--pane-edge)/0.05)]';
 
 const icon = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
 const Chevron = ({ open }: { open: boolean }) => (
@@ -49,34 +56,37 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
 
   return (
     <section aria-label="Focuses" className="mt-1 flex flex-col">
-      <div className="flex flex-col gap-1">
-        {shown.map((f) => {
+      <div className="flex flex-col gap-0.5">
+        {shown.map((f, i) => {
           const n = sorted.indexOf(f) + 1;
           const hint = n <= 9 ? ` (⌘${n})` : '';
           if (f.id === activeId) {
             return (
-              <div key={f.id} data-testid="focus-open" className="flex flex-col gap-1.5">
-                <div className="group flex h-7 min-w-0 items-center gap-1.5 px-1.5">
+              <div key={f.id} data-testid="focus-open" className={`flex flex-col gap-0.5 ${i > 0 ? 'mt-2' : ''} ${i < shown.length - 1 ? 'mb-2' : ''}`}>
+                <div className={`${ROW} group`}>
                   <span className="text-zinc-400"><Chevron open /></span>
+                  <span className="shrink-0 text-zinc-400"><FocusIcon size={13} /></span>
                   {renaming === f.id ? (
                     <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
                   ) : (
-                    <h3 aria-current="true" title={`${f.name}${hint}`} className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-100">{f.name}</h3>
+                    <h3 aria-current="true" title={`${f.name}${hint}`} className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100">{f.name}</h3>
                   )}
                   <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                   <Menu label={`${f.name} actions`} alwaysVisible
                     items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...activeMenu]} />
                 </div>
-                {children}
+                {/* What belongs to this Focus, grouped under its heading (no accent line). */}
+                <div data-testid="focus-group" className={GROUP}>{children}</div>
               </div>
             );
           }
           const b = badges.get(f.id) ?? {};
           return (
             <button key={f.id} type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
-              className="glass pane-card flex h-8 min-w-0 items-center gap-1.5 rounded-xl border px-2 text-left hover:border-[rgb(var(--pane-edge)/0.12)]">
+              className={`${ROW} text-left`}>
               <span className="text-zinc-500"><Chevron open={false} /></span>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-300">{f.name}</span>
+              <span className="shrink-0 text-zinc-600"><FocusIcon size={13} /></span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-400">{f.name}</span>
               {b.agents}
               {(b.pendingApprovals ?? 0) > 0 && (
                 <span role="img" aria-label={`${b.pendingApprovals} waiting for approval`} title="Jarvis is waiting for your approval" className="shrink-0 text-[11px] text-amber-400">⚠</span>

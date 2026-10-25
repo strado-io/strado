@@ -349,8 +349,8 @@ export function SidebarBody({
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}>
           <section aria-label="Focus">
             {active && rows.length === 0 ? (
-              <div className="flex flex-col gap-1 px-1 py-1">
-                {jarvis && <div className="-mx-1 mb-1">{jarvis}</div>}
+              <div className="flex flex-col gap-1.5">
+                {jarvis}
                 <button type="button" onClick={() => setAddingMembers(true)} className={emptyAction}>
                   <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
                 </button>
@@ -359,7 +359,7 @@ export function SidebarBody({
                 </button>
               </div>
             ) : (
-              <div className="mb-1.5 flex flex-col gap-1.5">{jarvis}{rows}</div>
+              <div className="flex flex-col gap-1.5">{jarvis}{rows}</div>
             )}
           </section>
         </FocusList>
