@@ -82,6 +82,11 @@ export function sendable(text: string): Sendable {
 const worktreeName = (ctx: ParseContext, path: string): string =>
   scrub(worktreeLabel(ctx, path)) ?? scrub(path.split('/').filter(Boolean).pop()) ?? 'worktree';
 
+/** A tab's exact model-facing name in this context (what planFromModel resolves exactly), or null. */
+export function modelTabName(ctx: ParseContext, ref: TabRef): string | null {
+  return nameIndex(ctx).find((e) => e.info.worktreePath === ref.worktreePath && e.info.mode === ref.mode && e.info.sessionId === ref.sessionId)?.name ?? null;
+}
+
 /** Every tab's unique model-facing name: plain in the current worktree,
  * `<worktree>/<name>` elsewhere. Deterministic, so the same context always
  * yields the same names on the way out and on the way back. */
@@ -643,6 +648,9 @@ export type RunOutcome = { done: number; failed?: { index: number; reason: strin
  * below reviewer; ran git status in shell-3"). Stored as the assistant turn so
  * a follow-up's "this"/"it"/"that shell" resolve to the tabs just opened.
  * `ctx` is read after the run. */
+/** "a", "a and b", "a, b and c". */
+const andList = (xs: string[]): string => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
 export function describeRun(plan: Plan, run: RunOutcome, ctx: ParseContext): string {
   const index = nameIndex(ctx);
   const cur = here(ctx);
@@ -686,6 +694,19 @@ export function describeRun(plan: Plan, run: RunOutcome, ctx: ParseContext): str
       case 'nav.worktree': return [`went to ${worktreeName(ctx, s.args.path)}`, `go to ${worktreeName(ctx, s.args.path)}`];
       case 'server.start': { const r = runLabel(ctx, s.args.worktreePath, s.args.run); return r ? [`started ${r}`, `start ${r}`] : ['started the dev server', 'start the dev server']; }
       case 'server.stop': { const r = runLabel(ctx, s.args.worktreePath, s.args.run); return r ? [`stopped ${r}`, `stop ${r}`] : ['stopped the dev server', 'stop the dev server']; }
+      case 'focus.edit': {
+        const { op, focusId, name, worktreePaths } = s.args;
+        const focus = ctx.focuses.find((f) => f.id === focusId)?.name ?? 'the Focus';
+        const wts = andList(worktreePaths.map((p) => worktreeName(ctx, p)));
+        switch (op) {
+          case 'create': return [`created the Focus ${name ?? ''}${wts ? ` with ${wts}` : ''}`.replace(/ {2,}/g, ' '), `create the Focus ${name ?? ''}`.trim()];
+          case 'rename': return [`renamed ${focus} to ${name ?? ''}`, `rename ${focus} to ${name ?? ''}`];
+          case 'delete': return [`deleted ${focus}`, `delete ${focus}`];
+          case 'add': return [`added ${wts} to ${focus}`, `add ${wts} to ${focus}`];
+          case 'remove': return [`removed ${wts} from ${focus}`, `remove ${wts} from ${focus}`];
+        }
+        return [s.action, s.action];
+      }
       default: { const label = s.chips[0]?.label ?? s.action; return [label, label]; }
     }
   };

@@ -43,6 +43,7 @@ vi.mock('../api', async (importOriginal) => {
 const PANE_WIDTH = 300;
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1'])); // these tests read the cards: expanded
   seedFocus();
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(PANE_WIDTH);
   vi.mocked(useMrSummaries).mockReturnValue(new Map());
@@ -150,10 +151,10 @@ describe('Sidebar tree', () => {
   });
 
   describe('focus members', () => {
-    it('shows the active Focus in the pill and its worktrees as cards, and opens them', () => {
+    it('shows the active Focus open in the list with its worktrees as cards, and opens them', () => {
       const onOpenWorktree = vi.fn();
       wrap(<Sidebar {...base} onOpenWorktree={onOpenWorktree} />);
-      expect(activePane().getByRole('button', { name: 'Focus: Working on' })).toBeInTheDocument();
+      expect(within(activePane().getByTestId('focus-open')).getByRole('heading', { name: 'Working on' })).toBeInTheDocument();
       const body = activePane().getByRole('region', { name: 'Focus' });
       fireEvent.click(within(body).getByRole('button', { name: 'FD-1' }));
       expect(onOpenWorktree).toHaveBeenCalledWith(base.worktrees[0]);
@@ -359,10 +360,11 @@ describe('Sidebar tree', () => {
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });
 
-  it('the toolbar button starts a worktree; Add repo lives in the blank-space menu', () => {
+  it('New worktree and Add repo live in the blank-space menu (and the open Focus\'s ⋯ menu)', () => {
     const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
     wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
-    fireEvent.click(activePane().getByRole('button', { name: 'New worktree' }));
+    fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
+    fireEvent.click(screen.getByRole('button', { name: 'New worktree…' }));
     expect(onNewWorktree).toHaveBeenCalled();
     expect(activePane().queryByRole('button', { name: 'Add repo' })).toBeNull();
     fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
@@ -370,9 +372,21 @@ describe('Sidebar tree', () => {
     expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
   });
 
-  it('has no bottom New worktree button', () => {
+  it('has no New worktree button of its own; the workspace row\'s +, left of its chevron, is New focus', () => {
     wrap(<Sidebar {...base} />);
-    expect(activePane().getAllByRole('button', { name: 'New worktree' })).toHaveLength(1);
+    expect(activePane().queryByRole('button', { name: 'New worktree' })).toBeNull();
+    const plus = screen.getByRole('button', { name: 'New focus' });
+    expect(plus).toHaveAttribute('title', 'New focus (⇧⌘N)');
+    expect(plus.compareDocumentPosition(screen.getByTestId('space-chevron')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Switch workspace/ }).compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(plus);
+    expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
+  });
+
+  it('the chevron opens the workspace menu too', () => {
+    wrap(<Sidebar {...base} />);
+    fireEvent.click(screen.getByTestId('space-chevron'));
+    expect(screen.getByRole('menu', { name: 'Workspaces' })).toBeInTheDocument();
   });
 
   describe('many worktrees (> 7)', () => {

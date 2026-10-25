@@ -102,10 +102,30 @@ export function SenderKeyLine({ fingerprint, className = '' }: { fingerprint: st
 export function CommandBoxSection() {
   const [localOnly, setLocal] = useState<boolean | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [wakes, setWakes] = useState<boolean | null>(null);
+  const [wakesError, setWakesError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.profile.get().then((p) => setLocal(!!p.jarvisLocalOnly)).catch(() => setLocal(false));
+    api.profile.get().then((p) => {
+      setLocal(!!p.jarvisLocalOnly);
+      setWakes(p.jarvisWakes !== false);
+    }).catch(() => {
+      setLocal(false);
+      setWakes(true);
+    });
   }, []);
+
+  const toggleWakes = async () => {
+    const next = !wakes;
+    setWakes(next);
+    setWakesError(null);
+    try {
+      await api.profile.save({ jarvisWakes: next });
+    } catch (e) {
+      setWakes(!next);
+      setWakesError((e as Error).message);
+    }
+  };
 
   const toggleLocal = async () => {
     const next = !localOnly;
@@ -151,6 +171,22 @@ export function CommandBoxSection() {
         </span>
       </label>
       {localError && <p role="alert" className="mt-1.5 text-xs text-red-400">{localError}</p>}
+
+      <label className="mt-4 flex items-start gap-3">
+        <input
+          type="checkbox"
+          aria-label="Jarvis speaks up when agents finish"
+          checked={!!wakes}
+          disabled={wakes === null}
+          onChange={() => void toggleWakes()}
+          className="mt-0.5 h-4 w-4 accent-sky-600"
+        />
+        <span>
+          <span className="text-sm text-zinc-200">Jarvis speaks up when agents finish</span>
+          <span className="block text-xs text-zinc-500">When an agent a Focus’s Jarvis started finishes, Jarvis posts a short note in that Focus’s chat. Off: the chat only records it.</span>
+        </span>
+      </label>
+      {wakesError && <p role="alert" className="mt-1.5 text-xs text-red-400">{wakesError}</p>}
     </div>
   );
 }

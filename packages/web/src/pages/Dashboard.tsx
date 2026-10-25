@@ -8,7 +8,8 @@ import { JarvisPaletteHost, JarvisToast, type JarvisRun } from '../components/ja
 import type { CommandBarHandle } from '../components/CommandPalette';
 import { Dock } from '../components/dock/Dock';
 import { HomeScreen } from '../components/home/HomeScreen';
-import { recentWorktrees } from '../lib/home/recent';
+import { recentInFocus, recentWorktrees } from '../lib/home/recent';
+import { AddWorktreesDialog } from '../components/focus/AddWorktreesDialog';
 import { lightOf } from '../lib/dock/stations';
 import { focusWorktreesOf, missionStations } from '../components/mission/mission';
 import { OrphanCalls } from '../components/mission/OrphanCalls';
@@ -52,6 +53,9 @@ import { WorktreesPage } from '../components/worktrees/WorktreesPage';
 import { useCodeReviews } from '../hooks/codeReviews';
 import { requestRunInShell } from '../lib/runInShell';
 import { worktreeLabel } from '../components/sidebar/labels';
+import { FocusJarvisLatest, FocusJarvisMain, FocusJarvisProvider, FocusJarvisStatus, type OpenCard } from '../components/focusJarvis/FocusJarvisHost';
+import type { JarvisStart } from '../components/focusJarvis/FocusJarvisView';
+import { useFocusJarvisBadges } from '../components/focusJarvis/badges';
 
 type State = {
   repos: RepoConfig[];
@@ -119,6 +123,19 @@ const STORE_SELECTED = 'strado:selected-by-focus';
 function readSelMap(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(STORE_SELECTED) || '{}') as Record<string, string>; }
   catch { return {}; }
+}
+// The Focuses whose Jarvis chat this window has open (per window: another
+// window may be on the same Focus, looking at a worktree).
+const STORE_JARVIS = 'strado:jarvis-by-focus';
+function readJarvisOpen(focusId: string): boolean {
+  try { return (JSON.parse(sessionStorage.getItem(STORE_JARVIS) || '[]') as string[]).includes(focusId); }
+  catch { return false; }
+}
+function writeJarvisOpen(focusId: string, open: boolean): void {
+  try {
+    const ids = (JSON.parse(sessionStorage.getItem(STORE_JARVIS) || '[]') as string[]).filter((x) => x !== focusId);
+    sessionStorage.setItem(STORE_JARVIS, JSON.stringify(open ? [...ids, focusId] : ids));
+  } catch { /* disabled storage — ignore */ }
 }
 function writeSelPath(focusId: string, path: string | null): void {
   try {
@@ -261,6 +278,10 @@ export function Dashboard(props: {
   // A worktree on a runner, when that is what's open. Mutually exclusive with
   // selectedPath: one hub at a time.
   const [selectedRemote, setSelectedRemote] = useState<RemoteWorktree | null>(null);
+  // The active Focus's Jarvis chat fills the main area. Opening a worktree,
+  // a remote one or a page replaces it.
+  const [jarvisOpen, setJarvisOpen] = useState(false);
+  useEffect(() => { if (selectedPath || selectedRemote) setJarvisOpen(false); }, [selectedPath, selectedRemote]);
   // undefined = a generic open — TerminalView restores the worktree's
   // last-active tab instead of being forced onto one.
   const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser' | 'files' | undefined>(undefined);
@@ -356,6 +377,7 @@ export function Dashboard(props: {
   const setReviewRepoId = (value: string) => setReviewRepoFilter({ wsId, value });
   // Top-level destinations close whichever worktree hub is open.
   const selectView = (view: SidebarView) => {
+    setJarvisOpen(false);
     setActiveView(view);
     setSelectedPath(null);
     setSelectedRemote(null);
@@ -509,8 +531,6 @@ export function Dashboard(props: {
   // full list instead, and stays asked: Back from a worktree opened there
   // returns to the list. "Go home" (and app start) is home again.
   const [homeAll, setHomeAll] = useState(false);
-  const onHome = !selectedRemote && !(selectedPath && state.worktrees.some((w) => w.path === selectedPath))
-    && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0 && !homeAll;
   // The sidebar is where the user left it, everywhere (home included): only
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
   // sidebar"). A hub closing itself (its last session gone) must not hide it.
@@ -619,6 +639,43 @@ export function Dashboard(props: {
       .catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }))
       .finally(() => { joiningRef.current.delete(pinId); });
   };
+  // Jarvis needs a Focus; which Focus has it open is kept for this window.
+  useEffect(() => {
+    if (focusApi.loaded && !focusApi.active) setJarvisOpen(false);
+  }, [focusApi.loaded, focusApi.active]);
+  useEffect(() => {
+    const id = focusApi.activeId;
+    if (id && restoredForRef.current === id) writeJarvisOpen(id, jarvisOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jarvisOpen]);
+  // The other Focuses' rows: approvals waiting and unread replies, refreshed on the stations feed's events.
+  const jarvisBadges = useFocusJarvisBadges(wsId, focusApi.focuses, focusApi.activeId, stations);
+  // With a Focus active, the main area is never the global home: nothing else
+  // open means its Jarvis chat. Home is for when no Focus is active.
+  const hubOpen = !!selectedRemote || !!(selectedPath && state.worktrees.some((w) => w.path === selectedPath));
+  const chatShown = !!focusApi.active && !hubOpen && (jarvisOpen || (activeView.kind === 'worktrees' && !homeAll));
+  const onHome = !chatShown && !hubOpen && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0 && !homeAll
+    && !focusApi.active && (focusApi.loaded || !focusApi.activeId);
+  // Until the list loads, a stored active Focus means its view is coming: no home flash.
+  const focusPending = !focusApi.loaded && !!focusApi.activeId;
+  // The empty chat's starting points: the Focus's own recent worktrees, or ways to fill a blank one.
+  const [addingToFocus, setAddingToFocus] = useState(false);
+  const jarvisStart: JarvisStart | undefined = focusApi.active ? {
+    recent: recentInFocus(focusApi.active.members, state.worktrees, state.repos, readWorktreeLru()),
+    onOpenRecent: (w) => openInlineHub(w),
+    onAddWorktrees: () => setAddingToFocus(true),
+    onNewWorktree: () => props.onNewWorktree(undefined, focusApi.active?.ticket),
+  } : undefined;
+  const openJarvis = () => {
+    setSelectedRemote(null);
+    setSelectedPath(null);
+    setJarvisOpen(true);
+  };
+  // A card in the chat opens its tab: the worktree's hub on that session.
+  const openJarvisCard: OpenCard = (r) => {
+    const w = state.worktrees.find((x) => x.path === r.worktreePath);
+    if (w) openInlineHub(w, r.mode, r.sessionId);
+  };
   // Persist the open worktree under the active Focus (remote hubs store nothing).
   useEffect(() => {
     const id = focusApi.activeId;
@@ -644,6 +701,14 @@ export function Dashboard(props: {
     const pin = selectedRemote ? remotePinId(selectedRemote) : selectedPath ? `local:${selectedPath}` : null;
     if (active && restoredForRef.current !== active.id) {
       restoredForRef.current = active.id;
+      // A blank Focus is only its Jarvis; one left on Jarvis in this window comes back to it.
+      if (active.members.length === 0 || readJarvisOpen(active.id)) {
+        setSelectedRemote(null);
+        setSelectedPath(null);
+        setJarvisOpen(true);
+        return;
+      }
+      setJarvisOpen(false);
       const path = readSelMap()[active.id] ?? null;
       if (path && active.members.includes(`local:${path}`)) {
         if (path !== selectedPath || selectedRemote) {
@@ -654,6 +719,7 @@ export function Dashboard(props: {
         }
         return;
       }
+      // No saved view: nothing is selected, so the main area shows its Jarvis (chatShown).
     }
     if (!pin || joiningRef.current.has(pin)) return;
     if (active?.members.includes(pin)) return;
@@ -974,6 +1040,14 @@ export function Dashboard(props: {
   return (
     <UiControlProvider wsId={wsId} openWorktree={openWorktreeForAgent}>
     <RendererOverlayContext.Provider value={overlays.report}>
+    <FocusJarvisProvider wsId={wsId} focus={focusApi.active ?? null} focuses={focusApi.focuses} worktrees={state.worktrees} repos={state.repos}
+      workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed}
+      chatOpen={chatShown}
+      onTreeChanged={() => {
+        void Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)])
+          .then(([repos, worktrees]) => { if (wsRef.current === wsId) commitTree(repos, worktrees); })
+          .catch(() => { /* the 15 s re-sync catches up */ });
+      }}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
       {!sidebarHidden && (
@@ -989,7 +1063,7 @@ export function Dashboard(props: {
           onOpenRemoteWorktree={openRemoteWorktree}
           // Home is no page: nothing in the page row is current there.
           // A worktree's tabs are open: no page is current (the rail shows which worktree).
-          selected={onHome || selectedRemote || selectedWorktree ? null : activeView}
+          selected={onHome || chatShown || selectedRemote || selectedWorktree ? null : activeView}
           onSelect={(view) => { selectView(view); if (view.kind === 'worktrees') setHomeAll(true); }}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
@@ -1006,6 +1080,11 @@ export function Dashboard(props: {
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
+          // The open Focus's header is its Jarvis: status, latest reply, click to open the chat.
+          jarvis={{ status: <FocusJarvisStatus />, latest: <FocusJarvisLatest />, selected: chatShown, onOpen: openJarvis }}
+          jarvisBadges={jarvisBadges}
+          // A Focus opened from its row lands on its Jarvis chat (the restore below reads this).
+          onOpenFocus={(id) => writeJarvisOpen(id, true)}
         />
         </div>
       )}
@@ -1052,6 +1131,10 @@ export function Dashboard(props: {
               mission={hubMission}
             />
           </div>
+        ) : chatShown ? (
+          <div className="flex min-h-0 flex-1">
+            <FocusJarvisMain onOpenCard={openJarvisCard} start={jarvisStart} />
+          </div>
         ) : activeView.kind === 'reviews' ? (
           <CodeReviewsPage
             key={wsId}
@@ -1088,7 +1171,7 @@ export function Dashboard(props: {
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
-            {state.loading ? (
+            {state.loading || focusPending ? (
               <div className="px-6 py-8 text-sm text-zinc-500">Loading…</div>
             ) : state.repos.length === 0 ? (
               <OnboardingCard
@@ -1238,6 +1321,11 @@ export function Dashboard(props: {
         context={activeView.kind}
       />
 
+      {addingToFocus && focusApi.active && (
+        <AddWorktreesDialog focus={focusApi.active} repos={state.repos} worktrees={state.worktrees} remoteWorktrees={remote.worktrees}
+          onAdd={(ids) => void focusApi.addMembers(focusApi.active!.id, ids).catch((err: Error) => dispatch({ type: 'error', message: `Could not add to ${focusApi.active?.name ?? 'focus'}: ${err.message}` }))}
+          onClose={() => setAddingToFocus(false)} />
+      )}
       {showAddRepo && (
         <AddRepoDialog
           anchor={addRepoAnchor}
@@ -1256,6 +1344,7 @@ export function Dashboard(props: {
 
       {jarvisRun && <JarvisToast wsId={wsId} run={jarvisRun} onDone={() => setJarvisRun(null)} />}
     </div>
+    </FocusJarvisProvider>
     </RendererOverlayContext.Provider>
     </UiControlProvider>
   );

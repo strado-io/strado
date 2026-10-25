@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { dropFocusJarvis, type FocusJarvisRunner } from './focusJarvis.js';
 
 const MemberIds = z.array(z.string().min(1).max(4096)).max(200);
 const Ticket = z.object({ provider: z.string().min(1).max(40), key: z.string().min(1).max(200) });
@@ -16,7 +17,7 @@ const PatchBody = z.object({
 
 // Focuses: named cross-repo sets of worktrees, one per task. Member ids are
 // the sidebar's pin ids (local:<path> / remote:<runnerId>:<path>), opaque here.
-export async function registerFocusesRoutes(app: FastifyInstance) {
+export async function registerFocusesRoutes(app: FastifyInstance, jarvis: FocusJarvisRunner | null = null) {
   app.get('/focuses', async (req) => ({ focuses: await req.workspace!.stores.focuses.list() }));
 
   app.post('/focuses', async (req) => {
@@ -31,6 +32,7 @@ export async function registerFocusesRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { id: string } }>('/focuses/:id', async (req, reply) => {
     await req.workspace!.stores.focuses.remove(req.params.id);
+    await dropFocusJarvis(req, jarvis, req.params.id);
     return reply.code(204).send();
   });
 }

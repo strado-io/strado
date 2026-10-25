@@ -30,6 +30,9 @@ export function buildParseContext(input: {
   shellNames?: Record<string, string>;
   /** The intercom stations feed: its open calls to the human ("answer claude-1 …"). */
   stations?: StationDto[];
+  /** Browser tabs no hub shows (stored per worktree): listed with the off-screen tabs, so
+   * "close the Google tab" finds one in a worktree that isn't on screen. Focus Jarvis passes its Focus's. */
+  storedBrowsers?: { worktreePath: string; sessionId: string; label: string }[];
 }): ParseContext {
   const hc = input.hub?.context ?? null;
   const live = input.peers.filter((p) => p.live);
@@ -58,7 +61,10 @@ export function buildParseContext(input: {
       agentId: p.agentId, alias: p.alias, ...(p.executionId ? { executionId: p.executionId } : {}),
       onScreen: false,
     }));
-  const tabs = [...onScreen, ...offScreen].slice(0, Math.max(onScreen.length, MODEL_CAPS.tabs));
+  const browsers = (input.storedBrowsers ?? [])
+    .filter((b) => local.has(b.worktreePath) && b.worktreePath !== input.hub?.path)
+    .map((b) => ({ worktreePath: b.worktreePath, mode: 'browser' as const, sessionId: b.sessionId, label: b.label, busy: false, onScreen: false }));
+  const tabs = [...onScreen, ...offScreen, ...browsers].slice(0, Math.max(onScreen.length, MODEL_CAPS.tabs));
   const names = uniqueWorktreeNames(input.worktrees, input.repos);
   return {
     tabs,
@@ -93,7 +99,7 @@ const lastTwo = (path: string) => path.split('/').filter(Boolean).slice(-2).join
  * branch or folder) when only one worktree has it, else "<repo>/<name>" for
  * every worktree sharing it ("Strado/main", "Strado Website/main"); without a
  * repo, or still clashing, the last two path segments. Compared ignoring case. */
-function uniqueWorktreeNames(worktrees: Worktree[], repos: RepoConfig[]): string[] {
+export function uniqueWorktreeNames(worktrees: Worktree[], repos: RepoConfig[]): string[] {
   const clashes = (names: string[]) => {
     const n = new Map<string, number>();
     for (const x of names) n.set(x.toLowerCase(), (n.get(x.toLowerCase()) ?? 0) + 1);

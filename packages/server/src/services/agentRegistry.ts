@@ -40,6 +40,9 @@ export type AgentSummary = {
   lifecycle: AgentLifecycle;
   executionId: string | null;
   live: boolean;
+  /** Set by the hub's peers route only (services/claudeTrust.ts): 'trust' while
+   *  a Claude tab that has not started yet shows Claude's folder-trust question. */
+  attention?: 'trust';
 };
 
 export type AgentRegistry = {

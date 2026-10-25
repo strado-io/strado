@@ -33,6 +33,7 @@ const worktreeLists: Record<string, unknown[]> = {
 };
 vi.mock('../api', () => ({
   api: {
+    focusJarvis: { log: vi.fn(async () => ({ entries: [], meta: null })), send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/jarvis/events' },
     focuses: {
       list: async (ws: string) => [{ id: `f-${ws}`, name: 'Working on', members: [ws === 'ws-a' ? 'local:/a/A-1' : 'local:/b/B-1'], createdAt: 't', lastActiveAt: 't' }],
       create: vi.fn(), update: vi.fn(async () => ({})), remove: vi.fn(),
@@ -94,6 +95,7 @@ describe('Dashboard poll vs workspace switch', () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('strado:sidebar-collapsed:v2', '0'); // drives the sidebar
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f-ws-a', 'f-ws-b'])); // these tests read the cards: expanded
     __resetFocuses();
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ 'ws-a': 'f-ws-a', 'ws-b': 'f-ws-b' }));
     current.workspace = { ...current.workspace, id: 'ws-a', name: 'A' };

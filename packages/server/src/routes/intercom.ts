@@ -16,6 +16,7 @@ import {
 import { ShellRunError } from '../services/shellRunner.js';
 import { parseSessionKey, sessionKeyFor } from '../services/terminalManager.js';
 import { peekLines } from '../services/terminalText.js';
+import { trustAttention } from '../services/claudeTrust.js';
 import type { AgentSummary, Execution } from '../services/agentRegistry.js';
 import { HUMAN, type Message, type MessageWithAlias } from '../services/intercomStore.js';
 
@@ -333,7 +334,14 @@ export async function registerIntercomScopedRoutes(app: FastifyInstance): Promis
 
   app.get('/intercom/diary', async (req) => diaryFor(app, req.workspace!.id, req.query));
 
-  app.get('/intercom/peers', async (req) => ({ peers: await app.deps.agents.list(req.workspace!.id) }));
+  // `attention`: a Claude tab waiting on its folder-trust question (the hub's cards show "needs you").
+  app.get('/intercom/peers', async (req) => {
+    const peers = await app.deps.agents.list(req.workspace!.id);
+    return { peers: peers.map((p) => {
+      const attention = trustAttention(p, (key) => app.deps.terminal.snapshot(key));
+      return attention ? { ...p, attention } : p;
+    }) };
+  });
 
   // The dock's station lights (spec: 2026-10-17-strado-dock-intercom-design.md):
   // every tab in the workspace, with the calls waiting on the human, in one

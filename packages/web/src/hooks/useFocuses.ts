@@ -98,6 +98,11 @@ export function activeFocusOf(wsId: string): Focus | null {
   return (id && snapshots.get(wsId)?.focuses.find((f) => f.id === id)) || null;
 }
 
+/** Refetch the list now: a change made on the server (Focus Jarvis adding a worktree) has no push. */
+export function refreshFocuses(wsId: string): Promise<void> {
+  return load(wsId, true);
+}
+
 /** Make sure the list is loaded (for callers outside React, like the Dashboard's open path). */
 export function ensureFocusesLoaded(wsId: string): Promise<void> {
   return snapshots.get(wsId)?.fresh ? Promise.resolve() : load(wsId);

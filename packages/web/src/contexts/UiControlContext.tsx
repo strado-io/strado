@@ -5,6 +5,10 @@ import { applyStoredBrowserOpen, applyStoredPlace, parseUiCommand, type ParsedUi
 import { startUiControl, type UiControlHandle } from '../lib/uiControl';
 import type { JarvisHubPort } from '../lib/jarvis/execute';
 import type { TabInfo, TabRef } from '../lib/jarvis/types';
+import { JARVIS_UI_OP, type JarvisUiActionArgs, type JarvisUiActionResult } from '../types';
+
+/** Runs a Focus Jarvis action in this window (FocusJarvisProvider registers it). */
+export type JarvisActionHandler = (args: JarvisUiActionArgs) => Promise<JarvisUiActionResult>;
 
 /** What the mounted hub exposes to app control: the worktree it shows, the
  * PTY panes on screen, and how to apply a command there. */
@@ -22,7 +26,11 @@ export type UiHubBridge = {
   apply(cmd: ParsedUiCommand, deadline: number): Promise<UiCommandAck>;
 };
 
-type Registry = { register(bridge: UiHubBridge): () => void; notify(): void; hub(): UiHubBridge | null };
+type Registry = {
+  register(bridge: UiHubBridge): () => void; notify(): void; hub(): UiHubBridge | null;
+  /** The window's Focus Jarvis action runner; the latest registration wins. */
+  setJarvisAction(handler: JarvisActionHandler): () => void;
+};
 const UiControlContext = createContext<Registry | null>(null);
 
 // One budget per command, from receipt to ack, covering the hub remount on a
@@ -43,6 +51,11 @@ export function UiControlProvider({ wsId, openWorktree, children }: {
   children: ReactNode;
 }) {
   const bridgeRef = useRef<UiHubBridge | null>(null);
+  const jarvisRef = useRef<JarvisActionHandler | null>(null);
+  const setJarvisAction = useCallback((handler: JarvisActionHandler) => {
+    jarvisRef.current = handler;
+    return () => { if (jarvisRef.current === handler) jarvisRef.current = null; };
+  }, []);
   const waiters = useRef(new Set<() => void>());
   const handleRef = useRef<UiControlHandle | null>(null);
   const openRef = useRef(openWorktree);
@@ -69,6 +82,20 @@ export function UiControlProvider({ wsId, openWorktree, children }: {
   });
 
   const onCommand = async (raw: UiCommand): Promise<UiCommandAck> => {
+    // A Focus Jarvis action does real work under the server's own, longer
+    // wait, in the background: it never needs the hub on screen.
+    if (raw.op === JARVIS_UI_OP) {
+      const run = jarvisRef.current;
+      const a = raw.args as Partial<JarvisUiActionArgs>;
+      if (!run) return { applied: false, reason: 'no_jarvis' };
+      // No scope, no action: the window never guesses which worktrees Jarvis may touch.
+      if (typeof a.action !== 'string' || !a.args || typeof a.args !== 'object'
+        || !Array.isArray(a.scope) || !a.scope.every((p) => typeof p === 'string')
+        || typeof a.focusId !== 'string' || !a.focusId) return { applied: false, reason: 'bad_args' };
+      const t = a.target as { worktreePath?: unknown; tab?: unknown } | undefined;
+      if (t !== undefined && (!t || typeof t !== 'object' || typeof t.worktreePath !== 'string' || typeof t.tab !== 'string')) return { applied: false, reason: 'bad_args' };
+      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown>, scope: a.scope, focusId: a.focusId, ...(a.target ? { target: a.target } : {}) }) };
+    }
     const deadline = Date.now() + UI_COMMAND_BUDGET_MS;
     const parsed = parseUiCommand(raw);
     if (!parsed.ok) return { applied: false, reason: parsed.reason };
@@ -106,7 +133,7 @@ export function UiControlProvider({ wsId, openWorktree, children }: {
     return () => { handle(); handleRef.current = null; };
   }, [wsId]);
 
-  const value = useRef<Registry>({ register, notify, hub: () => bridgeRef.current }).current;
+  const value = useRef<Registry>({ register, notify, hub: () => bridgeRef.current, setJarvisAction }).current;
   return <UiControlContext.Provider value={value}>{children}</UiControlContext.Provider>;
 }
 
@@ -132,6 +159,14 @@ export function useUiHubBridge(bridge: UiHubBridge | null): () => void {
   return ctx?.notify ?? noop;
 }
 const noop = () => undefined;
+
+/** Registers this window's Focus Jarvis action runner while mounted (read at call time, so it may change every render). */
+export function useJarvisActionHandler(handler: JarvisActionHandler): void {
+  const ctx = useContext(UiControlContext);
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => ctx?.setJarvisAction((args) => ref.current(args)), [ctx]);
+}
 
 /** The hub currently registered in this window (for the ⌘K box), read at call time. */
 export function useUiHub(): () => UiHubBridge | null {

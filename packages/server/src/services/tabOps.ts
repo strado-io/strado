@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from './worktreeRoot.js';
+import { trustAttention } from './claudeTrust.js';
 import { agentSpawnInstallers, spawnAgentTab, type AgentMode, type SpawnAgentTabResult } from './agentSpawn.js';
 import { ShellRunError, type ShellRunResult } from './shellRunner.js';
 import { parseSessionKey, sessionKeyFor } from './terminalManager.js';
@@ -17,6 +18,8 @@ export const SHELL_SETTLE_QUIET_MS = 500;
 export const SHELL_SETTLE_MAX_MS = 5_000;
 /** How long the first prompt keeps trying to reach a freshly started harness. */
 export const PROMPT_DELIVERY_WINDOW_MS = 45_000;
+/** …while the tab shows Claude's folder-trust question (the person must answer it). */
+export const PROMPT_TRUST_WINDOW_MS = 15 * 60_000;
 export const PROMPT_DELIVERY_RETRY_MS = 1_000;
 /** After typing the first prompt into Claude, how long until it must report working. */
 export const PROMPT_CONFIRM_MS = 5_000;
@@ -52,6 +55,20 @@ export function cleanLine(text: string): string {
     .replace(/ {2,}/g, ' ')
     .trim();
 }
+
+/** Every command a tab op ran, with its result: the Focus Jarvis gateway reads
+ *  the output of the line its window ran (the window's own result has none). */
+export type CommandRun = { key: string; command: string; result: CommandResult };
+const commandListeners = new Set<(run: CommandRun) => void>();
+export const commandRuns = {
+  on(listener: (run: CommandRun) => void): () => void {
+    commandListeners.add(listener);
+    return () => { commandListeners.delete(listener); };
+  },
+  emit(run: CommandRun): void {
+    for (const l of commandListeners) { try { l(run); } catch { /* a listener never breaks a run */ } }
+  },
+};
 
 export function createTabOps(app: FastifyInstance) {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -105,24 +122,33 @@ export function createTabOps(app: FastifyInstance) {
 
   /** Run one line in a shell tab; ShellRunError becomes a readable error result. */
   async function runCommand(key: string, command: string, timeoutMs = SPAWN_COMMAND_TIMEOUT_MS): Promise<CommandResult> {
+    let result: CommandResult;
     try {
-      return await app.deps.shellRunner.run(key, command, { timeoutMs });
+      result = await app.deps.shellRunner.run(key, command, { timeoutMs });
     } catch (err) {
       if (!(err instanceof ShellRunError)) throw err;
-      return { error: err.code === 'NOT_RUNNING' ? 'the shell is not running' : err.code === 'BUSY' ? 'a run is already in progress on that tab' : 'someone is typing in that tab' };
+      result = { error: err.code === 'NOT_RUNNING' ? 'the shell is not running' : err.code === 'BUSY' ? 'a run is already in progress on that tab' : 'someone is typing in that tab' };
     }
+    commandRuns.emit({ key, command, result });
+    return result;
   }
 
   /** Type the first prompt once the harness is ready. Claude: after SessionStart
    * reported idle. Others: the push gates (quiet input/output) stand in for a
    * "prompt shown" signal. Background; gives up quietly after the window. */
   function deliverPrompt(scopeId: string, agentId: string, key: string, mode: string, text: string): void {
-    const deadline = Date.now() + PROMPT_DELIVERY_WINDOW_MS;
+    const started = Date.now();
+    let trust = false;
     const tryOnce = async (): Promise<void> => {
-      if (Date.now() > deadline) { log(`first prompt for ${agentId} gave up after ${PROMPT_DELIVERY_WINDOW_MS} ms`); return; }
       try {
         const me = (await app.deps.agents.list(scopeId)).find((a) => a.agentId === agentId);
         if (!me || !me.live) return;
+        // A Claude tab on its folder-trust question is waiting for the person,
+        // not stuck: keep the prompt for them (up to 15 min) instead of 45 s.
+        // Once seen, the longer window holds: the prompt goes in after they answer.
+        trust ||= trustAttention(me, (k) => app.deps.terminal.snapshot(k)) === 'trust';
+        const window = trust ? PROMPT_TRUST_WINDOW_MS : PROMPT_DELIVERY_WINDOW_MS;
+        if (Date.now() - started > window) { log(`first prompt for ${agentId} gave up after ${window} ms`); return; }
         // Non-Claude harnesses post nothing until a first turn ends, so
         // 'starting' plus the push's quiet gates is the only "prompt shown"
         // signal. Known limit: a first-run trust/onboarding dialog that sits

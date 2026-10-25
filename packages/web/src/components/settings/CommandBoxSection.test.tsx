@@ -77,6 +77,24 @@ describe('CommandBoxSection', () => {
     await waitFor(() => expect(profile.save).toHaveBeenCalledWith({ jarvisLocalOnly: true }));
     expect(box).toBeChecked();
   });
+  it('"Jarvis speaks up when agents finish" is on unless the profile says false; saves to the profile', async () => {
+    render(<CommandBoxSection />);
+    const box = await screen.findByRole('checkbox', { name: /jarvis speaks up when agents finish/i });
+    await waitFor(() => expect(box).toBeChecked());
+    fireEvent.click(box);
+    await waitFor(() => expect(profile.save).toHaveBeenCalledWith({ jarvisWakes: false }));
+    expect(box).not.toBeChecked();
+  });
+  it('a failed wakes save flips back and says why', async () => {
+    profile.get.mockResolvedValue({ fullName: '', callMe: '', telemetryOptOut: false, jarvisWakes: false });
+    profile.save.mockRejectedValue(new Error('disk full'));
+    render(<CommandBoxSection />);
+    const box = await screen.findByRole('checkbox', { name: /jarvis speaks up when agents finish/i });
+    await waitFor(() => expect(box).not.toBeChecked());
+    fireEvent.click(box);
+    expect(await screen.findByText('disk full')).toBeInTheDocument();
+    expect(box).not.toBeChecked();
+  });
   it('a failed Local only save flips back and says why', async () => {
     profile.save.mockRejectedValue(new Error('offline'));
     render(<CommandBoxSection />);
@@ -101,7 +119,8 @@ describe('CommandBoxSection', () => {
       render(<CommandBoxSection />);
       await screen.findByRole('checkbox', { name: /local only/i });
       expect(screen.queryByText(/Hey Strado/)).not.toBeInTheDocument();
-      expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+      // Local only and Jarvis's "speaks up"; nothing for voice.
+      expect(screen.getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual(['Local only (never send to a model)', 'Jarvis speaks up when agents finish']);
     } finally {
       delete (window as { strado?: unknown }).strado;
     }

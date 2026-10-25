@@ -490,3 +490,37 @@ export type EditorStatus = { id: EditorId; label: string; available: boolean; li
 export type EditorsAnswer = { editors: EditorStatus[]; preferred: EditorId | null };
 /** path omitted = open the worktree folder; line/col 1-based. */
 export type OpenInEditorBody = { worktreePath: string; path?: string; line?: number; col?: number; editor?: EditorId };
+
+// Focus Jarvis: each Focus's chat, run by the person's own agent CLI with
+// Strado's actions as its tools. Mirrors server/src/services/jarvisChat/types.ts.
+export type JarvisAgent = 'claude';
+export type JarvisCardKind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'run' | 'browser';
+/** A tab Jarvis opened: `tab` is its session name ("claude-1"), `worktree` the worktree's name as
+ * Jarvis says it, `worktreePath` its exact path (what wakes and the chat match on; older cards lack it). */
+export type TabCardRef = { kind: JarvisCardKind; worktree: string; worktreePath?: string; tab: string; label?: string; url?: string };
+export type ApprovalState = 'pending' | 'approved' | 'declined' | 'superseded';
+export type TurnState = 'running' | 'done' | 'interrupted' | 'failed' | 'stopped';
+export type ChatEntry =
+  | { id: string; at: string; type: 'user'; text: string; windowId: string }
+  | { id: string; at: string; type: 'jarvis'; turnId: string; text: string; done: boolean }
+  | { id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef }
+  | { id: string; at: string; type: 'approval'; turnId: string; action: string; args: Record<string, unknown>; summary: string; danger?: string; state: ApprovalState; result?: string }
+  | { id: string; at: string; type: 'event'; text: string }
+  | { id: string; at: string; type: 'turn'; turnId: string; state: TurnState; wake?: boolean; error?: string; fix?: string }
+  | { id: string; at: string; type: 'agent'; agent: JarvisAgent };
+export type JarvisMeta = {
+  focusId: string; agent: JarvisAgent; sessionId: string | null; lastActiveAt: string | null; pendingApprovals: number; running: boolean;
+};
+export const JARVIS_MESSAGE_MAX = 16 * 1024;
+/** The ui command a Focus Jarvis turn sends this window: one action, in model args. */
+export const JARVIS_UI_OP = 'jarvis.action';
+/** `scope`: the Focus's member worktree paths; a step outside them is refused. `focusId`: the
+ * turn's Focus, which may not be the one the window shows (a wake, a late reply). */
+export type JarvisUiActionArgs = {
+  action: string; args: Record<string, unknown>; scope: string[]; focusId: string;
+  /** Set by the server only ("this"/"it" → the chat's newest fitting card): the action
+   * acts on exactly the tab at target.worktreePath named target.tab, never a lookup. */
+  target?: TabCardRef;
+};
+/** The ack's `result` for JARVIS_UI_OP. `askId`: agent.ask's intercom message id. */
+export type JarvisUiActionResult = { ok: boolean; text: string; card?: TabCardRef; askId?: string };

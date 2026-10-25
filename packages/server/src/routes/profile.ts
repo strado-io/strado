@@ -15,6 +15,7 @@ const PatchBody = z.object({
   callMe: z.string().max(120).optional(),
   telemetryOptOut: z.boolean().optional(),
   jarvisLocalOnly: z.boolean().optional(),
+  jarvisWakes: z.boolean().optional(),
 });
 
 // null/empty clears the credential; a string sets it. Bounded so a fat-finger

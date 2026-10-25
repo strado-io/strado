@@ -11,7 +11,12 @@ vi.mock('../lib/uiControl', () => ({
 }));
 
 import { readPaneLayouts } from '../hooks/paneLayout';
-import { UI_COMMAND_BUDGET_MS, UiControlProvider, useUiHubBridge, type UiHubBridge } from './UiControlContext';
+import { UI_COMMAND_BUDGET_MS, UiControlProvider, useJarvisActionHandler, useUiHubBridge, type JarvisActionHandler, type UiHubBridge } from './UiControlContext';
+
+function JarvisHandler({ run }: { run: JarvisActionHandler }) {
+  useJarvisActionHandler(run);
+  return null;
+}
 
 function Hub({ bridge }: { bridge: UiHubBridge | null }) {
   useUiHubBridge(bridge);
@@ -94,5 +99,19 @@ describe('UiControlProvider', () => {
     delete (window as unknown as { strado?: unknown }).strado;
     render(<UiControlProvider wsId="ws1" openWorktree={() => true}><Hub bridge={bridgeFor('/w/a')} /></UiControlProvider>);
     await expect(ctl.opts!.onCommand({ id: 'C', op: 'browser.open', args: { worktreePath: '/w/a', url: 'https://x.dev' } })).resolves.toEqual({ applied: false, reason: 'no_browser' });
+  });
+
+  it('jarvis.action runs in the registered Jarvis handler and acks its result; none registered says so', async () => {
+    const jarvisCmd: UiCommand = { id: 'J', op: 'jarvis.action', args: { action: 'tab.open', args: { mode: 'shell', worktree: 'api' }, scope: ['/w/api'], focusId: 'f1' } };
+    const r = render(<UiControlProvider wsId="ws1" openWorktree={() => true}><Hub bridge={null} /></UiControlProvider>);
+    await expect(ctl.opts!.onCommand(jarvisCmd)).resolves.toEqual({ applied: false, reason: 'no_jarvis' });
+    const run = vi.fn(async () => ({ ok: true, text: 'opened shell-3' }));
+    r.rerender(<UiControlProvider wsId="ws1" openWorktree={() => true}><JarvisHandler run={run} /></UiControlProvider>);
+    await expect(ctl.opts!.onCommand(jarvisCmd)).resolves.toEqual({ applied: true, result: { ok: true, text: 'opened shell-3' } });
+    expect(run).toHaveBeenCalledWith({ action: 'tab.open', args: { mode: 'shell', worktree: 'api' }, scope: ['/w/api'], focusId: 'f1' });
+    await expect(ctl.opts!.onCommand({ id: 'J4', op: 'jarvis.action', args: { action: 'tab.open', args: {}, scope: [] } })).resolves.toEqual({ applied: false, reason: 'bad_args' });
+    // No scope, no run: the window never guesses what Jarvis may touch.
+    await expect(ctl.opts!.onCommand({ id: 'J3', op: 'jarvis.action', args: { action: 'tab.open', args: {} } })).resolves.toEqual({ applied: false, reason: 'bad_args' });
+    await expect(ctl.opts!.onCommand({ id: 'J2', op: 'jarvis.action', args: { action: 7 } })).resolves.toEqual({ applied: false, reason: 'bad_args' });
   });
 });

@@ -21,6 +21,7 @@ import { createDetect } from './services/lsp/detect.js';
 import { createLspEnabledStore } from './services/lsp/store.js';
 import { createEditors, type Editors } from './services/editors/open.js';
 import { createEditorStore } from './services/editors/store.js';
+import type { FocusJarvisRunner } from './routes/focusJarvis.js';
 import { createActivityTracker, createAgentOutputBeats, ActivityTracker } from './services/activityTracker.js';
 import { createWorktreeWatcher, WorktreeWatcher } from './services/activityWatcher.js';
 import { createDiffStatsCache, DiffStatsCache } from './services/diffStatsCache.js';
@@ -105,6 +106,8 @@ export type Deps = {
   lsp?: LspManager;
   /** Open in editor; built in buildApp unless a test injects one. */
   editors?: Editors;
+  /** Focus Jarvis turn runner; tests inject a fake. */
+  jarvis?: FocusJarvisRunner;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
   // Worktree-list diff badges, cached on file/git changes (see diffStatsCache).
@@ -660,6 +663,61 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   const { registerWorkspaceRoutes } = await import('./routes/workspaces.js');
   await registerWorkspaceRoutes(app);
 
+  // Focus Jarvis: the turn runner (unless a test injects one), the tool
+  // gateway its `strado` MCP server calls, and the wakes when its agents
+  // finish or answer. Actions run in the turn's window; a new worktree is the
+  // server's own job.
+  {
+    const { createJarvisExecutor, createJarvisWorktree, cardOpen, focusScopeOf, grantAdds, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
+    const { createApprovalArgs } = await import('./services/jarvisChat/approvalArgs.js');
+    const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
+    const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
+    const { appWakeSource, createJarvisWakes } = await import('./services/jarvisChat/wakes.js');
+    const { readProfile } = await import('./services/profileStore.js');
+    const stores = (ws: string) => deps.registry.get(ws);
+    let wakes: ReturnType<typeof createJarvisWakes> | null = null;
+    const approvalArgs = createApprovalArgs();
+    const grants = new Map<string, Set<string>>();
+    const execute = grantAdds(trackAsks(
+      watchTrust(createJarvisExecutor({
+        uiClients: deps.uiClients,
+        createWorktree: createJarvisWorktree(app, stores),
+        focusPaths: async (ws, focusId) => ((await (await stores(ws)).focuses.list()).find((f) => f.id === focusId)?.members ?? [])
+          .filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length)),
+      }), trustWatcher(app)),
+      (ws, focusId, askId) => wakes?.asked(ws, focusId, askId),
+    ), grants);
+    deps.jarvis ??= createJarvisRunner({
+      stores,
+      spawnHeadless: (o) => runClaudeHeadless(o),
+      runApproved: execute,
+      approvalArgs,
+      tabOpen: cardOpen(() => deps.terminal.liveSessions()),
+    });
+    const runner = deps.jarvis;
+    // A test's runner may not wake.
+    const wake = (runner as { wake?: (ws: string, focusId: string, text: string) => void }).wake?.bind(runner);
+    if (wake) {
+      wakes = createJarvisWakes({
+        ...appWakeSource({ bus: deps.bus, agents: deps.agents, agentControl: deps.agentControl, intercom: deps.intercom }),
+        focuses: async (ws) => (await deps.registry.get(ws)).focuses.list(),
+        chat: async (ws) => (await deps.registry.get(ws)).jarvis,
+        wakesOn: async () => (await readProfile()).jarvisWakes,
+        runner: { wake },
+        log: (m) => app.log.warn(m),
+      });
+      wakes.start();
+      app.addHook('onClose', async () => wakes?.stop());
+    }
+    await registerJarvisToolRoutes(app, {
+      runner: { byToken: (t) => ('byToken' in runner && typeof runner.byToken === 'function' ? runner.byToken(t) : null) },
+      stores,
+      execute,
+      scope: focusScopeOf(stores, (ws, focusId) => ('lastContext' in runner && typeof runner.lastContext === 'function' ? runner.lastContext(ws, focusId) : null), grants),
+      approvalArgs,
+    });
+  }
+
   // Per-workspace routes scoped under /api/w/:wsId
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', async (req) => {
@@ -674,7 +732,9 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const { registerReposRoutes } = await import('./routes/repos.js');
     await registerReposRoutes(scoped);
     const { registerFocusesRoutes } = await import('./routes/focuses.js');
-    await registerFocusesRoutes(scoped);
+    await registerFocusesRoutes(scoped, deps.jarvis ?? null);
+    const { registerFocusJarvisRoutes } = await import('./routes/focusJarvis.js');
+    await registerFocusJarvisRoutes(scoped, deps.jarvis ?? null);
     const { registerWorktreesRoutes } = await import('./routes/worktrees.js');
     await registerWorktreesRoutes(scoped);
     const { registerGitChangesRoutes } = await import('./routes/gitChanges.js');
