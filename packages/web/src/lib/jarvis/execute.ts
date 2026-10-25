@@ -7,6 +7,9 @@ import { applyStoredPlace } from '../uiCommands';
 import { readShellNames, renameSession, sessionNameKey, type NamedSessionMode } from '../../hooks/shellNames';
 import type { ActionArgs, AppPage, Place, SettingId, SettingsSectionId, Split, Step, TabRef, Target } from './types';
 
+/** One intercom context item, as the server's ContextItem accepts it. */
+export type IntercomContextItem = { kind: 'text' | 'file' | 'url' | 'reference'; value: string; label?: string };
+
 /** A placement with its anchor resolved to a tab (null = the focused pane). */
 export type ResolvedPlace = { split: Split; anchor: TabRef | null; focus: boolean };
 
@@ -27,7 +30,8 @@ export type JarvisServerPort = {
   interrupt(tab: TabRef): Promise<unknown>;
   close(tab: TabRef): Promise<unknown>;
   /** `ask`: an intercom request whose reply comes back to the box. */
-  message(agentId: string, text: string, opts?: { ask?: boolean }): Promise<unknown>;
+  /** context: intercom context items riding on the message (the Files tab's lines). */
+  message(agentId: string, text: string, opts?: { ask?: boolean; context?: IntercomContextItem[] }): Promise<unknown>;
   /** A short recap of what the agents are doing / have done, from their saved turns. */
   recap?(agents: string[] | 'all', question?: string | null): Promise<{ text: string }>;
   /** `run`: a run command (id or name); null = the default. */
