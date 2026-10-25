@@ -42,7 +42,7 @@ type Params = { id: string };
 async function focusOf(req: FastifyRequest<{ Params: Params }>): Promise<string> {
   const id = req.params.id;
   const focuses = await req.workspace!.stores.focuses.list();
-  if (!focuses.some((f) => f.id === id)) throw new AppError('NOT_FOUND', `focus ${id} not found`);
+  if (!focuses.some((f) => f.id === id)) throw new AppError('NOT_FOUND', 'focus not found');
   return id;
 }
 

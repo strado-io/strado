@@ -56,7 +56,7 @@ describe('jarvis chat store', () => {
   it('upsert of an unknown id appends it; append with a known id is refused', async () => {
     const e = await store.upsert('f1', { id: 'x1', at: new Date().toISOString(), type: 'event', text: 'hi' });
     expect((await store.page('f1', {})).map((x) => x.id)).toEqual(['x1']);
-    await expect(store.append('f1', { id: e.id, type: 'event', text: 'again' })).rejects.toThrow(/already/);
+    await expect(store.append('f1', { id: e.id, type: 'event', text: 'again' })).rejects.toThrow(/^entry already exists$/);
   });
 
   it('trims to 2000 entries', async () => {
@@ -112,6 +112,15 @@ describe('jarvis chat store', () => {
     const j = await store.append('f1', { type: 'jarvis', turnId: 't', text: '', done: false });
     const up = await store.upsert('f1', { ...j, text: 'Bearer abcdefghijklmnop1234' } as ChatEntry);
     expect((up as { text: string }).text).not.toContain('abcdefghijklmnop1234');
+  });
+
+  it("a card's label and url are redacted; its kind, worktree and tab are kept", async () => {
+    const e = await store.append('f1', {
+      type: 'action', turnId: 't', action: 'browser.open', summary: 'Opened the app', ok: true,
+      card: { kind: 'browser', worktree: 'api', worktreePath: '/r/api', tab: 'browser-1', label: 'token=abc123', url: 'https://me:pw@x.io/?token=secretvalue' },
+    });
+    expect(JSON.stringify(e)).not.toMatch(/abc123|:pw@|secretvalue/);
+    expect(e).toMatchObject({ card: { kind: 'browser', worktree: 'api', worktreePath: '/r/api', tab: 'browser-1' } });
   });
 
   it('redactChat leaves ordinary text alone', () => {
@@ -192,7 +201,7 @@ describe('jarvis chat store', () => {
   it('writes after remove are refused, so a turn ending late cannot bring the chat back', async () => {
     const j = await store.append('f1', { type: 'jarvis', turnId: 't', text: 'half', done: false });
     await store.remove('f1');
-    await expect(store.upsert('f1', { ...j, done: true } as ChatEntry)).rejects.toThrow(/deleted/);
+    await expect(store.upsert('f1', { ...j, done: true } as ChatEntry)).rejects.toThrow(/^focus was deleted$/);
     await expect(store.append('f1', user('late'))).rejects.toThrow(/deleted/);
     await expect(store.setMeta('f1', { sessionId: 's' })).rejects.toThrow(/deleted/);
     expect(await fs.readdir(dir)).toEqual([]);

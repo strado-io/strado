@@ -46,7 +46,9 @@ export function redactChat(text: string): string {
 }
 
 /** Fields that are ids or enums, never free text. */
-const KEEP = new Set(['id', 'at', 'type', 'turnId', 'windowId', 'state', 'action', 'agent', 'done', 'ok', 'wake', 'card']);
+const KEEP = new Set(['id', 'at', 'type', 'turnId', 'windowId', 'state', 'action', 'agent', 'done', 'ok', 'wake']);
+/** A card's own ids; its label and url are text (a URL can carry a token). */
+const CARD_KEEP = new Set(['kind', 'worktree', 'worktreePath', 'tab']);
 
 function redactDeep(v: unknown): unknown {
   if (typeof v === 'string') return redactChat(v);
@@ -57,7 +59,11 @@ function redactDeep(v: unknown): unknown {
 
 function redactEntry(e: ChatEntry): ChatEntry {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(e)) out[k] = KEEP.has(k) ? v : redactDeep(v);
+  for (const [k, v] of Object.entries(e)) {
+    if (k === 'card' && v && typeof v === 'object') {
+      out[k] = Object.fromEntries(Object.entries(v).map(([ck, cv]) => [ck, CARD_KEEP.has(ck) ? cv : redactDeep(cv)]));
+    } else out[k] = KEEP.has(k) ? v : redactDeep(v);
+  }
   return out as ChatEntry;
 }
 
@@ -94,7 +100,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
   }
 
   function writable(focusId: string): void {
-    if (removed.has(focusId)) throw new AppError('NOT_FOUND', `focus ${focusId} was deleted`);
+    if (removed.has(focusId)) throw new AppError('NOT_FOUND', 'focus was deleted');
   }
 
   function emit(focusId: string, change: JarvisChatChange): void {
@@ -222,7 +228,7 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
         writable(focusId);
         const log = await load(focusId);
         const id = input.id ?? crypto.randomBytes(8).toString('hex');
-        if (log.entries.some((e) => e.id === id)) throw new AppError('CONFLICT', `entry ${id} already exists`);
+        if (log.entries.some((e) => e.id === id)) throw new AppError('CONFLICT', 'entry already exists');
         const entry = redactEntry({ ...input, id, at: new Date().toISOString() } as ChatEntry);
         log.entries.push(entry);
         log.bytes += lineBytes(entry);

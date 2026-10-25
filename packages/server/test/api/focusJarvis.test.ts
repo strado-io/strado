@@ -79,7 +79,9 @@ describe('GET log', () => {
   });
 
   it('unknown focus 404', async () => {
-    expect((await app.inject({ method: 'GET', url: '/api/w/default/focuses/nope/jarvis' })).statusCode).toBe(404);
+    const res = await app.inject({ method: 'GET', url: '/api/w/default/focuses/nope-secret-id/jarvis' });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).not.toContain('nope-secret-id');
     expect((await post('/api/w/default/focuses/nope/jarvis/messages', { text: 'x', windowId: 'w', context })).statusCode).toBe(404);
     expect(calls).toEqual([]);
   });
