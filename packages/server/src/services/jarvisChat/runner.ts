@@ -53,7 +53,8 @@ export type JarvisRunnerDeps = {
   turnMs?: number;
 };
 
-type Job = { input: TurnInput; windowId: string; wake: boolean };
+/** `prepare`: work that must finish before the turn (an approved action), run in queue order. */
+type Job = { input: TurnInput; windowId: string; wake: boolean; prepare?: () => Promise<TurnInput> };
 type FocusState = { queue: Job[]; draining: Promise<void> | null; running: { abort: AbortController; why: 'stop' | 'cap' | null } | null; lastContext: JarvisContext | null };
 
 const TURN_CAP = 'Jarvis took longer than 5 minutes and was stopped';
@@ -179,7 +180,12 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       try {
         // A write refused because the Focus was deleted ends the turn quietly.
         for (let job = s.queue.shift(); job; job = s.queue.shift()) {
-          await runTurn(ws, focusId, s, job).catch(() => { s.running = null; });
+          try {
+            if (job.prepare) job = { ...job, input: await job.prepare() };
+            await runTurn(ws, focusId, s, job);
+          } catch {
+            s.running = null;
+          }
         }
       } finally {
         s.draining = null;
@@ -209,7 +215,6 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       const claim = key(ws, focusId) + '\0' + entryId;
       if (deciding.has(claim)) throw new AppError('CONFLICT', 'that approval is no longer pending');
       deciding.add(claim);
-      let result: string | undefined;
       let entry: Extract<ChatEntry, { type: 'approval' }>;
       try {
         const found = await st.find(focusId, entryId);
@@ -222,26 +227,27 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
         deciding.delete(claim);
       }
       state(ws, focusId).lastContext = input.context;
-      if (input.approve) {
+      const turnInput = (result?: string): TurnInput =>
+        ({ kind: 'approval', approvalId: entry.id, approved: input.approve, ...(result ? { result } : {}), context: input.context });
+      // Answered now (202): the action runs in the background, in queue order,
+      // and its outcome lands as entries; the resumed turn follows it.
+      const runIt = async (): Promise<TurnInput> => {
         let r: JarvisUiActionResult;
         try {
           r = await deps.runApproved!({ ws, focusId, turnId: entry.turnId, windowId: input.windowId, wake: false, action: entry.action, args: entry.args });
         } catch {
           r = { ok: false, text: 'It failed' };
         }
-        result = r.ok ? r.text : `It failed: ${r.text}`;
+        const result = r.ok ? r.text : `It failed: ${r.text}`;
         // What it did, with its card, under the approval.
         await st.append(focusId, {
           type: 'action', turnId: entry.turnId, action: entry.action, summary: entry.summary, ok: r.ok,
           ...(r.ok ? {} : { error: r.text }), ...(r.card ? { card: r.card } : {}),
         });
         await st.upsert(focusId, { ...entry, state: 'approved', result });
-      }
-      enqueue(ws, focusId, {
-        input: { kind: 'approval', approvalId: entry.id, approved: input.approve, ...(result ? { result } : {}), context: input.context },
-        windowId: input.windowId,
-        wake: false,
-      });
+        return turnInput(result);
+      };
+      enqueue(ws, focusId, { input: turnInput(), windowId: input.windowId, wake: false, ...(input.approve ? { prepare: runIt } : {}) });
     },
 
     wake(ws, focusId, eventText) {

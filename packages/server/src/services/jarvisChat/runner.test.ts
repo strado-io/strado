@@ -220,6 +220,7 @@ describe('JarvisRunner', () => {
     const h = fakeHeadless([{ events: [{ type: 'done' }] }, { events: [{ type: 'done' }] }]);
     const r = runner(h, { runApproved });
     await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'win1', context: ctx() });
+    await settle(r, async () => (await store.find('f1', a1.id) as { result?: string }).result !== undefined);
     expect(runApproved).toHaveBeenCalledWith(expect.objectContaining({ ws: 'w', focusId: 'f1', windowId: 'win1', action: 'shell.run', args: { tab: 'shell-1', command: 'ls' } }));
     expect(await store.find('f1', a1.id)).toMatchObject({ state: 'approved', result: 'README.md src' });
     expect(of(await all(), 'action')).toEqual([expect.objectContaining({
@@ -248,11 +249,28 @@ describe('JarvisRunner', () => {
     await settle(r, turnsDone(1));
   });
 
+  it('Approve answers at once: the entry is approved, the action runs after, then the resumed turn', async () => {
+    const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'tab.open', args: { mode: 'shell', command: 'npm i' }, summary: 'Open a shell in api, running `npm i`', state: 'pending' });
+    let finish!: (r: { ok: boolean; text: string }) => void;
+    const runApproved = vi.fn(() => new Promise<{ ok: boolean; text: string }>((res) => (finish = res)));
+    const h = fakeHeadless([{ events: [{ type: 'done' }] }]);
+    const r = runner(h, { runApproved });
+    await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'a', context: ctx() });
+    expect(await store.find('f1', a1.id)).toMatchObject({ state: 'approved' });
+    await settle(r, async () => runApproved.mock.calls.length === 1);
+    expect(h.calls).toHaveLength(0);
+    finish({ ok: true, text: 'installed' });
+    await settle(r, turnsDone(1));
+    expect(h.calls[0]!.prompt).toContain('Result: installed');
+    expect(await store.find('f1', a1.id)).toMatchObject({ result: 'installed' });
+  });
+
   it('a failed approved action is logged and told to Jarvis in fixed words', async () => {
     const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'server.stop', args: {}, summary: 'Stop the dev server in api', state: 'pending' });
     const h = fakeHeadless([{ events: [{ type: 'done' }] }]);
     const r = runner(h, { runApproved: async () => ({ ok: false, text: 'No Strado window is open' }) });
     await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'a', context: ctx() });
+    await settle(r, turnsDone(1));
     expect(await store.find('f1', a1.id)).toMatchObject({ state: 'approved', result: 'It failed: No Strado window is open' });
     expect(of(await all(), 'action')[0]).toMatchObject({ ok: false, error: 'No Strado window is open' });
     await settle(r, turnsDone(1));
