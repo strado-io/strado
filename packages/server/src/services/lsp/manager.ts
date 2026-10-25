@@ -526,8 +526,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
 
     async stop(id) {
       await Promise.all([...entries.values()].filter((e) => e.spec.id === id).map(stopEntry));
-      // A deliberate stop is a clean slate, like re-enabling (Settings' Retry):
-      // the next request may start it again.
+      // A deliberate stop is a clean slate (Settings' Retry is a stop; so is
+      // re-enabling): the next request may start it again.
       for (const k of crashes.keys()) if (k.endsWith(`\0${id}`)) crashes.delete(k);
       lastError.delete(id);
     },
