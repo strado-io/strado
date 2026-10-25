@@ -66,6 +66,24 @@ describe('jarvis chat store', () => {
     expect(JSON.parse(kept[0]!).text).toBe('e3');
   });
 
+  it('trimming never drops a pending approval or the running turn\'s entries', async () => {
+    const ap = await store.append('f1', { type: 'approval', turnId: 't0', action: 'shell.run', args: {}, summary: 'Run ls', state: 'pending' });
+    const done = await store.append('f1', { type: 'approval', turnId: 't0', action: 'shell.run', args: {}, summary: 'Run pwd', state: 'declined' });
+    const turn = await store.append('f1', { type: 'turn', turnId: 't1', state: 'running' });
+    const text = await store.append('f1', { type: 'jarvis', turnId: 't1', text: 'working on it', done: false });
+    for (let i = 0; i < JARVIS_LIMITS.logEntries; i++) await store.append('f1', { type: 'event', text: `e${i}` });
+    const ids = (await lines('f1.jsonl')).map((l) => JSON.parse(l).id);
+    expect(ids).toHaveLength(JARVIS_LIMITS.logEntries);
+    expect(ids.slice(0, 3)).toEqual([ap.id, turn.id, text.id]);
+    expect(ids).not.toContain(done.id);
+    // Once the turn ends, its entries age out like any others.
+    await store.upsert('f1', { ...turn, state: 'done' } as ChatEntry);
+    await store.append('f1', { type: 'event', text: 'one more' });
+    const after = (await lines('f1.jsonl')).map((l) => JSON.parse(l).id);
+    expect(after[0]).toBe(ap.id);
+    expect(after).not.toContain(turn.id);
+  });
+
   it('trims to 2 MB', async () => {
     const big = 'x'.repeat(JARVIS_LIMITS.messageMax);
     for (let i = 0; i < 140; i++) await store.append('f1', { type: 'event', text: `${i} ${big}` });

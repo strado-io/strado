@@ -164,11 +164,22 @@ export function createJarvisChatStore(dir: string): JarvisChatStore {
     await writeAtomic(logPath(focusId), log.entries.map((e) => `${JSON.stringify(e)}\n`).join(''));
   }
 
-  /** Drops the oldest entries past the caps; true when any went. */
+  /** Drops the oldest entries past the caps; true when any went. A pending
+   *  approval and the running turn's entries are never dropped: the person
+   *  still has to answer the one, and the runner still upserts the other. */
   function trim(log: Log): boolean {
+    const over = () => log.entries.length > JARVIS_LIMITS.logEntries || log.bytes > JARVIS_LIMITS.logBytes;
+    if (!over()) return false;
+    const running = new Set(log.entries.flatMap((e) => (e.type === 'turn' && e.state === 'running' ? [e.turnId] : [])));
+    const kept = (e: ChatEntry) => (e.type === 'approval' && e.state === 'pending') || ('turnId' in e && running.has(e.turnId));
     let dropped = false;
-    while (log.entries.length > 1 && (log.entries.length > JARVIS_LIMITS.logEntries || log.bytes > JARVIS_LIMITS.logBytes)) {
-      log.bytes -= lineBytes(log.entries.shift()!);
+    let i = 0;
+    while (over() && i < log.entries.length - 1) {
+      if (kept(log.entries[i]!)) {
+        i++;
+        continue;
+      }
+      log.bytes -= lineBytes(log.entries.splice(i, 1)[0]!);
       dropped = true;
     }
     return dropped;
