@@ -92,7 +92,9 @@ export function UiControlProvider({ wsId, openWorktree, children }: {
       if (typeof a.action !== 'string' || !a.args || typeof a.args !== 'object'
         || !Array.isArray(a.scope) || !a.scope.every((p) => typeof p === 'string')
         || typeof a.focusId !== 'string' || !a.focusId) return { applied: false, reason: 'bad_args' };
-      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown>, scope: a.scope, focusId: a.focusId }) };
+      const t = a.target as { worktreePath?: unknown; tab?: unknown } | undefined;
+      if (t !== undefined && (!t || typeof t !== 'object' || typeof t.worktreePath !== 'string' || typeof t.tab !== 'string')) return { applied: false, reason: 'bad_args' };
+      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown>, scope: a.scope, focusId: a.focusId, ...(a.target ? { target: a.target } : {}) }) };
     }
     const deadline = Date.now() + UI_COMMAND_BUDGET_MS;
     const parsed = parseUiCommand(raw);

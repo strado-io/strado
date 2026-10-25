@@ -1,6 +1,6 @@
-import { describeRun, planFromModel } from '../../lib/jarvis/model';
+import { describeRun, modelTabName, planFromModel } from '../../lib/jarvis/model';
 import { runPlan, type JarvisPorts } from '../../lib/jarvis/execute';
-import { here, tabStep } from '../../lib/jarvis/parse';
+import { here, isAgentMode, tabStep } from '../../lib/jarvis/parse';
 import { storedHubPort } from './storedHub';
 import type { ParseContext, Plan, Step, TabRef } from '../../lib/jarvis/types';
 import type { JarvisUiActionArgs, JarvisUiActionResult, TabCardRef } from '../../types';
@@ -14,18 +14,51 @@ export const OUT_OF_SCOPE = "That worktree isn't in this Focus.";
 export const OTHER_FOCUS = "That Focus isn't this one.";
 export const TAB_GONE = "That tab isn't open any more.";
 
-/** Tab actions that may name their tab by a card ref (`card: { worktreePath, tab }`, the
- * server's resolution of "this"/"it" to the chat's newest card) instead of by name. */
-const BY_CARD = { 'tab.close': 'close', 'tab.focus': 'focus', 'tab.interrupt': 'interrupt' } as const;
+export const WRONG_KIND = "That tab can't do that.";
 
-/** The tab a card ref names, as this window knows it (on screen, a live
+/** Tab actions built straight from the server's `target` (its resolution of
+ * "this"/"it" to the chat's newest fitting card). */
+const DIRECT = { 'tab.close': 'close', 'tab.focus': 'focus', 'tab.interrupt': 'interrupt' } as const;
+/** Actions whose tab arg is rewritten to the target's exact name, then checked. */
+const NAMED_TAB = new Set(['tab.rename', 'tab.place', 'shell.run']);
+/** agent.* and the arg naming the agent. */
+const AGENT_ARG: Record<string, 'to' | 'agent'> = { 'agent.message': 'to', 'agent.ask': 'to', 'agent.interrupt': 'agent', 'agent.steer': 'agent' };
+
+/** The tab a target names, as this window knows it (on screen, a live
  * session, or a stored Browser tab of a Focus worktree); null when gone. */
-function cardTab(card: unknown, ctx: ParseContext): TabRef | null {
-  const c = card as { worktreePath?: unknown; tab?: unknown } | null;
-  if (!c || typeof c.worktreePath !== 'string' || typeof c.tab !== 'string') return null;
-  const t = ctx.tabs.find((x) => x.worktreePath === c.worktreePath && `${x.mode}-${x.sessionId}` === c.tab);
+function targetTab(target: TabCardRef, ctx: ParseContext): (TabRef & { agentId?: string | null }) | null {
+  const t = ctx.tabs.find((x) => x.worktreePath === target.worktreePath && `${x.mode}-${x.sessionId}` === target.tab);
   if (!t) return null;
-  return { worktreePath: t.worktreePath, mode: t.mode, sessionId: t.sessionId, ...(t.executionId ? { executionId: t.executionId } : {}) };
+  return { worktreePath: t.worktreePath, mode: t.mode, sessionId: t.sessionId, ...(t.executionId ? { executionId: t.executionId } : {}), agentId: t.agentId ?? null };
+}
+const sameTab = (a: TabRef, b: TabRef) => a.worktreePath === b.worktreePath && a.mode === b.mode && a.sessionId === b.sessionId;
+
+/** The plan for an action the server pinned to `target`: exactly that tab,
+ * never the focused one or a same-named tab elsewhere. */
+function planForTarget(action: string, args: Record<string, unknown>, target: TabCardRef, ctx: ParseContext): Plan | { refuse: string } {
+  const ref = targetTab(target, ctx);
+  if (!ref) return { refuse: TAB_GONE };
+  const { agentId, ...tab } = ref;
+  const only = (step: Plan['steps'][number]): Plan => ({ steps: [step], source: 'model', summary: '', executable: true });
+  if (action in DIRECT) return only(tabStep(ctx, DIRECT[action as keyof typeof DIRECT], { kind: 'tab', ref: tab }));
+  if (NAMED_TAB.has(action)) {
+    if (action === 'shell.run' && tab.mode !== 'shell') return { refuse: WRONG_KIND };
+    const name = modelTabName(ctx, tab);
+    if (!name) return { refuse: TAB_GONE };
+    const plan = planFromModel([{ action, args: { ...args, tab: name } }], ctx);
+    const step = plan.steps[0];
+    if (plan.steps.length !== 1 || step!.target.kind !== 'tab' || !sameTab(step!.target.ref, tab)) return plan.steps.length ? { refuse: TAB_GONE } : plan;
+    return plan;
+  }
+  const arg = AGENT_ARG[action];
+  if (arg) {
+    if (!isAgentMode(tab.mode) || !agentId) return { refuse: WRONG_KIND };
+    const plan = planFromModel([{ action, args: { ...args, [arg]: `@{${agentId}}` } }], ctx);
+    const got = (plan.steps[0]?.args as { agentId?: string } | undefined)?.agentId;
+    if (plan.steps.length === 1 && got !== agentId) return { refuse: TAB_GONE };
+    return plan;
+  }
+  return { refuse: WRONG_KIND };
 }
 
 /** Every worktree a step acts in: its own, its tab's, its anchor's, and the
@@ -98,7 +131,7 @@ function forFocus(ctx: ParseContext, focusId: string): ParseContext {
 }
 
 async function runAction(
-  { action, args: given, scope: scopePaths, focusId }: JarvisUiActionArgs,
+  { action, args: given, scope: scopePaths, focusId, target }: JarvisUiActionArgs,
   deps: ActionDeps,
 ): Promise<JarvisUiActionResult> {
   let args = given;
@@ -113,10 +146,10 @@ async function runAction(
     args = { ...args, worktree: names[0] };
   }
   let planned: Plan;
-  if (args.card != null && action in BY_CARD) {
-    const ref = cardTab(args.card, ctx);
-    if (!ref) return { ok: false, text: TAB_GONE };
-    planned = { steps: [tabStep(ctx, BY_CARD[action as keyof typeof BY_CARD], { kind: 'tab', ref })], source: 'model', summary: '', executable: true };
+  if (target) {
+    const p = planForTarget(action, args, target, ctx);
+    if ('refuse' in p) return { ok: false, text: p.refuse };
+    planned = p;
   } else {
     planned = planFromModel([{ action, args }], ctx);
   }
@@ -126,8 +159,8 @@ async function runAction(
   const plan = confined.plan;
   const base = deps.ports();
   // A tab in a worktree no hub shows is acted on in its stored layout (a Browser tab's close, say).
-  const target = plan.steps.find((s) => s.target.kind === 'tab')?.target;
-  const offScreen = target?.kind === 'tab' && target.ref.worktreePath !== base.hub?.path ? target.ref.worktreePath : null;
+  const acted = plan.steps.find((s) => s.target.kind === 'tab')?.target;
+  const offScreen = acted?.kind === 'tab' && acted.ref.worktreePath !== base.hub?.path ? acted.ref.worktreePath : null;
   const ports = offScreen ? { ...base, hub: storedHubPort(offScreen) } : base;
   const run = await runPlan(plan, {
     ...ports,

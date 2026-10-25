@@ -82,6 +82,11 @@ export function sendable(text: string): Sendable {
 const worktreeName = (ctx: ParseContext, path: string): string =>
   scrub(worktreeLabel(ctx, path)) ?? scrub(path.split('/').filter(Boolean).pop()) ?? 'worktree';
 
+/** A tab's exact model-facing name in this context (what planFromModel resolves exactly), or null. */
+export function modelTabName(ctx: ParseContext, ref: TabRef): string | null {
+  return nameIndex(ctx).find((e) => e.info.worktreePath === ref.worktreePath && e.info.mode === ref.mode && e.info.sessionId === ref.sessionId)?.name ?? null;
+}
+
 /** Every tab's unique model-facing name: plain in the current worktree,
  * `<worktree>/<name>` elsewhere. Deterministic, so the same context always
  * yields the same names on the way out and on the way back. */

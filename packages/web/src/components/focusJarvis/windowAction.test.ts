@@ -6,6 +6,7 @@ import type { Worktree } from '../../types';
 import { readActiveTab } from '../../hooks/tabOrder';
 import { readBrowserTabs, readBrowserUrls, previewKey } from '../../hooks/browserTabs';
 import { storedBrowserTabs } from './storedHub';
+import { readShellNames, sessionNameKey } from '../../hooks/shellNames';
 import { readPaneLayouts, leafKeys } from '../../hooks/paneLayout';
 import { beforeEach, afterEach } from 'vitest';
 
@@ -193,46 +194,78 @@ describe('runJarvisAction', () => {
       .toEqual({ ok: false, text: "That Focus isn't this one." });
   });
 
-  describe('a card ref ("this" resolved by the server)', () => {
+  describe('target: "this" resolved by the server (the shape of its dispatch)', () => {
     beforeEach(() => { localStorage.clear(); (window as unknown as { strado?: unknown }).strado = {}; });
     afterEach(() => { delete (window as unknown as { strado?: unknown }).strado; });
-    const withBrowsers = () => buildParseContext({
-      hub: null, lastActedOn: null, focuses: [focus(['local:/w/api'])], activeFocusId: 'f1', workspaces: [], repos: [], scripts: null,
-      worktrees: [wt('/w/api', 'fleetx-api'), wt('/w/web', 'web')], peers: [],
-      storedBrowsers: ['/w/api', '/w/web'].flatMap((p) => storedBrowserTabs(p).map((b) => ({ worktreePath: p, sessionId: b.id, label: b.label }))),
+    const BOTH = ['/w/api', '/w/web'];
+    const live = (agentId: string, mode: string, worktreePath: string, sessionId: string) =>
+      ({ agentId, alias: null, mode, worktreePath, sessionId, executionId: `x-${agentId}`, lifecycle: 'idle', live: true }) as never;
+    const world = () => buildParseContext({
+      hub: null, lastActedOn: null, focuses: [focus(['local:/w/api', 'local:/w/web'])], activeFocusId: 'f1', workspaces: [], repos: [], scripts: null,
+      worktrees: [wt('/w/api', 'master'), wt('/w/web', 'web')],
+      // shell-1 and claude-1 in BOTH worktrees: a lookup by name alone could pick the wrong one.
+      peers: [live('shell-1@api', 'shell', '/w/api', '1'), live('claude-1@api', 'claude', '/w/api', '1'),
+        live('shell-1@web', 'shell', '/w/web', '1'), live('claude-1@web', 'claude', '/w/web', '1')],
+      storedBrowsers: BOTH.flatMap((p) => storedBrowserTabs(p).map((b) => ({ worktreePath: p, sessionId: b.id, label: b.label }))),
     });
-    const d = () => ({ context: withBrowsers, ports: () => ports(server()) });
+    const card = (kind: string, worktreePath: string, tab: string) => ({ kind, worktree: worktreePath === '/w/api' ? 'master' : 'web', worktreePath, tab }) as never;
+    const payload = (action: string, args: Record<string, unknown>, target: unknown, scope = BOTH) => ({ action, args, scope, focusId: 'f1', target }) as never;
+    let s: JarvisServerPort;
+    const d = () => ({ context: world, ports: () => ports(s) });
+    beforeEach(() => { s = server(); });
 
-    it('closes a Browser tab of a worktree not on screen: gone from its stored tabs', async () => {
-      const opened = await runJarvisAction({ action: 'browser.open', args: { url: 'google.com', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
-      expect(opened.card).toMatchObject({ kind: 'browser', worktreePath: '/w/api', tab: 'browser-1' });
-      const r = await runJarvisAction({ action: 'tab.close', args: { card: { worktreePath: '/w/api', tab: 'browser-1' } }, scope: SCOPE, focusId: 'f1' }, d());
+    it('"close this" on a Browser tab of a worktree not on screen: gone from its stored tabs', async () => {
+      await runJarvisAction(payload('browser.open', { url: 'google.com', worktree: 'master' }, undefined), d());
+      const r = await runJarvisAction(payload('tab.close', { tab: 'browser-1' }, { ...(card('browser', '/w/api', 'browser-1') as object), url: 'https://google.com/' }), d());
       expect(r.ok).toBe(true);
       expect(readBrowserTabs().has('/w/api')).toBe(false);
       expect(readBrowserUrls()[previewKey('/w/api', '1')]).toBeUndefined();
     });
 
-    it('focuses it: the worktree\'s active tab', async () => {
-      await runJarvisAction({ action: 'browser.open', args: { url: 'google.com', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
-      await runJarvisAction({ action: 'tab.open', args: { mode: 'shell', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
-      const r = await runJarvisAction({ action: 'tab.focus', args: { card: { worktreePath: '/w/api', tab: 'browser-1' } }, scope: SCOPE, focusId: 'f1' }, d());
-      expect(r.ok).toBe(true);
+    it('"focus that": the worktree\'s active tab, the Browser one', async () => {
+      await runJarvisAction(payload('browser.open', { url: 'google.com', worktree: 'master' }, undefined), d());
+      expect((await runJarvisAction(payload('tab.focus', { tab: 'browser-1' }, card('browser', '/w/api', 'browser-1')), d())).ok).toBe(true);
       expect(readActiveTab('/w/api')).toEqual({ mode: 'browser', id: '1' });
     });
 
-    it('a card for a tab that is gone, or outside the Focus, is refused in fixed words', async () => {
-      expect(await runJarvisAction({ action: 'tab.close', args: { card: { worktreePath: '/w/api', tab: 'browser-4' } }, scope: SCOPE, focusId: 'f1' }, d()))
-        .toEqual({ ok: false, text: "That tab isn't open any more." });
-      await runJarvisAction({ action: 'browser.open', args: { url: 'x.dev', worktree: 'web' }, scope: ['/w/web'], focusId: 'f1' }, d());
-      expect(await runJarvisAction({ action: 'tab.close', args: { card: { worktreePath: '/w/web', tab: 'browser-1' } }, scope: SCOPE, focusId: 'f1' }, d()))
-        .toEqual({ ok: false, text: "That worktree isn't in this Focus." });
-      expect(readBrowserTabs().has('/w/web')).toBe(true);
+    it('shell.run goes to exactly the target\'s shell, not a same-named one in another worktree', async () => {
+      expect((await runJarvisAction(payload('shell.run', { tab: 'shell-1', command: 'ls' }, card('shell', '/w/web', 'shell-1')), d())).ok).toBe(true);
+      expect(s.run).toHaveBeenCalledWith(expect.objectContaining({ worktreePath: '/w/web', mode: 'shell', sessionId: '1' }), 'ls');
+      expect(s.run).toHaveBeenCalledTimes(1);
     });
 
-    it('the stored Browser tab is in Jarvis\'s context by name too', async () => {
-      await runJarvisAction({ action: 'browser.open', args: { url: 'google.com', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
-      const r = await runJarvisAction({ action: 'tab.close', args: { tab: 'fleetx-api/browser-1' }, scope: SCOPE, focusId: 'f1' }, d());
-      expect(r.ok).toBe(true);
+    it('agent.message / agent.interrupt reach exactly the target\'s agent', async () => {
+      s.interruptAgent = vi.fn(async () => ({}));
+      expect((await runJarvisAction(payload('agent.message', { to: 'claude-1', text: 'hi' }, card('claude', '/w/web', 'claude-1')), d())).ok).toBe(true);
+      expect(s.message).toHaveBeenCalledWith('claude-1@web', 'hi');
+      expect((await runJarvisAction(payload('agent.interrupt', { agent: 'claude-1' }, card('claude', '/w/api', 'claude-1')), d())).ok).toBe(true);
+      expect(s.interruptAgent).toHaveBeenCalledWith('claude-1@api');
+    });
+
+    it('tab.rename renames exactly the target', async () => {
+      expect((await runJarvisAction(payload('tab.rename', { tab: 'shell-1', name: 'logs' }, card('shell', '/w/web', 'shell-1')), d())).ok).toBe(true);
+      expect(readShellNames()[sessionNameKey('/w/web', 'shell', '1')]).toBe('logs');
+      expect(readShellNames()[sessionNameKey('/w/api', 'shell', '1')]).toBeUndefined();
+    });
+
+    it('refused in fixed words: a tab that is gone, the wrong kind, outside the Focus', async () => {
+      expect(await runJarvisAction(payload('tab.close', { tab: 'browser-4' }, card('browser', '/w/api', 'browser-4')), d()))
+        .toEqual({ ok: false, text: "That tab isn't open any more." });
+      await runJarvisAction(payload('browser.open', { url: 'x.dev', worktree: 'master' }, undefined), d());
+      expect(await runJarvisAction(payload('shell.run', { tab: 'browser-1', command: 'ls' }, card('browser', '/w/api', 'browser-1')), d()))
+        .toEqual({ ok: false, text: "That tab can't do that." });
+      expect(await runJarvisAction(payload('agent.message', { to: 'shell-1', text: 'hi' }, card('shell', '/w/api', 'shell-1')), d()))
+        .toEqual({ ok: false, text: "That tab can't do that." });
+      expect(await runJarvisAction(payload('tab.close', { tab: 'shell-1' }, card('shell', '/w/web', 'shell-1'), ['/w/api']), d()))
+        .toEqual({ ok: false, text: "That worktree isn't in this Focus." });
+      expect(s.run).not.toHaveBeenCalled();
+      expect(s.close).not.toHaveBeenCalled();
+      expect(s.message).not.toHaveBeenCalled();
+    });
+
+    it('a stored Browser tab is in Jarvis\'s context by name too', async () => {
+      await runJarvisAction(payload('browser.open', { url: 'google.com', worktree: 'master' }, undefined), d());
+      expect((await runJarvisAction(payload('tab.close', { tab: 'master/browser-1' }, undefined), d())).ok).toBe(true);
       expect(readBrowserTabs().has('/w/api')).toBe(false);
     });
   });

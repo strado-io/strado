@@ -516,6 +516,11 @@ export const JARVIS_MESSAGE_MAX = 16 * 1024;
 export const JARVIS_UI_OP = 'jarvis.action';
 /** `scope`: the Focus's member worktree paths; a step outside them is refused. `focusId`: the
  * turn's Focus, which may not be the one the window shows (a wake, a late reply). */
-export type JarvisUiActionArgs = { action: string; args: Record<string, unknown>; scope: string[]; focusId: string };
+export type JarvisUiActionArgs = {
+  action: string; args: Record<string, unknown>; scope: string[]; focusId: string;
+  /** Set by the server only ("this"/"it" → the chat's newest fitting card): the action
+   * acts on exactly the tab at target.worktreePath named target.tab, never a lookup. */
+  target?: TabCardRef;
+};
 /** The ack's `result` for JARVIS_UI_OP. `askId`: agent.ask's intercom message id. */
 export type JarvisUiActionResult = { ok: boolean; text: string; card?: TabCardRef; askId?: string };
