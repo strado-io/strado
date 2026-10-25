@@ -50,6 +50,8 @@ import { RendererOverlayContext, useRendererOverlayRegistry } from '../contexts/
 import { UsagePage } from '../components/usage/UsagePage';
 import { WorktreesPage } from '../components/worktrees/WorktreesPage';
 import { useCodeReviews } from '../hooks/codeReviews';
+import { requestRunInShell } from '../lib/runInShell';
+import { worktreeLabel } from '../components/sidebar/labels';
 
 type State = {
   repos: RepoConfig[];
@@ -1209,6 +1211,15 @@ export function Dashboard(props: {
             refreshTicketProviders();
           }}
           onOpenFeedback={() => setFeedbackOpen(true)}
+          // Install types into a new shell in the worktree open behind Settings
+          // (this Mac's only: a runner's hub has its own machine).
+          lspInstall={selectedWorktree && !selectedRemote ? {
+            label: worktreeLabel(selectedWorktree),
+            run: (command) => {
+              setSettingsSection(null);
+              requestRunInShell({ worktreePath: selectedWorktree.path, command });
+            },
+          } : null}
         />
       )}
       {settingsSection && (

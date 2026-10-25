@@ -39,6 +39,7 @@ import { FilePicker } from '../components/files/FilePicker';
 import { FileAskDialog } from '../components/files/FileAskDialog';
 import { jarvisServerPort } from '../lib/jarvis/serverPort';
 import { vscodeSrc } from '../lib/vscodeSrc';
+import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
 import { formatActiveTime } from '../components/WorktreeRow';
@@ -2413,6 +2414,42 @@ export function TerminalView({
   };
   addShellRef.current = addShell;
 
+  // Settings' Install buttons: a new Shell tab here, the command typed into it
+  // in plain sight (requestRunInShell). Retried while the new shell comes up;
+  // if it never takes the command, the command is copied for a paste.
+  const runInShellRef = useRef<(req: RunInShellRequest) => void>(() => undefined);
+  runInShellRef.current = ({ worktreePath, command }) => {
+    if (remote || worktreePath !== worktree.path) return;
+    const tab = allocSession('shell');
+    if (!tab) return;
+    activateTab(tab);
+    const target = { worktreePath, mode: 'shell' as const, sessionId: tab.id };
+    const until = Date.now() + 15_000;
+    const attempt = async (): Promise<void> => {
+      try {
+        await jarvisServerPort(localWsId).run(target, command);
+      } catch (err) {
+        if (/no live tab|not live/i.test(String((err as Error)?.message ?? err)) && Date.now() < until) {
+          await new Promise((r) => setTimeout(r, 250));
+          return attempt();
+        }
+        throw err;
+      }
+    };
+    attempt().catch(() => {
+      navigator.clipboard?.writeText(command).catch(() => undefined);
+      setHubHint("Couldn't type the command — it's copied; paste it into the shell");
+    });
+  };
+  useEffect(() => {
+    const onRun = (e: Event) => {
+      const d = (e as CustomEvent<RunInShellRequest>).detail;
+      if (d && typeof d.worktreePath === 'string' && typeof d.command === 'string') runInShellRef.current(d);
+    };
+    window.addEventListener(RUN_IN_SHELL_EVENT, onRun);
+    return () => window.removeEventListener(RUN_IN_SHELL_EVENT, onRun);
+  }, []);
+
   // "Browser" in the new-session menu: open the primary preview if it isn't
   // open, otherwise add another Browser tab (its own WebContentsView).
   const addBrowser = () => {
@@ -2632,12 +2669,12 @@ export function TerminalView({
   // VS Code web takes a file and line only when its frame first loads; a live
   // frame is never reloaded (that would drop the Claude IDE bridge's context).
   const [vscodeGoto, setVscodeGoto] = useState<Record<string, { path: string; line: number }>>({});
-  const [vscodeHint, setVscodeHint] = useState<string | null>(null);
+  const [hubHint, setHubHint] = useState<string | null>(null);
   useEffect(() => {
-    if (!vscodeHint) return;
-    const t = window.setTimeout(() => setVscodeHint(null), 5000);
+    if (!hubHint) return;
+    const t = window.setTimeout(() => setHubHint(null), 5000);
     return () => window.clearTimeout(t);
-  }, [vscodeHint]);
+  }, [hubHint]);
   // Each frame's src, fixed when the frame first renders: a later change
   // would navigate (reload) it. A pending goto rides on that first load only.
   const vscodeSrcRef = useRef(new Map<string, string>());
@@ -2661,7 +2698,7 @@ export function TerminalView({
     const live = groupsRef.current.some((g) => g.path === worktreePath && g.vscodeOpen) && !!vscodeUrls[worktreePath];
     if (live) {
       navigator.clipboard?.writeText(`${path}:${line}`).catch(() => undefined);
-      setVscodeHint(`Copied ${path}:${line} — press ⌘P in VS Code and paste`);
+      setHubHint(`Copied ${path}:${line} — press ⌘P in VS Code and paste`);
     } else {
       // A frame that comes back (same server) must load afresh, with the goto.
       for (const key of [...vscodeSrcRef.current.keys()]) {
@@ -3977,9 +4014,9 @@ export function TerminalView({
           onClose={() => setFileAsk(null)}
         />
       )}
-      {vscodeHint && (
+      {hubHint && (
         <div role="status" className="surface-pop fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-lg px-3 py-2 text-[12px] text-zinc-200">
-          {vscodeHint}
+          {hubHint}
         </div>
       )}
       {runEditor && reposById[runEditor.repoId] && (

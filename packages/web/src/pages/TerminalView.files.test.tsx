@@ -51,7 +51,8 @@ vi.mock('../components/files/FilesTab', () => ({
 }));
 
 const jarvisMessage = vi.hoisted(() => vi.fn(async () => ({})));
-vi.mock('../lib/jarvis/serverPort', () => ({ jarvisServerPort: () => ({ message: jarvisMessage }) }));
+const jarvisRun = vi.hoisted(() => vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ output: '' })));
+vi.mock('../lib/jarvis/serverPort', () => ({ jarvisServerPort: () => ({ message: jarvisMessage, run: jarvisRun }) }));
 
 const filesList = vi.fn();
 const runnerRpc = vi.fn();
@@ -94,6 +95,7 @@ class FakeWS {
 }
 
 import { TerminalView } from './TerminalView';
+import { requestRunInShell } from '../lib/runInShell';
 import type { Worktree } from '../types';
 
 const ROOT = '/Users/me/repo.worktrees/FD-1';
@@ -202,5 +204,30 @@ describe('Files tab in the hub', () => {
       ],
     });
     expect(screen.queryByRole('dialog', { name: 'Ask an agent about these lines' })).toBeNull();
+  });
+
+  it('an Install request opens a new Shell tab and types the command there, retrying until the shell is live', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    jarvisRun.mockRejectedValueOnce(new Error('no live tab for that shell yet')).mockResolvedValueOnce({ output: '' });
+    render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
+    act(() => requestRunInShell({ worktreePath: '/elsewhere', command: 'nope' }));
+    act(() => requestRunInShell({ worktreePath: ROOT, command: 'npm install -g pyright' }));
+    expect(strip().getByText('Shell 2')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(jarvisRun).toHaveBeenCalledTimes(2);
+    expect(jarvisRun).toHaveBeenLastCalledWith({ worktreePath: ROOT, mode: 'shell', sessionId: '2' }, 'npm install -g pyright');
+    expect(jarvisRun.mock.calls.flat()).not.toContain('nope');
+    vi.useRealTimers();
+  });
+
+  it('a command that cannot be typed is copied, and the hub says so', async () => {
+    jarvisRun.mockRejectedValue(new Error('target is not a shell tab'));
+    const writeText = vi.fn(async () => {});
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
+    await act(async () => { requestRunInShell({ worktreePath: ROOT, command: 'brew install gopls' }); await Promise.resolve(); });
+    await flush();
+    expect(writeText).toHaveBeenCalledWith('brew install gopls');
+    expect(screen.getByRole('status')).toHaveTextContent("Couldn't type the command — it's copied; paste it into the shell");
   });
 });
