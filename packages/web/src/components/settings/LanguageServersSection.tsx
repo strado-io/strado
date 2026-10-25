@@ -114,8 +114,9 @@ export function LanguageServersSection({ client = api.lspServers, install }: {
                     type="button"
                     aria-label={`Retry ${s.lang} language server`}
                     disabled={busy !== null}
-                    // A stop clears the failure count, so the next navigation starts it afresh.
-                    onClick={() => void act(`retry:${s.id}`, () => client.stop(s.id))}
+                    // Turning it on again is the retry: it clears the failure and its count,
+                    // so the next navigation starts it afresh.
+                    onClick={() => void act(`retry:${s.id}`, () => client.setEnabled(s.id, true))}
                     className="rounded-md border border-zinc-800 px-2 py-1 text-[13px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-40"
                   >
                     Retry
