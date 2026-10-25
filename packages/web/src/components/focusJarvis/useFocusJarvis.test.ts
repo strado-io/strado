@@ -185,6 +185,16 @@ describe('useFocusJarvis', () => {
       expect(mergePage([reply('j', 'Hello', false)], [reply('j', 'He', false)])[0]).toMatchObject({ text: 'Hello' });
       expect(mergePage([reply('j', 'Hel', false)], [done])[0]).toBe(done);
     });
+    it('a decided approval never goes back to pending, and an ended turn never back to running', () => {
+      const ap = (state: string) => ({ id: 'a1', at: '2026-10-26T10:00:01Z', type: 'approval', turnId: 't', action: 'x', args: {}, summary: 's', state }) as ChatEntry;
+      const tu = (state: string) => ({ id: 't1', at: '2026-10-26T10:00:00Z', type: 'turn', turnId: 't', state }) as ChatEntry;
+      expect(mergePage([ap('approved')], [ap('pending')])[0]).toMatchObject({ state: 'approved' });
+      expect(upsertEntry([ap('declined')], ap('pending'))[0]).toMatchObject({ state: 'declined' });
+      expect(mergePage([ap('pending')], [ap('superseded')])[0]).toMatchObject({ state: 'superseded' });
+      expect(mergePage([tu('done')], [tu('running')])[0]).toMatchObject({ state: 'done' });
+      expect(mergePage([tu('running')], [tu('stopped')])[0]).toMatchObject({ state: 'stopped' });
+    });
+
     it('a page started before a stream meta does not overwrite that meta', async () => {
       let resolvePage: (v: unknown) => void = () => {};
       log.mockReset();

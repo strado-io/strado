@@ -4,13 +4,16 @@ import { uiClientId } from '../../lib/uiControl';
 import type { ChatEntry, JarvisMeta } from '../../types';
 
 /** Of two copies of one entry, the one to keep: the incoming one, unless it
- * is an earlier copy of a reply already finished (done:false over done:true),
- * or a shorter unfinished copy of one still streaming. */
+ * is an earlier copy of something already settled — a finished reply (or a
+ * longer copy of one still streaming), a decided approval, a turn that ended.
+ * A stale page must never bring back Approve buttons or the Stop button. */
 function newer(have: ChatEntry, incoming: ChatEntry): ChatEntry {
   if (have.type === 'jarvis' && incoming.type === 'jarvis') {
     if (have.done && !incoming.done) return have;
     if (!have.done && !incoming.done && incoming.text.length < have.text.length) return have;
   }
+  if (have.type === 'approval' && incoming.type === 'approval' && have.state !== 'pending' && incoming.state === 'pending') return have;
+  if (have.type === 'turn' && incoming.type === 'turn' && have.state !== 'running' && incoming.state === 'running') return have;
   return incoming;
 }
 
