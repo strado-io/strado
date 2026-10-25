@@ -10,7 +10,7 @@
 //   has no local editor, so the web hides the button for remote worktrees.
 
 export type EditorId =
-  | 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf' | 'zed' | 'sublime'
+  | 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf' | 'antigravity' | 'zed' | 'sublime'
   | 'webstorm' | 'idea' | 'pycharm' | 'goland' | 'xcode' | 'system';
 
 export type EditorSpec = {
@@ -32,6 +32,7 @@ export const EDITORS: EditorSpec[] = [
   { id: 'vscode-insiders', label: 'VS Code Insiders', cli: 'code-insiders', macApp: 'Visual Studio Code - Insiders', goto: 'vscode' },
   { id: 'cursor', label: 'Cursor', cli: 'cursor', macApp: 'Cursor', goto: 'vscode' },
   { id: 'windsurf', label: 'Windsurf', cli: 'windsurf', macApp: 'Windsurf', goto: 'vscode' },
+  { id: 'antigravity', label: 'Antigravity', cli: 'antigravity', macApp: 'Antigravity', goto: 'vscode' },
   { id: 'zed', label: 'Zed', cli: 'zed', macApp: 'Zed', goto: 'zed' },
   { id: 'sublime', label: 'Sublime Text', cli: 'subl', macApp: 'Sublime Text', goto: 'sublime' },
   { id: 'webstorm', label: 'WebStorm', cli: 'webstorm', macApp: 'WebStorm', goto: 'jetbrains' },
@@ -69,6 +70,7 @@ export type OpenInEditorBody = {
 
 export const EDITOR_ROUTES = {
   list: '/api/editors', // GET → EditorsAnswer
+  icon: '/api/editors/:id/icon', // GET → image/png of the app's own icon (macOS); 404 when none
   setPreferred: '/api/editors/preferred', // POST { editor: EditorId | null } → 204   (assertLocalHub)
   open: '/api/w/:ws/open-in-editor', // POST OpenInEditorBody → 204   (assertLocalHub)
 } as const;

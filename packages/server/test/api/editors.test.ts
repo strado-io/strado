@@ -27,8 +27,17 @@ beforeEach(async () => {
     detect: { dirs: async () => ['/fake/bin'], which: async (n) => (n === 'code' ? '/fake/bin/code' : null) },
     store: createEditorStore(() => path.join(tmp, 'editors.json')),
     platform: 'darwin',
-    appDirs: [],
+    appDirs: [path.join(tmp, 'Applications')],
     spawn,
+    icons: {
+      cacheDir: path.join(tmp, 'icons'),
+      finderApp: path.join(tmp, 'nope', 'Finder.app'),
+      run: async (cmd, args) => {
+        if (cmd === 'plutil') return { code: 0, stdout: 'Cursor.icns\n' };
+        await fs.writeFile(args[args.indexOf('--out') + 1]!, 'PNGDATA');
+        return { code: 0, stdout: '' };
+      },
+    },
   });
   const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
   app = await buildApp({ ...deps, editors });
@@ -60,6 +69,23 @@ describe('GET /api/editors, POST /api/editors/preferred', () => {
     expect((await post('/api/editors/preferred', { editor: 'emacs' })).statusCode).toBe(400);
     expect((await post('/api/editors/preferred', { editor: 'zed' }, { host: '127.0.0.1:4000', 'x-strado-via': 'relay' })).statusCode).toBe(403);
     expect((await post('/api/editors/preferred', { editor: 'zed' }, { host: '127.0.0.1:4000', origin: 'https://evil.example' })).statusCode).toBe(403);
+  });
+});
+
+describe('GET /api/editors/:id/icon', () => {
+  it("serves the app's icon as a cached PNG; 404 for no bundle or an unknown id", async () => {
+    const res0 = path.join(tmp, 'Applications', 'Cursor.app', 'Contents', 'Resources');
+    await fs.mkdir(res0, { recursive: true });
+    await fs.writeFile(path.join(res0, 'Cursor.icns'), 'ICNS');
+    const res = await app.inject({ method: 'GET', url: '/api/editors/cursor/icon' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['cache-control']).toBe('max-age=86400');
+    expect(res.body).toBe('PNGDATA');
+    expect((await app.inject({ method: 'GET', url: '/api/editors/zed/icon' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: '/api/editors/system/icon' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: '/api/editors/..%2F..%2Fetc/icon' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: '/api/editors/emacs/icon' })).statusCode).toBe(404);
   });
 });
 

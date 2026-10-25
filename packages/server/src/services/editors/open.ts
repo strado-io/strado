@@ -9,7 +9,8 @@ import { AppError } from '../../errors.js';
 import { resolveInside, safeRel } from '../files/files.js';
 import type { Detect } from '../lsp/detect.js';
 import { envAllowed } from '../lsp/manager.js';
-import { findEditor, listEditors, type FoundEditor } from './detect.js';
+import { editorLabel, findEditor, listEditors, type FoundEditor } from './detect.js';
+import { editorIcon, type IconDeps } from './icons.js';
 import type { EditorStore } from './store.js';
 import { EDITORS, type EditorId, type EditorsAnswer, type OpenInEditorBody } from './types.js';
 
@@ -36,6 +37,8 @@ export type EditorsDeps = {
   platform?: NodeJS.Platform;
   appDirs?: string[];
   spawn?: SpawnFn;
+  /** For icons: the converter and its cache (tests fake them). */
+  icons?: Pick<IconDeps, 'run' | 'cacheDir' | 'finderApp'>;
 };
 
 export type Editors = {
@@ -43,6 +46,8 @@ export type Editors = {
   setPreferred(id: EditorId | null): Promise<void>;
   /** `worktreePath` is already known to belong to this server (the route checks). */
   open(o: OpenInEditorBody): Promise<void>;
+  /** The cached PNG of the editor's app icon, or null (macOS only). */
+  icon(id: EditorId): Promise<string | null>;
 };
 
 /** The argv for `target` (a file, or the worktree folder when `file` is null). */
@@ -140,8 +145,10 @@ export function createEditors(deps: EditorsDeps): Editors {
       try {
         await spawn(bin!, args, { cwd: realRoot, env: await env(), detached: true, stdio: 'ignore' });
       } catch {
-        throw new AppError('UNAVAILABLE', `Could not start ${found.spec.label}`);
+        throw new AppError('UNAVAILABLE', `Could not start ${editorLabel(found.spec, platform)}`);
       }
     },
+
+    icon: (id) => editorIcon(id, { ...detectDeps, ...deps.icons }),
   };
 }

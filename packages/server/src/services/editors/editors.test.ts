@@ -61,8 +61,8 @@ describe('listEditors', () => {
     expect(by.zed).toEqual({ id: 'zed', label: 'Zed', available: true, lines: false });
     expect(by.webstorm).toMatchObject({ available: true, lines: true });
     expect(by.cursor).toMatchObject({ available: false, lines: false });
-    expect(by.system).toEqual({ id: 'system', label: 'Default app', available: true, lines: false });
-    expect(list.map((e) => e.id)).toEqual(['vscode', 'vscode-insiders', 'cursor', 'windsurf', 'zed', 'sublime', 'webstorm', 'idea', 'pycharm', 'goland', 'xcode', 'system']);
+    expect(by.system).toEqual({ id: 'system', label: 'Finder', available: true, lines: false });
+    expect(list.map((e) => e.id)).toEqual(['vscode', 'vscode-insiders', 'cursor', 'windsurf', 'antigravity', 'zed', 'sublime', 'webstorm', 'idea', 'pycharm', 'goland', 'xcode', 'system']);
   });
 
   it('VS Code Insiders on its own: its CLI, or its app bundle', async () => {
@@ -74,10 +74,19 @@ describe('listEditors', () => {
     expect(byApp.find((e) => e.id === 'vscode-insiders')).toMatchObject({ available: true, lines: false });
   });
 
-  it('app bundles count only on macOS', async () => {
+  it('app bundles count only on macOS; the default app is the File manager on Linux', async () => {
     await fs.mkdir(path.join(apps, 'Zed.app'));
     const list = await listEditors({ detect: detect({}), platform: 'linux', appDirs: [apps] });
     expect(list.find((e) => e.id === 'zed')!.available).toBe(false);
+    expect(list.find((e) => e.id === 'system')!.label).toBe('File manager');
+  });
+
+  it('Antigravity: by its CLI (vscode-style lines) or its app', async () => {
+    const byCli = await listEditors({ detect: detect({ antigravity: '/bin/antigravity' }), platform: 'darwin', appDirs: [apps] });
+    expect(byCli.find((e) => e.id === 'antigravity')).toEqual({ id: 'antigravity', label: 'Antigravity', available: true, lines: true });
+    await fs.mkdir(path.join(apps, 'Antigravity.app'));
+    const byApp = await listEditors({ detect: detect({}), platform: 'darwin', appDirs: [apps] });
+    expect(byApp.find((e) => e.id === 'antigravity')).toMatchObject({ available: true, lines: false });
   });
 });
 
@@ -87,6 +96,7 @@ describe('open: argv per goto style', () => {
     ['vscode', { code: '/bin/code' }, () => ['/bin/code', root, '-g', `${file()}:12:3`]],
     ['vscode-insiders', { 'code-insiders': '/bin/code-insiders' }, () => ['/bin/code-insiders', root, '-g', `${file()}:12:3`]],
     ['cursor', { cursor: '/bin/cursor' }, () => ['/bin/cursor', root, '-g', `${file()}:12:3`]],
+    ['antigravity', { antigravity: '/bin/antigravity' }, () => ['/bin/antigravity', root, '-g', `${file()}:12:3`]],
     ['zed', { zed: '/bin/zed' }, () => ['/bin/zed', `${file()}:12:3`]],
     ['sublime', { subl: '/bin/subl' }, () => ['/bin/subl', `${file()}:12:3`]],
     ['webstorm', { webstorm: '/bin/webstorm' }, () => ['/bin/webstorm', '--line', '12', '--column', '3', file()]],

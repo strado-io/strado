@@ -3,6 +3,7 @@
 // checked against the repos this server owns. Both POSTs answer only this
 // machine's own window: a relayed request (a runner reached over rpc) is
 // refused, and a runner worktree has no local editor anyway.
+import fs from 'node:fs/promises';
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
@@ -29,6 +30,17 @@ const OpenBody = z
 /** Machine-wide: GET the list, POST the preferred one. */
 export async function registerEditorAdminRoutes(app: FastifyInstance, editors: Editors) {
   app.get(EDITOR_ROUTES.list, async () => editors.list());
+
+  // The real app icon (macOS). Takes only an id from EDITORS; 404 when there is none.
+  app.get<{ Params: { id: string } }>(EDITOR_ROUTES.icon, async (req, reply) => {
+    const id = EditorIdSchema.safeParse(req.params.id);
+    const file = id.success ? await editors.icon(id.data) : null;
+    if (!file) throw new AppError('NOT_FOUND', 'no icon for that editor');
+    return reply
+      .type('image/png')
+      .header('cache-control', 'max-age=86400')
+      .send(await fs.readFile(file));
+  });
 
   app.post(EDITOR_ROUTES.setPreferred, async (req, reply) => {
     assertLocalHub(req.headers);

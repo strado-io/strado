@@ -42,11 +42,19 @@ export async function findEditor(spec: EditorSpec, deps: EditorDetectDeps): Prom
   return { spec, cli, app, available: cli !== null || app !== null };
 }
 
+/** The label shown: 'system' is named for what it is on this OS. */
+export function editorLabel(spec: EditorSpec, platform: NodeJS.Platform = process.platform): string {
+  if (spec.id !== 'system') return spec.label;
+  if (platform === 'darwin') return 'Finder';
+  if (platform === 'linux') return 'File manager';
+  return spec.label;
+}
+
 export async function listEditors(deps: EditorDetectDeps): Promise<EditorStatus[]> {
   const found = await Promise.all(EDITORS.map((spec) => findEditor(spec, deps)));
   return found.map(({ spec, cli, available }) => ({
     id: spec.id,
-    label: spec.label,
+    label: editorLabel(spec, deps.platform),
     available,
     lines: cli !== null && spec.goto !== 'none',
   }));
