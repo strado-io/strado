@@ -9,12 +9,14 @@ const wtKillExternal = vi.hoisted(() => vi.fn());
 const reposList = vi.hoisted(() => vi.fn());
 const stopVscode = vi.hoisted(() => vi.fn());
 const vscodeClose = vi.hoisted(() => vi.fn());
+const lspStop = vi.hoisted(() => vi.fn());
 vi.mock('../../api', () => ({
   api: {
     sessions: { metrics, kill, stopVscode },
     vscode: { close: vscodeClose },
     worktrees: { list: worktreesList, stop: wtStop, killExternal: wtKillExternal },
     repos: { list: reposList },
+    lspServers: { stop: lspStop },
   },
 }));
 
@@ -66,6 +68,7 @@ beforeEach(() => {
   kill.mockReset().mockResolvedValue(undefined);
   stopVscode.mockReset().mockResolvedValue(undefined);
   vscodeClose.mockReset().mockResolvedValue({ ok: true });
+  lspStop.mockReset().mockResolvedValue(undefined);
   localStorage.clear();
   worktreesList.mockReset().mockResolvedValue([
     { path: WT, repoId: 'fleetx-react-app', branch: 'master', meta: { ticketId: null, title: null },
@@ -294,4 +297,53 @@ describe('SessionsSection', () => {
     expect(worktreesList).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: /refresh now/i })).not.toBeInTheDocument();
   }, 8000);
+
+  describe('language servers', () => {
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    const withLsp = () => {
+      const m = sample();
+      return { ...m, app: { ...m.app, languageServers: [
+        { id: 'typescript', lang: 'TypeScript', worktreePath: WT, pid: 1200, cpu: 1.5, rssBytes: 700 * MB, processes: 2, startedAt: ago(30), lastUsedAt: ago(3) },
+        { id: 'pyright', lang: 'Python', worktreePath: WT2, pid: 1300, cpu: 0.5, rssBytes: 300 * MB, processes: 1, startedAt: ago(30), lastUsedAt: new Date().toISOString() },
+      ] } };
+    };
+
+    it('hidden when none run, and absent from the map', async () => {
+      renderSection();
+      const map = await screen.findByTestId('sessions-memory-map');
+      expect(screen.queryByTestId('sessions-group-lsp')).not.toBeInTheDocument();
+      expect(within(map).queryByRole('button', { name: /Language servers/ })).not.toBeInTheDocument();
+    });
+
+    it('one row with the total, expanding to each server by worktree with idle time; Stop stops it', async () => {
+      metrics.mockResolvedValue(withLsp());
+      renderSection();
+      const group = await screen.findByTestId('sessions-group-lsp');
+      expect(within(group).getByText('1000.0 MB')).toBeInTheDocument();
+      expect(within(group).getByText('2.0%')).toBeInTheDocument();
+      fireEvent.click(within(group).getByRole('button', { name: /expand language servers/i }));
+      const ts = within(group).getByTestId(`sessions-row-lsp:typescript:${WT}:1200`);
+      expect(within(ts).getByText('TypeScript · master')).toBeInTheDocument();
+      expect(within(ts).getByText('idle 3m')).toBeInTheDocument();
+      expect(within(ts).getByText('700.0 MB')).toBeInTheDocument();
+      expect(within(group).getByText('Python · feature')).toBeInTheDocument();
+      expect(within(group).getByText('in use')).toBeInTheDocument();
+      fireEvent.click(within(ts).getByRole('button', { name: 'Stop TypeScript · master' }));
+      await waitFor(() => expect(lspStop).toHaveBeenCalledWith('typescript'));
+    });
+
+    it('the map shows them as their own kind beside VS Code; its legend shows them alone', async () => {
+      metrics.mockResolvedValue(withLsp());
+      renderSection();
+      const map = await screen.findByTestId('sessions-memory-map');
+      const legend = within(map).getAllByRole('button').map((b) => b.textContent);
+      const at = legend.findIndex((t) => t?.startsWith('Language servers'));
+      expect(legend[at]).toContain('1000.0 MB');
+      expect(legend[at - 1]).toMatch(/^VS Code/);
+      fireEvent.click(within(map).getByRole('button', { name: /^Language servers/ }));
+      expect(screen.getByTestId('sessions-group-lsp')).toBeInTheDocument();
+      expect(screen.queryByTestId('sessions-group-fleetx-react-app')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Nothing matches/)).not.toBeInTheDocument();
+    });
+  });
 });

@@ -314,6 +314,10 @@ export type SessionMetric = {
   processes: number;
 };
 export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
+export type LanguageServerMetric = {
+  id: LspServerId; lang: string; worktreePath: string; pid: number;
+  cpu: number; rssBytes: number; processes: number; startedAt: string; lastUsedAt: string;
+};
 export type SessionMetrics = {
   sampledAt: number;
   app: {
@@ -321,6 +325,8 @@ export type SessionMetrics = {
     daemon: AppProcMetric | null;
     /** the shared `code serve-web` workbench and everything under it */
     vscode: (AppProcMetric & { processes: number }) | null;
+    /** Each running language server (Files tab), its process tree; absent from an older server. */
+    languageServers?: LanguageServerMetric[];
   };
   sessions: SessionMetric[];
   /** one per VS Code window whose extension host reported its folder */

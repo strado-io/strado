@@ -1,27 +1,27 @@
 // Pure model for Settings → Sessions: fold the server's pty metrics, the
 // shell's Electron process list and the VS Code window reports into
 // repo → worktree → session rows, plus a by-kind breakdown for the memory map.
-import type { RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
+import type { LanguageServerMetric, LspServerId, RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
 
 export const MB = 1024 * 1024;
 
 /** What a row is, for icon, colour and the memory-map legend. */
-export type Kind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'vscode' | 'browser' | 'server' | 'app';
+export type Kind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'vscode' | 'lsp' | 'browser' | 'server' | 'app';
 
 export const KIND_LABEL: Record<Kind, string> = {
   claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi', shell: 'Shell',
-  vscode: 'VS Code', browser: 'Browser', server: 'Dev servers', app: 'Strado app',
+  vscode: 'VS Code', lsp: 'Language servers', browser: 'Browser', server: 'Dev servers', app: 'Strado app',
 };
 // Same hues as the tab strip and sidebar avatars (sessionAvatars.tsx).
 export const KIND_TEXT: Record<Kind, string> = {
   claude: 'text-amber-300', codex: 'text-sky-300', opencode: 'text-violet-300', pi: 'text-rose-300',
-  shell: 'text-zinc-300', vscode: 'text-blue-400', browser: 'text-emerald-400', server: 'text-teal-300', app: 'text-zinc-400',
+  shell: 'text-zinc-300', vscode: 'text-blue-400', lsp: 'text-indigo-300', browser: 'text-emerald-400', server: 'text-teal-300', app: 'text-zinc-400',
 };
 export const KIND_BG: Record<Kind, string> = {
   claude: 'bg-amber-300', codex: 'bg-sky-300', opencode: 'bg-violet-300', pi: 'bg-rose-300',
-  shell: 'bg-zinc-400', vscode: 'bg-blue-400', browser: 'bg-emerald-400', server: 'bg-teal-400', app: 'bg-zinc-600',
+  shell: 'bg-zinc-400', vscode: 'bg-blue-400', lsp: 'bg-indigo-400', browser: 'bg-emerald-400', server: 'bg-teal-400', app: 'bg-zinc-600',
 };
-export const KIND_ORDER: Kind[] = ['server', 'claude', 'codex', 'opencode', 'pi', 'vscode', 'browser', 'shell', 'app'];
+export const KIND_ORDER: Kind[] = ['server', 'claude', 'codex', 'opencode', 'pi', 'vscode', 'lsp', 'browser', 'shell', 'app'];
 
 export type Usage = { cpu: number; rssBytes: number };
 export type AppMetric = { pid: number; type: string; name?: string; cpu: number; memoryKb: number; preview?: string };
@@ -35,6 +35,8 @@ export type SessionRow =
 export type WorktreeRow = { path: string; label: string; usage: Usage; byKind: Partial<Record<Kind, number>>; sessions: SessionRow[] };
 export type Group = { id: string; label: string; orphan: boolean; usage: Usage; byKind: Partial<Record<Kind, number>>; worktrees: WorktreeRow[] };
 export type AppRow = { id: string; label: string; usage: Usage };
+/** One running language server: "TypeScript · <worktree>". */
+export type LspRow = { key: string; id: LspServerId; label: string; worktreePath: string; pid: number; processes: number; idle: string; usage: Usage };
 
 export type SortKey = 'memory' | 'cpu' | 'name';
 
@@ -185,9 +187,32 @@ export function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): AppR
   return rows;
 }
 
+/** "idle 3m" since the server last answered; "in use" under a minute. */
+export function idleFor(lastUsedAt: string, now: number): string {
+  const s = Math.max(0, (now - Date.parse(lastUsedAt)) / 1000);
+  if (!Number.isFinite(s) || s < 60) return 'in use';
+  if (s < 3600) return `idle ${Math.floor(s / 60)}m`;
+  if (s < 86_400) return `idle ${Math.floor(s / 3600)}h`;
+  return `idle ${Math.floor(s / 86_400)}d`;
+}
+
+// Language servers, named for the worktree they serve as the sidebar names it.
+export function lspRows(servers: LanguageServerMetric[] | undefined, worktrees: Worktree[], sort: SortKey, now: number): LspRow[] {
+  const wtByPath = new Map(worktrees.map((w) => [w.path, w]));
+  return (servers ?? []).map((m) => {
+    const wt = wtByPath.get(m.worktreePath);
+    const where = wt ? (wt.meta?.ticketId?.trim() || wt.branch || basename(m.worktreePath)) : basename(m.worktreePath);
+    return {
+      key: `lsp:${m.id}:${m.worktreePath}:${m.pid}`, id: m.id, label: `${m.lang} · ${where}`, worktreePath: m.worktreePath,
+      pid: m.pid, processes: m.processes, idle: idleFor(m.lastUsedAt, now), usage: { cpu: m.cpu, rssBytes: m.rssBytes },
+    };
+  }).sort(compare(sort));
+}
+
 /** Whole-picture breakdown for the memory map: every byte in exactly one kind. */
-export function memoryByKind(groups: Group[], app: AppRow[]): Array<{ kind: Kind; bytes: number }> {
+export function memoryByKind(groups: Group[], app: AppRow[], lsp: LspRow[] = []): Array<{ kind: Kind; bytes: number }> {
   const acc: Partial<Record<Kind, number>> = {};
+  for (const r of lsp) addKind(acc, 'lsp', r.usage.rssBytes);
   for (const g of groups) for (const [k, v] of Object.entries(g.byKind)) addKind(acc, k as Kind, v);
   for (const r of app) addKind(acc, r.id === 'vscode' ? 'vscode' : 'app', r.usage.rssBytes);
   return KIND_ORDER.filter((k) => (acc[k] ?? 0) > 0).map((k) => ({ kind: k, bytes: acc[k]! }));

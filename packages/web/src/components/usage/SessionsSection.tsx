@@ -12,11 +12,11 @@ import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '..
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
 import { closeVscodeTab } from '../../pages/vscodeTabClose';
-import type { RepoConfig, SessionMetrics, Worktree } from '../../types';
+import type { LspServerId, RepoConfig, SessionMetrics, Worktree } from '../../types';
 import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
 import { BranchIcon, RepoIcon } from '../sidebar/rowBits';
 import {
-  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, serverPids, sum,
+  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, lspRows, memoryByKind, serverPids, sum,
   type AppMetric, type Group, type Kind, type SessionRow, type SortKey, type Usage,
 } from './sessionsModel';
 
@@ -38,6 +38,7 @@ function KindIcon({ kind, size = 13 }: { kind: Kind; size?: number }) {
   if (kind === 'browser') return <GlobeIcon className={`h-[13px] w-[13px] ${cls}`} />;
   if (kind === 'app') return <StradoMark className={cls} />;
   if (kind === 'server') return <ScreenIcon size={size} className={cls} />;
+  if (kind === 'lsp') return <BracesMark className={cls} />;
   return <ShellIcon size={size} className={cls} />;
 }
 
@@ -46,6 +47,15 @@ function StradoMark({ className = '' }: { className?: string }) {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden className={className}>
       <rect x="3" y="4" width="18" height="16" rx="3" />
       <path d="M3 9h18" />
+    </svg>
+  );
+}
+
+function BracesMark({ className = '' }: { className?: string }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={className}>
+      <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1" />
+      <path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
     </svg>
   );
 }
@@ -182,7 +192,7 @@ export function SessionsSection() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // Strado's own processes start folded: the page is about sessions.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(['strado']));
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(['strado', 'lsp']));
   const [sort, setSort] = useState<SortKey>('memory');
   const [kindFilter, setKindFilter] = useState<Kind | null>(null);
   const [query, setQuery] = useState('');
@@ -261,6 +271,8 @@ export function SessionsSection() {
   };
   // Stopping the shared workbench strands every VS Code tab on a dead server,
   // so close them all; reopening one boots a fresh workbench.
+  // Stops that server everywhere on this machine; the next lookup starts it again.
+  const stopLsp = (id: LspServerId, key: string) => run(key, () => api.lspServers.stop(id));
   const stopVscode = () =>
     run('vscode', async () => {
       await api.sessions.stopVscode();
@@ -290,12 +302,17 @@ export function SessionsSection() {
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
   const appTotal = sum(app.map((r) => r.usage));
-  const map = memoryByKind(groups, app);
+  const lsp = metrics ? lspRows(metrics.app.languageServers, worktrees, sort, Date.now()) : [];
+  const lspTotal = sum(lsp.map((r) => r.usage));
+  const map = memoryByKind(groups, app, lsp);
   const shown = filterGroups(groups, kindFilter, query);
-  const maxRss = Math.max(appTotal.rssBytes, ...groups.map((g) => g.usage.rssBytes), 1);
+  const maxRss = Math.max(appTotal.rssBytes, lspTotal.rssBytes, ...groups.map((g) => g.usage.rssBytes), 1);
   const sessionCount = groups.reduce((a, g) => a + g.worktrees.reduce((b, w) => b + w.sessions.length, 0), 0);
   const stradoOpen = !collapsed.has('strado');
   const showApp = !kindFilter && !query;
+  // Hidden when none run; the map's legend can show them alone.
+  const showLsp = lsp.length > 0 && !query && (!kindFilter || kindFilter === 'lsp');
+  const lspOpen = !collapsed.has('lsp');
 
   return (
     <section className="flex flex-col gap-4" data-testid="sessions-section">
@@ -384,7 +401,42 @@ export function SessionsSection() {
               </tbody>
             )}
 
-            {shown.length === 0 && (
+            {showLsp && (
+              <tbody data-testid="sessions-group-lsp">
+                <tr className="[&>td]:border-t [&>td]:border-zinc-800 [&>td]:bg-zinc-900/30">
+                  <td className="px-3 py-2">
+                    <button type="button" onClick={() => toggle('lsp')} aria-expanded={lspOpen}
+                      aria-label={`${lspOpen ? 'Collapse' : 'Expand'} Language servers`}
+                      title="Go to definition, references and hover in the Files tab"
+                      className="flex items-center gap-2 whitespace-nowrap text-sm font-medium text-zinc-100">
+                      <Chevron open={lspOpen} />
+                      <KindIcon kind="lsp" />
+                      <span>Language servers</span>
+                      <span className="text-xs font-normal tabular-nums text-zinc-600">{lsp.length}</span>
+                    </button>
+                  </td>
+                  <UsageCells usage={lspTotal} max={maxRss} label="Language servers" strong parts={[{ kind: 'lsp', bytes: lspTotal.rssBytes }]} />
+                  <td />
+                </tr>
+                {lspOpen && lsp.map((r) => (
+                  <tr key={r.key} data-testid={`sessions-row-${r.key}`} className="group hover:bg-zinc-900/40">
+                    <td className="py-1.5 pl-12 pr-3">
+                      <span className="flex min-w-0 items-center gap-2 text-[13px] text-zinc-300" title={`${r.worktreePath} · pid ${r.pid}`}>
+                        <span className="truncate">{r.label}</span>
+                        <span className="shrink-0 text-[11px] tabular-nums text-zinc-600">{r.idle}</span>
+                        {r.processes > 1 && <span className="shrink-0 text-[11px] tabular-nums text-zinc-600">{r.processes} processes</span>}
+                      </span>
+                    </td>
+                    <UsageCells usage={r.usage} max={maxRss} label={r.label} parts={[{ kind: 'lsp', bytes: r.usage.rssBytes }]} />
+                    <td className="px-2 py-1 text-right">
+                      <ActionButton label={`Stop ${r.label}`} busy={busy === r.key} onRun={() => void stopLsp(r.id, r.key)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            )}
+
+            {shown.length === 0 && kindFilter !== 'lsp' && (
               <tbody>
                 <tr>
                   <td colSpan={5} className="px-3 py-6 text-center text-xs text-zinc-500">
