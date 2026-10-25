@@ -225,6 +225,12 @@ describe('jarvis: actions as the human', () => {
 
     expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: [{ kind: 'shell', value: 'rm -rf /' }] })).statusCode).toBe(400);
     expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: 'nope' })).statusCode).toBe(400);
+    // Capped well under the intercom's own limit: a few items, each at most 8 KB (bytes, not chars).
+    const big = (n: number) => [{ kind: 'text', value: 'é'.repeat(n) }];
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: big(4096) })).statusCode).toBe(201);
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: big(4097) })).statusCode).toBe(400);
+    const many = Array.from({ length: 5 }, () => ({ kind: 'text', value: 'a' }));
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: many })).statusCode).toBe(400);
   });
 
   it('recap: reads saved turns (nothing is sent to the agent), hides secret-looking lines, and asks the model for a short answer', async () => {
