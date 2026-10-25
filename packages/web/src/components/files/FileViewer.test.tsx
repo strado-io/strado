@@ -21,7 +21,7 @@ function show(over: Partial<Parameters<typeof FileViewer>[0]> = {}, file: FileCo
   const props = {
     worktreePath: '/wt', path: 'src/app.ts',
     read: vi.fn(async () => file), marks: vi.fn(async () => marks),
-    onAskAgent: vi.fn(), onOpenInEditor: vi.fn(), ...over,
+    onAskAgent: vi.fn(), ...over,
   };
   return { ...render(<FileViewer {...props} />), props };
 }
@@ -122,18 +122,17 @@ describe('FileViewer', () => {
   });
 
   it('has no editor button of its own (the pane title bar has it)', async () => {
-    show({ editorLabel: 'Cursor' });
+    show();
     await flush();
     expect(screen.queryByRole('button', { name: /Open in/ })).toBeNull();
   });
 
-  it('too large: says the size and offers the editor by name', async () => {
-    const { props } = show({ editorLabel: 'Zed' }, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
+  it('too large: says the size and points at the title bar\'s editor button', async () => {
+    show({}, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
     await flush();
     expect(screen.getByTestId('file-empty')).toHaveTextContent('Too large to show');
     expect(screen.getByTestId('file-empty')).toHaveTextContent('3.0 MB');
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
-    expect(props.onOpenInEditor).toHaveBeenCalledWith('src/app.ts', 1);
+    expect(screen.getByTestId('file-empty')).toHaveTextContent('Open it in your editor from the title bar.');
   });
 
   it('a failed read says so in fixed words by its code, never the relayed message', async () => {

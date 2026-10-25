@@ -10,11 +10,11 @@ const git = vi.hoisted(() => ({ changes: vi.fn() }));
 vi.mock('../../api', () => ({ api: { files, lsp, lspServers, runners, worktrees: { git } } }));
 vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
-  FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInEditor?: unknown;
+  FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
     onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
-      data-ask={String(!!p.onAskAgent)} data-editor={String(!!p.onOpenInEditor)}>
+      data-ask={String(!!p.onAskAgent)}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
       <button type="button" onClick={() => p.onNavigate?.('definition', { path: p.path, line: 2, col: 4 })}>F12</button>
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
@@ -166,11 +166,10 @@ describe('FilesTab', () => {
     }
   });
 
-  it('passes Ask agent and Open in editor through', async () => {
-    render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} onAskAgent={vi.fn()} onOpenInEditor={vi.fn()} />);
+  it('passes Ask agent through', async () => {
+    render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} onAskAgent={vi.fn()} />);
     await flush();
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-ask', 'true');
-    expect(screen.getByTestId('viewer')).toHaveAttribute('data-editor', 'true');
   });
 
   it('glass panes, 13/11px type, no raw hex', async () => {
@@ -607,32 +606,22 @@ describe('FilesTab', () => {
       expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
     });
 
-    it('⌘⇧O opens the active file at its cursor in the editor (from a box too); with no file it is left alone', async () => {
-      const onOpenInEditor = vi.fn();
-      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" onOpenInEditor={onOpenInEditor} />);
+    it('reports the active file and its cursor line for the pane title bar, and null with none', async () => {
+      const onActiveFile = vi.fn();
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" onActiveFile={onActiveFile} />);
       await flush();
+      expect(onActiveFile).toHaveBeenLastCalledWith(null);
+      expect(within(screen.getByTestId('files-tree-header')).queryByRole('button', { name: /Open worktree/ })).toBeNull();
+      // ⌘⇧O is the hub's (its window listener), not this tab's.
       const ev = new KeyboardEvent('keydown', { key: 'O', metaKey: true, shiftKey: true, bubbles: true, cancelable: true });
       screen.getByTestId('files-tab').dispatchEvent(ev);
-      expect(onOpenInEditor).not.toHaveBeenCalled();
-      expect(ev.defaultPrevented).toBe(false); // the hub opens the worktree instead
-      rerender(<FilesTab wsId="ws1" worktreePath="/wt" onOpenInEditor={onOpenInEditor} openPath={{ path: 'a.ts', line: 7, nonce: 1 }} />);
-      fireEvent.change(screen.getByLabelText('cursor'), { target: { value: '30' } });
-      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: 'O', metaKey: true, shiftKey: true });
-      expect(onOpenInEditor).toHaveBeenCalledWith('a.ts', 30);
-    });
-
-    it('reports the active file and its cursor line for the pane title bar, and null with none', async () => {
-      const onActiveFileChange = vi.fn();
-      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" onActiveFileChange={onActiveFileChange} />);
-      await flush();
-      expect(onActiveFileChange).toHaveBeenLastCalledWith(null);
-      expect(within(screen.getByTestId('files-tree-header')).queryByRole('button', { name: /Open worktree/ })).toBeNull();
-      rerender(<FilesTab wsId="ws1" worktreePath="/wt" onActiveFileChange={onActiveFileChange} openPath={{ path: 'a.ts', line: 7, nonce: 1 }} />);
-      expect(onActiveFileChange).toHaveBeenLastCalledWith({ path: 'a.ts', line: 7 });
+      expect(ev.defaultPrevented).toBe(false);
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" onActiveFile={onActiveFile} openPath={{ path: 'a.ts', line: 7, nonce: 1 }} />);
+      expect(onActiveFile).toHaveBeenLastCalledWith({ path: 'a.ts', line: 7 });
       fireEvent.change(screen.getByLabelText('cursor'), { target: { value: '40' } });
-      expect(onActiveFileChange).toHaveBeenLastCalledWith({ path: 'a.ts', line: 40 });
+      expect(onActiveFile).toHaveBeenLastCalledWith({ path: 'a.ts', line: 40 });
       fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'w', metaKey: true });
-      expect(onActiveFileChange).toHaveBeenLastCalledWith(null);
+      expect(onActiveFile).toHaveBeenLastCalledWith(null);
     });
   });
 });

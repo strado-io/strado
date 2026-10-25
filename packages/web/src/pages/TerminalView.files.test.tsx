@@ -40,8 +40,7 @@ type FilesTabProps = {
   wsId: string; worktreePath: string; remote?: { runnerId: string; remoteWsId: string; name?: string };
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
-  onOpenInEditor?: (path: string, line: number) => void;
-  editorLabel?: string;
+  onActiveFile?: (f: { path: string; line: number } | null) => void;
 };
 const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null, fileTabOpen: false }));
 vi.mock('../components/files/FilesTab', () => ({
@@ -175,50 +174,57 @@ describe('Files tab in the hub', () => {
     render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
     await flush();
     expect(filesTab.last!.remote).toEqual({ runnerId: 'run1', remoteWsId: 'rw', name: 'runner-dev' });
-    // A runner worktree has no editor on this machine.
-    expect(filesTab.last!.onOpenInEditor).toBeUndefined();
   });
 
-  it('Open in editor hands the file and line to this machine\'s editor; a failure says so in fixed words', async () => {
+  it('the Files title bar: Open in <editor> opens the open file at its cursor, else the worktree; ⌘O and ⌘⇧O do the same', async () => {
     editorOpen.mockReset().mockResolvedValue(undefined);
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
     await flush();
-    act(() => filesTab.last!.onOpenInEditor!('src/app.ts', 12));
-    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, path: 'src/app.ts', line: 12, editor: 'cursor' });
+    const button = screen.getByRole('button', { name: 'Open in Cursor' });
+    fireEvent.click(button);
+    expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
+    act(() => filesTab.last!.onActiveFile!({ path: 'src/app.ts', line: 12 }));
+    fireEvent.click(button);
+    expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, path: 'src/app.ts', line: 12, editor: 'cursor' });
+    editorOpen.mockClear();
+    fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'o', metaKey: true });
+    fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
+    expect(editorOpen).toHaveBeenCalledTimes(2);
+    expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, path: 'src/app.ts', line: 12, editor: 'cursor' });
+    act(() => filesTab.last!.onActiveFile!(null));
+    fireEvent.keyDown(window, { key: 'o', metaKey: true });
+    expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
+  });
+
+  it('Open with…: another editor just this once, or Finder at the file\'s folder; a failure says so in fixed words', async () => {
+    editorOpen.mockReset().mockResolvedValue(undefined);
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    await flush();
+    act(() => filesTab.last!.onActiveFile!({ path: 'src/app.ts', line: 3 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open with…' }));
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Cursor⌘O', expect.stringMatching(/^(Finder|File manager)$/)]);
+    fireEvent.click(screen.getAllByRole('menuitem')[1]!);
+    expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, path: 'src', editor: 'system' });
     editorOpen.mockRejectedValue(new Error('spawn /usr/bin/code ENOENT'));
-    act(() => filesTab.last!.onOpenInEditor!('src/app.ts', 3));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Cursor' }));
     await flush();
     expect(screen.getByRole('status')).toHaveTextContent('Couldn’t open the editor. Pick one in Settings › Files.');
   });
 
-  it('names the editor it will use', async () => {
-    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
-    await flush();
-    expect(filesTab.last!.editorLabel).toBe('Cursor');
-  });
-
-  it('⌘⇧O opens the active worktree in the editor; with a file tab open the Files tab takes it', async () => {
+  it('a shell tab of a local worktree has it too, opening the worktree', async () => {
     editorOpen.mockReset().mockResolvedValue(undefined);
-    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
     await flush();
-    fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
-    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
-    editorOpen.mockClear();
-    filesTab.fileTabOpen = true;
-    cleanup();
-    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
-    await flush();
-    fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'O', metaKey: true, shiftKey: true });
-    expect(editorOpen).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Cursor' }));
+    expect(editorOpen).toHaveBeenLastCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
   });
 
-  it('a runner worktree offers no editor, and ⌘⇧O does nothing', async () => {
+  it('a runner worktree offers no editor: no button, and ⌘O does nothing', async () => {
     editorOpen.mockReset();
     render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
     await flush();
-    expect(filesTab.last!.onOpenInEditor).toBeUndefined();
-    fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
+    expect(screen.queryByRole('button', { name: 'Open in Cursor' })).toBeNull();
+    fireEvent.keyDown(window, { key: 'o', metaKey: true });
     expect(editorOpen).not.toHaveBeenCalled();
   });
 
@@ -228,7 +234,10 @@ describe('Files tab in the hub', () => {
       render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
       await flush();
       await flush();
-      expect(filesTab.last!.onOpenInEditor).toBeUndefined();
+      editorOpen.mockReset();
+      expect(screen.queryByRole('button', { name: 'Open in Cursor' })).toBeNull();
+      fireEvent.keyDown(window, { key: 'o', metaKey: true });
+      expect(editorOpen).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

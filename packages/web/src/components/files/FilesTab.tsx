@@ -2,7 +2,8 @@
 // left (loaded as they open), files in tabs on the right — one pane, or two
 // side by side (fileTabs.ts has the rules). The same for a runner's
 // worktree, read through the runner's own API. For "what's in this file / what
-// changed here"; the person's own editor stays one click away (Open in editor).
+// changed here"; the person's own editor stays one click away (the pane's
+// title bar, which reads the active file through onActiveFile).
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
@@ -42,15 +43,11 @@ export type FilesTabProps = {
   /** Open this file (and line); a new nonce opens it again. */
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: FileAskContext) => void;
-  /** The person's own desktop editor, at a file and line (this machine only). */
-  onOpenInEditor?: (path: string, line: number) => void;
-  /** The chosen editor's name ("Cursor", "VS Code"), for the too-large note; "editor" when unknown. */
-  editorLabel?: string;
-  /** The active file and its cursor line (1-based), or null with none: for the pane title bar's editor button. */
-  onActiveFileChange?: (file: { path: string; line: number } | null) => void;
+  /** The active file and its cursor line (1-based), or null with none open: for the pane title bar's editor button. */
+  onActiveFile?: (file: { path: string; line: number } | null) => void;
 };
 
-export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInEditor, editorLabel, onActiveFileChange }: FilesTabProps) {
+export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onActiveFile }: FilesTabProps) {
   const runnerId = remote?.runnerId;
   const remoteWsId = remote?.remoteWsId;
   const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
@@ -76,8 +73,8 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   const selected = activeTab(tabs)?.path ?? null;
   // The pane's title bar opens the active file at its cursor in the person's editor.
   const activeLine = activeTab(tabs)?.line ?? null;
-  const reportActive = useRef(onActiveFileChange);
-  reportActive.current = onActiveFileChange;
+  const reportActive = useRef(onActiveFile);
+  reportActive.current = onActiveFile;
   useEffect(() => {
     reportActive.current?.(selected && activeLine != null ? { path: selected, line: activeLine } : null);
   }, [selected, activeLine]);
@@ -280,16 +277,6 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     // In a text box every key is the box's. In the code, Alt←/→ moves by word;
     // ⌘[ ⌘] and Ctrl± still go back/forward there.
     const t = e.target as HTMLElement;
-    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
-      // ⌘⇧O: the open file, at its cursor, in the person's editor (the hub opens
-      // the worktree when no file tab is open, so only claim it with one).
-      const active = activeTab(tabsRef.current);
-      if (active && onOpenInEditor) {
-        e.preventDefault(); e.stopPropagation();
-        onOpenInEditor(active.path, active.line);
-      }
-      return;
-    }
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
       // ⌘W closes the file tab, not the app's tab, while focus is in Files (the find bar too).
       const active = activeTab(tabsRef.current);
@@ -374,7 +361,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
                   <div role="tabpanel" id={tabIds(pane.id).panel} aria-labelledby={t ? tabIds(pane.id).tab(t.path) : undefined} className="flex min-h-0 flex-1 flex-col">
                   {t ? (
                     <FileViewer key={`${worktreePath}\0${t.path}`} onMissing={t.restored ? () => dispatch({ type: 'close', pane: pi, path: t.path }) : undefined} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
-                      read={read} marks={marks} onAskAgent={onAskAgent} onOpenInEditor={onOpenInEditor} editorLabel={editorLabel}
+                      read={read} marks={marks} onAskAgent={onAskAgent}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
                       headerStart={historyButtons}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (

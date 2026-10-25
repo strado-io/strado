@@ -3810,8 +3810,6 @@ export function TerminalView({
                     remote={filesTarget}
                     openPath={filesOpenPath[g.path]}
                     onAskAgent={setFileAsk}
-                    onOpenInEditor={openInEditor ? (path, line) => openInEditor(g.path, path, line) : undefined}
-                    editorLabel={editor?.label}
                   />
                 </div>
               );
