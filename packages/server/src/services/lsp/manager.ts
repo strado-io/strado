@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveInside, safeRel } from '../files/files.js';
+import { FILES_LIMITS } from '../files/types.js';
 import { classifyDefinitions, isDefinition, searchWord } from '../files/search.js';
 import type { SearchAnswer } from './types.js';
 import { LspClient, LspError } from './client.js';
@@ -160,17 +161,15 @@ async function wordAt(abs: string, line: number, col: number): Promise<string | 
   return text.slice(from, to);
 }
 
-const ENV_ALLOW = new Set([
-  'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'TERM',
-  'GOPATH', 'GOROOT', 'GOFLAGS', 'GOPROXY', 'CARGO_HOME', 'RUSTUP_HOME', 'JAVA_HOME',
-  'PYTHONPATH', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'NODE_PATH', 'NVM_DIR', 'GEM_HOME', 'GEM_PATH',
-]);
+/** Names that look like a secret, wherever they appear in the name. */
+const SECRET_SHAPED = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_KEY|PRIVATE_KEY|ACCESS_KEY|AUTH/i;
+/** Strado's own identity, and providers whose variables are all credentials or config for them. */
+const DENIED_PREFIX = /^(STRADO_|ANTHROPIC_|OPENAI_|CLAUDE_CODE_|GH_|GITHUB_|GITLAB_|AWS_SECRET|AWS_SESSION|OPENROUTER_|ELEVENLABS_)/i;
 
-/** Allowlisted, and even then never a name that looks like a secret. */
+/** The user's env reaches the server (toolchains need GOPRIVATE, venvs, …),
+ *  minus Strado's identity and anything shaped like a credential. */
 export function envAllowed(name: string): boolean {
-  if (/TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/i.test(name)) return false;
-  if (/^(STRADO_|ANTHROPIC_|OPENAI_|GITHUB_|GH_)/i.test(name)) return false;
-  return ENV_ALLOW.has(name) || name.startsWith('LC_');
+  return name !== 'PORT' && !SECRET_SHAPED.test(name) && !DENIED_PREFIX.test(name);
 }
 
 type Entry = {
@@ -217,9 +216,9 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     await e.client.stop().catch(() => e.client.kill());
   }
 
-  /** The server's environment: an allowlist (a language server runs repo
-   *  code: build scripts, proc macros, Gradle), so no token or key of the
-   *  user's or of Strado's reaches it. node and the common bin dirs go on PATH
+  /** The server's environment: a language server runs repo code (build
+   *  scripts, proc macros, Gradle), so no token or key of the user's or of
+   *  Strado's reaches it (envAllowed). node and the common bin dirs go on PATH
    *  (a server's own `#!/usr/bin/env node` must work from a dock launch). */
   async function serverEnv(): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = {};
@@ -347,7 +346,12 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       const id = `${relPosix}:${line}:${col}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      if (!lines.has(real)) lines.set(real, (await fs.readFile(real, 'utf8').catch(() => '')).split('\n'));
+      if (!lines.has(real)) {
+        // A reference into a huge generated file gets no preview rather than a read of all of it.
+        const size = (await fs.stat(real).catch(() => null))?.size ?? Infinity;
+        const text = size > FILES_LIMITS.readBytes ? '' : await fs.readFile(real, 'utf8').catch(() => '');
+        lines.set(real, text.split('\n'));
+      }
       const text = lines.get(real)![line - 1] ?? '';
       hits.push({
         path: relPosix,

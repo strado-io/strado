@@ -278,12 +278,14 @@ describe('review fixes', () => {
     );
   });
 
-  it('the server gets an allowlisted env: toolchain yes, secrets and Strado identity never', async () => {
+  it("the server keeps the user's env but never a secret or Strado's identity", async () => {
+    const kept = { GOPATH: '/go', GOPRIVATE: 'x.com/*', VIRTUAL_ENV: '/v', JAVA_HOME: '/jdk', LC_ALL: 'C', RANDOM_THING: 'r' };
     const set: Record<string, string> = {
       STRADO_AGENT_TOKEN: 'tok', STRADO_HOME: '/x', PORT: '1234', ANTHROPIC_API_KEY: 'k', OPENAI_BASE: 'u',
-      GITHUB_TOKEN: 'g', GH_HOST: 'h', MY_SECRET: 's', NPM_TOKEN: 'n', AWS_ACCESS_KEY_ID: 'a', DB_PASSWORD: 'p',
-      GOOGLE_APPLICATION_CREDENTIALS: '/c', RANDOM_THING: 'r',
-      GOPATH: '/go', JAVA_HOME: '/jdk', LC_ALL: 'C', LANG: 'en_US.UTF-8', HOME: process.env.HOME ?? '/home/x',
+      CLAUDE_CODE_OAUTH_TOKEN: 'c', GITHUB_TOKEN: 'g', GH_HOST: 'h', GITLAB_HOST: 'l', MY_SECRET: 's', NPM_TOKEN: 'n',
+      AWS_ACCESS_KEY_ID: 'a', AWS_SESSION_X: 'x', DB_PASSWORD: 'p', DB_PASSWD: 'p', GOOGLE_APPLICATION_CREDENTIALS: '/c',
+      STRIPE_API_KEY: 'k', SSH_PRIVATE_KEY: 'k', BASIC_AUTH: 'b', OPENROUTER_X: 'o', ELEVENLABS_X: 'e',
+      ...kept,
     };
     const prev = { ...process.env };
     Object.assign(process.env, set);
@@ -297,10 +299,8 @@ describe('review fixes', () => {
       }
     }
     const env = ((await received()).find((x: any) => x.env) as any).env as string[];
-    for (const k of ['GOPATH', 'JAVA_HOME', 'LC_ALL', 'LANG', 'HOME', 'PATH']) expect(env).toContain(k);
-    for (const k of Object.keys(set).filter((k) => !['GOPATH', 'JAVA_HOME', 'LC_ALL', 'LANG', 'HOME'].includes(k))) {
-      expect(env).not.toContain(k);
-    }
+    for (const k of [...Object.keys(kept), 'PATH']) expect(env).toContain(k);
+    for (const k of Object.keys(set).filter((k) => !(k in kept))) expect(env).not.toContain(k);
   });
 
   it('a hit through a symlink that leaves the worktree is dropped', async () => {
