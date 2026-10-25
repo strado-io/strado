@@ -22,7 +22,7 @@ const ancestors = (p: string) => p.split('/').slice(0, -1).map((_, i, parts) => 
 
 type Row = { entry: FileTreeEntry; level: number };
 
-export function FileTree({ load, changedOnly, selected, reveal, reloadKey = 0, onSelect }: {
+export function FileTree({ load, changedOnly, selected, reveal, reloadKey = 0, onSelect, onPin }: {
   /** One folder's entries ('' = root). A new function (e.g. ignored toggled) reloads the tree. */
   load: (dir: string) => Promise<FileTreePage>;
   changedOnly: boolean;
@@ -33,6 +33,8 @@ export function FileTree({ load, changedOnly, selected, reveal, reloadKey = 0, o
   /** A new value re-lists every open folder (Refresh), keeping them open. */
   reloadKey?: number;
   onSelect: (path: string) => void;
+  /** Double-click: keep the file's tab (not the preview one). */
+  onPin?: (path: string) => void;
 }) {
   const [folders, setFolders] = useState<Map<string, Folder>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']));
@@ -161,6 +163,7 @@ export function FileTree({ load, changedOnly, selected, reveal, reloadKey = 0, o
               data-path={entry.path}
               data-change={entry.change}
               onClick={() => activate(entry)}
+              onDoubleClick={() => { if (!isDir) onPin?.(entry.path); }}
               onFocus={() => setFocus(entry.path)}
               title={change ? `${entry.path} — ${change.word}` : entry.path}
               className={`mx-1 flex h-6 cursor-pointer items-center gap-1.5 rounded-md pr-2 outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60 ${

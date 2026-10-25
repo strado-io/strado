@@ -42,7 +42,8 @@ export function NavPanel({ title, hits, empty, pending, action, onPick, onClose 
   empty: string;
   /** Still asking: hits so far (if any) stay. */
   pending?: boolean;
-  onPick: (hit: NavHit) => void;
+  /** `side`: ⌥-click, open it beside the current file. */
+  onPick: (hit: NavHit, side: boolean) => void;
   onClose: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -75,7 +76,7 @@ export function NavPanel({ title, hits, empty, pending, action, onPick, onClose 
             <ul>
               {group.map((h) => (
                 <li key={`${h.line}:${h.col}`}>
-                  <button type="button" data-hit onClick={() => onPick(h)}
+                  <button type="button" data-hit onClick={(e) => onPick(h, e.altKey)} title="⌥-click to open to the side"
                     className="flex w-full items-baseline gap-2 rounded-md px-2 py-0.5 text-left outline-none hover:bg-white/[0.05] focus-visible:bg-white/[0.07] focus-visible:ring-1 focus-visible:ring-sky-400/50">
                     <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-zinc-500">{h.line}</span>
                     <span className="truncate font-mono text-[11px] text-zinc-300">{h.preview}</span>

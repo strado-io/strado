@@ -27,7 +27,9 @@ describe('SearchPanel', () => {
     expect(screen.getByTitle('Whole word')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('search')).toHaveTextContent('2 results');
     fireEvent.click(within(screen.getByRole('region', { name: 'src/b.ts' })).getByRole('button'));
-    expect(onPick).toHaveBeenCalledWith(ANSWER.hits[1]);
+    expect(onPick).toHaveBeenCalledWith(ANSWER.hits[1], false);
+    fireEvent.click(within(screen.getByRole('region', { name: 'src/b.ts' })).getByRole('button'), { altKey: true });
+    expect(onPick).toHaveBeenLastCalledWith(ANSWER.hits[1], true);
   });
 
   it('a newer query cancels the older one', async () => {

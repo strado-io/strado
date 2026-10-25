@@ -10,7 +10,8 @@ const DEBOUNCE_MS = 250;
 
 export function SearchPanel({ search, onPick, onClose }: {
   search: (q: SearchQuery, signal: AbortSignal) => Promise<SearchAnswer>;
-  onPick: (hit: NavHit) => void;
+  /** `side`: ⌥-click, open it beside the current file. */
+  onPick: (hit: NavHit, side: boolean) => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState('');
@@ -63,7 +64,7 @@ export function SearchPanel({ search, onPick, onClose }: {
               <ul>
                 {group.map((h) => (
                   <li key={`${h.line}:${h.col}`}>
-                    <button type="button" onClick={() => onPick(h)} className="flex w-full items-baseline gap-2 rounded-md px-2 py-0.5 text-left hover:bg-white/[0.05] focus-visible:bg-white/[0.07] focus-visible:outline-none">
+                    <button type="button" onClick={(e) => onPick(h, e.altKey)} title="⌥-click to open to the side" className="flex w-full items-baseline gap-2 rounded-md px-2 py-0.5 text-left hover:bg-white/[0.05] focus-visible:bg-white/[0.07] focus-visible:outline-none">
                       <span className="w-8 shrink-0 text-right font-mono text-[11px] tabular-nums text-zinc-500">{h.line}</span>
                       <span className="truncate font-mono text-[11px] text-zinc-300">{h.preview}</span>
                     </button>

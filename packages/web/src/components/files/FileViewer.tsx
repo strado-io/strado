@@ -18,7 +18,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, onCursor, hover, outline, headerStart }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, onCursor, hover, outline, headerStart, headerEnd }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -39,6 +39,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   outline?: (path: string, signal: AbortSignal) => Promise<OutlineAnswer>;
   /** Before the path in the header (the tab's back/forward). */
   headerStart?: ReactNode;
+  /** After the header's own buttons (the tab's Open to the side). */
+  headerEnd?: ReactNode;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [marks, setMarks] = useState<FileMarks | null>(null);
@@ -190,6 +192,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
             </svg>
           </button>
         )}
+        {headerEnd}
       </header>
       {error ? (
         <p role="alert" className="p-4 text-[13px] text-red-300">{error}</p>

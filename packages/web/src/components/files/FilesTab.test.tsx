@@ -12,7 +12,7 @@ vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
-    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode }) => (
+    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
       data-ask={String(!!p.onAskAgent)} data-vscode={String(!!p.onOpenInVsCode)}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
@@ -20,6 +20,7 @@ vi.mock('./FileViewer', () => ({
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
       <input aria-label="cursor" onChange={(e) => p.onCursor?.({ path: p.path, line: Number(e.target.value), col: 1 })} />
       {p.headerStart}
+      {p.headerEnd}
     </div>
   ),
 }));
@@ -32,6 +33,7 @@ const page = (dir: string) => ({ dir, truncated: false, entries: dir === '' ? [{
 beforeEach(() => {
   for (const f of [...Object.values(files), ...Object.values(lsp), lspServers.list, runners.rpc, shell.requestRunInShell, git.changes]) f.mockReset();
   git.changes.mockResolvedValue({ files: [] });
+  localStorage.clear();
   files.tree.mockImplementation(async (_ws: string, _wt: string, dir: string) => page(dir));
   files.read.mockResolvedValue({});
 });
@@ -117,8 +119,9 @@ describe('FilesTab', () => {
     await flush();
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-path', 'a.ts');
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-line', '7');
+    const nonce = screen.getByTestId('viewer').getAttribute('data-nonce');
     rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', line: 7, nonce: 2 }} />);
-    expect(screen.getByTestId('viewer')).toHaveAttribute('data-nonce', '2');
+    expect(screen.getByTestId('viewer').getAttribute('data-nonce')).not.toBe(nonce);
     rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 3 }} />);
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-path', 'b.ts');
   });
@@ -381,6 +384,128 @@ describe('FilesTab', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Shift-F12' }));
       await flush();
       expect(screen.getByTestId('nav-panel')).toHaveTextContent('That took too long — try again.');
+    });
+  });
+
+  describe('file tabs', () => {
+    const hit = (path: string, line: number, col = 1) => ({ path, line, col, preview: `${path}:${line}` });
+    const pane = (i: number) => screen.getByTestId(`files-pane-${i}`);
+    const strip = (i = 0) => within(pane(i)).getAllByRole('tab').map((t) => `${t.textContent?.replace('×', '')}${t.hasAttribute('data-preview') ? '*' : ''}${t.getAttribute('aria-selected') === 'true' ? '!' : ''}`);
+    const viewerIn = (i: number) => within(pane(i)).getByTestId('viewer');
+    const treeItem = (path: string) => document.querySelector<HTMLElement>(`[role="treeitem"][data-path="${path}"]`)!;
+
+    it('a tree click opens the preview tab, the next one replaces it; double-click keeps it', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      fireEvent.click(treeItem('a.ts'));
+      expect(strip()).toEqual(['a.ts*!']);
+      fireEvent.click(treeItem('b.ts'));
+      expect(strip()).toEqual(['b.ts*!']);
+      fireEvent.doubleClick(within(pane(0)).getByRole('tab'));
+      expect(strip()).toEqual(['b.ts!']);
+      fireEvent.click(treeItem('a.ts'));
+      expect(strip()).toEqual(['b.ts', 'a.ts*!']);
+      fireEvent.doubleClick(treeItem('a.ts'));
+      expect(strip()).toEqual(['b.ts', 'a.ts!']);
+    });
+
+    it('a definition opens its own tab and the first stays; each tab keeps its cursor; an open file is switched to', async () => {
+      lsp.definition.mockResolvedValue({ source: 'lsp', server: 'typescript', hits: [hit('lib/util.ts', 40, 7)] });
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.change(screen.getByLabelText('cursor'), { target: { value: '5' } });
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      expect(strip()).toEqual(['a.ts', 'util.ts!']);
+      expect(viewerIn(0)).toHaveAttribute('data-path', 'lib/util.ts');
+      fireEvent.click(within(pane(0)).getByRole('tab', { name: /a\.ts/ }));
+      expect(viewerIn(0)).toHaveAttribute('data-path', 'a.ts');
+      expect(viewerIn(0)).toHaveAttribute('data-line', '2'); // where F12 was pressed: the cursor
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      expect(strip()).toEqual(['a.ts', 'util.ts!']); // switched to, not opened twice
+      expect(viewerIn(0)).toHaveAttribute('data-line', '40');
+    });
+
+    it('× , middle-click and ⌘W close tabs; the neighbour takes over', async () => {
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 2 }} />);
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'c.ts', nonce: 3 }} />);
+      expect(strip()).toEqual(['a.ts', 'b.ts', 'c.ts!']);
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'w', metaKey: true });
+      expect(strip()).toEqual(['a.ts', 'b.ts!']);
+      fireEvent.click(within(pane(0)).getByRole('button', { name: 'Close b.ts' }));
+      expect(strip()).toEqual(['a.ts!']);
+      fireEvent(within(pane(0)).getByRole('tab'), new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+      expect(screen.queryByRole('tab')).toBeNull();
+      expect(screen.getByText('Pick a file to read it here.')).toBeInTheDocument();
+    });
+
+    it('⌥-click a reference opens it to the side; both show; Esc closes the side pane', async () => {
+      lsp.references.mockResolvedValue({ source: 'lsp', server: 'typescript', hits: [hit('a.ts', 2, 4), hit('lib/util.ts', 9)] });
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'Shift-F12' }));
+      await flush();
+      fireEvent.click(within(screen.getByTestId('nav-panel')).getByRole('button', { name: /lib\/util\.ts:9/ }), { altKey: true });
+      expect(viewerIn(0)).toHaveAttribute('data-path', 'a.ts');
+      expect(viewerIn(1)).toHaveAttribute('data-path', 'lib/util.ts');
+      expect(viewerIn(1)).toHaveAttribute('data-line', '9');
+      // A plain click opens in the pane the lookup came from.
+      fireEvent.click(within(screen.getByTestId('nav-panel')).getByRole('button', { name: /lib\/util\.ts:9/ }));
+      expect(strip(0)).toEqual(['a.ts', 'util.ts!']);
+      fireEvent.click(within(screen.getByTestId('nav-panel')).getByRole('button', { name: 'Close' }));
+      fireEvent.mouseDown(pane(1));
+      fireEvent.keyDown(viewerIn(1), { key: 'Escape' });
+      expect(screen.queryByTestId('files-pane-1')).toBeNull();
+    });
+
+    it('"Open to the side" shows the file in a second pane; its × closes that pane', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'Open to the side' }));
+      expect(viewerIn(1)).toHaveAttribute('data-path', 'a.ts');
+      expect(screen.queryByRole('button', { name: 'Open to the side' })).toBeNull(); // two panes at most
+      fireEvent.click(screen.getByRole('button', { name: 'Close side pane' }));
+      expect(screen.queryByTestId('files-pane-1')).toBeNull();
+    });
+
+    it('back/forward switch tabs and panes as needed', async () => {
+      lsp.definition.mockResolvedValue({ source: 'lsp', server: 'typescript', hits: [hit('lib/util.ts', 40, 7)] });
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: '[', metaKey: true });
+      expect(strip()).toEqual(['a.ts!', 'util.ts']);
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: ']', metaKey: true });
+      expect(strip()).toEqual(['a.ts', 'util.ts!']);
+      // Closed meanwhile: back reopens it.
+      fireEvent.click(within(pane(0)).getByRole('button', { name: 'Close a.ts' }));
+      fireEvent.keyDown(screen.getByTestId('files-tab'), { key: '[', metaKey: true });
+      expect(viewerIn(0)).toHaveAttribute('data-path', 'a.ts');
+    });
+
+    it('open tabs are kept per worktree and come back when it reopens', async () => {
+      const first = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'Open to the side' }));
+      first.unmount();
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      expect(strip(0)).toEqual(['a.ts!']);
+      expect(viewerIn(1)).toHaveAttribute('data-path', 'a.ts');
+      cleanupOther();
+    });
+    const cleanupOther = () => { localStorage.clear(); };
+
+    it('another worktree has its own tabs', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      const { unmount } = render(<FilesTab wsId="ws1" worktreePath="/other" />);
+      expect(within(screen.getAllByTestId('files-tab')[1]!).queryByRole('tab')).toBeNull();
+      unmount();
     });
   });
 });

@@ -42,7 +42,9 @@ describe('NavPanel', () => {
     fireEvent.keyDown(panel, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(within(a).getAllByRole('button')[1]);
     fireEvent.click(first);
-    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ path: 'src/a.ts', line: 4 }));
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ path: 'src/a.ts', line: 4 }), false);
+    fireEvent.click(first, { altKey: true });
+    expect(onPick).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'src/a.ts', line: 4 }), true);
     fireEvent.keyDown(panel, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });

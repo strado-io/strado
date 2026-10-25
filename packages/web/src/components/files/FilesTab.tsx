@@ -1,10 +1,11 @@
 // The Files tab: a light, read-only look at a worktree — its folders on the
-// left (loaded as they open), one file on the right. The same for a runner's
+// left (loaded as they open), files in tabs on the right — one pane, or two
+// side by side (fileTabs.ts has the rules). The same for a runner's
 // worktree, read through the runner's own API. Instead of VS Code for "what's
 // in this file / what changed here"; VS Code stays one click away.
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
 import { requestRunInShell } from '../../lib/runInShell';
@@ -13,17 +14,20 @@ import { FileViewer, type FileAt } from './FileViewer';
 import { NavPanel, navTitle, type NavKind } from './NavPanel';
 import { SearchPanel } from './SearchPanel';
 import { filesError } from './errors';
+import { activeTab, loadTabs, saveTabs, tabsReducer, type OpenMode, type Pane, type PaneIndex } from './fileTabs';
 
 /** Back/forward keep this many places each way. */
 export const HISTORY_CAP = 50;
 /** A cursor move within this many lines of the current place updates it instead of adding one. */
 export const NEAR_LINES = 10;
-const capped = (list: FileAt[], at: FileAt) => [...list, at].slice(-HISTORY_CAP);
+/** A place in the history: a file position and the pane it was in. */
+type Place = FileAt & { pane: PaneIndex };
+const capped = (list: Place[], at: Place) => [...list, at].slice(-HISTORY_CAP);
 
 /** Narrower than this (px), the tree header's chips show icons only. */
 const COMPACT_BELOW = 220;
 
-type NavState = { kind: NavKind; at: FileAt; answer: NavAnswer | null; error: string | null };
+type NavState = { kind: NavKind; at: Place; answer: NavAnswer | null; error: string | null };
 
 export type FilesTabProps = {
   wsId: string;
@@ -37,17 +41,34 @@ export type FilesTabProps = {
 };
 
 export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInVsCode }: FilesTabProps) {
+  const runnerId = remote?.runnerId;
+  const remoteWsId = remote?.remoteWsId;
+  const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
   const [changedOnly, setChangedOnly] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
-  const [selected, setSelected] = useState<string | null>(openPath?.path ?? null);
-  // Every jump gets a new nonce (the viewer goes to its line once per nonce).
+  // Open tabs (and the side pane), kept per worktree.
+  const scope = `${wsId}\0${runnerId ?? ''}\0${worktreePath}`;
+  const [tabs, dispatch] = useReducer(tabsReducer, scope, loadTabs);
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const loadedScope = useRef(scope);
+  useEffect(() => {
+    if (loadedScope.current === scope) return;
+    loadedScope.current = scope;
+    dispatch({ type: 'load', state: loadTabs(scope) });
+  }, [scope]);
+  useEffect(() => { if (loadedScope.current === scope) saveTabs(scope, tabs); }, [scope, tabs]);
+  const selected = activeTab(tabs)?.path ?? null;
+  const [reveal, setReveal] = useState<{ path: string; nonce: number } | null>(openPath ? { path: openPath.path, nonce: 0 } : selected ? { path: selected, nonce: 0 } : null);
   const seq = useRef(0);
-  const [target, setTarget] = useState<{ line?: number; col?: number; nonce: number }>({ line: openPath?.line, nonce: 0 });
-  const [reveal, setReveal] = useState<{ path: string; nonce: number } | null>(openPath ? { path: openPath.path, nonce: 0 } : null);
-  // Where you went, for ⌘[ / ⌘] (or Alt←/→). `here` is the last place opened or navigated from.
-  const [back, setBack] = useState<FileAt[]>([]);
-  const [forward, setForward] = useState<FileAt[]>([]);
-  const here = useRef<FileAt | null>(openPath ? { path: openPath.path, line: openPath.line ?? 1, col: 1 } : null);
+  // Where you went, for ⌘[ / ⌘] (or Alt←/→), across tabs and panes. `here` is the last place opened or navigated from.
+  const [back, setBack] = useState<Place[]>([]);
+  const [forward, setForward] = useState<Place[]>([]);
+  const here = useRef<Place | null>(null);
+  if (here.current === null) {
+    const t = activeTab(tabs);
+    if (t) here.current = { path: t.path, line: t.line, col: t.col, pane: tabs.focus };
+  }
   const [nav, setNav] = useState<NavState | null>(null);
   const navAbort = useRef<AbortController | null>(null);
   const [searching, setSearching] = useState(false);
@@ -95,33 +116,37 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     };
   }, []);
 
-  const open = useCallback((to: { path: string; line?: number; col?: number }) => {
+  /** Show a file: in its open tab (going to `line` if given), else a new tab of `mode`. */
+  const open = useCallback((to: { path: string; line?: number; col?: number }, mode: OpenMode, pane: PaneIndex = tabsRef.current.focus) => {
     // Going somewhere else drops a definition still being looked up (a starting
     // server can take a while), so it can't pull you away later.
     navAbort.current?.abort();
     setNav((n) => (n && !n.answer && !n.error ? null : n));
-    const nonce = ++seq.current;
-    setSelected(to.path);
-    setTarget({ line: to.line, col: to.col, nonce });
-    setReveal({ path: to.path, nonce });
-    here.current = { path: to.path, line: to.line ?? 1, col: to.col ?? 1 };
+    dispatch({ type: 'open', pane, path: to.path, line: to.line, col: to.col, mode });
+    setReveal({ path: to.path, nonce: ++seq.current });
+    const p: PaneIndex = pane === 1 ? 1 : 0;
+    const have = tabsRef.current.panes[p]?.tabs.find((t) => t.path === to.path);
+    here.current = { path: to.path, line: to.line ?? have?.line ?? 1, col: to.col ?? have?.col ?? 1, pane: p };
   }, []);
   /** A jump you can come back from. */
-  const jump = useCallback((from: FileAt | null, to: FileAt) => {
+  const jump = useCallback((from: Place | null, to: { path: string; line?: number; col?: number }, mode: OpenMode = 'permanent', pane?: PaneIndex) => {
     if (from) setBack((b) => capped(b, from));
     setForward([]);
-    open(to);
+    open(to, mode, pane);
   }, [open]);
-  // The cursor moved in the open file (VS Code's rule): far from the current
-  // place, that place goes into the history; near it, the place just moves, so
-  // arrow keys and nearby clicks don't fill the history.
-  const moved = useCallback((at: FileAt) => {
+  // The cursor moved in a file (VS Code's rule): far from the current place,
+  // that place goes into the history; near it, the place just moves, so arrow
+  // keys and nearby clicks don't fill the history.
+  const moved = useCallback((at: FileAt, pane: PaneIndex) => {
+    dispatch({ type: 'cursor', pane, path: at.path, line: at.line, col: at.col });
     const cur = here.current;
-    here.current = at;
+    here.current = { ...at, pane };
     if (!cur || (cur.path === at.path && Math.abs(cur.line - at.line) <= NEAR_LINES)) return;
     setBack((b) => capped(b, cur));
     setForward([]);
   }, []);
+  // Back and forward reopen a closed file, in the preview tab, rather than refuse.
+  const paneFor = (p: Place): PaneIndex => (p.pane < tabsRef.current.panes.length ? p.pane : 0);
   const goBack = () => {
     const prev = back[back.length - 1];
     if (!prev) return;
@@ -129,7 +154,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     const from = here.current;
     setBack(back.slice(0, -1));
     if (from) setForward((f) => capped(f, from));
-    open(prev);
+    open(prev, 'preview', paneFor(prev));
   };
   const goForward = () => {
     const next = forward[forward.length - 1];
@@ -137,20 +162,18 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     const from = here.current;
     setForward(forward.slice(0, -1));
     if (from) setBack((b) => capped(b, from));
-    open(next);
+    open(next, 'preview', paneFor(next));
   };
 
   useEffect(() => {
     if (!openPath) return;
-    // Opening from elsewhere (a chat link, the picker) is a file switch you can come back from.
+    // Opening from elsewhere (a chat link, the picker) is its own tab, and a place you can come back from.
     const from = here.current;
-    if (from && (from.path !== openPath.path || Math.abs(from.line - (openPath.line ?? 1)) > NEAR_LINES)) jump(from, { path: openPath.path, line: openPath.line ?? 1, col: 1 });
-    else open({ path: openPath.path, line: openPath.line });
+    const to = { path: openPath.path, line: openPath.line ?? 1, col: 1 };
+    if (from && (from.path !== to.path || Math.abs(from.line - to.line) > NEAR_LINES)) jump(from, to);
+    else open(to, 'permanent');
   }, [openPath?.path, openPath?.line, openPath?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runnerId = remote?.runnerId;
-  const remoteWsId = remote?.remoteWsId;
-  const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
   // Stable per worktree and toggle, so the tree reloads only when one changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const loadDir = useCallback((dir: string) => api.files.tree(wsId, worktreePath, dir, { ignored: showIgnored }, where), [wsId, worktreePath, showIgnored, runnerId, remoteWsId]);
@@ -177,13 +200,17 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     return () => { live = false; };
   }, [wsId, worktreePath, runnerId, remoteWsId, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A newer navigation cancels the one in flight.
-  const navigate = (kind: NavKind, at: FileAt) => {
+  // A newer navigation cancels the one in flight. What it finds opens in the pane it was asked from.
+  const navigate = (kind: NavKind, at: FileAt, pane: PaneIndex) => {
     navAbort.current?.abort();
     const ac = new AbortController();
     navAbort.current = ac;
-    here.current = at;
-    setNav({ kind, at, answer: null, error: null });
+    dispatch({ type: 'focus', pane });
+    // ⌘-click moved the cursor there; the tab comes back to it.
+    dispatch({ type: 'cursor', pane, path: at.path, line: at.line, col: at.col });
+    const from: Place = { ...at, pane };
+    here.current = from;
+    setNav({ kind, at: from, answer: null, error: null });
     api.lsp[kind](wsId, worktreePath, at, where, ac.signal)
       .then((answer) => {
         if (ac.signal.aborted) return;
@@ -191,18 +218,20 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         if (kind === 'definition' && answer.source === 'lsp' && answer.hits.length === 1) {
           setNav(null);
           const h = answer.hits[0]!;
-          jump(at, { path: h.path, line: h.line, col: h.col });
+          jump(from, { path: h.path, line: h.line, col: h.col }, 'permanent', pane);
           return;
         }
-        setNav({ kind, at, answer, error: null });
+        setNav({ kind, at: from, answer, error: null });
       })
-      .catch((err: unknown) => { if (!ac.signal.aborted) setNav({ kind, at, answer: null, error: filesError(err, 'nav') }); });
+      .catch((err: unknown) => { if (!ac.signal.aborted) setNav({ kind, at: from, answer: null, error: filesError(err, 'nav') }); });
   };
   /** Back to the code after a panel closes, so the keys keep working. */
-  const focusCode = () => requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('.cm-content')?.focus());
+  const focusCode = () => requestAnimationFrame(() => root.current?.querySelector<HTMLElement>(`[data-testid="files-pane-${tabsRef.current.focus}"] .cm-content`)?.focus());
   const closeNav = () => { navAbort.current?.abort(); setNav(null); focusCode(); };
   useEffect(() => () => navAbort.current?.abort(), []);
-  const pickHit = (h: NavHit, from: FileAt | null) => jump(from, { path: h.path, line: h.line, col: h.col });
+  // A picked hit opens as its own tab; ⌥-click opens it in the side pane.
+  const pickHit = (h: NavHit, from: Place | null, side: boolean, pane: PaneIndex = tabsRef.current.focus) =>
+    jump(from, { path: h.path, line: h.line, col: h.col }, 'permanent', side ? 1 : pane);
 
   // No server for this file here: its install command (this machine's, or the
   // runner's) goes to a Shell tab, typed in locally, copied with a hint on a runner.
@@ -213,6 +242,11 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     const opts = servers.find((s) => s.id === id)?.install ?? [];
     const cmd = (opts.find((o) => o.available) ?? opts[0])?.command;
     if (cmd) requestRunInShell({ worktreePath, command: cmd });
+  };
+
+  const closeTab = (pane: PaneIndex, path: string) => {
+    dispatch({ type: 'close', pane, path });
+    focusCode();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -230,9 +264,27 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     if ((mod && !e.shiftKey && e.key === '[') || (alt && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
     else if ((mod && !e.shiftKey && e.key === ']') || (alt && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
+    else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
+      // ⌘W closes the file tab, not the app's tab, while focus is in Files.
+      const active = activeTab(tabsRef.current);
+      if (active) { e.preventDefault(); e.stopPropagation(); closeTab(tabsRef.current.focus, active.path); }
+    } else if (e.key === 'Escape' && !e.defaultPrevented && tabs.panes.length > 1 && tabs.focus === 1 && !nav) {
+      e.preventDefault();
+      dispatch({ type: 'closePane', pane: 1 });
+      focusCode();
+    }
   };
 
   const iconBtn = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-white/[0.06] hover:text-zinc-100';
+  const historyButtons = (
+    <span className="flex shrink-0 items-center">
+      <button type="button" onClick={goBack} disabled={back.length === 0} aria-label="Back" title="Back (⌘[)"
+        className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">‹</button>
+      <button type="button" onClick={goForward} disabled={forward.length === 0} aria-label="Forward" title="Forward (⌘])"
+        className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">›</button>
+    </span>
+  );
+  const fromHere = () => (selected ? here.current : null);
   return (
     <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab" onKeyDown={onKeyDown}>
       <aside className="glass pane-card flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border">
@@ -248,27 +300,50 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
-          <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h) => pickHit(h, selected ? here.current : null)} />
+          <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h, side) => pickHit(h, fromHere(), side)} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
-            onSelect={(p) => jump(selected ? here.current : null, { path: p, line: 1, col: 1 })} />
+            onSelect={(p) => jump(fromHere(), { path: p }, 'preview')}
+            onPin={(p) => dispatch({ type: 'pin', pane: tabsRef.current.focus, path: p })} />
         )}
       </aside>
       <main className="glass pane-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border">
-        {selected ? (
-          <FileViewer key={`${worktreePath}\0${selected}`} worktreePath={worktreePath} path={selected} line={target.line} col={target.col} nonce={target.nonce} reloadKey={reloadKey}
-            read={read} marks={marks} onAskAgent={onAskAgent} onOpenInVsCode={onOpenInVsCode}
-            onNavigate={navigate} onCursor={moved} hover={hover} outline={outline}
-            headerStart={(
-              <span className="flex shrink-0 items-center">
-                <button type="button" onClick={goBack} disabled={back.length === 0} aria-label="Back" title="Back (⌘[)"
-                  className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">‹</button>
-                <button type="button" onClick={goForward} disabled={forward.length === 0} aria-label="Forward" title="Forward (⌘])"
-                  className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">›</button>
-              </span>
-            )} />
-        ) : (
+        {selected === null && tabs.panes.every((p) => p.tabs.length === 0) ? (
           <div className="flex flex-1 items-center justify-center p-6 text-[11px] text-zinc-500">Pick a file to read it here.</div>
+        ) : (
+          <div className="flex min-h-0 flex-1">
+            {tabs.panes.map((pane, i) => {
+              const pi = i as PaneIndex;
+              const t = activeTab(tabs, pi);
+              return (
+                <section key={i} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
+                  className={`flex min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-zinc-800/80' : ''}`}
+                  onMouseDownCapture={() => dispatch({ type: 'focus', pane: pi })} onFocusCapture={() => dispatch({ type: 'focus', pane: pi })}>
+                  <TabStrip pane={pane} focused={tabs.panes.length > 1 && tabs.focus === pi}
+                    onActivate={(path) => {
+                      const tab = pane.tabs.find((x) => x.path === path);
+                      if (tab && path !== pane.active) jump(here.current, { path }, 'preview', pi);
+                    }}
+                    onPin={(path) => dispatch({ type: 'pin', pane: pi, path })}
+                    onClose={(path) => closeTab(pi, path)}
+                    onClosePane={i > 0 ? () => { dispatch({ type: 'closePane', pane: pi }); focusCode(); } : undefined} />
+                  {t ? (
+                    <FileViewer key={`${worktreePath}\0${i}\0${t.path}`} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
+                      read={read} marks={marks} onAskAgent={onAskAgent} onOpenInVsCode={onOpenInVsCode}
+                      onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
+                      headerStart={historyButtons}
+                      headerEnd={i === 0 && tabs.panes.length < 2 ? (
+                        <button type="button" onClick={() => open({ path: t.path, line: t.line, col: t.col }, 'permanent', 1)}
+                          aria-label="Open to the side" title="Open to the side (⌥-click a definition or reference)"
+                          className="rounded-md px-1.5 py-0.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"><SplitIcon /></button>
+                      ) : undefined} />
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center p-6 text-[11px] text-zinc-500">Pick a file to read it here.</div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
         )}
         {nav && (
           <NavPanel
@@ -279,11 +354,53 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
               ? { label: 'Install', run: () => { void install(nav.answer!.server!).catch((err: unknown) => console.warn('[files] no install command:', err)); } }
               : undefined}
             empty={nav.error ? '' : nav.kind === 'definition' ? 'No definition found.' : 'No references found.'}
-            onPick={(h) => { pickHit(h, nav.at); if (nav.kind === 'definition') setNav(null); }}
+            onPick={(h, side) => { pickHit(h, nav.at, side, nav.at.pane); if (nav.kind === 'definition') setNav(null); }}
             onClose={closeNav}
           />
         )}
       </main>
+    </div>
+  );
+}
+
+// One pane's open files: the preview tab in italics, × or middle-click closes,
+// double-click keeps a preview tab. Scrolls sideways, never wraps.
+function TabStrip({ pane, focused, onActivate, onPin, onClose, onClosePane }: {
+  pane: Pane;
+  focused: boolean;
+  onActivate: (path: string) => void;
+  onPin: (path: string) => void;
+  onClose: (path: string) => void;
+  onClosePane?: () => void;
+}) {
+  return (
+    <div className={`flex h-8 shrink-0 items-stretch border-b border-zinc-800/80 ${focused ? 'bg-white/[0.02]' : ''}`}>
+      <div role="tablist" aria-label="Open files" className="flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
+        {pane.tabs.map((t) => {
+          const on = t.path === pane.active;
+          const name = t.path.split('/').pop() || t.path;
+          return (
+            <div key={t.path} role="tab" aria-selected={on} tabIndex={on ? 0 : -1} title={t.preview ? `${t.path} — preview (double-click to keep)` : t.path}
+              data-preview={t.preview || undefined}
+              onClick={() => onActivate(t.path)}
+              onDoubleClick={() => onPin(t.path)}
+              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(t.path); } }}
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate(t.path); } }}
+              className={`group flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap border-r border-zinc-800/60 pl-3 pr-1 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-400/50 ${
+                on ? 'glass-pill rounded-none text-zinc-100' : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'}`}>
+              <span className={t.preview ? 'italic' : ''}>{name}</span>
+              <button type="button" tabIndex={-1} aria-label={`Close ${name}`} title="Close (⌘W)"
+                onClick={(e) => { e.stopPropagation(); onClose(t.path); }}
+                className={`flex h-4 w-4 items-center justify-center rounded text-[13px] leading-none text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-100 ${on ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}>×</button>
+            </div>
+          );
+        })}
+      </div>
+      {onClosePane && (
+        <button type="button" onClick={onClosePane} aria-label="Close side pane" title="Close side pane (Esc)"
+          className="flex w-8 shrink-0 items-center justify-center text-[13px] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100">×</button>
+      )}
     </div>
   );
 }
@@ -321,6 +438,9 @@ function EyeOffIcon() {
 }
 function SearchIcon() {
   return <svg {...svg}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>;
+}
+function SplitIcon() {
+  return <svg {...svg}><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" /></svg>;
 }
 function RefreshIcon() {
   return (
