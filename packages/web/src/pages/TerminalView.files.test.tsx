@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The Files tab in the hub: its mount (local and runner worktrees), ⌘P, paths
@@ -41,6 +41,8 @@ type FilesTabProps = {
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
   onOpenInEditor?: (path: string, line: number) => void;
+  onOpenWorktreeInEditor?: () => void;
+  editorLabel?: string;
 };
 const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null, fileTabOpen: false }));
 vi.mock('../components/files/FilesTab', () => ({
@@ -63,6 +65,7 @@ vi.mock('../lib/jarvis/serverPort', () => ({ jarvisServerPort: () => ({ message:
 const filesList = vi.fn();
 const runnerRpc = vi.fn();
 const editorOpen = vi.fn();
+const editorsList = vi.fn();
 vi.mock('../api', () => ({
   ApiClientError: class extends Error {},
   api: {
@@ -86,7 +89,7 @@ vi.mock('../api', () => ({
       rpc: (...a: unknown[]) => runnerRpc(...a),
       forwards: { list: vi.fn().mockResolvedValue({ forwards: [] }), open: vi.fn(), close: vi.fn() },
     },
-    editors: { open: (...a: unknown[]) => editorOpen(...a) },
+    editors: { open: (...a: unknown[]) => editorOpen(...a), list: (...a: unknown[]) => editorsList(...a) },
   },
 }));
 
@@ -103,6 +106,7 @@ class FakeWS {
 
 import { TerminalView } from './TerminalView';
 import { requestRunInShell } from '../lib/runInShell';
+import { resetEditorsCache } from '../hooks/editors';
 import type { Worktree } from '../types';
 
 const ROOT = '/Users/me/repo.worktrees/FD-1';
@@ -126,6 +130,15 @@ beforeEach(() => {
   term.rows = [];
   filesTab.last = null;
   filesTab.fileTabOpen = false;
+  resetEditorsCache();
+  editorsList.mockReset().mockResolvedValue({
+    preferred: null,
+    editors: [
+      { id: 'vscode', label: 'VS Code', available: false, lines: true },
+      { id: 'cursor', label: 'Cursor', available: true, lines: true },
+      { id: 'system', label: 'Default app', available: true, lines: false },
+    ],
+  });
   peers.list = [];
   filesList.mockReset().mockResolvedValue({ files: ['src/app.ts', 'README.md'], truncated: false });
   runnerRpc.mockReset().mockResolvedValue({ worktrees: [], repos: [] });
@@ -173,11 +186,57 @@ describe('Files tab in the hub', () => {
     render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
     await flush();
     act(() => filesTab.last!.onOpenInEditor!('src/app.ts', 12));
-    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, path: 'src/app.ts', line: 12 });
+    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, path: 'src/app.ts', line: 12, editor: 'cursor' });
     editorOpen.mockRejectedValue(new Error('spawn /usr/bin/code ENOENT'));
     act(() => filesTab.last!.onOpenInEditor!('src/app.ts', 3));
     await flush();
     expect(screen.getByRole('status')).toHaveTextContent('Couldn’t open the editor. Pick one in Settings › Files.');
+  });
+
+  it('names the editor it will use, and opens the whole worktree in it', async () => {
+    editorOpen.mockReset().mockResolvedValue(undefined);
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    await flush();
+    expect(filesTab.last!.editorLabel).toBe('Cursor');
+    act(() => filesTab.last!.onOpenWorktreeInEditor!());
+    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
+  });
+
+  it('⌘⇧O opens the active worktree in the editor; with a file tab open the Files tab takes it', async () => {
+    editorOpen.mockReset().mockResolvedValue(undefined);
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    await flush();
+    fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
+    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, editor: 'cursor' });
+    editorOpen.mockClear();
+    filesTab.fileTabOpen = true;
+    cleanup();
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    await flush();
+    fireEvent.keyDown(screen.getByTestId('files-tab'), { key: 'O', metaKey: true, shiftKey: true });
+    expect(editorOpen).not.toHaveBeenCalled();
+  });
+
+  it('a runner worktree offers no editor: no worktree button, and ⌘⇧O does nothing', async () => {
+    editorOpen.mockReset();
+    render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
+    await flush();
+    expect(filesTab.last!.onOpenWorktreeInEditor).toBeUndefined();
+    fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
+    expect(editorOpen).not.toHaveBeenCalled();
+  });
+
+  it('a UI served by a runner box offers no editor: there is no desktop there', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ runner: true, embeds: false }) })));
+    try {
+      render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+      await flush();
+      await flush();
+      expect(filesTab.last!.onOpenInEditor).toBeUndefined();
+      expect(filesTab.last!.onOpenWorktreeInEditor).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('⌘P lists the worktree files; Enter opens the pick in the Files tab', async () => {

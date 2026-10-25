@@ -64,6 +64,7 @@ import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
 import { readRemoteShells, rememberRemoteShells, type RemoteShell } from '../hooks/remoteShells';
 import { useActivityBeacon } from '../hooks/useActivityBeacon';
+import { openInEditor as openEditor, useEditors } from '../hooks/editors';
 import { useIntercom } from '../contexts/IntercomContext';
 import { useUiHubBridge, type JarvisHubContext } from '../contexts/UiControlContext';
 import type { JarvisHubPort } from '../lib/jarvis/execute';
@@ -697,6 +698,7 @@ export function TerminalView({
   const openChangesRef = useRef<() => void>(() => undefined);
   // Cmd+P: go to a file in the active worktree (ref for the same reason).
   const openFilePickerRef = useRef<() => void>(() => undefined);
+  const openWorktreeInEditorRef = useRef<() => void>(() => undefined);
   const lastNonDiffRef = useRef<Tab | null>(null);
   // Agent tabs the user explicitly closed. A close kills the session AND sets
   // claudeOpen=false optimistically, but a stale in-flight SSE snapshot (taken
@@ -1882,6 +1884,16 @@ export function TerminalView({
         openFilePickerRef.current();
         return;
       }
+      // Cmd+Shift+O opens the active worktree in the person's editor. Inside the
+      // Files tab with a file tab open, that file at its cursor (its own handler).
+      if (e.metaKey && !e.altKey && e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'o') {
+        if ((e.target as Element | null)?.closest?.('[data-files-tab][data-file-tab-open]')) return;
+        if (e.repeat) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openWorktreeInEditorRef.current();
+        return;
+      }
       // Cmd+W closes the active tab (terminal/shell/agent focus lands here;
       // Browser focus arrives via the 'close-tab' IPC combo below).
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'w') {
@@ -2536,13 +2548,17 @@ export function TerminalView({
     openMode('files', { path: worktreePath });
   };
   // "Open in editor": the person's own desktop editor, on this machine only (a
-  // runner worktree has no local editor, so there is no button for one).
-  const openInEditor = remote ? undefined : (worktreePath: string, path: string, line: number) => {
-    api.editors.open(localWsId, { worktreePath, path, line }).catch((err: unknown) => {
-      console.warn('[files] open in editor failed:', err);
+  // runner worktree, or a UI a runner box serves, has no desktop editor, so
+  // there is no button for one).
+  // The editor is named, so it is the one the button says (not a preferred
+  // one that has since been uninstalled).
+  const { chosen: editor } = useEditors();
+  const openInEditor = remote || localCaps.runner ? undefined : (worktreePath: string, path?: string, line?: number) => {
+    openEditor(localWsId, { worktreePath, ...(path ? { path } : {}), ...(line ? { line } : {}), ...(editor ? { editor: editor.id } : {}) }).catch(() => {
       setHubHint('Couldn’t open the editor. Pick one in Settings › Files.');
     });
   };
+  openWorktreeInEditorRef.current = () => openInEditor?.(activeRef.current.path);
   // A runner's worktree reads its files through the runner; wsId is then unused.
   // `name` lets the Files tab say which machine an install belongs on.
   const filesTarget = remote ? { runnerId: remote.runnerId, remoteWsId: remote.wsId, name: remote.runnerName } : undefined;
@@ -3797,6 +3813,8 @@ export function TerminalView({
                     openPath={filesOpenPath[g.path]}
                     onAskAgent={setFileAsk}
                     onOpenInEditor={openInEditor ? (path, line) => openInEditor(g.path, path, line) : undefined}
+                    onOpenWorktreeInEditor={openInEditor ? () => openInEditor(g.path) : undefined}
+                    editorLabel={editor?.label}
                   />
                 </div>
               );

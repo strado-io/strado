@@ -488,7 +488,7 @@ export type LspServerStatus = {
 
 // "Open in editor" (replaces the embedded VS Code) — mirrors server/src/services/editors/types.ts.
 export type EditorId =
-  | 'vscode' | 'cursor' | 'windsurf' | 'zed' | 'sublime'
+  | 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf' | 'zed' | 'sublime'
   | 'webstorm' | 'idea' | 'pycharm' | 'goland' | 'xcode' | 'system';
 export type EditorStatus = { id: EditorId; label: string; available: boolean; lines: boolean };
 /** preferred: the person's choice; null = first available, then 'system'. */
