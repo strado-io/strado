@@ -668,7 +668,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // finish or answer. Actions run in the turn's window; a new worktree is the
   // server's own job.
   {
-    const { createJarvisExecutor, createJarvisWorktree, registerJarvisToolRoutes, trackAsks } = await import('./routes/jarvisTools.js');
+    const { createJarvisExecutor, createJarvisWorktree, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
     const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
     const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
     const { appWakeSource, createJarvisWakes } = await import('./services/jarvisChat/wakes.js');
@@ -676,7 +676,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const stores = (ws: string) => deps.registry.get(ws);
     let wakes: ReturnType<typeof createJarvisWakes> | null = null;
     const execute = trackAsks(
-      createJarvisExecutor({ uiClients: deps.uiClients, createWorktree: createJarvisWorktree(app, stores) }),
+      watchTrust(createJarvisExecutor({ uiClients: deps.uiClients, createWorktree: createJarvisWorktree(app, stores) }), trustWatcher(app)),
       (ws, focusId, askId) => wakes?.asked(ws, focusId, askId),
     );
     deps.jarvis ??= createJarvisRunner({

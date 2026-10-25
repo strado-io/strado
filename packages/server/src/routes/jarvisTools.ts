@@ -9,6 +9,7 @@ import { AppError } from '../errors.js';
 import type { WorkspaceStores } from '../workspaceRegistry.js';
 import { exec } from '../shell.js';
 import { trustClaudeFolder } from '../services/claudeMcp.js';
+import { trustAttention } from '../services/claudeTrust.js';
 import type { UiClients } from '../services/uiClients.js';
 import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
 import { approvalFor, checkArgs, jarvisToolSpecs, summarize } from '../services/jarvisChat/tools.js';
@@ -71,6 +72,39 @@ export function trackAsks(execute: JarvisExecutor, asked: (ws: string, focusId: 
     const r = await execute(call);
     if (call.action === 'agent.ask' && r.ok && r.askId) asked(call.ws, call.focusId, r.askId);
     return r;
+  };
+}
+
+/** After an agent tab opens: is it on Claude's folder-trust question? Polls
+ *  the hub's view of that tab (found by the card) until it starts, the
+ *  question shows, or `timeoutMs` passes. */
+export function trustWatcher(app: FastifyInstance, o: { timeoutMs?: number; pollMs?: number } = {}) {
+  const timeoutMs = o.timeoutMs ?? 10_000;
+  const pollMs = o.pollMs ?? 500;
+  return async (ws: string, card: TabCardRef & { worktreePath?: string }): Promise<boolean> => {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const tab = (await app.deps.agents.list(ws)).find((a) =>
+        (card.worktreePath ? a.worktreePath === card.worktreePath : a.worktreePath.split('/').pop() === card.worktree)
+        && (a.alias === card.tab || `${a.mode}-${a.sessionId}` === card.tab));
+      if (tab && tab.lifecycle !== 'starting') return false;
+      if (tab && trustAttention(tab, (k) => app.deps.terminal.snapshot(k))) return true;
+      if (Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+  };
+}
+
+/** An agent tab that sits on Claude's trust question is the person's to
+ *  answer: Jarvis is told so plainly instead of a prompt that never lands. */
+export function watchTrust(execute: JarvisExecutor, onTrust: (ws: string, card: TabCardRef) => Promise<boolean>): JarvisExecutor {
+  return async (call) => {
+    const r = await execute(call);
+    // Only Claude asks it (others would just wait out the poll).
+    if (call.action !== 'tab.open' || call.args.mode !== 'claude' || !r.ok || !r.card) return r;
+    return (await onTrust(call.ws, r.card).catch(() => false))
+      ? { ...r, text: `${r.card.tab} is waiting for you to trust the folder; open the tab to answer` }
+      : r;
   };
 }
 

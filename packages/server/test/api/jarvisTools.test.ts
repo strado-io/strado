@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
-import { createJarvisExecutor, createJarvisWorktree, trackAsks } from '../../src/routes/jarvisTools';
+import { createJarvisExecutor, createJarvisWorktree, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
+import type { FastifyInstance } from 'fastify';
+import type { AgentSummary } from '../../src/services/agentRegistry';
 import { exec } from '../../src/shell';
 import type { JarvisRunner, TurnRef } from '../../src/services/jarvisChat/runner';
 import { createUiClients, type UiCommand } from '../../src/services/uiClients';
@@ -196,6 +198,50 @@ describe('worktree.create (approved)', () => {
     expect(after.members).toContain(`local:${trusted[0]}`);
     expect(await run({ ws: 'default', focusId: focus.id, turnId: 't', windowId: 'w', wake: false, action: 'worktree.create', args: { repo: 'nope', branch: 'x' } })).toEqual({ ok: false, text: 'No repo named nope' });
     expect(trusted).toHaveLength(1);
+  });
+});
+
+describe('a Claude tab on the folder-trust question', () => {
+  const SCREEN = 'Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder';
+  const tab = (over: Partial<AgentSummary> = {}): AgentSummary => ({
+    agentId: 'claude-1@web', alias: 'claude-1', scopeId: 'default', mode: 'claude', worktreePath: '/w/fix', sessionId: '1',
+    lifecycle: 'starting', executionId: 'e', live: true, ...over,
+  });
+  const fakeApp = (list: () => AgentSummary[], screen: () => string) =>
+    ({ deps: { agents: { list: async () => list() }, terminal: { snapshot: () => screen() } } }) as unknown as FastifyInstance;
+  const card = { kind: 'claude' as const, worktree: 'fix', worktreePath: '/w/fix', tab: 'claude-1' };
+
+  it('trustWatcher: true once the question shows; false when the tab starts, or nothing shows in time', async () => {
+    expect(await trustWatcher(fakeApp(() => [tab()], () => SCREEN), { pollMs: 5 })('default', card)).toBe(true);
+    expect(await trustWatcher(fakeApp(() => [tab({ lifecycle: 'idle' })], () => SCREEN), { pollMs: 5 })('default', card)).toBe(false);
+    expect(await trustWatcher(fakeApp(() => [tab()], () => '❯ '), { pollMs: 5, timeoutMs: 30 })('default', card)).toBe(false);
+    expect(await trustWatcher(fakeApp(() => [tab({ worktreePath: '/w/other' })], () => SCREEN), { pollMs: 5, timeoutMs: 30 })('default', card)).toBe(false);
+  });
+
+  it('the hub\'s peers list carries attention: trust while the question is up (the card\'s "needs you")', async () => {
+    let screen = SCREEN;
+    const deps = await buildDeps({ configDir: path.join(tmp, 'config2'), homeStateDir: path.join(tmp, 'home2') });
+    const a = await buildApp({
+      ...deps, jarvis: fakeRunner(),
+      agents: { ...deps.agents, list: async () => [tab(), tab({ agentId: 'shell-1@web', alias: null, mode: 'shell', sessionId: '1' })] },
+      terminal: { ...deps.terminal, snapshot: () => screen },
+    });
+    const peers = async () => (await a.inject({ method: 'GET', url: '/api/w/default/intercom/peers' })).json().peers as AgentSummary[];
+    expect((await peers()).map((p) => p.attention)).toEqual(['trust', undefined]);
+    screen = '❯ ';
+    expect((await peers()).map((p) => p.attention)).toEqual([undefined, undefined]);
+    await a.close();
+  });
+
+  it('watchTrust: Jarvis hears it plainly; shells and other agents are not watched', async () => {
+    const ref = { ws: 'default', focusId: 'f1', turnId: 't', windowId: 'w', wake: false };
+    const opened = { ok: true, text: 'Opened claude-1 in fix', card };
+    const seen: string[] = [];
+    const run = watchTrust(async () => opened, async (_ws, c) => { seen.push(c.tab); return true; });
+    expect(await run({ ...ref, action: 'tab.open', args: { mode: 'claude' } })).toEqual({ ...opened, text: 'claude-1 is waiting for you to trust the folder; open the tab to answer' });
+    expect(await run({ ...ref, action: 'tab.open', args: { mode: 'codex' } })).toEqual(opened);
+    expect(await run({ ...ref, action: 'tab.open', args: { mode: 'shell' } })).toEqual(opened);
+    expect(seen).toEqual(['claude-1']);
   });
 });
 

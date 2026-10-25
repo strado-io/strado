@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
 import { findOwningRepo, worktreeRootsFor } from './worktreeRoot.js';
+import { trustAttention } from './claudeTrust.js';
 import { agentSpawnInstallers, spawnAgentTab, type AgentMode, type SpawnAgentTabResult } from './agentSpawn.js';
 import { ShellRunError, type ShellRunResult } from './shellRunner.js';
 import { parseSessionKey, sessionKeyFor } from './terminalManager.js';
@@ -17,6 +18,8 @@ export const SHELL_SETTLE_QUIET_MS = 500;
 export const SHELL_SETTLE_MAX_MS = 5_000;
 /** How long the first prompt keeps trying to reach a freshly started harness. */
 export const PROMPT_DELIVERY_WINDOW_MS = 45_000;
+/** …while the tab shows Claude's folder-trust question (the person must answer it). */
+export const PROMPT_TRUST_WINDOW_MS = 15 * 60_000;
 export const PROMPT_DELIVERY_RETRY_MS = 1_000;
 /** After typing the first prompt into Claude, how long until it must report working. */
 export const PROMPT_CONFIRM_MS = 5_000;
@@ -117,12 +120,18 @@ export function createTabOps(app: FastifyInstance) {
    * reported idle. Others: the push gates (quiet input/output) stand in for a
    * "prompt shown" signal. Background; gives up quietly after the window. */
   function deliverPrompt(scopeId: string, agentId: string, key: string, mode: string, text: string): void {
-    const deadline = Date.now() + PROMPT_DELIVERY_WINDOW_MS;
+    const started = Date.now();
+    let trust = false;
     const tryOnce = async (): Promise<void> => {
-      if (Date.now() > deadline) { log(`first prompt for ${agentId} gave up after ${PROMPT_DELIVERY_WINDOW_MS} ms`); return; }
       try {
         const me = (await app.deps.agents.list(scopeId)).find((a) => a.agentId === agentId);
         if (!me || !me.live) return;
+        // A Claude tab on its folder-trust question is waiting for the person,
+        // not stuck: keep the prompt for them (up to 15 min) instead of 45 s.
+        // Once seen, the longer window holds: the prompt goes in after they answer.
+        trust ||= trustAttention(me, (k) => app.deps.terminal.snapshot(k)) === 'trust';
+        const window = trust ? PROMPT_TRUST_WINDOW_MS : PROMPT_DELIVERY_WINDOW_MS;
+        if (Date.now() - started > window) { log(`first prompt for ${agentId} gave up after ${window} ms`); return; }
         // Non-Claude harnesses post nothing until a first turn ends, so
         // 'starting' plus the push's quiet gates is the only "prompt shown"
         // signal. Known limit: a first-run trust/onboarding dialog that sits
