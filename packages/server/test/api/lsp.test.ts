@@ -80,6 +80,13 @@ describe('admin routes', () => {
     expect((await app.inject({ method: 'GET', url: '/api/lsp/servers' })).json()).toEqual({ servers: [] });
   });
 
+  it('stop with an empty {} body (what the web sends) stops every instance', async () => {
+    const h = { host: '127.0.0.1:4000', origin: 'http://127.0.0.1:4000' };
+    const res = await app.inject({ method: 'POST', url: '/api/lsp/servers/typescript/stop', headers: h, payload: {} });
+    expect(res.statusCode).toBe(204);
+    expect(calls).toEqual([['stop', 'typescript']]);
+  });
+
   it("stop with a worktree stops only that worktree's instance", async () => {
     const h = { host: '127.0.0.1:4000', origin: 'http://127.0.0.1:4000' };
     const res = await app.inject({ method: 'POST', url: '/api/lsp/servers/typescript/stop', headers: h, payload: { worktreePath: '/wt/a' } });
