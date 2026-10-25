@@ -73,6 +73,34 @@ describe('FilesTab', () => {
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-reload', '1');
   });
 
+  it('refreshes by itself when the person comes back — window focus, or the tab shown again — at most every 2s, no polling', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let observe!: (visible: boolean) => void;
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) { observe = (v) => cb([{ isIntersecting: v }]); }
+      observe() {} disconnect() {}
+    });
+    try {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      const reload = () => screen.getByTestId('viewer').getAttribute('data-reload');
+      expect(reload()).toBe('0');
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      expect(reload()).toBe('0'); // nothing on a timer
+      act(() => { window.dispatchEvent(new Event('focus')); });
+      expect(reload()).toBe('1');
+      act(() => { window.dispatchEvent(new Event('focus')); });
+      expect(reload()).toBe('1'); // within 2s: once
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      act(() => { observe(false); });
+      act(() => { observe(true); });
+      expect(reload()).toBe('2');
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('passes Ask agent and Open in VS Code through', async () => {
     render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} onAskAgent={vi.fn()} onOpenInVsCode={vi.fn()} />);
     await flush();

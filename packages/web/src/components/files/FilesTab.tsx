@@ -2,7 +2,7 @@
 // left (loaded as they open), one file on the right. The same for a runner's
 // worktree, read through the runner's own API. Instead of VS Code for "what's
 // in this file / what changed here"; VS Code stays one click away.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext } from '../../types';
 import { FileTree } from './FileTree';
@@ -25,6 +25,37 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   const [target, setTarget] = useState<{ line?: number; nonce: number }>({ line: openPath?.line, nonce: openPath?.nonce ?? 0 });
   // Refresh: agents change files all the time; re-list the open folders and re-read the open file.
   const [reloadKey, setReloadKey] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
+  // No polling: re-check when the person comes back — the tab shown again (it
+  // was hidden in the hub), the window refocused, or the app visible again.
+  // At most once every 2s, so a burst of those is one reload.
+  useEffect(() => {
+    let last = Date.now();
+    let shown = true;
+    const refresh = () => {
+      if (Date.now() - last < 2000) return;
+      last = Date.now();
+      setReloadKey((k) => k + 1);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible' && shown) refresh(); };
+    const onFocus = () => { if (shown) refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+    let io: IntersectionObserver | null = null;
+    if (root.current && typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver((entries) => {
+        const now = entries.some((e) => e.isIntersecting);
+        if (now && !shown) refresh();
+        shown = now;
+      });
+      io.observe(root.current);
+    }
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+      io?.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (!openPath) return;
@@ -45,7 +76,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
 
   const toggle = 'flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-zinc-200';
   return (
-    <div className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab">
+    <div ref={root} className="flex h-full min-h-0 gap-2 p-2" data-testid="files-tab">
       <aside className="glass pane-card flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border">
         <div className="flex h-8 shrink-0 items-center gap-3 border-b border-zinc-800/80 px-3">
           <label className={toggle}>

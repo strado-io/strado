@@ -146,6 +146,7 @@ describe('FileTree', () => {
   });
 
   it('a folder that fails to list says so in fixed words, never the raw message', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fail = (code: string) => vi.fn(async () => { throw Object.assign(new Error('relayed: secret detail'), { code }); });
     const { rerender } = render(<FileTree load={fail('NOT_FOUND')} changedOnly={false} selected={null} onSelect={vi.fn()} />);
     await flush();
@@ -156,6 +157,9 @@ describe('FileTree', () => {
     rerender(<FileTree load={fail('UNKNOWN')} changedOnly={false} selected={null} onSelect={vi.fn()} />);
     await flush();
     expect(screen.getByRole('alert')).toHaveTextContent(/^Couldn’t list this folder\.$/);
+    // The detail goes to the console only.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[files]'), expect.objectContaining({ message: 'relayed: secret detail' }));
+    warn.mockRestore();
   });
 
   it('a truncated folder says how much is shown', async () => {
