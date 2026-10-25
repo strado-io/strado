@@ -3,12 +3,13 @@
 import type { Focus } from '../../api';
 
 const icon = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
-// Lucide: focus.
+// A viewfinder: four corner brackets round a ring. Bolder than Lucide's
+// `focus` so it still reads at 13px.
 export const FocusIcon = ({ size = 14 }: { size?: number }) => (
-  <svg {...icon} width={size} height={size}>
-    <circle cx="12" cy="12" r="3" />
-    <path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" />
-    <path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+  <svg {...icon} strokeWidth={2.4} strokeLinecap="butt" width={size} height={size}>
+    <circle cx="12" cy="12" r="4.25" />
+    <path d="M3.5 8.5V5.5a2 2 0 0 1 2-2h3" /><path d="M15.5 3.5h3a2 2 0 0 1 2 2v3" />
+    <path d="M20.5 15.5v3a2 2 0 0 1-2 2h-3" /><path d="M8.5 20.5h-3a2 2 0 0 1-2-2v-3" />
   </svg>
 );
 

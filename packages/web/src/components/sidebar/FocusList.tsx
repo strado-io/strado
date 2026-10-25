@@ -65,7 +65,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
               <div key={f.id} data-testid="focus-open" className={`flex flex-col gap-0.5 ${i > 0 ? 'mt-2' : ''} ${i < shown.length - 1 ? 'mb-2' : ''}`}>
                 <div className={`${ROW} group`}>
                   <span className="text-zinc-400"><Chevron open /></span>
-                  <span className="shrink-0 text-zinc-400"><FocusIcon size={13} /></span>
+                  <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
                   {renaming === f.id ? (
                     <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
                   ) : (
@@ -85,7 +85,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
             <button key={f.id} type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
               className={`${ROW} text-left`}>
               <span className="text-zinc-500"><Chevron open={false} /></span>
-              <span className="shrink-0 text-zinc-600"><FocusIcon size={13} /></span>
+              <span className="shrink-0 text-zinc-500"><FocusIcon size={15} /></span>
               <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-400">{f.name}</span>
               {b.agents}
               {(b.pendingApprovals ?? 0) > 0 && (
