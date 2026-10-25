@@ -139,11 +139,29 @@ describe('JarvisRunner', () => {
   });
 
   it('turn cap stops the turn after 5 minutes, with a fixed error', async () => {
-    const h = fakeHeadless([{ events: [{ type: 'text', delta: 'Working…' }], hang: true }]);
-    const r = runner(h, { turnMs: 30 });
-    await r.send('w', 'f1', { text: 'slow', windowId: 'a', context: ctx() });
-    await settle(r, turnsDone(1));
-    const entries = await all();
+    // The cap is a timer the test fires once the reply has started: on a
+    // loaded machine a real 30 ms one could go off before anything streamed.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const until = async (check: () => Promise<boolean>) => {
+      const deadline = Date.now() + 10_000;
+      while (!(await check())) {
+        if (Date.now() > deadline) throw new Error('never settled');
+        await new Promise((res) => setImmediate(res));
+      }
+    };
+    let entries: ChatEntry[];
+    try {
+      const h = fakeHeadless([{ events: [{ type: 'text', delta: 'Working…' }], hang: true }]);
+      const r = runner(h, { turnMs: 30 });
+      await r.send('w', 'f1', { text: 'slow', windowId: 'a', context: ctx() });
+      await until(async () => of(await all(), 'jarvis').length === 1);
+      expect(of(await all(), 'turn')[0]).toMatchObject({ state: 'running' });
+      await vi.advanceTimersByTimeAsync(30);
+      await until(turnsDone(1));
+      entries = await all();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(of(entries, 'turn')[0]).toMatchObject({ state: 'failed', error: 'Jarvis took longer than 5 minutes and was stopped' });
     expect(of(entries, 'jarvis')[0]).toMatchObject({ text: 'Working…', done: true });
   });
