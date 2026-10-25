@@ -3,13 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
-import { createJarvisExecutor, createJarvisWorktree, focusScopeOf, grantAdds, outputText, outsideFocus, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
+import { cardOpen, createJarvisExecutor, createJarvisWorktree, focusScopeOf, grantAdds, outputText, outsideFocus, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
 import { commandRuns } from '../../src/services/tabOps';
 import { sessionKeyFor } from '../../src/services/terminalManager';
 import type { FastifyInstance } from 'fastify';
 import type { AgentSummary } from '../../src/services/agentRegistry';
 import { exec } from '../../src/shell';
 import { JARVIS_CHAT_SYSTEM } from '../../src/services/jarvisChat/prompt';
+import { jarvisToolSpecs } from '../../src/services/jarvisChat/tools';
 import type { JarvisRunner, TurnRef } from '../../src/services/jarvisChat/runner';
 import { createUiClients, type UiCommand } from '../../src/services/uiClients';
 import { JARVIS_TOKEN_HEADER, JARVIS_TOOLS, type ChatEntry, type JarvisContext, type JarvisToolSpec } from '../../src/services/jarvisChat/types';
@@ -94,7 +95,7 @@ describe('jarvis tool gateway', () => {
   it('spawn runs in the turn\'s window and appends an action with its card', async () => {
     openWindow('win1');
     const res = await call('jarvis_open_tab', { mode: 'shell', worktree: 'api' });
-    expect(res.json()).toEqual({ text: 'Opened shell-1 in api' });
+    expect(res.json()).toEqual({ text: 'Opened shell-1 in api (tab api/shell-1)' });
     expect(sent).toEqual([expect.objectContaining({ op: 'jarvis.action', args: { action: 'tab.open', args: shell, scope: ['/w/api'], focusId: FOCUS } })]);
     expect(of(await log(), 'action')).toEqual([expect.objectContaining({
       turnId: 't1', action: 'tab.open', summary: 'Open a shell in api', ok: true, card: { kind: 'shell', worktree: 'api', tab: 'shell-1' },
@@ -134,7 +135,7 @@ describe('jarvis tool gateway', () => {
     expect(of(await log(), 'approval').map((a) => a.action)).toEqual(['tab.open']);
     turns.set('e'.repeat(64), { ...turns.get(WAKE)!, turnId: 't4' });
     const res = await call('jarvis_open_tab', { mode: 'shell', worktree: 'api' }, 'e'.repeat(64));
-    expect(res.json().text).toBe('Opened shell-1 in api');
+    expect(res.json().text).toBe('Opened shell-1 in api (tab api/shell-1)');
     expect(sent).toHaveLength(1);
   });
 
@@ -157,7 +158,7 @@ describe('jarvis tool gateway', () => {
     expect(await log()).toEqual([]);
     // The name the window shows for a member counts too.
     shown = { focuses: [{ name: 'Login', worktrees: ['API (main)'] }] } as unknown as JarvisContext;
-    expect((await call('jarvis_open_tab', { mode: 'shell', worktree: 'API (main)' })).json().text).toBe('Opened shell-1 in api');
+    expect((await call('jarvis_open_tab', { mode: 'shell', worktree: 'API (main)' })).json().text).toBe('Opened shell-1 in api (tab api/shell-1)');
   });
 
   it('focus.edit: only this Focus, except creating a new one', async () => {
@@ -295,8 +296,35 @@ describe('"this" in the chat: the newest card', () => {
     expect((await call('jarvis_focus_tab', { tab: 'this', target: card('shell', 'shell-1') })).statusCode).toBe(400);
   });
 
-  it('the system prompt says what "this" means', () => {
-    expect(JARVIS_CHAT_SYSTEM).toContain('"this", "it" and "that" mean the most recent tab in this chat');
+  it('the system prompt and the tab args say how to name a tab in the chat', () => {
+    expect(JARVIS_CHAT_SYSTEM).toContain('Name a tab by its ref from context.tabsInThisChat');
+    expect(JARVIS_CHAT_SYSTEM).toContain('"this", "it" and "that" mean the most recent tab you were talking about');
+    const specs = jarvisToolSpecs();
+    const prop = (tool: string, arg: string) => ((specs.find((t) => t.name === tool)!.inputSchema.properties as Record<string, { description: string }>)[arg]!.description);
+    for (const [tool, arg] of [['jarvis_close_tab', 'tab'], ['jarvis_run_in_shell', 'tab'], ['jarvis_message_agent', 'to'], ['jarvis_interrupt_agent', 'agent']]) {
+      expect(prop(tool!, arg!)).toContain('a ref from context.tabsInThisChat');
+    }
+    expect(prop('jarvis_open_tab', 'worktree')).not.toContain('tabsInThisChat');
+  });
+
+  it('a result that names a tab states its exact ref', async () => {
+    openWindow('win1');
+    ack = () => ({ ok: true, text: 'Opened google.com in master', card: card('browser', 'browser-2', { url: 'google.com' }) });
+    expect((await call('jarvis_open_browser', { url: 'google.com', split: null, anchor: null, worktree: 'api' })).json().text).toBe('Opened google.com in master (tab master/browser-2)');
+  });
+
+  it('cardOpen: terminal tabs by live sessions, Browser tabs by the window\'s context, run tabs unknown', () => {
+    const live = [{ path: '/w/api', mode: 'shell', id: '2' }];
+    const open = cardOpen(() => live);
+    const ctxWith = (tabs: { name: string; worktree: string }[]) => ({ tabs }) as unknown as JarvisContext;
+    expect(open('w', card('shell', 'shell-2') as never, null)).toBe(true);
+    expect(open('w', card('shell', 'shell-3') as never, null)).toBe(false);
+    expect(open('w', card('claude', 'claude-2') as never, null)).toBe(false);
+    expect(open('w', card('run', 'run-1') as never, null)).toBeNull();
+    expect(open('w', card('browser', 'browser-2') as never, null)).toBeNull();
+    expect(open('w', card('browser', 'browser-2') as never, ctxWith([{ name: 'master/browser-2', worktree: 'master' }]))).toBe(true);
+    expect(open('w', card('browser', 'browser-2') as never, ctxWith([{ name: 'browser-2', worktree: 'master' }]))).toBe(true);
+    expect(open('w', card('browser', 'browser-2') as never, ctxWith([{ name: 'browser-2', worktree: 'web' }]))).toBe(false);
   });
 });
 
@@ -397,7 +425,7 @@ describe('shell output for Jarvis', () => {
     card = { kind: 'shell', worktree: 'api', worktreePath: '/w/api', tab: 'shell-1' };
     const execute = createJarvisExecutor({ uiClients: ui, createWorktree: async () => ({ ok: true, text: '' }) });
     const r = await execute({ ...ref, action: 'shell.run', args: { tab: 'shell-1', command: 'ls' } });
-    expect(r.text).toBe('Ran ls in shell-1\n\nOutput of `ls`:\nREADME.md\nsrc');
+    expect(r.text).toBe('Ran ls in shell-1 (tab api/shell-1)\n\nOutput of `ls`:\nREADME.md\nsrc');
     // No card: only a run in one of this Focus's worktrees; none at all without that list.
     card = undefined;
     const scoped = createJarvisExecutor({ uiClients: ui, createWorktree: async () => ({ ok: true, text: '' }), focusPaths: async () => ['/w/web'] });

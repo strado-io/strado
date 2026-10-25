@@ -668,7 +668,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // finish or answer. Actions run in the turn's window; a new worktree is the
   // server's own job.
   {
-    const { createJarvisExecutor, createJarvisWorktree, focusScopeOf, grantAdds, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
+    const { createJarvisExecutor, createJarvisWorktree, cardOpen, focusScopeOf, grantAdds, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
     const { createApprovalArgs } = await import('./services/jarvisChat/approvalArgs.js');
     const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
     const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
@@ -692,6 +692,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       spawnHeadless: (o) => runClaudeHeadless(o),
       runApproved: execute,
       approvalArgs,
+      tabOpen: cardOpen(() => deps.terminal.liveSessions()),
     });
     const runner = deps.jarvis;
     // A test's runner may not wake.

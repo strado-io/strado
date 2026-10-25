@@ -192,6 +192,25 @@ describe('JarvisRunner', () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  it('each turn\'s context lists the tabs this chat opened or acted on, newest first, one per tab, open or closed', async () => {
+    const act = (kind: string, tab: string, extra: object = {}) => store.append('f1', { type: 'action', turnId: 't0', action: 'tab.open', summary: 's', ok: true, card: { kind, worktree: 'master', worktreePath: '/w/m', tab, ...extra } as never });
+    await act('shell', 'shell-1');
+    await act('browser', 'browser-2', { url: 'google.com' });
+    await act('claude', 'claude-1', { label: 'fix login' });
+    await act('shell', 'shell-1');
+    const h = fakeHeadless([{ events: [{ type: 'done' }] }]);
+    const r = runner(h, { tabOpen: (_ws, c) => (c.kind === 'run' ? null : c.kind !== 'claude') });
+    await r.send('w', 'f1', { text: 'close the google one', windowId: 'a', context: ctx() });
+    await settle(r, turnsDone(1));
+    const block = JSON.parse(/<context>\n(.*)\n<\/context>/s.exec(h.calls[0]!.prompt)![1]!);
+    expect(block.tabsInThisChat).toEqual([
+      { ref: 'master/shell-1', kind: 'shell', worktree: 'master', open: true },
+      { ref: 'master/claude-1', kind: 'claude', label: 'fix login', worktree: 'master', open: false },
+      { ref: 'master/browser-2', kind: 'browser', label: 'google.com', worktree: 'master', open: true },
+    ]);
+    expect(h.calls[0]!.prompt.endsWith('close the google one')).toBe(true);
+  });
+
   it('context is escaped: a tab name with </context> cannot close the block', async () => {
     const h = fakeHeadless([{ events: [{ type: 'done' }] }]);
     const r = runner(h);

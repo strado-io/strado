@@ -18,8 +18,8 @@ import { createDetect } from '../lsp/detect.js';
 import { envAllowed } from '../lsp/manager.js';
 import type { HeadlessEvent, HeadlessOpts } from './claudeHeadless.js';
 import type { ApprovalArgs } from './approvalArgs.js';
-import { JARVIS_CHAT_SYSTEM, turnPrompt, type TurnInput } from './prompt.js';
-import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext, type JarvisUiActionResult } from './types.js';
+import { chatTabs, JARVIS_CHAT_SYSTEM, turnPrompt, type ChatTab, type TurnInput } from './prompt.js';
+import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext, type JarvisUiActionResult, type TabCardRef } from './types.js';
 
 export type TurnRef = { ws: string; focusId: string; turnId: string; windowId: string; wake: boolean };
 
@@ -55,6 +55,8 @@ export type JarvisRunnerDeps = {
   runApproved?: ApprovedRun;
   /** The raw args the gateway held for each approval (the log's copy is redacted). */
   approvalArgs?: ApprovalArgs;
+  /** Whether a card's tab is still open (null: not known), for "Tabs in this chat". */
+  tabOpen?: (ws: string, card: TabCardRef, context: JarvisContext | null) => boolean | null;
   turnMs?: number;
 };
 
@@ -140,6 +142,12 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
     return file;
   }
 
+  async function tabsOf(ws: string, focusId: string, input: TurnInput): Promise<ChatTab[]> {
+    const ctx = ('context' in input ? input.context : null) ?? null;
+    const entries = await (await store(ws)).page(focusId, { limit: JARVIS_LIMITS.pageMax }).catch(() => []);
+    return chatTabs(entries, (c) => { try { return deps.tabOpen?.(ws, c, ctx) ?? null; } catch { return null; } });
+  }
+
   async function runTurn(ws: string, focusId: string, s: FocusState, job: Job): Promise<void> {
     const st = await store(ws);
     const turnId = randomUUID();
@@ -166,7 +174,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       const meta = await st.meta(focusId);
       // Stopped before it started: no process at all.
       if (!abort.signal.aborted) for await (const e of deps.spawnHeadless({
-        cwd, prompt: turnPrompt(job.input), resume: meta.sessionId, systemPrompt: JARVIS_CHAT_SYSTEM,
+        cwd, prompt: turnPrompt(job.input, await tabsOf(ws, focusId, job.input)), resume: meta.sessionId, systemPrompt: JARVIS_CHAT_SYSTEM,
         mcpConfigPath: mcpFile, env: await env(), signal: abort.signal,
       })) {
         if (e.type === 'session' && e.sessionId !== meta.sessionId) await st.setMeta(focusId, { sessionId: e.sessionId });

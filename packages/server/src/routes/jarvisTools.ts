@@ -17,6 +17,7 @@ import { redactChat } from '../services/jarvisChat/store.js';
 import type { UiClients } from '../services/uiClients.js';
 import type { ApprovalArgs } from '../services/jarvisChat/approvalArgs.js';
 import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
+import { tabRef } from '../services/jarvisChat/prompt.js';
 import { approvalFor, checkArgs, jarvisToolSpecs, summarize } from '../services/jarvisChat/tools.js';
 import {
   JARVIS_ROUTES, JARVIS_TOKEN_HEADER, JARVIS_TOOLS, JARVIS_UI_OP, WORKTREE_CREATE,
@@ -87,7 +88,9 @@ export function createJarvisExecutor(deps: {
       off();
     }
     if (!r.applied) return { ok: false, text: WINDOW_REASONS[r.reason ?? ''] ?? 'The Strado window could not do it' };
-    const out = resultOf(r.result) ?? { ok: false, text: 'The Strado window could not do it' };
+    const got = resultOf(r.result) ?? { ok: false, text: 'The Strado window could not do it' };
+    // The tab's exact ref, so Jarvis's own session knows which is which next turn.
+    const out = got.card ? { ...got, text: `${got.text} (tab ${tabRef(got.card)})` } : got;
     // Which run was this one: the card's own tab when the window named it,
     // else a run of that line in one of this Focus's worktrees. Never another
     // workspace's or Focus's run of the same line.
@@ -203,6 +206,7 @@ const TAB_ARGS: Record<string, { arg: string; kinds: CardKind[] | null }> = {
   'tab.focus': { arg: 'tab', kinds: null },
   'tab.interrupt': { arg: 'tab', kinds: null },
   'tab.rename': { arg: 'tab', kinds: null },
+  'tab.place': { arg: 'tab', kinds: null },
   'shell.run': { arg: 'tab', kinds: ['shell'] },
   'agent.message': { arg: 'to', kinds: AGENT_KINDS },
   'agent.ask': { arg: 'to', kinds: AGENT_KINDS },
@@ -230,6 +234,18 @@ export function resolveTab(action: string, args: Record<string, unknown>, entrie
     return { ...args, [spec.arg]: e.card.tab, target: e.card };
   }
   return null;
+}
+
+/** Whether a card's tab is still open, for "Tabs in this chat": terminal tabs
+ *  by the server's live sessions, Browser tabs by the window's context (only
+ *  the window keeps them); null when not known. */
+export function cardOpen(live: () => { path: string; mode: string; id: string }[]) {
+  return (_ws: string, c: TabCardRef, ctx: JarvisContext | null): boolean | null => {
+    if (c.kind === 'browser') return ctx ? ctx.tabs.some((t) => t.name === tabRef(c) || (t.worktree === c.worktree && t.name === c.tab)) : null;
+    if (c.kind === 'run' || !c.worktreePath || !c.tab.startsWith(`${c.kind}-`)) return null;
+    const id = c.tab.slice(c.kind.length + 1);
+    return live().some((s) => s.path === c.worktreePath && s.mode === c.kind && s.id === id);
+  };
 }
 
 export const OUT_OF_FOCUS = "That worktree isn't in this Focus.";

@@ -16,15 +16,21 @@ const WORKTREE_CREATE_MODEL = {
 const defOf = (action: string): Pick<ActionDef, 'risk' | 'model'> | undefined =>
   action === WORKTREE_CREATE ? { risk: 'destructive', model: WORKTREE_CREATE_MODEL } : ACTIONS.find((a) => a.id === action);
 
+/** In the chat, a tab arg also takes a ref from "Tabs in this chat". */
+const CHAT_REF = ' In this chat: a ref from context.tabsInThisChat or context.tabs (e.g. "master/browser-2"); "this", "it" or "that" = the most recent tab you were talking about.';
+const TAB_PROPS = new Set(['tab', 'to', 'agent']);
+
 /** The tools jarvis.mjs serves: exactly JARVIS_TOOLS, each with its action's model schema. */
 export function jarvisToolSpecs(): JarvisToolSpec[] {
   return Object.entries(JARVIS_TOOLS).map(([name, action]) => {
     const model = defOf(action)?.model;
     if (!model) throw new Error(`jarvis tool ${name}: ${action} has no model schema`);
+    const properties = Object.fromEntries(Object.entries(model.properties as Record<string, { description?: string }>).map(([k, p]) =>
+      [k, TAB_PROPS.has(k) && p.description ? { ...p, description: p.description + CHAT_REF } : p]));
     return {
       name,
       description: model.description,
-      inputSchema: { type: 'object', properties: model.properties, required: Object.keys(model.properties), additionalProperties: false },
+      inputSchema: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false },
     };
   });
 }
