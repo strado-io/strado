@@ -37,7 +37,7 @@ vi.mock('../hooks/useWorkspace', () => ({ useWorkspace: () => ({ workspace: { id
 vi.mock('../eventStream', () => ({ subscribeWorktrees: () => () => {}, subscribeLogs: () => () => {} }));
 
 type FilesTabProps = {
-  wsId: string; worktreePath: string; remote?: { runnerId: string; remoteWsId: string };
+  wsId: string; worktreePath: string; remote?: { runnerId: string; remoteWsId: string; name?: string };
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
   onOpenInVsCode?: (path: string, line: number) => void;
@@ -154,7 +154,7 @@ describe('Files tab in the hub', () => {
   it('a runner worktree gets it too, reading through the runner', async () => {
     render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
     await flush();
-    expect(filesTab.last!.remote).toEqual({ runnerId: 'run1', remoteWsId: 'rw' });
+    expect(filesTab.last!.remote).toEqual({ runnerId: 'run1', remoteWsId: 'rw', name: 'runner-dev' });
     expect(filesTab.last!.onOpenInVsCode).toBeUndefined();
   });
 

@@ -2652,7 +2652,8 @@ export function TerminalView({
     openMode('files', { path: worktreePath });
   };
   // A runner's worktree reads its files through the runner; wsId is then unused.
-  const filesTarget = remote ? { runnerId: remote.runnerId, remoteWsId: remote.wsId } : undefined;
+  // `name` lets the Files tab say which machine an install belongs on.
+  const filesTarget = remote ? { runnerId: remote.runnerId, remoteWsId: remote.wsId, name: remote.runnerName } : undefined;
   const listFiles = (worktreePath: string) => api.files.list(wsId, worktreePath, filesTarget);
   // Each worktree's file list, so only paths that exist become links in its
   // terminals. Fetched on the first hover over terminal output, then again
