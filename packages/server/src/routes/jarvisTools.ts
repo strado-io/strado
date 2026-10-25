@@ -10,6 +10,9 @@ import type { WorkspaceStores } from '../workspaceRegistry.js';
 import { exec } from '../shell.js';
 import { trustClaudeFolder } from '../services/claudeMcp.js';
 import { trustAttention } from '../services/claudeTrust.js';
+import { commandRuns, type CommandResult, type CommandRun } from '../services/tabOps.js';
+import { stripAnsi, tailBytes } from '../services/terminalText.js';
+import { redactChat } from '../services/jarvisChat/store.js';
 import type { UiClients } from '../services/uiClients.js';
 import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
 import { approvalFor, checkArgs, jarvisToolSpecs, summarize } from '../services/jarvisChat/tools.js';
@@ -56,13 +59,37 @@ function resultOf(raw: unknown): JarvisUiActionResult | null {
 export function createJarvisExecutor(deps: { uiClients: UiClients; createWorktree: JarvisExecutor; timeoutMs?: number }): JarvisExecutor {
   return async (call) => {
     if (call.action === WORKTREE_CREATE) return deps.createWorktree(call);
-    const r = await deps.uiClients.dispatch(call.ws, JARVIS_UI_OP, { action: call.action, args: call.args }, null, null, {
-      ...(call.windowId ? { clientId: call.windowId } : {}),
-      timeoutMs: deps.timeoutMs ?? JARVIS_ACTION_TIMEOUT_MS,
-    });
+    // A shell line's output, as the server ran it for the window: Jarvis sees what it printed.
+    const command = (call.action === 'shell.run' || call.action === 'tab.open') && typeof call.args.command === 'string' ? call.args.command : null;
+    const runs: CommandRun[] = [];
+    const off = command ? commandRuns.on((run) => { if (run.command === command) runs.push(run); }) : () => undefined;
+    let r: Awaited<ReturnType<UiClients['dispatch']>>;
+    try {
+      r = await deps.uiClients.dispatch(call.ws, JARVIS_UI_OP, { action: call.action, args: call.args }, null, null, {
+        ...(call.windowId ? { clientId: call.windowId } : {}),
+        timeoutMs: deps.timeoutMs ?? JARVIS_ACTION_TIMEOUT_MS,
+      });
+    } finally {
+      off();
+    }
     if (!r.applied) return { ok: false, text: WINDOW_REASONS[r.reason ?? ''] ?? 'The Strado window could not do it' };
-    return resultOf(r.result) ?? { ok: false, text: 'The Strado window could not do it' };
+    const out = resultOf(r.result) ?? { ok: false, text: 'The Strado window could not do it' };
+    const run = runs.at(-1);
+    return run && command ? { ...out, text: `${out.text}\n\n${outputText(command, run.result)}` } : out;
   };
+}
+
+const OUTPUT_LINES = 40;
+const OUTPUT_BYTES = 4096;
+
+/** The last lines a shell line printed (≤40 lines, ≤4 KB), secrets redacted. */
+export function outputText(command: string, result: CommandResult): string {
+  if ('error' in result) return `\`${command}\` did not run: ${result.error}.`;
+  const lines = stripAnsi(result.output).split('\n').map((l) => l.trimEnd());
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  const tail = redactChat(tailBytes(lines.slice(-OUTPUT_LINES).join('\n'), OUTPUT_BYTES, '…'));
+  const head = result.settled ? `Output of \`${command}\`` : `Output of \`${command}\` so far (still running)`;
+  return `${head}:\n${tail || '(no output)'}`;
 }
 
 /** An agent.ask that went out: its answer (a reply to that message) belongs

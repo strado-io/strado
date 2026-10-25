@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
-import { createJarvisExecutor, createJarvisWorktree, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
+import { createJarvisExecutor, createJarvisWorktree, outputText, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
+import { commandRuns } from '../../src/services/tabOps';
 import type { FastifyInstance } from 'fastify';
 import type { AgentSummary } from '../../src/services/agentRegistry';
 import { exec } from '../../src/shell';
@@ -242,6 +243,35 @@ describe('a Claude tab on the folder-trust question', () => {
     expect(await run({ ...ref, action: 'tab.open', args: { mode: 'codex' } })).toEqual(opened);
     expect(await run({ ...ref, action: 'tab.open', args: { mode: 'shell' } })).toEqual(opened);
     expect(seen).toEqual(['claude-1']);
+  });
+});
+
+describe('shell output for Jarvis', () => {
+  it('a shell line the window ran comes back with its output tail; other runs are not mixed in', async () => {
+    const ui = createUiClients();
+    ui.connect({ clientId: 'win1', wsId: 'w', remote: false, send: (cmd) => {
+      commandRuns.emit({ key: 'other', command: 'npm test', result: { output: 'NOT THIS', settled: true, durationMs: 1 } });
+      commandRuns.emit({ key: 'shell:/w/api:1', command: 'ls', result: { output: '\x1b[1mREADME.md\x1b[0m\nsrc\n\n', settled: true, durationMs: 5 } });
+      queueMicrotask(() => ui.ack('w', 'win1', cmd.id, { applied: true, result: { ok: true, text: 'Ran ls in shell-1' } }));
+    } });
+    const execute = createJarvisExecutor({ uiClients: ui, createWorktree: async () => ({ ok: true, text: '' }) });
+    const r = await execute({ ws: 'w', focusId: 'f', turnId: 't', windowId: 'win1', wake: false, action: 'shell.run', args: { tab: 'shell-1', command: 'ls' } });
+    expect(r.text).toBe('Ran ls in shell-1\n\nOutput of `ls`:\nREADME.md\nsrc');
+    // Nothing is captured once the action is over.
+    commandRuns.emit({ key: 'x', command: 'ls', result: { output: 'late', settled: true, durationMs: 1 } });
+  });
+
+  it('the tail: last 40 lines, at most 4 KB, secrets redacted; still running and errors say so', () => {
+    const many = Array.from({ length: 100 }, (_, i) => `line ${i}`).join('\n');
+    const t = outputText('seq', { output: many, settled: true, durationMs: 1 });
+    expect(t.split('\n')).toHaveLength(41);
+    expect(t).toContain('line 99');
+    expect(t).not.toContain('line 59\n');
+    expect(Buffer.byteLength(outputText('big', { output: 'x'.repeat(10_000), settled: true, durationMs: 1 }))).toBeLessThan(4200);
+    expect(outputText('env', { output: 'API_TOKEN=abcdef123456\nok', settled: true, durationMs: 1 })).not.toContain('abcdef123456');
+    expect(outputText('npm run dev', { output: 'ready on :3000', settled: false, durationMs: 15000 })).toBe('Output of `npm run dev` so far (still running):\nready on :3000');
+    expect(outputText('ls', { error: 'the shell is not running' })).toBe('`ls` did not run: the shell is not running.');
+    expect(outputText('true', { output: '', settled: true, durationMs: 1 })).toBe('Output of `true`:\n(no output)');
   });
 });
 

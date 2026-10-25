@@ -56,6 +56,20 @@ export function cleanLine(text: string): string {
     .trim();
 }
 
+/** Every command a tab op ran, with its result: the Focus Jarvis gateway reads
+ *  the output of the line its window ran (the window's own result has none). */
+export type CommandRun = { key: string; command: string; result: CommandResult };
+const commandListeners = new Set<(run: CommandRun) => void>();
+export const commandRuns = {
+  on(listener: (run: CommandRun) => void): () => void {
+    commandListeners.add(listener);
+    return () => { commandListeners.delete(listener); };
+  },
+  emit(run: CommandRun): void {
+    for (const l of commandListeners) { try { l(run); } catch { /* a listener never breaks a run */ } }
+  },
+};
+
 export function createTabOps(app: FastifyInstance) {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const log = (m: string) => app.deps.debugLog.log('app-control', m);
@@ -108,12 +122,15 @@ export function createTabOps(app: FastifyInstance) {
 
   /** Run one line in a shell tab; ShellRunError becomes a readable error result. */
   async function runCommand(key: string, command: string, timeoutMs = SPAWN_COMMAND_TIMEOUT_MS): Promise<CommandResult> {
+    let result: CommandResult;
     try {
-      return await app.deps.shellRunner.run(key, command, { timeoutMs });
+      result = await app.deps.shellRunner.run(key, command, { timeoutMs });
     } catch (err) {
       if (!(err instanceof ShellRunError)) throw err;
-      return { error: err.code === 'NOT_RUNNING' ? 'the shell is not running' : err.code === 'BUSY' ? 'a run is already in progress on that tab' : 'someone is typing in that tab' };
+      result = { error: err.code === 'NOT_RUNNING' ? 'the shell is not running' : err.code === 'BUSY' ? 'a run is already in progress on that tab' : 'someone is typing in that tab' };
     }
+    commandRuns.emit({ key, command, result });
+    return result;
   }
 
   /** Type the first prompt once the harness is ready. Claude: after SessionStart
