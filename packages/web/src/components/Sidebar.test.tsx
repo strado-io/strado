@@ -57,7 +57,7 @@ function swipe(px: number) {
   }
 }
 
-const ws: Workspace ={ id: 'w1', name: 'W', color: '#333', icon: 'W', defaultEditor: 'code', defaultPortBase: 8080, logDir: null };
+const ws: Workspace ={ id: 'w1', name: 'W', color: '#333', icon: 'W', defaultPortBase: 8080, logDir: null };
 const repo = { id: 'r1', name: 'Repo One', path: '/r1' } as RepoConfig;
 const wt = (
   path: string,
@@ -68,13 +68,13 @@ const wt = (
   ({ path, repoId: 'r1', branch: 'feat/x', meta: ticketId ? ({ ticketId } as Worktree['meta']) : null, diffStats,
      process: { status, pid: null, startedAt: null, port: null, detectedUrl: null, exitCode: null, external: false } } as Worktree);
 
-const ws2: Workspace = { id: 'w2', name: 'Second', color: '#444', icon: 'S', defaultEditor: 'code', defaultPortBase: 9090, logDir: null };
+const ws2: Workspace = { id: 'w2', name: 'Second', color: '#444', icon: 'S', defaultPortBase: 9090, logDir: null };
 // Every space's pane renders the same chrome (the search box among it), so a
 // query for chrome has to say which pane it means. The active space is the
 // first workspace in these tests, hence pane 0.
 const activePane = () => within(screen.getAllByTestId('carousel-pane')[0]!);
 
-const ws3: Workspace ={ id: 'w3', name: 'Third', color: '#555', icon: 'T', defaultEditor: 'code', defaultPortBase: 9100, logDir: null };
+const ws3: Workspace ={ id: 'w3', name: 'Third', color: '#555', icon: 'T', defaultPortBase: 9100, logDir: null };
 const switchTo = vi.fn();
 
 function wrap(ui: React.ReactNode, workspaces: Workspace[] = [ws, ws2]) {

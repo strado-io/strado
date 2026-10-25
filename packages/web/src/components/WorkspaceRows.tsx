@@ -118,7 +118,6 @@ export function WorkspaceRows({
               {w.id === activeId && <span className="ml-2 text-[10px] text-emerald-400">active</span>}
             </td>
             <td className="px-2 py-2 font-mono text-[11px] text-zinc-400">{w.id}</td>
-            <td className="px-2 py-2 text-zinc-400">{w.defaultEditor}</td>
             <td className="px-2 py-2 text-zinc-400">{w.defaultPortBase}</td>
             <td className="px-2 py-2 text-right">
               {workspaces.length > 1 && (

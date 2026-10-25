@@ -42,7 +42,6 @@ const repos = [
     projectSubdir: null,
     startCommand: 'npm start',
     defaultPort: 8080,
-    editor: 'code' as const,
     cloneUrl: 'https://github.com/acme/r.git',
   },
 ];

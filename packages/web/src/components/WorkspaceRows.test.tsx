@@ -5,7 +5,7 @@ import type { Workspace } from '../types';
 
 const ws = (id: string): Workspace => ({
   id, name: id.toUpperCase(), color: '#334455', icon: id[0]!,
-  defaultEditor: 'code', defaultPortBase: 8080, logDir: null,
+  defaultPortBase: 8080, logDir: null,
 });
 const list = [ws('a'), ws('b'), ws('c')];
 

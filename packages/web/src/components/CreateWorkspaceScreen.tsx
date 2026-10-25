@@ -30,7 +30,6 @@ export function CreateWorkspaceScreen({ onCreated }: { onCreated: (id: string) =
         name: name.trim(),
         color,
         icon,
-        defaultEditor: 'code',
         defaultPortBase: 8080,
         logDir: null,
       } as Workspace);

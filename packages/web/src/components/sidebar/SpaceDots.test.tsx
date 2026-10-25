@@ -4,7 +4,7 @@ import { SpaceDots } from './SpaceDots';
 import type { Workspace } from '../../types';
 
 const ws = (id: string, name: string): Workspace => ({
-  id, name, color: '#333', icon: name[0]!, defaultEditor: 'code',
+  id, name, color: '#333', icon: name[0]!,
   defaultPortBase: 8080, logDir: null,
 });
 const A = ws('a', 'Alpha');

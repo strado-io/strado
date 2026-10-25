@@ -9,7 +9,6 @@ const ACME = {
   name: 'Acme',
   color: '#3b82f6',
   icon: 'F',
-  defaultEditor: 'code' as const,
   defaultPortBase: 8080,
   logDir: null,
 };

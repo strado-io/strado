@@ -4,7 +4,7 @@ import { publishTickets } from '../hooks/tickets';
 
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({
-    workspace: { id: 'default', name: 'Default', color: 'zinc', icon: 'DF', defaultEditor: 'vscode', defaultPortBase: 3000, logDir: null },
+    workspace: { id: 'default', name: 'Default', color: 'zinc', icon: 'DF', defaultPortBase: 3000, logDir: null },
     allWorkspaces: [],
     switchTo: vi.fn(),
   }),

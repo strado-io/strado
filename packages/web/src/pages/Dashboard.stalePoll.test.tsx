@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mutable so a test can switch workspaces mid-flight, the way a swipe does.
 const current = {
-  workspace: { id: 'ws-a', name: 'A', color: 'zinc', icon: 'A', defaultEditor: 'vscode', defaultPortBase: 3000, logDir: null },
+  workspace: { id: 'ws-a', name: 'A', color: 'zinc', icon: 'A', defaultPortBase: 3000, logDir: null },
 };
 const reviewList = vi.hoisted(() => vi.fn());
 vi.mock('../hooks/useWorkspace', () => ({

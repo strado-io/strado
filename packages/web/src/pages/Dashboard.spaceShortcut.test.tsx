@@ -4,7 +4,7 @@ import type { Workspace } from '../types';
 
 const space = (id: string): Workspace => ({
   id, name: id.toUpperCase(), color: '#334455', icon: id[0]!,
-  defaultEditor: 'code', defaultPortBase: 3000, logDir: null,
+  defaultPortBase: 3000, logDir: null,
 });
 const switchTo = vi.fn(async () => {});
 

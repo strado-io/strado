@@ -546,8 +546,6 @@ export const api = {
       request<ProcInfo>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/status`),
     logs: (wsId: string, p: string, tail = 500) =>
       request<{ lines: string[] }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/logs?tail=${tail}`),
-    openEditor: (wsId: string, p: string) =>
-      request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/open-editor`, { method: 'POST' }),
     openTerminal: (wsId: string, p: string) =>
       request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/open-terminal`, { method: 'POST' }),
     resumeClaude: (wsId: string, p: string) =>

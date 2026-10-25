@@ -24,7 +24,7 @@ import type { Workspace } from '../../types';
 const MB = 1024 * 1024;
 const workspace: Workspace = {
   id: 'default', name: 'Default', color: '#333333', icon: 'D',
-  defaultEditor: 'code', defaultPortBase: 8080, logDir: null,
+  defaultPortBase: 8080, logDir: null,
 };
 
 const WT = '/Users/me/.strado/worktrees/fleetx-react-app/master';

@@ -1,6 +1,3 @@
-export type Editor = 'code' | 'cursor' | 'subl' | 'webstorm';
-
-
 /** A named way to run a worktree of a repo (the header's Run menu): several can run at once, each in its own tab.
  * A repo's list order is its tab order; the first is the default (the header's main Run). */
 export type RunCommand = { id: string; name: string; command: string; envFile?: string | null };
@@ -15,7 +12,6 @@ export type RepoConfig = {
   startCommand: string;
   defaultPort: number;
   fixedPort?: boolean;
-  editor: Editor;
   openUrl?: string | null;
   /** Named run commands (startCommand mirrors the first). The first is the default. */
   runCommands?: RunCommand[];
@@ -126,7 +122,6 @@ export type Workspace = {
   name: string;
   color: string;
   icon: string;
-  defaultEditor: Editor;
   defaultPortBase: number;
   logDir: string | null;
   /**

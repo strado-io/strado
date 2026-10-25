@@ -25,7 +25,7 @@ import type { Workspace } from '../../types';
 
 const workspace: Workspace = {
   id: 'default', name: 'Default', color: '#333333', icon: 'D',
-  defaultEditor: 'code', defaultPortBase: 8080, logDir: null,
+  defaultPortBase: 8080, logDir: null,
 };
 
 describe('SettingsPage', () => {

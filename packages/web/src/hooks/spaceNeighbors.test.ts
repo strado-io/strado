@@ -9,7 +9,7 @@ vi.mock('../api', () => ({
 const { api } = await import('../api');
 
 const ws = (id: string): Workspace => ({
-  id, name: id.toUpperCase(), color: '#333', icon: id[0]!, defaultEditor: 'code',
+  id, name: id.toUpperCase(), color: '#333', icon: id[0]!,
   defaultPortBase: 8080, logDir: null,
 });
 const spaces = [ws('a'), ws('b'), ws('c')];
