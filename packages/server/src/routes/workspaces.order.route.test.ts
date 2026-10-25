@@ -17,7 +17,6 @@ const newWorkspace = (id: string, portBase: number) => ({
   name: id.toUpperCase(),
   color: '#334455',
   icon: id[0]!,
-  defaultEditor: 'code',
   defaultPortBase: portBase,
   logDir: null,
 });
