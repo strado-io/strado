@@ -13,6 +13,8 @@ const METHOD_NOT_FOUND = -32601;
 const MAX_BODY = 64 * 1024 * 1024;
 /** Documents kept open on the server; the least recently used is closed. */
 const MAX_OPEN_DOCS = 50;
+/** How much of the server's stderr is kept, to explain a failure. */
+const STDERR_TAIL = 2048;
 
 /** Server → client requests we answer; everything else (workspace/applyEdit,
  *  workspace/executeCommand, window/showDocument, …) is refused. */
@@ -44,6 +46,7 @@ export class LspClient {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private buf: Buffer = Buffer.alloc(0);
+  private stderr = '';
   private exited = false;
   /** Work-done progress begun and not yet ended (a project load, indexing). */
   private progress = new Set<string | number>();
@@ -59,12 +62,16 @@ export class LspClient {
     this.child = spawn(o.argv[0]!, o.argv.slice(1), {
       cwd: o.root,
       env: o.env ?? process.env,
-      stdio: ['pipe', 'pipe', 'ignore'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       // Its own process group, so a stop also reaches what a wrapper script
       // started (jdtls' and OmniSharp's JVM / mono).
       detached: true,
     });
     this.child.stdout!.on('data', (b: Buffer) => this.onData(b));
+    // Kept only to explain a failure (never sent to a client unredacted).
+    this.child.stderr!.on('data', (b: Buffer) => {
+      this.stderr = (this.stderr + b.toString('utf8')).slice(-STDERR_TAIL);
+    });
     this.child.stdin!.on('error', () => {});
     this.child.on('error', () => this.onExit(null));
     this.child.on('exit', (code) => this.onExit(code));
@@ -78,8 +85,13 @@ export class LspClient {
     return !this.exited;
   }
 
+  /** The last STDERR_TAIL characters the server wrote to stderr. */
+  get stderrTail(): string {
+    return this.stderr;
+  }
+
   /** initialize + initialized. Rejects if the server is not up within `timeoutMs`. */
-  async initialize(timeoutMs: number): Promise<void> {
+  async initialize(timeoutMs: number, initializationOptions?: unknown): Promise<void> {
     const rootUri = pathToFileURL(this.root).href;
     await this.request(
       'initialize',
@@ -88,6 +100,7 @@ export class LspClient {
         clientInfo: { name: 'strado' },
         rootUri,
         rootPath: this.root,
+        ...(initializationOptions === undefined ? {} : { initializationOptions }),
         workspaceFolders: [{ uri: rootUri, name: this.root.split('/').pop() || this.root }],
         capabilities: {
           general: { positionEncodings: ['utf-16'] },

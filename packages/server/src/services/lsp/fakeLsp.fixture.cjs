@@ -2,13 +2,19 @@
 // FAKE_LSP_LOG: append every message it receives (one JSON per line).
 // FAKE_LSP_MODE: 'normal' | 'slow-init' | 'crash-on-request' | 'hang' | 'exit-at-start' | 'grandchild'
 //   | 'progress' (the first didOpen starts a project load that ends 1.5s later; until then
-//     definition answers with the import line, as tsserver does) | 'progress-stuck' (never ends).
+//     definition answers with the import line, as tsserver does) | 'progress-stuck' (never ends)
+//   | 'needs-tsserver' (initialize fails unless initializationOptions.tsserver.path is a file,
+//     as typescript-language-server does) | 'stderr-exit' (writes to stderr, exits 3).
 // FAKE_LSP_PIDFILE: 'grandchild' writes the pid of a child it leaves running.
 const fs = require('fs');
 
 const mode = process.env.FAKE_LSP_MODE || 'normal';
 const log = (m) => process.env.FAKE_LSP_LOG && fs.appendFileSync(process.env.FAKE_LSP_LOG, JSON.stringify(m) + '\n');
 if (mode === 'exit-at-start') process.exit(3);
+if (mode === 'stderr-exit') {
+  process.stderr.write('boom: cannot start, token=sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAA\n');
+  setTimeout(() => process.exit(3), 50);
+}
 if (mode === 'grandchild') {
   // Like a wrapper script's JVM: a process of its own that outlives a kill of this one.
   const kid = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
@@ -34,6 +40,12 @@ function onMessage(m) {
     case 'initialize':
       root = decodeURIComponent(new URL(m.params.rootUri).pathname);
       log({ env: Object.keys(process.env).filter((k) => !k.startsWith('FAKE_LSP_')).sort() });
+      if (mode === 'needs-tsserver') {
+        const p = m.params.initializationOptions && m.params.initializationOptions.tsserver && m.params.initializationOptions.tsserver.path;
+        if (!p || !fs.existsSync(p)) {
+          return send({ id: m.id, error: { code: -32603, message: 'Could not find a valid TypeScript installation. Please ensure that the "typescript" dependency is installed in the workspace or that a valid `tsserver.path` is specified.' } });
+        }
+      }
       if (mode === 'slow-init') return setTimeout(() => reply({ capabilities: {} }), 10000);
       return reply({ capabilities: { definitionProvider: true }, serverInfo: { name: 'fake' } });
     case 'initialized':

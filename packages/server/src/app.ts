@@ -559,7 +559,9 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     : null;
 
   // Started on demand by the Files tab; every one is stopped with the app.
-  const lsp = deps.lsp ?? createLspManager({ detect: createDetect(), store: createLspEnabledStore() });
+  const lsp =
+    deps.lsp ??
+    createLspManager({ detect: createDetect(), store: createLspEnabledStore(), log: (line) => app.log.warn(line) });
 
   // FSWatchers keep the event loop alive; close them with the app and flush
   // any activity accrued since the last debounced write.

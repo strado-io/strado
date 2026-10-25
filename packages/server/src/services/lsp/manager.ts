@@ -12,7 +12,9 @@ import { resolveInside, safeRel } from '../files/files.js';
 import { FILES_LIMITS } from '../files/types.js';
 import { classifyDefinitions, isDefinition, searchWord } from '../files/search.js';
 import type { SearchAnswer } from './types.js';
+import { redact } from '../hostTabs/redact.js';
 import { LspClient, LspError } from './client.js';
+import { npmGlobalRoot, tsserverPathFor } from './tsserver.js';
 import { installOptions, type Detect } from './detect.js';
 import type { LspEnabledStore } from './store.js';
 import {
@@ -44,6 +46,10 @@ export type LspManagerDeps = {
   progressGraceMs?: number;
   /** Resident memory of a pid in bytes, null when it cannot be read. */
   rss?: (pid: number) => Promise<number | null>;
+  /** `npm root -g`, for a TypeScript install to hand typescript-language-server. */
+  npmRoot?: () => Promise<string | null>;
+  /** The server log: a failure's reason, once per change. */
+  log?: (line: string) => void;
   now?: () => number;
 };
 
@@ -184,6 +190,9 @@ type Entry = {
   startedAt: number;
   lastUsedAt: number;
   stopping: boolean;
+  /** Its failure was already counted: an initialize error and the exit that
+   *  follows it (or the other way round) are one failure. */
+  failed: boolean;
 };
 
 class Fallback extends Error {
@@ -203,6 +212,19 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
   const starting = new Map<string, Promise<Entry>>();
   /** Crashes per key since its last good answer: one retry, then 'failed'. */
   const crashes = new Map<string, number>();
+  /** The binary and options a key failed with: a change (an install, a new
+   *  TypeScript) earns a fresh try. */
+  const failedConfig = new Map<string, string>();
+  /** Why each server last failed, for Settings. */
+  const lastError = new Map<LspServerId, string>();
+  const npmRoot = deps.npmRoot ?? (async () => npmGlobalRoot(await serverEnv(null)));
+
+  function recordError(id: LspServerId, message: string): void {
+    const clean = redact(message).trim().slice(-2048);
+    if (lastError.get(id) === clean) return;
+    lastError.set(id, clean);
+    deps.log?.(`language server ${id}: ${clean}`);
+  }
 
   const sweepTimer = setInterval(() => void sweep(), Math.min(limits.idleMs / 4, 60_000));
   sweepTimer.unref();
@@ -222,16 +244,36 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
    *  scripts, proc macros, Gradle), so no token or key of the user's or of
    *  Strado's reaches it (envAllowed). node and the common bin dirs go on PATH
    *  (a server's own `#!/usr/bin/env node` must work from a dock launch). */
-  async function serverEnv(): Promise<NodeJS.ProcessEnv> {
+  async function serverEnv(binary: string | null): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && envAllowed(k)) env[k] = v;
-    env.PATH = [...new Set([path.dirname(process.execPath), ...(await deps.detect.dirs())])].join(path.delimiter);
+    // The server's own bin dir first: an nvm-installed server runs on the node it was installed with.
+    const first = binary ? [path.dirname(binary)] : [];
+    env.PATH = [...new Set([...first, path.dirname(process.execPath), ...(await deps.detect.dirs())])].join(path.delimiter);
     return env;
+  }
+
+  /** Server-specific initializationOptions, or undefined. */
+  async function initOptions(spec: LspServerSpec, root: string, binary: string): Promise<unknown> {
+    if (spec.id !== 'typescript') return undefined;
+    const tsserver = await tsserverPathFor(root, binary, npmRoot);
+    return tsserver ? { tsserver: { path: tsserver } } : undefined;
+  }
+
+  /** Counts one failure (crash or failed initialize) and frees the slot at
+   *  once, so the very next request gets its retry. */
+  function fail(entry: Entry, why: string): void {
+    entry.state = 'failed';
+    if (entry.failed) return;
+    entry.failed = true;
+    if (entries.get(entry.key) === entry) entries.delete(entry.key);
+    crashes.set(entry.key, (crashes.get(entry.key) ?? 0) + 1);
+    recordError(entry.spec.id, why);
   }
 
   /** Everything up to entries.set runs without an await, so the size check
    *  and the insert cannot interleave with another start. */
-  function start(spec: LspServerSpec, root: string, binary: string, env: NodeJS.ProcessEnv): Entry {
+  function start(spec: LspServerSpec, root: string, binary: string, env: NodeJS.ProcessEnv, options: unknown): Entry {
     // Make room: the least recently used goes first.
     while (entries.size >= limits.maxServers) {
       const lru = [...entries.values()].sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0]!;
@@ -240,27 +282,28 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     const key = `${root}\0${spec.id}`;
     const t = now();
     const entry: Entry = {
-      key, spec, root, state: 'starting', startedAt: t, lastUsedAt: t, stopping: false,
+      key, spec, root, state: 'starting', startedAt: t, lastUsedAt: t, stopping: false, failed: false,
       ready: Promise.resolve(),
       client: new LspClient({
         argv: [binary, ...spec.cmd.slice(1)],
         root,
         env,
-        onExit: () => {
+        onExit: (code) => {
           if (entries.get(key) === entry) entries.delete(key);
           if (!entry.stopping) {
-            entry.state = 'failed';
-            crashes.set(key, (crashes.get(key) ?? 0) + 1);
+            const tail = entry.client.stderrTail.trim();
+            fail(entry, `exited with code ${code ?? 'signal'}${tail ? `: ${tail}` : ''}`);
           }
         },
       }),
     };
-    entry.ready = entry.client.initialize(limits.startMs).then(
+    entry.ready = entry.client.initialize(limits.startMs, options).then(
       () => {
         entry.state = 'ready';
       },
       (err) => {
-        entry.state = 'failed';
+        // An exit got here first (onExit runs before the rejection) and said why.
+        fail(entry, `initialize failed: ${err instanceof Error ? err.message : String(err)}`);
         entry.client.kill();
         throw err;
       },
@@ -284,8 +327,14 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
         pending = (async () => {
           const binary = await deps.detect.which(spec.cmd[0]!);
           if (!binary) throw new Fallback('not-installed', spec);
-          if ((crashes.get(key) ?? 0) >= 2) throw new Fallback('failed', spec);
-          return start(spec, realRoot, binary, await serverEnv());
+          const options = await initOptions(spec, realRoot, binary);
+          const config = JSON.stringify([binary, options]);
+          if ((crashes.get(key) ?? 0) >= 2) {
+            if (failedConfig.get(key) === config) throw new Fallback('failed', spec);
+            crashes.delete(key);
+          }
+          failedConfig.set(key, config);
+          return start(spec, realRoot, binary, await serverEnv(binary), options);
         })();
         starting.set(key, pending);
         void pending.finally(() => starting.delete(key)).catch(() => {});
@@ -317,6 +366,7 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     try {
       const r = await entry.client.request<T>(method, params, limits.requestMs);
       crashes.delete(entry.key);
+      lastError.delete(entry.spec.id);
       return r;
     } catch (err) {
       throw new Fallback(err instanceof LspError && err.kind === 'timeout' ? 'timeout' : 'failed', entry.spec);
@@ -454,6 +504,7 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
             ...(binary ? { binary } : {}),
             install: await installOptions(spec, deps.detect),
             running,
+            ...(lastError.has(spec.id) ? { lastError: lastError.get(spec.id) } : {}),
           };
         }),
       );
@@ -462,6 +513,11 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     async setEnabled(id, enabled) {
       await deps.store.setEnabled(id, enabled);
       if (!enabled) await this.stop(id);
+      else {
+        // Turned back on: a clean slate, failures and all.
+        for (const k of crashes.keys()) if (k.endsWith(`\0${id}`)) crashes.delete(k);
+        lastError.delete(id);
+      }
     },
 
     async stop(id) {

@@ -23,6 +23,34 @@ function npmGlobalBin(): Promise<string | null> {
   });
 }
 
+/** "v22.1.10" → [22, 1, 10]; anything else sorts last. */
+function versionOf(name: string): number[] {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(name);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [-1, -1, -1];
+}
+
+/** Node version managers keep their bins out of a dock-launched app's PATH:
+ *  nvm (newest version first), volta, fnm, asdf. */
+async function versionManagerDirs(env: NodeJS.ProcessEnv, home: string): Promise<string[]> {
+  const nvmDir = env.NVM_DIR || path.join(home, '.nvm');
+  const versions = (await fs.readdir(path.join(nvmDir, 'versions', 'node')).catch(() => [] as string[]))
+    .sort((a, b) => {
+      const [x, y] = [versionOf(a), versionOf(b)];
+      return y[0]! - x[0]! || y[1]! - x[1]! || y[2]! - x[2]!;
+    })
+    .map((v) => path.join(nvmDir, 'versions', 'node', v, 'bin'));
+  const fnmDirs = [env.FNM_DIR, path.join(home, '.local', 'share', 'fnm'), path.join(home, 'Library', 'Application Support', 'fnm')]
+    .filter((d): d is string => !!d)
+    .map((d) => path.join(d, 'aliases', 'default', 'bin'));
+  return [
+    ...(env.NVM_BIN ? [env.NVM_BIN] : []),
+    ...versions,
+    path.join(env.VOLTA_HOME || path.join(home, '.volta'), 'bin'),
+    ...fnmDirs,
+    path.join(env.ASDF_DATA_DIR || path.join(home, '.asdf'), 'shims'),
+  ];
+}
+
 async function isExecutable(p: string): Promise<boolean> {
   try {
     const st = await fs.stat(p);
@@ -48,8 +76,9 @@ export function createDetect(o: { env?: NodeJS.ProcessEnv; home?: string; npmBin
         '/usr/local/bin',
         path.join(home, '.local', 'bin'),
       ];
+      const managers = await versionManagerDirs(env, home);
       const npm = await (o.npmBin ?? npmGlobalBin)().catch(() => null);
-      const all = [...(env.PATH ?? '').split(path.delimiter), ...common, ...(npm ? [npm] : [])];
+      const all = [...(env.PATH ?? '').split(path.delimiter), ...common, ...managers, ...(npm ? [npm] : [])];
       return [...new Set(all.filter((d) => d && path.isAbsolute(d)))];
     })());
   return {

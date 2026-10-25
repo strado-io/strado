@@ -35,6 +35,24 @@ describe('createDetect', () => {
     expect(await d.which('nope-ls')).toBeNull();
   });
 
+  it('finds node version managers a dock launch has no PATH for: nvm newest first, volta, fnm, asdf', async () => {
+    const home = path.join(tmp, 'home');
+    const v18 = await exe(path.join(home, '.nvm', 'versions', 'node', 'v18.20.4', 'bin'), 'typescript-language-server');
+    const v22 = await exe(path.join(home, '.nvm', 'versions', 'node', 'v22.22.1', 'bin'), 'typescript-language-server');
+    await exe(path.join(home, '.nvm', 'versions', 'node', 'v9.0.0', 'bin'), 'typescript-language-server');
+    const volta = await exe(path.join(home, '.volta', 'bin'), 'pyright-langserver');
+    const fnm = await exe(path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'), 'zls');
+    const asdf = await exe(path.join(home, '.asdf', 'shims'), 'texlab');
+    const d = createDetect({ env: { PATH: '' }, home, npmBin: async () => null });
+    expect(await d.which('typescript-language-server')).toBe(v22);
+    expect(await d.which('pyright-langserver')).toBe(volta);
+    expect(await d.which('zls')).toBe(fnm);
+    expect(await d.which('texlab')).toBe(asdf);
+    // $NVM_BIN (the shell's chosen version) wins over newest.
+    const pinned = createDetect({ env: { PATH: '', NVM_BIN: path.dirname(v18) }, home, npmBin: async () => null });
+    expect(await pinned.which('typescript-language-server')).toBe(v18);
+  });
+
   it('skips files that are not executable, and relative PATH entries', async () => {
     const home = path.join(tmp, 'home');
     await exe(path.join(tmp, 'p'), 'zls', 0o644);

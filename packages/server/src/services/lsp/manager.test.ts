@@ -66,6 +66,7 @@ async function make(bin: string, over: Partial<Parameters<typeof createLspManage
     limits: { requestMs: 4000, startMs: 15000 },
     now: () => clock,
     rss: async () => 4096,
+    npmRoot: async () => null,
     ...over,
   });
   return mgr;
@@ -363,6 +364,90 @@ describe('project loading ($/progress)', () => {
     await m.definition(root, 'src/use.ts', 2, 14);
     await m.definition(root, 'src/def.ts', 2, 14);
     expect(Date.now() - t).toBeLessThan(3000);
+  });
+});
+
+describe('typescript-language-server needs a TypeScript', () => {
+  const tsserverAt = async (dir: string) => {
+    const p = path.join(dir, 'typescript', 'lib', 'tsserver.js');
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, '');
+    return p;
+  };
+  const initOptions = async () => (await received()).find((x) => x.method === 'initialize')!.params.initializationOptions;
+
+  it("none at the root: the project's own in a subfolder is handed over", async () => {
+    const p = await tsserverAt(path.join(root, 'dashboard', 'node_modules'));
+    const m = await make(await fakeBinary('needs-tsserver'));
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect(await initOptions()).toEqual({ tsserver: { path: p } });
+  });
+
+  it('one at the root: nothing is passed (the server finds it itself)', async () => {
+    await tsserverAt(path.join(root, 'node_modules'));
+    await tsserverAt(path.join(root, 'dashboard', 'node_modules'));
+    const m = await make(await fakeBinary());
+    await m.definition(root, 'src/use.ts', 2, 14);
+    expect(await initOptions()).toBeUndefined();
+  });
+
+  it('the TypeScript installed globally beside the server, found through its symlinked bin', async () => {
+    const prefix = path.join(tmp, 'nvm', 'v22');
+    const pkgBin = path.join(prefix, 'lib', 'node_modules', 'typescript-language-server', 'lib', 'cli.mjs');
+    await fs.mkdir(path.dirname(pkgBin), { recursive: true });
+    await fs.copyFile(await fakeBinary('needs-tsserver'), pkgBin);
+    await fs.chmod(pkgBin, 0o755);
+    await fs.mkdir(path.join(prefix, 'bin'));
+    await fs.symlink(pkgBin, path.join(prefix, 'bin', 'typescript-language-server'));
+    const p = await tsserverAt(path.join(prefix, 'lib', 'node_modules'));
+    const m = await make(path.join(prefix, 'bin', 'typescript-language-server'));
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect(await initOptions()).toEqual({ tsserver: { path: p } });
+  });
+
+  it('npm root -g as the last resort', async () => {
+    const p = await tsserverAt(path.join(tmp, 'npmroot'));
+    const m = await make(await fakeBinary('needs-tsserver'), { npmRoot: async () => path.join(tmp, 'npmroot') });
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect(await initOptions()).toEqual({ tsserver: { path: p } });
+  });
+
+  it("none anywhere: failed, and Settings says why; installing one earns a retry", async () => {
+    const logged: string[] = [];
+    const m = await make(await fakeBinary('needs-tsserver'), { log: (l) => logged.push(l) });
+    expect(await m.definition(root, 'src/use.ts', 2, 14)).toMatchObject({ source: 'search', fallback: 'failed' });
+    expect(await m.definition(root, 'src/use.ts', 2, 14)).toMatchObject({ fallback: 'failed' });
+    expect(await m.definition(root, 'src/use.ts', 2, 14)).toMatchObject({ fallback: 'failed' });
+    expect((await received()).filter((x) => x.method === 'initialize')).toHaveLength(2);
+    const [s] = await m.servers();
+    expect(s!.lastError).toMatch(/^initialize failed: Could not find a valid TypeScript installation/);
+    // Logged once, not once per attempt.
+    expect(logged).toEqual([`language server typescript: ${s!.lastError}`]);
+    // The config changed (a TypeScript appeared): tried again, and it works.
+    await tsserverAt(path.join(root, 'dashboard', 'node_modules'));
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect((await m.servers())[0]!.lastError).toBeUndefined();
+  });
+
+  it('re-enabling clears a failure', async () => {
+    const m = await make(await fakeBinary('needs-tsserver'));
+    await m.definition(root, 'src/use.ts', 2, 14);
+    await m.definition(root, 'src/use.ts', 2, 14);
+    expect((await m.servers())[0]!.lastError).toBeDefined();
+    await m.setEnabled('typescript', false);
+    await m.setEnabled('typescript', true);
+    expect((await m.servers())[0]!.lastError).toBeUndefined();
+    await m.definition(root, 'src/use.ts', 2, 14);
+    expect((await received()).filter((x) => x.method === 'initialize')).toHaveLength(3);
+  });
+
+  it('a server that dies at start: exit code and stderr tail, secrets redacted', async () => {
+    const m = await make(await fakeBinary('stderr-exit'));
+    await m.definition(root, 'src/use.ts', 2, 14);
+    await until(async () => (await m.servers())[0]!.lastError !== undefined);
+    const err = (await m.servers())[0]!.lastError!;
+    expect(err).toBe('exited with code 3: boom: cannot start, token=[redacted]');
+    expect(err).not.toContain('sk-ant');
   });
 });
 

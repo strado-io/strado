@@ -119,6 +119,8 @@ export type LspServerStatus = {
   /** Install commands for THIS machine's OS, with `available` = its `needs` tool is present. */
   install: (LspInstall & { available: boolean })[];
   running: { worktreePath: string; pid: number; rssBytes: number | null; startedAt: string; lastUsedAt: string }[];
+  /** Why it last failed to start or died (secrets redacted); cleared by a good answer or re-enabling. */
+  lastError?: string;
 };
 
 /** Per-worktree navigation: mounted under /api/w/:ws, like files. Query: path, line, col (1-based). */
