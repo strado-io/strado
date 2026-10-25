@@ -36,18 +36,12 @@ describe('sidebar chrome', () => {
     expect(screen.getByRole('button', { name: 'Worktrees' }).className).not.toMatch(/tab-pill/);
   });
 
-  it('the Focus list\'s header is a caption, not a box: small caps "Focuses", + (New focus) at the right', () => {
+  it('the Focus list has no header: no caption, no + of its own (New focus is in the workspace row)', () => {
     const focus = { id: 'f', name: 'test 2', members: [], createdAt: 't', lastActiveAt: 't' };
-    render(<FocusList focuses={[focus]} activeId="f" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onNewFocus={vi.fn()} onRename={vi.fn()}>cards</FocusList>);
-    const caption = screen.getByText('Focuses');
-    expect(caption.className).toMatch(/text-\[11px\]/);
-    expect(caption.className).toMatch(/\buppercase\b/);
-    expect(caption.className).toMatch(/\btracking-wide\b/);
-    expect(caption.className).toMatch(/\btext-zinc-500\b/);
-    const add = screen.getByRole('button', { name: 'New focus' });
-    expect(add.className).toMatch(/\brounded-md\b/);
-    expect(add.className).toMatch(/\btext-zinc-500\b/);
-    expect(svgSize(add)).toBe('14');
+    render(<FocusList focuses={[focus]} activeId="f" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>cards</FocusList>);
+    expect(screen.queryByText(/^Focuses$/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New focus' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'test 2' })).toBeInTheDocument();
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

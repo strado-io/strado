@@ -346,7 +346,6 @@ export function SidebarBody({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
-          onNewFocus={() => openComposer()}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}>
           <section aria-label="Focus">
             {active && rows.length === 0 ? (

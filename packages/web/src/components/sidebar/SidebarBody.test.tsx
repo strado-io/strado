@@ -185,14 +185,10 @@ describe('SidebarBody: the active Focus', () => {
     expect(focusMock.setMembership).toHaveBeenCalledWith('f1', 'remote:rn1:/srv/wt/FX-77', false);
   });
 
-  it('with no Focus, nothing is open and New focus (below the list, or the header\'s +) opens the composer', () => {
+  it('with no Focus, nothing is open and New focus below the list opens the composer', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.queryByTestId('focus-open')).toBeNull();
-    const [plus, row] = screen.getAllByRole('button', { name: 'New focus' });
-    fireEvent.click(row!);
-    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    fireEvent.click(plus!);
+    fireEvent.click(screen.getByRole('button', { name: 'New focus' }));
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
 
@@ -336,10 +332,10 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(rowNames()).toHaveLength(6);
   });
 
-  it('+ in the header opens the composer', () => {
+  it('the list has no header of its own (New focus is the workspace row\'s +)', () => {
     render(<SidebarBody {...props()} />);
-    fireEvent.click(within(list()).getByRole('button', { name: 'New focus' }));
-    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+    expect(within(list()).queryByRole('button', { name: 'New focus' })).toBeNull();
+    expect(within(list()).queryByText(/^Focuses$/i)).toBeNull();
   });
 
   it('the open Focus renames inline and deletes from its ⋯ menu, confirming when it has members', () => {

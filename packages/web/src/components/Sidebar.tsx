@@ -12,6 +12,7 @@ import { SpaceCarousel, type CarouselPane, type SpaceCarouselHandle } from './si
 import { SpaceDots } from './sidebar/SpaceDots';
 import { SidebarNav } from './sidebar/SidebarNav';
 import { UpdateFooter, type UpdateFooterProps } from './UpdateFooter';
+import { NEW_FOCUS_EVENT } from '../hooks/focusShortcut';
 
 export type AddRepoAnchor = { left: number; right: number; bottom: number };
 
@@ -62,11 +63,14 @@ function WorkspaceSwitcher({
   active,
   workspaces,
   onSelect,
+  onNewFocus,
 }: {
   active: Workspace;
   workspaces: Workspace[];
   /** A pick from the list or the dots: the dots slide the carousel to a neighbour. */
   onSelect: (id: string) => void;
+  /** The + left of the chevron: New focus (the Focus list has no header of its own). */
+  onNewFocus?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -88,14 +92,14 @@ function WorkspaceSwitcher({
   }, [open]);
 
   return (
-    <div ref={ref} className="relative min-w-0">
+    <div ref={ref} className="relative flex min-w-0 items-center">
       <button
         type="button"
         aria-label={`Switch workspace, current: ${active.name}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-[10px] px-1.5 text-left transition-colors hover:bg-white/[0.04]"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-[10px] px-1.5 text-left transition-colors hover:bg-white/[0.04]"
       >
         {/* A tinted tile, like a tab's icon on the right. */}
         <span
@@ -108,10 +112,22 @@ function WorkspaceSwitcher({
         <span data-testid="space-name" className="truncate text-[14px] font-medium text-zinc-100">
           {active.name}
         </span>
-        <svg className="ml-auto shrink-0 text-zinc-600" width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+      </button>
+      {onNewFocus && (
+        <button type="button" aria-label="New focus" title="New focus (⇧⌘N)" onClick={onNewFocus}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M5 12h14" /><path d="M12 5v14" />
+          </svg>
+        </button>
+      )}
+      {/* The switcher's chevron: part of its click target, after the +. */}
+      <span aria-hidden data-testid="space-chevron" onClick={() => setOpen((value) => !value)}
+        className="no-drag flex h-8 w-5 shrink-0 cursor-pointer items-center justify-center text-zinc-600">
+        <svg width="12" height="12" viewBox="0 0 12 12">
           <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-      </button>
+      </span>
 
       {open && (
         <div
@@ -175,6 +191,8 @@ export function Sidebar({
   onOpenFocus,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
+  // The workspace row's +: the active pane's SidebarBody opens the composer (as for ⇧⌘N).
+  const newFocus = () => window.dispatchEvent(new Event(NEW_FOCUS_EVENT));
   // Drag the right edge to resize; pointer capture keeps the drag alive over
   // an embed, and the edge follows the cursor so it rarely strays
   // onto a native preview view. 288 = the old fixed w-72.
@@ -275,7 +293,7 @@ export function Sidebar({
           style={{ height: TITLE_BAR_HEIGHT }}>
           <TrafficLightsSpacer />
           <div className="min-w-0 flex-1 [&>div>button]:w-auto [&>div>button]:max-w-full">
-            <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
+            <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} onNewFocus={newFocus} />
           </div>
           <SidebarToggleButton open onClick={onCollapse} />
         </div>
@@ -283,7 +301,7 @@ export function Sidebar({
         // One row at the tab bar's height, so the two headers line up.
         <div className="flex shrink-0 items-center gap-1 pl-2 pr-3" style={{ height: TITLE_BAR_HEIGHT }}>
           <div className="min-w-0 flex-1">
-            <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} />
+            <WorkspaceSwitcher active={workspace} workspaces={allWorkspaces} onSelect={selectSpace} onNewFocus={newFocus} />
           </div>
           <SidebarToggleButton open onClick={onCollapse} />
         </div>

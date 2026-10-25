@@ -3,7 +3,7 @@
 // its name, live badges and when it was last active. Clicking a row makes
 // that Focus the active one; at most one is ever open, and it is always the
 // active one. The six most recent show, the active one always, then
-// "Show all (N)". The header's + is New focus.
+// "Show all (N)". No header: New focus is the + in the workspace row.
 import { useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
@@ -26,15 +26,13 @@ const icon = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strok
 const Chevron = ({ open }: { open: boolean }) => (
   <svg {...icon} width={12} height={12} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}><path d="m9 18 6-6-6-6" /></svg>
 );
-const PlusIcon = () => (<svg {...icon} width={14} height={14}><path d="M5 12h14" /><path d="M12 5v14" /></svg>);
 
-export function FocusList({ focuses, activeId, badges, onOpen, onNewFocus, activeMenu, onRename, children }: {
+export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, children }: {
   focuses: Focus[];
   activeId: string | null;
   badges: Map<string, FocusBadges>;
   /** A collapsed row was clicked: make that Focus the active one. */
   onOpen: (id: string) => void;
-  onNewFocus: () => void;
   /** The open Focus's ⋯ menu (Rename is added here). */
   activeMenu: MenuItem[];
   onRename: (id: string, name: string) => void;
@@ -50,12 +48,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, onNewFocus, activ
   const hidden = sorted.length - shown.length;
 
   return (
-    <section aria-label="Focuses" className="flex flex-col">
-      <div className="flex h-7 items-center gap-1 px-1.5">
-        <span className="flex-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Focuses</span>
-        <button type="button" aria-label="New focus" title="New focus (⇧⌘N)" onClick={onNewFocus}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"><PlusIcon /></button>
-      </div>
+    <section aria-label="Focuses" className="mt-1 flex flex-col">
       <div className="flex flex-col gap-1">
         {shown.map((f) => {
           const n = sorted.indexOf(f) + 1;
