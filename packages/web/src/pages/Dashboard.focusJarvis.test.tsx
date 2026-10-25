@@ -125,7 +125,7 @@ describe('Dashboard: Focus Jarvis', () => {
   it('while a card\'s tab is starting, peers are polled; a folder-trust question reads "needs you"', async () => {
     focusList.members = ['local:/a/A-1'];
     intercom.peer = { ...intercom.peer, lifecycle: 'starting' };
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     try {
       renderDashboard();
       await act(async () => {});
@@ -133,6 +133,11 @@ describe('Dashboard: Focus Jarvis', () => {
       expect(screen.getByTestId('tab-card')).toHaveTextContent('A-1 · starting');
       await act(async () => { vi.advanceTimersByTime(2_000); });
       expect(intercom.refresh).toHaveBeenCalled();
+      // W5: about two minutes per card, then it stops.
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      const after = intercom.refresh.mock.calls.length;
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(intercom.refresh.mock.calls.length).toBe(after);
     } finally {
       vi.useRealTimers();
     }
@@ -168,5 +173,20 @@ describe('Dashboard: Focus Jarvis', () => {
     expect(screen.getByRole('alert')).toHaveTextContent("Couldn't record your answer. The card shows where it stands now.");
     expect(screen.queryByText(/superseded by/)).toBeNull();
     expect(vi.mocked(api.focusJarvis.log).mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('W5: with the chat closed, a starting card is not polled for', async () => {
+    focusList.members = ['local:/a/A-1'];
+    intercom.peer = { ...intercom.peer, lifecycle: 'starting' };
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      renderDashboard();
+      await act(async () => {});
+      expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(intercom.refresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

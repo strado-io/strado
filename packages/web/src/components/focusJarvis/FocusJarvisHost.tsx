@@ -31,7 +31,7 @@ const HostContext = createContext<Host | null>(null);
 /** One Jarvis chat per window, for the active Focus, shared by its sidebar
  * card and its main view. Sends carry this window's context, built exactly
  * as the ⌘K bar builds it. */
-export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, onTreeChanged, children }: {
+export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, onTreeChanged, chatOpen = false, children }: {
   wsId: string;
   focus: Focus | null;
   focuses: Focus[];
@@ -42,6 +42,8 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   lastActedOn: MutableRefObject<TabRef | null>;
   /** Reload the worktree list: a Jarvis action made one on the server. */
   onTreeChanged?: () => void;
+  /** The chat is on screen (its cards' live state is worth polling for). */
+  chatOpen?: boolean;
   children: ReactNode;
 }) {
   const hub = useUiHub();
@@ -87,14 +89,25 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
     onTreeChanged?.();
   });
   // Nothing pushes when a starting tab hits Claude's folder-trust question
-  // (peer.attention): poll the peers while any card's tab is still starting.
-  const starting = chat.entries.some((e) => e.type === 'action' && e.card
-    && (() => { const r = resolveCard(e.card, { worktrees, repos, peers }); return r.open && r.status === 'starting'; })());
+  // (peer.attention): poll the peers while the chat is open and a card's tab
+  // is still starting — each card for STARTING_POLL_CAP_MS at most (W5).
+  const startingIds = chat.entries
+    .filter((e) => e.type === 'action' && e.card
+      && (() => { const r = resolveCard(e.card, { worktrees, repos, peers }); return r.open && r.status === 'starting'; })())
+    .map((e) => e.id);
+  const startingKey = startingIds.join(',');
+  const startedAt = useRef(new Map<string, number>());
   useEffect(() => {
-    if (!starting) return;
-    const id = setInterval(() => { void refreshPeers().catch(() => {}); }, STARTING_POLL_MS);
-    return () => clearInterval(id);
-  }, [starting, refreshPeers]);
+    if (!chatOpen || !startingKey) return;
+    const ids = startingKey.split(',');
+    const now = Date.now();
+    for (const id of ids) if (!startedAt.current.has(id)) startedAt.current.set(id, now);
+    const timer = setInterval(() => {
+      if (!ids.some((id) => Date.now() - startedAt.current.get(id)! < STARTING_POLL_CAP_MS)) { clearInterval(timer); return; }
+      void refreshPeers().catch(() => {});
+    }, STARTING_POLL_MS);
+    return () => clearInterval(timer);
+  }, [chatOpen, startingKey, refreshPeers]);
   const value = useMemo<Host | null>(() => {
     if (!focus) return null;
     const inFocus = worktrees.filter((w) => focus.members.includes(`local:${w.path}`));
@@ -111,6 +124,7 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
 }
 
 const STARTING_POLL_MS = 2_000;
+const STARTING_POLL_CAP_MS = 120_000;
 
 const refuseApp = () => { throw new Error('Jarvis does not move the window'); };
 /** W3: Jarvis's Focus edits go straight to the server and refresh the list;

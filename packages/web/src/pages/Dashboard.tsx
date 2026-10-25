@@ -1022,6 +1022,7 @@ export function Dashboard(props: {
     <RendererOverlayContext.Provider value={overlays.report}>
     <FocusJarvisProvider wsId={wsId} focus={focusApi.active ?? null} focuses={focusApi.focuses} worktrees={state.worktrees} repos={state.repos}
       workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed}
+      chatOpen={jarvisOpen && !!focusApi.active && !selectedRemote && !selectedWorktree}
       onTreeChanged={() => {
         void Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)])
           .then(([repos, worktrees]) => { if (wsRef.current === wsId) commitTree(repos, worktrees); })
