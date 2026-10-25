@@ -11,6 +11,7 @@ import { resolveInside, safeRel } from '../files/files.js';
 import { FILES_LIMITS } from '../files/types.js';
 import { classifyDefinitions, isDefinition, searchWord } from '../files/search.js';
 import type { SearchAnswer } from './types.js';
+import { AppError } from '../../errors.js';
 import { redact } from '../hostTabs/redact.js';
 import { sampleProcesses, subtreeTotals, type ProcSample } from '../sessionMetrics.js';
 import { LspClient, LspError } from './client.js';
@@ -44,6 +45,9 @@ export type LspManagerDeps = {
   limits?: Partial<{ -readonly [K in keyof typeof LSP_LIMITS]: number }>;
   /** How long the first open waits for a project load to begin (default 300 ms). */
   progressGraceMs?: number;
+  /** Everything one request may wait, start + load + answer (default 70 s,
+   *  inside the web client's 75 s deadline). */
+  totalMs?: number;
   /** One system-wide `ps` sample; memory is the server's whole process tree
    *  (tsserver, a JVM), the same figure the Usage page shows. */
   sample?: () => Promise<ProcSample[]>;
@@ -75,8 +79,9 @@ export type LspManager = {
   /** Every server process that is up (starting or ready). */
   running(): LspRunning[];
   setEnabled(id: LspServerId, enabled: boolean): Promise<void>;
-  /** Stops every running instance of that server. */
-  stop(id: LspServerId): Promise<void>;
+  /** Stops every running instance of that server, or only the one for
+   *  `worktreePath` (404 when that one is not running). */
+  stop(id: LspServerId, worktreePath?: string): Promise<void>;
   /** Stops servers unused for idleMs. Runs on a timer; exposed for tests. */
   sweep(): Promise<void>;
   closeAll(): Promise<void>;
@@ -329,7 +334,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
   }
 
   /** The ready server for this file, or a Fallback saying why there is none. */
-  async function serverFor(worktree: string, rel: string): Promise<{ entry: Entry; abs: string; uri: string }> {
+  async function serverFor(worktree: string, rel: string): Promise<{ entry: Entry; abs: string; uri: string; deadline: number }> {
+    const deadline = Date.now() + (deps.totalMs ?? 70_000);
     const { realRoot, real: abs } = await resolveInside(worktree, safeRel(rel));
     const { ext, spec } = specFor(rel);
     if (!spec) throw new Fallback('no-server');
@@ -360,7 +366,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     if (entry.state === 'failed') throw new Fallback('failed', spec);
     if (entry.state === 'starting') {
       let timer: NodeJS.Timeout | undefined;
-      const slow = new Promise<'slow'>((r) => (timer = setTimeout(() => r('slow'), limits.requestMs)));
+      const wait = Math.min(limits.requestMs, deadline - Date.now());
+      const slow = new Promise<'slow'>((r) => (timer = setTimeout(() => r('slow'), Math.max(0, wait))));
       const r = await Promise.race([entry.ready.then(() => 'up' as const, () => 'failed' as const), slow]);
       clearTimeout(timer);
       if (r === 'slow') throw new Fallback('starting', spec);
@@ -370,16 +377,20 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       const uri = await entry.client.sync(abs, languageId(spec, ext));
       // A server still loading the project answers wrong, not slowly: wait
       // (bounded) for it to finish, then ask either way.
-      await entry.client.settle(limits.requestMs, deps.progressGraceMs ?? 300);
-      return { entry, abs, uri };
+      // Room is kept for the request itself.
+      const settle = Math.min(limits.settleMs, deadline - Date.now() - limits.requestMs);
+      if (settle > 0) await entry.client.settle(settle, deps.progressGraceMs ?? 300);
+      return { entry, abs, uri, deadline };
     } catch {
       throw new Fallback('failed', spec);
     }
   }
 
-  async function ask<T>(entry: Entry, method: string, params: unknown): Promise<T> {
+  async function ask<T>(entry: Entry, method: string, params: unknown, deadline: number): Promise<T> {
+    const budget = Math.min(limits.requestMs, deadline - Date.now());
+    if (budget <= 0) throw new Fallback('timeout', entry.spec);
     try {
-      const r = await entry.client.request<T>(method, params, limits.requestMs);
+      const r = await entry.client.request<T>(method, params, budget);
       crashes.delete(entry.key);
       lastError.delete(entry.spec.id);
       return r;
@@ -450,10 +461,10 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
 
   async function navigate(method: string, worktree: string, rel: string, line: number, col: number, defs: boolean): Promise<NavAnswer> {
     try {
-      const { entry, uri } = await serverFor(worktree, rel);
+      const { entry, uri, deadline } = await serverFor(worktree, rel);
       const params: Record<string, unknown> = { textDocument: { uri }, position: { line: line - 1, character: col - 1 } };
       if (!defs) params.context = { includeDeclaration: true };
-      const result = await ask<unknown>(entry, method, params);
+      const result = await ask<unknown>(entry, method, params, deadline);
       return { source: 'lsp', server: entry.spec.id, hits: await toHits(entry.root, toLocations(result), !defs) };
     } catch (err) {
       if (err instanceof Fallback) return searchAnswer(worktree, rel, line, col, err, defs);
@@ -472,11 +483,11 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
 
     async hover(worktree, rel, line, col) {
       try {
-        const { entry, uri } = await serverFor(worktree, rel);
+        const { entry, uri, deadline } = await serverFor(worktree, rel);
         const r = await ask<{ contents?: unknown } | null>(entry, 'textDocument/hover', {
           textDocument: { uri },
           position: { line: line - 1, character: col - 1 },
-        });
+        }, deadline);
         const markdown = r ? hoverMarkdown(r.contents) : '';
         return markdown ? { server: entry.spec.id, markdown } : null;
       } catch (err) {
@@ -487,8 +498,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
 
     async outline(worktree, rel) {
       try {
-        const { entry, uri } = await serverFor(worktree, rel);
-        const r = await ask<RawSymbol[] | null>(entry, 'textDocument/documentSymbol', { textDocument: { uri } });
+        const { entry, uri, deadline } = await serverFor(worktree, rel);
+        const r = await ask<RawSymbol[] | null>(entry, 'textDocument/documentSymbol', { textDocument: { uri } }, deadline);
         return { server: entry.spec.id, symbols: Array.isArray(r) ? toOutline(r) : [] };
       } catch (err) {
         if (err instanceof Fallback) return { server: null, symbols: [] };
@@ -546,7 +557,16 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       }
     },
 
-    async stop(id) {
+    async stop(id, worktreePath) {
+      if (worktreePath !== undefined) {
+        const real = await fs.realpath(worktreePath).catch(() => null);
+        const entry = real ? entries.get(`${real}\0${id}`) : undefined;
+        if (!entry) throw new AppError('NOT_FOUND', 'that language server is not running for this worktree');
+        await stopEntry(entry);
+        crashes.delete(entry.key);
+        lastError.delete(id);
+        return;
+      }
       await Promise.all([...entries.values()].filter((e) => e.spec.id === id).map(stopEntry));
       // A deliberate stop is a clean slate (Settings' Retry is a stop; so is
       // re-enabling): the next request may start it again.

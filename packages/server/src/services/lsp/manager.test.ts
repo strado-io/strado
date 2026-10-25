@@ -58,12 +58,14 @@ const fakeSearch: SearchFallback = {
 };
 
 async function make(bin: string, over: Partial<Parameters<typeof createLspManager>[0]> = {}) {
+  // Every test keeps the load wait short unless it says otherwise.
+  if (over.limits && over.limits.settleMs === undefined) over = { ...over, limits: { ...over.limits, settleMs: 4000 } };
   mgr = createLspManager({
     detect: detect(),
     store: createLspEnabledStore(() => path.join(tmp, 'lsp-servers.json')),
     specs: [spec(bin)],
     search: fakeSearch,
-    limits: { requestMs: 4000, startMs: 15000 },
+    limits: { requestMs: 4000, startMs: 15000, settleMs: 4000 },
     now: () => clock,
     // The server and one child of it, whatever pid it got: rss is the whole tree.
     sample: async () => {
@@ -361,8 +363,24 @@ describe('project loading ($/progress)', () => {
     expect(Date.now() - t2).toBeLessThan(1000);
   });
 
-  it('a load that never ends is waited for at most requestMs, then asked anyway', async () => {
-    const m = await make(await fakeBinary('progress-stuck'), { limits: { requestMs: 1200, startMs: 15000 } });
+  it('the load gets its own cap (settleMs), longer than a request', async () => {
+    // The load ends ~1.6 s in; a 1 s request cap alone would have asked too early.
+    const m = await make(await fakeBinary('progress'), { limits: { requestMs: 1000, startMs: 15000, settleMs: 5000 } });
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).hits.map((h) => `${h.path}:${h.line}`)).toEqual(['src/def.ts:2']);
+  });
+
+  it('the whole request stays inside its budget, whatever settleMs says', async () => {
+    const m = await make(await fakeBinary('progress-stuck'), {
+      limits: { requestMs: 1000, startMs: 15000, settleMs: 30_000 },
+      totalMs: 2500,
+    });
+    const t = Date.now();
+    expect((await m.definition(root, 'src/use.ts', 2, 14)).source).toBe('lsp');
+    expect(Date.now() - t).toBeLessThan(4000);
+  });
+
+  it('a load that never ends is waited for at most settleMs, then asked anyway', async () => {
+    const m = await make(await fakeBinary('progress-stuck'), { limits: { requestMs: 1200, startMs: 15000, settleMs: 1200 } });
     const t = Date.now();
     const ans = await m.definition(root, 'src/use.ts', 2, 14);
     expect(ans.source).toBe('lsp');
@@ -522,6 +540,27 @@ describe('typescript-language-server needs a TypeScript', () => {
     const err = (await m.servers())[0]!.lastError!;
     expect(err).toBe('exited with code 3: boom: cannot start, token=[redacted]');
     expect(err).not.toContain('sk-ant');
+  });
+});
+
+describe('stop one worktree', () => {
+  it("stops only that worktree's instance, clears its failures, 404 when it is not running", async () => {
+    const m = await make(await fakeBinary());
+    const other = path.join(tmp, 'other');
+    await fs.mkdir(path.join(other, 'src'), { recursive: true });
+    await fs.writeFile(path.join(other, 'src', 'use.ts'), 'foo\n');
+    await m.definition(root, 'src/use.ts', 2, 14);
+    await m.definition(other, 'src/use.ts', 1, 1);
+    expect(m.running()).toHaveLength(2);
+    // A path that resolves to the same worktree (a trailing slash) is the same instance.
+    await m.stop('typescript', `${root}/`);
+    expect(m.running().map((r) => r.worktreePath)).toEqual([other]);
+    await expect(m.stop('typescript', root)).rejects.toMatchObject({ httpStatus: 404 });
+    await expect(m.stop('gopls', other)).rejects.toMatchObject({ httpStatus: 404 });
+    await expect(m.stop('typescript', path.join(tmp, 'nope'))).rejects.toMatchObject({ httpStatus: 404 });
+    // Without a worktree: all of them, as before.
+    await m.stop('typescript');
+    expect(m.running()).toEqual([]);
   });
 });
 

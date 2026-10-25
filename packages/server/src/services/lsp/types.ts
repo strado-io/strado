@@ -67,6 +67,9 @@ export const LSP_LIMITS = {
   maxServers: 3,
   /** Per navigation request, after the server is up. */
   requestMs: 10_000,
+  /** Waiting for a project load ($/progress) to finish before asking: a big JS
+   *  project takes longer than a request, and asked early answers wrong. */
+  settleMs: 30_000,
   /** Starting + initialize, before the first answer. */
   startMs: 60_000,
   maxHits: 500,

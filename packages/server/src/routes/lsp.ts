@@ -23,6 +23,8 @@ const IdParams = z.object({
   id: z.string().refine((id): id is LspServerId => LSP_SERVERS.some((s) => s.id === id), 'unknown language server'),
 });
 const EnabledBody = z.object({ enabled: z.boolean() });
+/** Optional: stop only this worktree's instance. */
+const StopBody = z.object({ worktreePath: z.string().min(1).max(4096) }).strict().nullish();
 
 /** Per-worktree navigation: mounted under /api/w/:ws, like the Files routes. */
 export async function registerLspRoutes(app: FastifyInstance, lsp: LspManager) {
@@ -71,7 +73,9 @@ export async function registerLspAdminRoutes(app: FastifyInstance, lsp: LspManag
   app.post(LSP_ADMIN_ROUTES.stop, async (req, reply) => {
     assertLocalHub(req.headers);
     const { id } = IdParams.parse(req.params);
-    await lsp.stop(id as LspServerId);
+    const body = StopBody.parse(req.body);
+    if (body) await lsp.stop(id as LspServerId, body.worktreePath);
+    else await lsp.stop(id as LspServerId);
     return reply.code(204).send();
   });
 }
