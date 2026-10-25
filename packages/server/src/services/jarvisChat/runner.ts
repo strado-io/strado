@@ -17,6 +17,7 @@ import { claudeMcpEntry } from '../claudeMcp.js';
 import { createDetect } from '../lsp/detect.js';
 import { envAllowed } from '../lsp/manager.js';
 import type { HeadlessEvent, HeadlessOpts } from './claudeHeadless.js';
+import type { ApprovalArgs } from './approvalArgs.js';
 import { JARVIS_CHAT_SYSTEM, turnPrompt, type TurnInput } from './prompt.js';
 import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext, type JarvisUiActionResult } from './types.js';
 
@@ -35,6 +36,8 @@ export type JarvisRunner = {
   forget(ws: string, focusId: string): Promise<void>;
   /** Gateway lookup: token → the turn it belongs to. */
   byToken(token: string): TurnRef | null;
+  /** The context a window last posted for this Focus (its worktree and Focus names), if any. */
+  lastContext(ws: string, focusId: string): JarvisContext | null;
 };
 
 export type JarvisRunnerDeps = {
@@ -50,6 +53,8 @@ export type JarvisRunnerDeps = {
   serverEnv?: () => Record<string, string>;
   /** Runs an approved action; wired to the tool gateway by app.ts. */
   runApproved?: ApprovedRun;
+  /** The raw args the gateway held for each approval (the log's copy is redacted). */
+  approvalArgs?: ApprovalArgs;
   turnMs?: number;
 };
 
@@ -59,6 +64,7 @@ type Job = { input: TurnInput; windowId: string; wake: boolean; prepare?: () => 
 type FocusState = { queue: Job[]; draining: Promise<void> | null; running: { abort: AbortController; why: 'stop' | 'cap' | null } | null; stopNext: boolean; lastContext: JarvisContext | null };
 
 const TURN_CAP = 'Jarvis took longer than 5 minutes and was stopped';
+export const SECRET_GONE = 'This command had a secret in it; run it yourself in the tab.';
 
 /** How the person's claude tabs log in, which Jarvis must too: an API key or
  *  token (or `claude setup-token`'s), a gateway, a model, or Bedrock / Vertex with their cloud credentials. */
@@ -244,10 +250,16 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       // and its outcome lands as entries; the resumed turn follows it.
       const runIt = async (): Promise<TurnInput> => {
         let r: JarvisUiActionResult;
-        try {
-          r = await deps.runApproved!({ ws, focusId, turnId: entry.turnId, windowId: input.windowId, wake: false, action: entry.action, args: entry.args });
-        } catch {
-          r = { ok: false, text: 'It failed' };
+        const raw = deps.approvalArgs?.take(entry.id);
+        if (!raw && JSON.stringify(entry.args).includes('[redacted]')) {
+          // The raw args were lost (a restart) and the stored ones were redacted: never run those.
+          r = { ok: false, text: SECRET_GONE };
+        } else {
+          try {
+            r = await deps.runApproved!({ ws, focusId, turnId: entry.turnId, windowId: input.windowId, wake: false, action: entry.action, args: raw ?? entry.args });
+          } catch {
+            r = { ok: false, text: 'It failed' };
+          }
         }
         const result = r.ok ? r.text : `It failed: ${r.text}`;
         // What it did, with its card, under the approval.
@@ -284,6 +296,10 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
         focuses.delete(key(ws, focusId));
       }
       if (/^[A-Za-z0-9_-]{1,64}$/.test(focusId)) await fs.rm(path.join(home, 'jarvis', focusId), { recursive: true, force: true });
+    },
+
+    lastContext(ws, focusId) {
+      return focuses.get(key(ws, focusId))?.lastContext ?? null;
     },
 
     byToken(token) {

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceStores } from '../../workspaceRegistry.js';
 import type { HeadlessEvent, HeadlessOpts } from './claudeHeadless.js';
 import { NOT_INSTALLED } from './claudeHeadless.js';
-import { createJarvisRunner, jarvisEnvAllowed, type JarvisRunnerDeps } from './runner.js';
+import { createApprovalArgs } from './approvalArgs.js';
+import { createJarvisRunner, jarvisEnvAllowed, SECRET_GONE, type JarvisRunnerDeps } from './runner.js';
 import { createJarvisChatStore, type JarvisChatStore } from './store.js';
 import { JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext } from './types.js';
 
@@ -284,6 +285,27 @@ describe('JarvisRunner', () => {
     await settle(r, turnsDone(1));
     expect(h.calls[0]!.prompt).toContain('Result: installed');
     expect(await store.find('f1', a1.id)).toMatchObject({ result: 'installed' });
+  });
+
+  it('Approve runs the exact args the gateway held, not the log\'s redacted copy; after a restart a redacted one is refused', async () => {
+    const raw = { tab: 'shell-1', command: 'curl -H "Authorization: Bearer sk-live-123456" api' };
+    const a1 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'shell.run', args: raw, summary: 'Run curl', state: 'pending' });
+    const a2 = await store.append('f1', { type: 'approval', turnId: 't0', action: 'shell.run', args: raw, summary: 'Run curl', state: 'pending' });
+    expect(JSON.stringify((await store.find('f1', a1.id) as { args: unknown }).args)).toContain('[redacted]');
+    const approvalArgs = createApprovalArgs();
+    approvalArgs.hold(a1.id, raw);
+    const runApproved = vi.fn(async () => ({ ok: true, text: 'ran' }));
+    const h = fakeHeadless([{ events: [{ type: 'done' }] }, { events: [{ type: 'done' }] }]);
+    const r = runner(h, { runApproved, approvalArgs });
+    await r.approve('w', 'f1', a1.id, { approve: true, windowId: 'a', context: ctx() });
+    await settle(r, turnsDone(1));
+    expect(runApproved).toHaveBeenCalledWith(expect.objectContaining({ args: raw }));
+    // a2's raw args were never held (the server restarted): never run the redacted line.
+    await r.approve('w', 'f1', a2.id, { approve: true, windowId: 'a', context: ctx() });
+    await settle(r, turnsDone(2));
+    expect(runApproved).toHaveBeenCalledTimes(1);
+    expect(await store.find('f1', a2.id)).toMatchObject({ result: `It failed: ${SECRET_GONE}` });
+    expect(h.calls[1]!.prompt).toContain(SECRET_GONE);
   });
 
   it('a failed approved action is logged and told to Jarvis in fixed words', async () => {

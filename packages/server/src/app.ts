@@ -668,13 +668,15 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // finish or answer. Actions run in the turn's window; a new worktree is the
   // server's own job.
   {
-    const { createJarvisExecutor, createJarvisWorktree, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
+    const { createJarvisExecutor, createJarvisWorktree, focusScopeOf, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
+    const { createApprovalArgs } = await import('./services/jarvisChat/approvalArgs.js');
     const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
     const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
     const { appWakeSource, createJarvisWakes } = await import('./services/jarvisChat/wakes.js');
     const { readProfile } = await import('./services/profileStore.js');
     const stores = (ws: string) => deps.registry.get(ws);
     let wakes: ReturnType<typeof createJarvisWakes> | null = null;
+    const approvalArgs = createApprovalArgs();
     const execute = trackAsks(
       watchTrust(createJarvisExecutor({
         uiClients: deps.uiClients,
@@ -688,6 +690,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       stores,
       spawnHeadless: (o) => runClaudeHeadless(o),
       runApproved: execute,
+      approvalArgs,
     });
     const runner = deps.jarvis;
     // A test's runner may not wake.
@@ -708,6 +711,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       runner: { byToken: (t) => ('byToken' in runner && typeof runner.byToken === 'function' ? runner.byToken(t) : null) },
       stores,
       execute,
+      scope: focusScopeOf(stores, (ws, focusId) => ('lastContext' in runner && typeof runner.lastContext === 'function' ? runner.lastContext(ws, focusId) : null)),
+      approvalArgs,
     });
   }
 

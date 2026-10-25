@@ -15,11 +15,12 @@ import { stripAnsi, tailBytes } from '../services/terminalText.js';
 import { parseSessionKey, sessionKeyFor } from '../services/terminalManager.js';
 import { redactChat } from '../services/jarvisChat/store.js';
 import type { UiClients } from '../services/uiClients.js';
+import type { ApprovalArgs } from '../services/jarvisChat/approvalArgs.js';
 import type { JarvisRunner, TurnRef } from '../services/jarvisChat/runner.js';
 import { approvalFor, checkArgs, jarvisToolSpecs, summarize } from '../services/jarvisChat/tools.js';
 import {
   JARVIS_ROUTES, JARVIS_TOKEN_HEADER, JARVIS_TOOLS, JARVIS_UI_OP, WORKTREE_CREATE,
-  type JarvisUiActionResult, type TabCardRef,
+  type JarvisContext, type JarvisUiActionArgs, type JarvisUiActionResult, type TabCardRef,
 } from '../services/jarvisChat/types.js';
 
 export type JarvisCall = TurnRef & { action: string; args: Record<string, unknown> };
@@ -69,10 +70,13 @@ export function createJarvisExecutor(deps: {
     // A shell line's output, as the server ran it for the window: Jarvis sees what it printed.
     const command = (call.action === 'shell.run' || call.action === 'tab.open') && typeof call.args.command === 'string' ? call.args.command : null;
     const runs: CommandRun[] = [];
+    // The window refuses a step outside these, after it resolves names (D1).
+    const scope = deps.focusPaths ? await deps.focusPaths(call.ws, call.focusId).catch(() => []) : [];
     const off = command ? commandRuns.on((run) => { if (run.command === command) runs.push(run); }) : () => undefined;
     let r: Awaited<ReturnType<UiClients['dispatch']>>;
     try {
-      r = await deps.uiClients.dispatch(call.ws, JARVIS_UI_OP, { action: call.action, args: call.args }, null, null, {
+      const ui: JarvisUiActionArgs = { action: call.action, args: call.args, scope };
+      r = await deps.uiClients.dispatch(call.ws, JARVIS_UI_OP, ui, null, null, {
         ...(call.windowId ? { clientId: call.windowId } : {}),
         timeoutMs: deps.timeoutMs ?? JARVIS_ACTION_TIMEOUT_MS,
       });
@@ -90,8 +94,8 @@ export function createJarvisExecutor(deps: {
     if (shellId && card?.worktreePath) {
       const key = sessionKeyFor('shell', card.worktreePath, shellId);
       mine = runs.filter((x) => x.key === key).at(-1);
-    } else if (runs.length && deps.focusPaths) {
-      const paths = new Set(await deps.focusPaths(call.ws, call.focusId).catch(() => []));
+    } else if (runs.length) {
+      const paths = new Set(scope);
       mine = runs.filter((x) => paths.has(parseSessionKey(x.key).path)).at(-1);
     }
     return mine && command ? { ...out, text: `${out.text}\n\n${outputText(command, mine.result)}` } : out;
@@ -187,13 +191,45 @@ export function createJarvisWorktree(
   };
 }
 
-const SECRET_ARGS = 'That contains a secret (a token, key or password). Jarvis never passes secrets: tell the person to run it themselves.';
+export const OUT_OF_FOCUS = "That worktree isn't in this Focus.";
+export const OTHER_FOCUS = 'Jarvis only edits this Focus (or creates a new one).';
+
+/** The Focus a turn may act in: its name, and its worktrees by name. */
+export type FocusScope = { name: string; worktrees: Set<string> };
+
+/** Why a call reaches outside its turn's Focus, or null. The window checks
+ *  again after resolving names; this refuses before anything is dispatched. */
+export function outsideFocus(action: string, args: Record<string, unknown>, scope: FocusScope | null): string | null {
+  if (action === 'focus.edit') return args.op === 'create' || (scope && args.focus === scope.name) ? null : OTHER_FOCUS;
+  if (typeof args.worktree === 'string' && !scope?.worktrees.has(args.worktree)) return OUT_OF_FOCUS;
+  return null;
+}
+
+/** A Focus's scope from the store: its members' folder names, plus the names
+ *  its window last showed for them (a display name can differ from the folder). */
+export function focusScopeOf(
+  stores: (ws: string) => Promise<WorkspaceStores>,
+  lastContext: (ws: string, focusId: string) => JarvisContext | null,
+): (ws: string, focusId: string) => Promise<FocusScope | null> {
+  return async (ws, focusId) => {
+    const f = (await (await stores(ws)).focuses.list()).find((x) => x.id === focusId);
+    if (!f) return null;
+    const names = f.members.filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length).split('/').pop()!);
+    const shown = lastContext(ws, focusId)?.focuses.find((x) => x.name === f.name)?.worktrees ?? [];
+    return { name: f.name, worktrees: new Set([...names, ...shown]) };
+  };
+}
+
 const waitText = (id: string) => `Waiting for the person's approval (approval ${id}). End your turn now.`;
 
 export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
   runner: Pick<JarvisRunner, 'byToken'>;
   stores: (ws: string) => Promise<WorkspaceStores>;
   execute: JarvisExecutor;
+  /** The turn's Focus, for refusing calls outside it. */
+  scope: (ws: string, focusId: string) => Promise<FocusScope | null>;
+  /** Where an approval's exact args wait for Approve (the log's are redacted). */
+  approvalArgs: ApprovalArgs;
 }): Promise<void> {
   /** Turns that asked for approval: they may not act again (approvals end the
    *  turn). Kept past any turn's 5-minute cap, then forgotten. */
@@ -222,9 +258,8 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
     } catch (err) {
       throw new AppError('VALIDATION', (err as Error).message);
     }
-    // A secret in an argument would be redacted in the log, and an approved
-    // action runs what the log holds: the person runs such a line themselves.
-    if (redactChat(JSON.stringify(args)) !== JSON.stringify(args)) return { text: SECRET_ARGS };
+    const outside = outsideFocus(action, args, await deps.scope(ref.ws, ref.focusId).catch(() => null));
+    if (outside) return { text: outside };
     const t = Date.now();
     for (const [id, at] of waiting) if (t - at > WAITING_MS) waiting.delete(id);
     if (waiting.has(ref.turnId)) return { text: 'An approval is already waiting. End your turn now.' };
@@ -235,6 +270,7 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
     const log = (await deps.stores(ref.ws)).jarvis;
     if (gate) {
       const entry = await log.append(ref.focusId, { type: 'approval', turnId: ref.turnId, action, args, summary, ...gate, state: 'pending' });
+      deps.approvalArgs.hold(entry.id, args);
       return { text: waitText(entry.id) };
     }
     const r = await deps.execute({ ...ref, action, args });

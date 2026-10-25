@@ -11,7 +11,7 @@ import type { AgentSummary } from '../../src/services/agentRegistry';
 import { exec } from '../../src/shell';
 import type { JarvisRunner, TurnRef } from '../../src/services/jarvisChat/runner';
 import { createUiClients, type UiCommand } from '../../src/services/uiClients';
-import { JARVIS_TOKEN_HEADER, JARVIS_TOOLS, type ChatEntry, type JarvisToolSpec } from '../../src/services/jarvisChat/types';
+import { JARVIS_TOKEN_HEADER, JARVIS_TOOLS, type ChatEntry, type JarvisContext, type JarvisToolSpec } from '../../src/services/jarvisChat/types';
 // @ts-expect-error plain ESM module without types
 import { jarvisTools, toolsFor } from '../../hooks/mcp/jarvis.mjs';
 
@@ -23,7 +23,8 @@ let ack: (cmd: UiCommand) => Record<string, unknown> | null;
 
 const TOKEN = 'a'.repeat(64);
 const WAKE = 'b'.repeat(64);
-const FOCUS = 'f1';
+let FOCUS = '';
+let shown: JarvisContext | null;
 const call = (tool: string, args: unknown, token = TOKEN) =>
   app.inject({ method: 'POST', url: `/api/jarvis-tools/${tool}`, headers: { [JARVIS_TOKEN_HEADER]: token }, payload: args as object });
 const log = async () => (await (await app.deps.registry.get('default')).jarvis.page(FOCUS, { limit: 100 }));
@@ -38,6 +39,7 @@ function fakeRunner(): JarvisRunner {
     wake: () => undefined,
     stop: async () => undefined,
     byToken: (t) => turns.get(t) ?? null,
+    lastContext: () => shown,
   };
 }
 
@@ -56,14 +58,16 @@ function openWindow(clientId: string) {
 
 beforeEach(async () => {
   tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'api-jarvis-tools-')));
+  sent = [];
+  shown = null;
+  ack = () => ({ ok: true, text: 'Opened shell-1 in api', card: { kind: 'shell', worktree: 'api', tab: 'shell-1' } });
+  const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
+  app = await buildApp({ ...deps, jarvis: fakeRunner() });
+  FOCUS = (await (await app.deps.registry.get('default')).focuses.create({ name: 'Login', members: ['local:/w/api'] })).id;
   turns = new Map([
     [TOKEN, { ws: 'default', focusId: FOCUS, turnId: 't1', windowId: 'win1', wake: false }],
     [WAKE, { ws: 'default', focusId: FOCUS, turnId: 't2', windowId: '', wake: true }],
   ]);
-  sent = [];
-  ack = () => ({ ok: true, text: 'Opened shell-1 in api', card: { kind: 'shell', worktree: 'api', tab: 'shell-1' } });
-  const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
-  app = await buildApp({ ...deps, jarvis: fakeRunner() });
 });
 
 afterEach(async () => {
@@ -90,7 +94,7 @@ describe('jarvis tool gateway', () => {
     openWindow('win1');
     const res = await call('jarvis_open_tab', { mode: 'shell', worktree: 'api' });
     expect(res.json()).toEqual({ text: 'Opened shell-1 in api' });
-    expect(sent).toEqual([expect.objectContaining({ op: 'jarvis.action', args: { action: 'tab.open', args: shell } })]);
+    expect(sent).toEqual([expect.objectContaining({ op: 'jarvis.action', args: { action: 'tab.open', args: shell, scope: ['/w/api'] } })]);
     expect(of(await log(), 'action')).toEqual([expect.objectContaining({
       turnId: 't1', action: 'tab.open', summary: 'Open a shell in api', ok: true, card: { kind: 'shell', worktree: 'api', tab: 'shell-1' },
     })]);
@@ -133,14 +137,38 @@ describe('jarvis tool gateway', () => {
     expect(sent).toHaveLength(1);
   });
 
-  it('an argument carrying a secret is refused: nothing runs, no card, Jarvis is told to leave it to the person', async () => {
+  it('a line with a secret-shaped arg still becomes an approval; the log keeps it redacted', async () => {
     openWindow('win1');
     const res = await call('jarvis_run_in_shell', { tab: 'shell-1', command: 'export API_KEY=sk-live-123456 && npm run deploy' });
-    expect(res.json().text).toMatch(/contains a secret/);
-    const open = await call('jarvis_open_tab', { mode: 'claude', worktree: 'api', prompt: 'use password: hunter2' });
-    expect(open.json().text).toMatch(/contains a secret/);
+    expect(res.json().text).toMatch(/^Waiting for the person's approval/);
+    const [approval] = of(await log(), 'approval');
+    expect(JSON.stringify(approval)).not.toContain('sk-live-123456');
+    expect(sent).toEqual([]);
+  });
+
+  it('a worktree outside the Focus is refused before anything is sent or logged', async () => {
+    openWindow('win1');
+    const res = await call('jarvis_open_tab', { mode: 'shell', worktree: 'billing' });
+    expect(res.json()).toEqual({ text: "That worktree isn't in this Focus." });
+    const run = await call('jarvis_open_tab', { mode: 'shell', worktree: 'billing', command: 'ls' });
+    expect(run.json()).toEqual({ text: "That worktree isn't in this Focus." });
     expect(sent).toEqual([]);
     expect(await log()).toEqual([]);
+    // The name the window shows for a member counts too.
+    shown = { focuses: [{ name: 'Login', worktrees: ['API (main)'] }] } as unknown as JarvisContext;
+    expect((await call('jarvis_open_tab', { mode: 'shell', worktree: 'API (main)' })).json().text).toBe('Opened shell-1 in api');
+  });
+
+  it('focus.edit: only this Focus, except creating a new one', async () => {
+    openWindow('win1');
+    ack = () => ({ ok: true, text: 'Done' });
+    const edit = (a: object) => call('jarvis_edit_focus', { op: 'add', focus: null, name: null, worktrees: null, ...a });
+    expect((await edit({ op: 'rename', focus: 'Billing', name: 'x' })).json().text).toBe('Jarvis only edits this Focus (or creates a new one).');
+    expect((await edit({ op: 'add', focus: null, worktrees: ['api'] })).json().text).toBe('Jarvis only edits this Focus (or creates a new one).');
+    expect(sent).toEqual([]);
+    expect((await edit({ op: 'add', focus: 'Login', worktrees: ['web'] })).json().text).toBe('Done');
+    expect((await edit({ op: 'create', name: 'New' })).json().text).toBe('Done');
+    expect(sent).toHaveLength(2);
   });
 
   it('two gated calls at once in one turn make one approval card', async () => {
