@@ -489,3 +489,13 @@ export type LspServerStatus = {
   /** Why it last failed to start or answer (cleared by a Stop or a good start). */
   lastError?: string;
 };
+
+// "Open in editor" (replaces the embedded VS Code) — mirrors server/src/services/editors/types.ts.
+export type EditorId =
+  | 'vscode' | 'cursor' | 'windsurf' | 'zed' | 'sublime'
+  | 'webstorm' | 'idea' | 'pycharm' | 'goland' | 'xcode' | 'system';
+export type EditorStatus = { id: EditorId; label: string; available: boolean; lines: boolean };
+/** preferred: the person's choice; null = first available, then 'system'. */
+export type EditorsAnswer = { editors: EditorStatus[]; preferred: EditorId | null };
+/** path omitted = open the worktree folder; line/col 1-based. */
+export type OpenInEditorBody = { worktreePath: string; path?: string; line?: number; col?: number; editor?: EditorId };

@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -766,6 +766,14 @@ export const api = {
     /** With `worktreePath`, only that worktree's instance; without, every one. */
     stop: (id: LspServerId, worktreePath?: string) =>
       request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/stop`, { method: 'POST', body: JSON.stringify(worktreePath ? { worktreePath } : {}) }),
+  },
+  /** "Open in editor": this machine's desktop editors, and handing a worktree or file to one. */
+  editors: {
+    list: () => request<EditorsAnswer>('/api/editors'),
+    setPreferred: (editor: EditorId | null) =>
+      request<void>('/api/editors/preferred', { method: 'POST', body: JSON.stringify({ editor }) }),
+    open: (wsId: string, body: OpenInEditorBody) =>
+      request<void>(`${wsBase(wsId)}/open-in-editor`, { method: 'POST', body: JSON.stringify(body) }),
   },
   kb: {
     files: (wsId: string, p: string) =>
