@@ -48,6 +48,8 @@ export type Props = {
   onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
   onRebuildSandbox?: (w: RemoteWorktree) => void;
+  /** The active Focus's ✦ Jarvis card, first in its section (this space's pane only). */
+  jarvis?: React.ReactNode;
   /** A workspace switch the server refused — shown on the dashboard's banner. */
   onSwitchError?: (message: string) => void;
 };
@@ -164,6 +166,7 @@ export function Sidebar({
   onOpenMr,
   onOpenDiff,
   onSwitchError,
+  jarvis,
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
   // Drag the right edge to resize; pointer capture keeps the drag alive over
@@ -215,6 +218,7 @@ export function Sidebar({
         onOpenRemoteWorktree={onOpenRemoteWorktree}
         onDeleteRemoteWorktree={onDeleteRemoteWorktree}
         onRebuildSandbox={onRebuildSandbox}
+        jarvis={jarvis}
       />
     ),
   });

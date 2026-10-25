@@ -58,6 +58,8 @@ export type SidebarBodyProps = {
   onError?: (message: string) => void;
   /** False for a neighbour space's pane in the carousel: it shows, but does not answer global events. */
   isActivePane?: boolean;
+  /** The active Focus's ✦ Jarvis card, first in the Focus (a blank one too, above its empty actions). */
+  jarvis?: React.ReactNode;
 };
 
 /**
@@ -166,7 +168,7 @@ export function SidebarBody({
   onAddRepo, onOpenWorktree, activeWorktreePath,
   onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
-  remoteLoading = false, onError, isActivePane = true,
+  remoteLoading = false, onError, isActivePane = true, jarvis,
 }: SidebarBodyProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const { focuses, active, activeId, activate, create, rename, remove, setMembership, addMembers } = useFocuses(wsId);
@@ -350,6 +352,7 @@ export function SidebarBody({
             </div>
           ) : rows.length === 0 ? (
             <div className="flex flex-col gap-1 px-1 py-1">
+              {jarvis && <div className="-mx-1 mb-1">{jarvis}</div>}
               <button type="button" onClick={() => setAddingMembers(true)} className={emptyAction}>
                 <span className="text-zinc-500"><PlusIcon size={14} /></span>Add worktrees
               </button>
@@ -358,7 +361,7 @@ export function SidebarBody({
               </button>
             </div>
           ) : (
-            <div className="mb-1.5 flex flex-col gap-1.5">{rows}</div>
+            <div className="mb-1.5 flex flex-col gap-1.5">{jarvis}{rows}</div>
           )}
           {/* First runner fetch still in flight: say so, quietly. Runner rows
               appearing a beat after the local ones otherwise looks like a bug. */}

@@ -5,11 +5,13 @@ import { JarvisComposer, type AgentChip, type WorktreeChip } from './JarvisCompo
 
 /** A Focus's Jarvis in the main area, T3 Code style: one centred column, the
  * chat scrolling above, the composer pinned below. */
-export function FocusJarvisView({ focusName, entries, meta, hasOlder, onSend, onStop, onLoadOlder, agents, worktrees, ...handlers }: {
+export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onLoadOlder, agents, worktrees, ...handlers }: {
   focusName: string;
   entries: ChatEntry[];
   meta: JarvisMeta | null;
   hasOlder: boolean;
+  /** The last send/approve/stop that failed, said above the composer. */
+  error?: string | null;
   onSend: (text: string) => void;
   onStop: () => void;
   onLoadOlder: () => void;
@@ -48,6 +50,7 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, onSend, on
         </div>
       </div>
       <div className="mx-auto w-full max-w-[640px] px-4 pb-4">
+        {error && <div role="alert" className="mb-2 text-[12px] text-red-300">{error}</div>}
         <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
       </div>
     </section>

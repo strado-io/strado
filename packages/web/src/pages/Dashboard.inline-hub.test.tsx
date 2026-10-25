@@ -51,6 +51,7 @@ const fakeFocuses = vi.hoisted(() => {
 });
 vi.mock('../api', () => ({
   api: {
+    focusJarvis: { log: vi.fn(async () => ({ entries: [], meta: null })), send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/jarvis/events' },
     focuses: fakeFocuses.api,
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
     worktrees: { list: vi.fn().mockResolvedValue([
@@ -241,7 +242,7 @@ describe('Dashboard inline hub', () => {
     expect(await screen.findByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 
-  it('landing on home by a sidebar action (a Focus switch) keeps the sidebar; landing any other way (Back) hides it', async () => {
+  it('a sidebar Focus switch to a blank Focus lands on its Jarvis, the sidebar kept', async () => {
     fakeFocuses.reset([
       { id: 'f1', name: 'Working on', members: ['local:/wt/FD-9'], createdAt: 't', lastActiveAt: '2026-02-01' },
       { id: 'f2', name: 'Perf', members: [], createdAt: 't', lastActiveAt: '2026-01-01' },
@@ -255,7 +256,8 @@ describe('Dashboard inline hub', () => {
     const dialog = screen.getByRole('dialog', { name: 'Switch focus' });
     fireEvent.pointerDown(within(dialog).getByRole('button', { name: /Perf/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: /Perf/ }));
-    await home();
+    expect(await screen.findByRole('region', { name: 'Jarvis' })).toHaveTextContent(/what should we do in perf/i);
+    expect(screen.queryByTestId('inline-hub')).toBeNull();
     expect(screen.getByRole('region', { name: 'Focus' })).toBeInTheDocument();
   });
 

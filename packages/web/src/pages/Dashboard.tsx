@@ -52,6 +52,7 @@ import { WorktreesPage } from '../components/worktrees/WorktreesPage';
 import { useCodeReviews } from '../hooks/codeReviews';
 import { requestRunInShell } from '../lib/runInShell';
 import { worktreeLabel } from '../components/sidebar/labels';
+import { FocusJarvisCard, FocusJarvisMain, FocusJarvisProvider, type OpenCard } from '../components/focusJarvis/FocusJarvisHost';
 
 type State = {
   repos: RepoConfig[];
@@ -119,6 +120,19 @@ const STORE_SELECTED = 'strado:selected-by-focus';
 function readSelMap(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(STORE_SELECTED) || '{}') as Record<string, string>; }
   catch { return {}; }
+}
+// The Focuses whose Jarvis chat this window has open (per window: another
+// window may be on the same Focus, looking at a worktree).
+const STORE_JARVIS = 'strado:jarvis-by-focus';
+function readJarvisOpen(focusId: string): boolean {
+  try { return (JSON.parse(sessionStorage.getItem(STORE_JARVIS) || '[]') as string[]).includes(focusId); }
+  catch { return false; }
+}
+function writeJarvisOpen(focusId: string, open: boolean): void {
+  try {
+    const ids = (JSON.parse(sessionStorage.getItem(STORE_JARVIS) || '[]') as string[]).filter((x) => x !== focusId);
+    sessionStorage.setItem(STORE_JARVIS, JSON.stringify(open ? [...ids, focusId] : ids));
+  } catch { /* disabled storage — ignore */ }
 }
 function writeSelPath(focusId: string, path: string | null): void {
   try {
@@ -261,6 +275,10 @@ export function Dashboard(props: {
   // A worktree on a runner, when that is what's open. Mutually exclusive with
   // selectedPath: one hub at a time.
   const [selectedRemote, setSelectedRemote] = useState<RemoteWorktree | null>(null);
+  // The active Focus's Jarvis chat fills the main area. Opening a worktree,
+  // a remote one or a page replaces it.
+  const [jarvisOpen, setJarvisOpen] = useState(false);
+  useEffect(() => { if (selectedPath || selectedRemote) setJarvisOpen(false); }, [selectedPath, selectedRemote]);
   // undefined = a generic open — TerminalView restores the worktree's
   // last-active tab instead of being forced onto one.
   const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser' | 'files' | undefined>(undefined);
@@ -356,6 +374,7 @@ export function Dashboard(props: {
   const setReviewRepoId = (value: string) => setReviewRepoFilter({ wsId, value });
   // Top-level destinations close whichever worktree hub is open.
   const selectView = (view: SidebarView) => {
+    setJarvisOpen(false);
     setActiveView(view);
     setSelectedPath(null);
     setSelectedRemote(null);
@@ -509,7 +528,7 @@ export function Dashboard(props: {
   // full list instead, and stays asked: Back from a worktree opened there
   // returns to the list. "Go home" (and app start) is home again.
   const [homeAll, setHomeAll] = useState(false);
-  const onHome = !selectedRemote && !(selectedPath && state.worktrees.some((w) => w.path === selectedPath))
+  const onHome = !jarvisOpen && !selectedRemote && !(selectedPath && state.worktrees.some((w) => w.path === selectedPath))
     && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0 && !homeAll;
   // The sidebar is where the user left it, everywhere (home included): only
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
@@ -619,6 +638,25 @@ export function Dashboard(props: {
       .catch((err) => dispatch({ type: 'error', message: `Could not add to focus: ${(err as Error).message}` }))
       .finally(() => { joiningRef.current.delete(pinId); });
   };
+  // Jarvis needs a Focus; which Focus has it open is kept for this window.
+  useEffect(() => {
+    if (focusApi.loaded && !focusApi.active) setJarvisOpen(false);
+  }, [focusApi.loaded, focusApi.active]);
+  useEffect(() => {
+    const id = focusApi.activeId;
+    if (id && restoredForRef.current === id) writeJarvisOpen(id, jarvisOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jarvisOpen]);
+  const openJarvis = () => {
+    setSelectedRemote(null);
+    setSelectedPath(null);
+    setJarvisOpen(true);
+  };
+  // A card in the chat opens its tab: the worktree's hub on that session.
+  const openJarvisCard: OpenCard = (r) => {
+    const w = state.worktrees.find((x) => x.path === r.worktreePath);
+    if (w) openInlineHub(w, r.mode, r.sessionId);
+  };
   // Persist the open worktree under the active Focus (remote hubs store nothing).
   useEffect(() => {
     const id = focusApi.activeId;
@@ -644,6 +682,14 @@ export function Dashboard(props: {
     const pin = selectedRemote ? remotePinId(selectedRemote) : selectedPath ? `local:${selectedPath}` : null;
     if (active && restoredForRef.current !== active.id) {
       restoredForRef.current = active.id;
+      // A blank Focus is only its Jarvis; one left on Jarvis in this window comes back to it.
+      if (active.members.length === 0 || readJarvisOpen(active.id)) {
+        setSelectedRemote(null);
+        setSelectedPath(null);
+        setJarvisOpen(true);
+        return;
+      }
+      setJarvisOpen(false);
       const path = readSelMap()[active.id] ?? null;
       if (path && active.members.includes(`local:${path}`)) {
         if (path !== selectedPath || selectedRemote) {
@@ -974,6 +1020,8 @@ export function Dashboard(props: {
   return (
     <UiControlProvider wsId={wsId} openWorktree={openWorktreeForAgent}>
     <RendererOverlayContext.Provider value={overlays.report}>
+    <FocusJarvisProvider wsId={wsId} focus={focusApi.active ?? null} focuses={focusApi.focuses} worktrees={state.worktrees} repos={state.repos}
+      workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
       {!sidebarHidden && (
@@ -989,7 +1037,7 @@ export function Dashboard(props: {
           onOpenRemoteWorktree={openRemoteWorktree}
           // Home is no page: nothing in the page row is current there.
           // A worktree's tabs are open: no page is current (the rail shows which worktree).
-          selected={onHome || selectedRemote || selectedWorktree ? null : activeView}
+          selected={onHome || jarvisOpen || selectedRemote || selectedWorktree ? null : activeView}
           onSelect={(view) => { selectView(view); if (view.kind === 'worktrees') setHomeAll(true); }}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
@@ -1006,6 +1054,7 @@ export function Dashboard(props: {
           onWorktreeSettings={(w) => props.onMenu(w)}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
+          jarvis={<FocusJarvisCard active={jarvisOpen && !selectedRemote && !selectedWorktree} onSelect={openJarvis} />}
         />
         </div>
       )}
@@ -1051,6 +1100,10 @@ export function Dashboard(props: {
               modalOpen={modalOpen}
               mission={hubMission}
             />
+          </div>
+        ) : jarvisOpen && focusApi.active ? (
+          <div className="flex min-h-0 flex-1">
+            <FocusJarvisMain onOpenCard={openJarvisCard} />
           </div>
         ) : activeView.kind === 'reviews' ? (
           <CodeReviewsPage
@@ -1256,6 +1309,7 @@ export function Dashboard(props: {
 
       {jarvisRun && <JarvisToast wsId={wsId} run={jarvisRun} onDone={() => setJarvisRun(null)} />}
     </div>
+    </FocusJarvisProvider>
     </RendererOverlayContext.Provider>
     </UiControlProvider>
   );

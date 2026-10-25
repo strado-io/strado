@@ -193,6 +193,27 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
 
+  it('the Jarvis card comes first in the Focus, before the worktree cards', () => {
+    withFocus('local:/r1/wt');
+    render(<SidebarBody {...props({ jarvis: <div data-testid="jarvis-slot">Jarvis</div> })} />);
+    const section = screen.getByRole('region', { name: 'Focus' });
+    const slot = within(section).getByTestId('jarvis-slot');
+    const card = within(section).getByRole('button', { name: 'fx-412' });
+    expect(slot.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('a blank Focus shows its Jarvis card above the empty actions; no Focus, no card', () => {
+    focusMock.focuses = [focus('f1', 'Billing')];
+    focusMock.activeId = 'f1';
+    const { unmount } = render(<SidebarBody {...props({ jarvis: <div data-testid="jarvis-slot">Jarvis</div> })} />);
+    expect(screen.getByTestId('jarvis-slot')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add worktrees' })).toBeInTheDocument();
+    unmount();
+    focusMock.activeId = null;
+    render(<SidebarBody {...props({ jarvis: <div data-testid="jarvis-slot">Jarvis</div> })} />);
+    expect(screen.queryByTestId('jarvis-slot')).toBeNull();
+  });
+
   it('the empty Focus offers Add worktrees (a picker that adds the checked ones) and New worktree here (with its ticket)', () => {
     focusMock.focuses = [{ ...focus('f1', 'Billing'), ticket: { provider: 'jira', key: 'FD-9' } }];
     focusMock.activeId = 'f1';

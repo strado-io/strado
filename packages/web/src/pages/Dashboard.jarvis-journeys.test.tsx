@@ -53,6 +53,7 @@ const fakeFocuses = vi.hoisted(() => {
 });
 vi.mock('../api', () => ({
   api: {
+    focusJarvis: { log: vi.fn(async () => ({ entries: [], meta: null })), send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/jarvis/events' },
     focuses: fakeFocuses.api,
     repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
     worktrees: { list: vi.fn().mockResolvedValue([

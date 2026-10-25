@@ -33,6 +33,7 @@ const worktreeLists: Record<string, unknown[]> = {
 };
 vi.mock('../api', () => ({
   api: {
+    focusJarvis: { log: vi.fn(async () => ({ entries: [], meta: null })), send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/jarvis/events' },
     focuses: {
       list: async (ws: string) => [{ id: `f-${ws}`, name: 'Working on', members: [ws === 'ws-a' ? 'local:/a/A-1' : 'local:/b/B-1'], createdAt: 't', lastActiveAt: 't' }],
       create: vi.fn(), update: vi.fn(async () => ({})), remove: vi.fn(),
