@@ -139,6 +139,9 @@ export function buildSessionMetrics(input: {
       daemon: input.daemonPid ? one(input.daemonPid) : null,
       vscode: input.vscodePid ? { pid: input.vscodePid, ...subtreeTotals(input.procs, input.vscodePid, windowPids) } : null,
       // Gone between the manager's list and the sample: dropped, like dead VS Code windows.
+      // The tree is walked by ppid, so a process that outlives its server (a
+      // Gradle daemon re-parented to launchd after jdtls exits) is in no row at all.
+      // Accepted: it is no longer the server's to show.
       languageServers: (input.languageServers ?? [])
         .filter((l) => known.has(l.pid))
         .map((l) => ({ ...l, ...subtreeTotals(input.procs, l.pid) })),

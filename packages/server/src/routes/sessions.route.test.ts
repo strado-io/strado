@@ -5,7 +5,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { buildApp, buildDeps } from '../app.js';
 
 let tmp: string;
@@ -67,8 +68,11 @@ describe('GET /api/sessions/metrics: language servers', () => {
   it("lists the LSP manager's running servers with their process-tree usage", async () => {
     await app.close();
     const deps = await buildDeps({ configDir: path.join(tmp, 'config2'), homeStateDir: state });
+    // A real process of its own, not this test runner, stands in for the server.
+    const child = spawn('sleep', ['60'], { stdio: 'ignore' });
+    onTestFinished(() => void child.kill('SIGKILL'));
     const running = [{
-      id: 'typescript' as const, lang: 'TypeScript and JavaScript', worktreePath: '/wt/a', pid: process.pid,
+      id: 'typescript' as const, lang: 'TypeScript and JavaScript', worktreePath: '/wt/a', pid: child.pid!,
       startedAt: '2026-10-25T10:00:00.000Z', lastUsedAt: '2026-10-25T10:05:00.000Z',
     }];
     const lsp = {

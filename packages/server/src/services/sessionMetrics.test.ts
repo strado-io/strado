@@ -138,6 +138,29 @@ describe('buildSessionMetrics: language servers', () => {
     expect(out.app.server).toEqual({ pid: 100, cpu: 0.5, rssBytes: 50000 * 1024 });
   });
 
+  it('a session and a language server side by side under the server: each row is its own subtree', () => {
+    const procs = parsePsOutput(`
+      100     1   0.5  50000
+      200   100   3.0  80000
+      201   200   1.0  20000
+      500   100   1.0  60000
+      501   500  20.0 400000
+    `);
+    const out = buildSessionMetrics({
+      live: [{ path: '/wt/a', mode: 'claude' as const, id: '1' }],
+      pidOf: () => 200,
+      procs,
+      serverPid: 100,
+      daemonPid: null,
+      extraPids: [200],
+      languageServers: [{ id: 'typescript', lang: 'TS', worktreePath: '/wt/a', pid: 500, startedAt: 's', lastUsedAt: 'l' }],
+    });
+    expect(out.sessions[0]).toMatchObject({ pid: 200, cpu: 4, rssBytes: 100000 * 1024, processes: 2 });
+    expect(out.app.languageServers[0]).toMatchObject({ pid: 500, cpu: 21, rssBytes: 460000 * 1024, processes: 2 });
+    expect(out.processes).toEqual([{ pid: 200, cpu: 4, rssBytes: 100000 * 1024, processes: 2 }]);
+    expect(out.app.server).toEqual({ pid: 100, cpu: 0.5, rssBytes: 50000 * 1024 });
+  });
+
   it('none running: an empty list', () => {
     const out = buildSessionMetrics({ live: [], pidOf: () => null, procs: parsePsOutput(PS), serverPid: 100, daemonPid: null });
     expect(out.app.languageServers).toEqual([]);
