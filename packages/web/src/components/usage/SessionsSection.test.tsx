@@ -329,7 +329,8 @@ describe('SessionsSection', () => {
       expect(within(group).getByText('Python · feature')).toBeInTheDocument();
       expect(within(group).getByText('in use')).toBeInTheDocument();
       fireEvent.click(within(ts).getByRole('button', { name: 'Stop TypeScript · master' }));
-      await waitFor(() => expect(lspStop).toHaveBeenCalledWith('typescript'));
+      // Only this worktree's TypeScript server.
+      await waitFor(() => expect(lspStop).toHaveBeenCalledWith('typescript', WT));
     });
 
     it('the map shows them as their own kind beside VS Code; its legend shows them alone', async () => {
@@ -344,6 +345,31 @@ describe('SessionsSection', () => {
       expect(screen.getByTestId('sessions-group-lsp')).toBeInTheDocument();
       expect(screen.queryByTestId('sessions-group-fleetx-react-app')).not.toBeInTheDocument();
       expect(screen.queryByText(/Nothing matches/)).not.toBeInTheDocument();
+    });
+
+    it('stopping the last one while filtered to them drops the filter instead of a blank table', async () => {
+      metrics.mockResolvedValue(withLsp());
+      renderSection();
+      const map = await screen.findByTestId('sessions-memory-map');
+      fireEvent.click(within(map).getByRole('button', { name: /^Language servers/ }));
+      metrics.mockResolvedValue(sample());
+      fireEvent.click(screen.getByRole('button', { name: /expand language servers/i }));
+      fireEvent.click(screen.getAllByRole('button', { name: /^Stop / })[0]!);
+      await waitFor(() => expect(screen.queryByTestId('sessions-group-lsp')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId('sessions-group-strado')).toBeInTheDocument());
+      expect(screen.getByTestId('sessions-group-fleetx-react-app')).toBeInTheDocument();
+    });
+
+    it('a failed Stop says so in fixed words, never the server\'s text', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      metrics.mockResolvedValue(withLsp());
+      lspStop.mockRejectedValue(new Error('<b>relay</b> said /etc/passwd'));
+      renderSection();
+      const group = await screen.findByTestId('sessions-group-lsp');
+      fireEvent.click(within(group).getByRole('button', { name: /expand language servers/i }));
+      fireEvent.click(within(group).getAllByRole('button', { name: /^Stop / })[0]!);
+      expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t stop the language server.');
+      expect(screen.getByRole('alert')).not.toHaveTextContent('passwd');
     });
   });
 });

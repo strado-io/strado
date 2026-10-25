@@ -242,13 +242,15 @@ export function SessionsSection() {
     };
   }, [load]);
 
-  const run = async (id: string, action: () => Promise<unknown>) => {
+  // Fixed words on failure: the error's own text can be whatever a server relayed.
+  const run = async (id: string, action: () => Promise<unknown>, failed = 'That didn’t work. Try again.') => {
     setBusy(id);
     try {
       await action();
       await load(true);
     } catch (err) {
-      setError((err as Error).message);
+      console.warn('[usage] action failed:', err);
+      setError(failed);
     } finally {
       setBusy(null);
     }
@@ -272,7 +274,9 @@ export function SessionsSection() {
   // Stopping the shared workbench strands every VS Code tab on a dead server,
   // so close them all; reopening one boots a fresh workbench.
   // Stops that server everywhere on this machine; the next lookup starts it again.
-  const stopLsp = (id: LspServerId, key: string) => run(key, () => api.lspServers.stop(id));
+  // Just this worktree's server; the others keep running.
+  const stopLsp = (id: LspServerId, worktreePath: string, key: string) =>
+    run(key, () => api.lspServers.stop(id, worktreePath), 'Couldn’t stop the language server.');
   const stopVscode = () =>
     run('vscode', async () => {
       await api.sessions.stopVscode();
@@ -310,6 +314,11 @@ export function SessionsSection() {
   const sessionCount = groups.reduce((a, g) => a + g.worktrees.reduce((b, w) => b + w.sessions.length, 0), 0);
   const stradoOpen = !collapsed.has('strado');
   const showApp = !kindFilter && !query;
+  // A kind that leaves the map (its last server stopped) can't stay the filter: that would be a blank table.
+  const mapKinds = map.map((p) => p.kind).join();
+  useEffect(() => {
+    if (metrics && kindFilter && !map.some((p) => p.kind === kindFilter)) setKindFilter(null);
+  }, [mapKinds, kindFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   // Hidden when none run; the map's legend can show them alone.
   const showLsp = lsp.length > 0 && !query && (!kindFilter || kindFilter === 'lsp');
   const lspOpen = !collapsed.has('lsp');
@@ -408,11 +417,11 @@ export function SessionsSection() {
                     <button type="button" onClick={() => toggle('lsp')} aria-expanded={lspOpen}
                       aria-label={`${lspOpen ? 'Collapse' : 'Expand'} Language servers`}
                       title="Go to definition, references and hover in the Files tab"
-                      className="flex items-center gap-2 whitespace-nowrap text-sm font-medium text-zinc-100">
+                      className="flex items-center gap-2 whitespace-nowrap text-[13px] font-medium text-zinc-100">
                       <Chevron open={lspOpen} />
                       <KindIcon kind="lsp" />
                       <span>Language servers</span>
-                      <span className="text-xs font-normal tabular-nums text-zinc-600">{lsp.length}</span>
+                      <span className="text-[11px] font-normal tabular-nums text-zinc-600">{lsp.length}</span>
                     </button>
                   </td>
                   <UsageCells usage={lspTotal} max={maxRss} label="Language servers" strong parts={[{ kind: 'lsp', bytes: lspTotal.rssBytes }]} />
@@ -429,14 +438,14 @@ export function SessionsSection() {
                     </td>
                     <UsageCells usage={r.usage} max={maxRss} label={r.label} parts={[{ kind: 'lsp', bytes: r.usage.rssBytes }]} />
                     <td className="px-2 py-1 text-right">
-                      <ActionButton label={`Stop ${r.label}`} busy={busy === r.key} onRun={() => void stopLsp(r.id, r.key)} />
+                      <ActionButton label={`Stop ${r.label}`} busy={busy === r.key} onRun={() => void stopLsp(r.id, r.worktreePath, r.key)} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             )}
 
-            {shown.length === 0 && kindFilter !== 'lsp' && (
+            {shown.length === 0 && !(kindFilter === 'lsp' && showLsp) && (
               <tbody>
                 <tr>
                   <td colSpan={5} className="px-3 py-6 text-center text-xs text-zinc-500">

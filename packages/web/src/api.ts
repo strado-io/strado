@@ -763,8 +763,9 @@ export const api = {
       request<{ servers: LspServerStatus[] }>('/api/lsp/servers', signal ? { signal } : undefined).then((b) => b.servers),
     setEnabled: (id: LspServerId, enabled: boolean) =>
       request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
-    stop: (id: LspServerId) =>
-      request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' }),
+    /** With `worktreePath`, only that worktree's instance; without, every one. */
+    stop: (id: LspServerId, worktreePath?: string) =>
+      request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/stop`, { method: 'POST', body: JSON.stringify(worktreePath ? { worktreePath } : {}) }),
   },
   kb: {
     files: (wsId: string, p: string) =>
