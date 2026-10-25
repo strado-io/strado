@@ -92,7 +92,13 @@ export type JarvisToolSpec = { name: string; description: string; inputSchema: R
  * clientId is the turn's windowId): the window runs it through the same
  * model-args → Step → runPlan path as the ⌘K box, in the background. */
 export const JARVIS_UI_OP = 'jarvis.action';
-export type JarvisUiActionArgs = { action: string; args: Record<string, unknown> };
+export type JarvisUiActionArgs = {
+  action: string;
+  args: Record<string, unknown>;
+  /** The Focus's member worktree paths. The window refuses any step whose
+   * resolved worktree is outside them (worktree.create is the way in). */
+  scope: string[];
+};
 /** The window's ack `result` for JARVIS_UI_OP. */
 export type JarvisUiActionResult = {
   ok: boolean;
