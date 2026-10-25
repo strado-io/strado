@@ -12,7 +12,7 @@ vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
-    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode }) => (
+    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
       data-ask={String(!!p.onAskAgent)} data-vscode={String(!!p.onOpenInVsCode)}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
@@ -21,6 +21,7 @@ vi.mock('./FileViewer', () => ({
       <input aria-label="cursor" onChange={(e) => p.onCursor?.({ path: p.path, line: Number(e.target.value), col: 1 })} />
       {p.headerStart}
       {p.headerEnd}
+      <button type="button" onClick={() => p.onMissing?.()}>missing</button>
     </div>
   ),
 }));
@@ -541,6 +542,69 @@ describe('FilesTab', () => {
       const { unmount } = render(<FilesTab wsId="ws1" worktreePath="/other" />);
       expect(within(screen.getAllByTestId('files-tab')[1]!).queryByRole('tab')).toBeNull();
       unmount();
+    });
+
+    it('keyboard: ←/→/Home/End move between tabs, Enter shows one, Delete closes; each pane has its tabpanel', async () => {
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 2 }} />);
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'c.ts', nonce: 3 }} />);
+      const tabs = () => within(pane(0)).getAllByRole('tab');
+      expect(tabs()[2]).toHaveAttribute('tabindex', '0');
+      expect(within(tabs()[2]!).queryByRole('button')).toBeNull(); // no button inside a tab
+      const panel = within(pane(0)).getByRole('tabpanel');
+      expect(tabs()[2]).toHaveAttribute('aria-controls', panel.id);
+      expect(panel).toHaveAttribute('aria-labelledby', tabs()[2]!.id);
+      tabs()[2]!.focus();
+      fireEvent.keyDown(tabs()[2]!, { key: 'ArrowRight' });
+      expect(document.activeElement).toBe(tabs()[0]);
+      fireEvent.keyDown(tabs()[0]!, { key: 'End' });
+      expect(document.activeElement).toBe(tabs()[2]);
+      fireEvent.keyDown(tabs()[2]!, { key: 'ArrowLeft' });
+      fireEvent.keyDown(tabs()[1]!, { key: 'Enter' });
+      expect(strip()).toEqual(['a.ts', 'b.ts!', 'c.ts']);
+      fireEvent.keyDown(tabs()[1]!, { key: 'Delete' });
+      expect(strip()).toEqual(['a.ts', 'c.ts!']);
+    });
+
+    it('⌘W from the find bar or another box closes the file tab too', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: 'w', metaKey: true });
+      expect(screen.queryByRole('tab')).toBeNull();
+    });
+
+    it('opening an open file without a line keeps its place', async () => {
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', line: 30, nonce: 1 }} />);
+      await flush();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 2 }} />);
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 3 }} />);
+      expect(viewerIn(0)).toHaveAttribute('data-path', 'a.ts');
+      expect(viewerIn(0)).toHaveAttribute('data-line', '30');
+    });
+
+    it('a restored tab whose file is gone closes; one opened now stays to say so', async () => {
+      const first = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'gone.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'missing' }));
+      expect(strip()).toEqual(['gone.ts!']);
+      first.unmount();
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'missing' }));
+      expect(screen.queryByRole('tab')).toBeNull();
+    });
+
+    it('another worktree starts with its own history', async () => {
+      lsp.definition.mockResolvedValue({ source: 'lsp', server: 'typescript', hits: [hit('lib/util.ts', 40, 7)] });
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      expect(screen.getByRole('button', { name: 'Back' })).not.toBeDisabled();
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt2" openPath={{ path: 'a.ts', nonce: 2 }} />);
+      await flush();
+      expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
     });
   });
 });

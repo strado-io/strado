@@ -5,7 +5,7 @@
 // in this file / what changed here"; VS Code stays one click away.
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
-import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
 import { requestRunInShell } from '../../lib/runInShell';
@@ -60,7 +60,12 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   useEffect(() => {
     if (loadedScope.current === scope) return;
     loadedScope.current = scope;
-    dispatch({ type: 'load', state: loadTabs(scope) });
+    const next = loadTabs(scope);
+    dispatch({ type: 'load', state: next });
+    // Another worktree: its own places, not this one's history.
+    setBack([]); setForward([]); setNav(null); navAbort.current?.abort();
+    const t = activeTab(next);
+    here.current = t ? { path: t.path, line: t.line, col: t.col, pane: next.focus } : null;
   }, [scope]);
   useEffect(() => { if (loadedScope.current === scope) saveTabs(scope, tabs); }, [scope, tabs]);
   const selected = activeTab(tabs)?.path ?? null;
@@ -174,8 +179,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     if (!openPath) return;
     // Opening from elsewhere (a chat link, the picker) is its own tab, and a place you can come back from.
     const from = here.current;
-    const to = { path: openPath.path, line: openPath.line ?? 1, col: 1 };
-    if (from && (from.path !== to.path || Math.abs(from.line - to.line) > NEAR_LINES)) jump(from, to);
+    // No line asked: an open tab stays where it was (a new one starts at the top).
+    const to = { path: openPath.path, line: openPath.line, col: openPath.line ? 1 : undefined };
+    if (from && (from.path !== to.path || (to.line != null && Math.abs(from.line - to.line) > NEAR_LINES))) jump(from, to);
     else open(to, 'permanent');
   }, [openPath?.path, openPath?.line, openPath?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -262,6 +268,12 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     // In a text box every key is the box's. In the code, Alt←/→ moves by word;
     // ⌘[ ⌘] and Ctrl± still go back/forward there.
     const t = e.target as HTMLElement;
+    if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
+      // ⌘W closes the file tab, not the app's tab, while focus is in Files (the find bar too).
+      const active = activeTab(tabsRef.current);
+      if (active) { e.preventDefault(); e.stopPropagation(); closeTab(tabsRef.current.focus, active.path); }
+      return;
+    }
     if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') {
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
       return;
@@ -272,11 +284,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
     if ((mod && !e.shiftKey && e.key === '[') || (alt && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
     else if ((mod && !e.shiftKey && e.key === ']') || (alt && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
-    else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
-      // ⌘W closes the file tab, not the app's tab, while focus is in Files.
-      const active = activeTab(tabsRef.current);
-      if (active) { e.preventDefault(); e.stopPropagation(); closeTab(tabsRef.current.focus, active.path); }
-    } else if (e.key === 'Escape' && !e.defaultPrevented && tabs.panes.length > 1 && tabs.focus === 1 && !nav) {
+    else if (e.key === 'Escape' && !e.defaultPrevented && tabs.panes.length > 1 && tabs.focus === 1 && !nav) {
       e.preventDefault();
       dispatch({ type: 'closePane', pane: 1 });
       focusCode();
@@ -292,6 +300,11 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">›</button>
     </span>
   );
+  const uid = useId();
+  const tabIds = (paneId: number) => ({
+    panel: `${uid}-panel-${paneId}`,
+    tab: (path: string) => `${uid}-tab-${paneId}-${encodeURIComponent(path)}`,
+  });
   const fromHere = () => (selected ? here.current : null);
   return (
     // data-file-tab-open: the hub's own ⌘W steps aside for ours while a file tab is open.
@@ -325,10 +338,10 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
               const pi = i as PaneIndex;
               const t = activeTab(tabs, pi);
               return (
-                <section key={i} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
+                <section key={pane.id} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
                   className={`flex min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-zinc-800/80' : ''}`}
                   onMouseDownCapture={() => dispatch({ type: 'focus', pane: pi })} onFocusCapture={() => dispatch({ type: 'focus', pane: pi })}>
-                  <TabStrip pane={pane} focused={tabs.panes.length > 1 && tabs.focus === pi}
+                  <TabStrip pane={pane} ids={tabIds(pane.id)} focused={tabs.panes.length > 1 && tabs.focus === pi}
                     onActivate={(path) => {
                       const tab = pane.tabs.find((x) => x.path === path);
                       if (tab && path !== pane.active) jump(here.current, { path }, 'preview', pi);
@@ -336,8 +349,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
                     onPin={(path) => dispatch({ type: 'pin', pane: pi, path })}
                     onClose={(path) => closeTab(pi, path)}
                     onClosePane={i > 0 ? () => { dispatch({ type: 'closePane', pane: pi }); focusCode(); } : undefined} />
+                  <div role="tabpanel" id={tabIds(pane.id).panel} aria-labelledby={t ? tabIds(pane.id).tab(t.path) : undefined} className="flex min-h-0 flex-1 flex-col">
                   {t ? (
-                    <FileViewer key={`${worktreePath}\0${i}\0${t.path}`} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
+                    <FileViewer key={`${worktreePath}\0${t.path}`} onMissing={t.restored ? () => dispatch({ type: 'close', pane: pi, path: t.path }) : undefined} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
                       read={read} marks={marks} onAskAgent={onAskAgent} onOpenInVsCode={onOpenInVsCode}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
                       headerStart={historyButtons}
@@ -349,6 +363,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
                   ) : (
                     <div className="flex flex-1 items-center justify-center p-6 text-[11px] text-zinc-500">Pick a file to read it here.</div>
                   )}
+                  </div>
                 </section>
               );
             })}
@@ -375,35 +390,61 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
 }
 
 // One pane's open files: the preview tab in italics, × or middle-click closes,
-// double-click keeps a preview tab. Scrolls sideways, never wraps.
-function TabStrip({ pane, focused, onActivate, onPin, onClose, onClosePane }: {
+// double-click keeps a preview tab. Scrolls sideways, never wraps. Keyboard:
+// ←/→ (Home/End) move between tabs, Enter or Space shows one, Delete closes it.
+function TabStrip({ pane, ids, focused, onActivate, onPin, onClose, onClosePane }: {
   pane: Pane;
+  ids: { panel: string; tab: (path: string) => string };
   focused: boolean;
   onActivate: (path: string) => void;
   onPin: (path: string) => void;
   onClose: (path: string) => void;
   onClosePane?: () => void;
 }) {
+  const list = useRef<HTMLDivElement>(null);
+  const focusTab = (path: string | undefined) => {
+    if (path) list.current?.querySelector<HTMLElement>(`[id="${CSS.escape(ids.tab(path))}"]`)?.focus();
+  };
+  const onKey = (e: KeyboardEvent<HTMLDivElement>, path: string) => {
+    const i = pane.tabs.findIndex((t) => t.path === path);
+    const to = e.key === 'ArrowRight' ? pane.tabs[(i + 1) % pane.tabs.length]
+      : e.key === 'ArrowLeft' ? pane.tabs[(i - 1 + pane.tabs.length) % pane.tabs.length]
+      : e.key === 'Home' ? pane.tabs[0]
+      : e.key === 'End' ? pane.tabs[pane.tabs.length - 1]
+      : null;
+    if (to) { e.preventDefault(); focusTab(to.path); return; }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate(path); return; }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      const next = pane.tabs[i + 1] ?? pane.tabs[i - 1];
+      onClose(path);
+      requestAnimationFrame(() => focusTab(next?.path));
+    }
+  };
   return (
     <div className={`flex h-8 shrink-0 items-stretch border-b border-zinc-800/80 ${focused ? 'bg-white/[0.02]' : ''}`}>
-      <div role="tablist" aria-label="Open files" className="flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
+      <div ref={list} role="tablist" aria-label="Open files" className="flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
         {pane.tabs.map((t) => {
           const on = t.path === pane.active;
           const name = t.path.split('/').pop() || t.path;
           return (
-            <div key={t.path} role="tab" aria-selected={on} tabIndex={on ? 0 : -1} title={t.preview ? `${t.path} — preview (double-click to keep)` : t.path}
-              data-preview={t.preview || undefined}
-              onClick={() => onActivate(t.path)}
-              onDoubleClick={() => onPin(t.path)}
+            <div key={t.path} role="presentation"
+              className={`group flex shrink-0 items-center border-r border-zinc-800/60 ${on ? 'glass-pill rounded-none' : 'hover:bg-white/[0.04]'}`}
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(t.path); } }}
-              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate(t.path); } }}
-              className={`group flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap border-r border-zinc-800/60 pl-3 pr-1 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-400/50 ${
-                on ? 'glass-pill rounded-none text-zinc-100' : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'}`}>
-              <span className={t.preview ? 'italic' : ''}>{name}</span>
-              <button type="button" tabIndex={-1} aria-label={`Close ${name}`} title="Close (⌘W)"
-                onClick={(e) => { e.stopPropagation(); onClose(t.path); }}
-                className={`flex h-4 w-4 items-center justify-center rounded text-[13px] leading-none text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-100 ${on ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}>×</button>
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}>
+              <div id={ids.tab(t.path)} role="tab" aria-selected={on} aria-controls={on ? ids.panel : undefined} tabIndex={on ? 0 : -1}
+                title={t.preview ? `${t.path} — preview (double-click to keep)` : t.path}
+                data-preview={t.preview || undefined}
+                onClick={() => onActivate(t.path)}
+                onDoubleClick={() => onPin(t.path)}
+                onKeyDown={(e) => onKey(e, t.path)}
+                className={`flex h-full cursor-pointer items-center whitespace-nowrap pl-3 pr-1 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-400/50 ${
+                  on ? 'text-zinc-100' : 'text-zinc-400 group-hover:text-zinc-200'} ${t.preview ? 'italic' : ''}`}>
+                {name}
+              </div>
+              <button type="button" tabIndex={-1} aria-label={`Close ${name}`} title="Close (⌘W, or Delete on the tab)"
+                onClick={() => onClose(t.path)}
+                className={`mr-1 flex h-4 w-4 items-center justify-center rounded text-[13px] leading-none text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-100 ${on ? '' : 'opacity-0 group-hover:opacity-100'}`}>×</button>
             </div>
           );
         })}

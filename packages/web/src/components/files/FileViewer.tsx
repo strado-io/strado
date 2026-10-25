@@ -18,7 +18,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, onCursor, hover, outline, headerStart, headerEnd }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -41,6 +41,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   headerStart?: ReactNode;
   /** After the header's own buttons (the tab's Open to the side). */
   headerEnd?: ReactNode;
+  /** The file isn't there (deleted since): the tab may go. */
+  onMissing?: () => void;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [marks, setMarks] = useState<FileMarks | null>(null);
@@ -58,6 +60,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   // The editor is built once per text; it reaches these through refs.
   const navRef = useRef(onNavigate);
   navRef.current = onNavigate;
+  const missingRef = useRef(onMissing);
+  missingRef.current = onMissing;
   const cursorRef = useRef(onCursor);
   cursorRef.current = onCursor;
   const hoverRef = useRef(hover);
@@ -82,7 +86,11 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         // Same text back: keep the object, so the editor (and its cursor) stays put.
         setFile((cur) => (cur && cur.path === f.path && cur.text === f.text && cur.binary === f.binary && cur.tooLarge === f.tooLarge ? cur : f));
       })
-      .catch((err: unknown) => { if (live) setError(filesError(err, 'file')); });
+      .catch((err: unknown) => {
+        if (!live) return;
+        setError(filesError(err, 'file'));
+        if ((err as { code?: unknown })?.code === 'NOT_FOUND') missingRef.current?.();
+      });
     Promise.resolve().then(() => readMarks(path))
       .then((m) => { if (live) setMarks(m); })
       .catch(() => { /* no gutter */ });

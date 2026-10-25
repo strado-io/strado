@@ -48,9 +48,11 @@ describe('file tabs', () => {
     expect(s.focus).toBe(1);
     s = tabsReducer(s, { type: 'close', pane: 0, path: 'b' });
     expect(s.panes[0]!.active).toBe('a');
+    const sideId = s.panes[1]!.id;
     s = tabsReducer(s, { type: 'close', pane: 0, path: 'a' });
     expect(s.panes).toHaveLength(1);
     expect(paths(s)).toEqual(['c']);
+    expect(s.panes[0]!.id).toBe(sideId); // the same pane, so its viewer isn't rebuilt
     s = tabsReducer(s, { type: 'open', pane: 1, path: 'd', mode: 'permanent' });
     s = tabsReducer(s, { type: 'close', pane: 1, path: 'd' });
     expect(s.panes).toHaveLength(1);

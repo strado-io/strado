@@ -21,11 +21,14 @@ export type FileTab = {
   nonce: number;
   /** For least-recently-used closing. */
   used: number;
+  /** Brought back from storage and not opened since: dropped if the file is gone. */
+  restored?: boolean;
 };
-export type Pane = { tabs: FileTab[]; active: string | null };
+/** `id` stays with the pane, so its viewer survives the side pane becoming the only one. */
+export type Pane = { id: number; tabs: FileTab[]; active: string | null };
 export type TabsState = { panes: Pane[]; focus: PaneIndex; clock: number };
 
-export const emptyTabs = (): TabsState => ({ panes: [{ tabs: [], active: null }], focus: 0, clock: 0 });
+export const emptyTabs = (): TabsState => ({ panes: [{ id: 0, tabs: [], active: null }], focus: 0, clock: 0 });
 
 export type OpenMode = 'preview' | 'permanent';
 export type TabsAction =
@@ -43,14 +46,15 @@ export function activeTab(s: TabsState, pane: PaneIndex = s.focus): FileTab | nu
   return p?.tabs.find((t) => t.path === p.active) ?? null;
 }
 
-function withPane(s: TabsState, i: PaneIndex, f: (p: Pane) => Pane): TabsState {
+function withPane(s: TabsState, i: PaneIndex, f: (p: Pane) => Omit<Pane, 'id'>): TabsState {
   const panes = [...s.panes];
-  panes[i] = f(panes[i] ?? { tabs: [], active: null });
+  const old = panes[i] ?? { id: s.clock + 1, tabs: [], active: null };
+  panes[i] = { ...f(old), id: old.id };
   return { ...s, panes };
 }
 
 // Past the cap, close the least recently used tab other than the active one.
-function capTabs(p: Pane): Pane {
+function capTabs<P extends Omit<Pane, 'id'>>(p: P): P {
   if (p.tabs.length <= TABS_CAP) return p;
   const victim = [...p.tabs].filter((t) => t.path !== p.active).sort((a, b) => a.used - b.used)[0];
   return victim ? capTabs({ ...p, tabs: p.tabs.filter((t) => t !== victim) }) : p;
@@ -78,7 +82,7 @@ export function tabsReducer(s: TabsState, a: TabsAction): TabsState {
         if (have) {
           const keepPlace = a.line == null;
           const tab: FileTab = {
-            ...have, used: clock,
+            ...have, used: clock, restored: false,
             preview: have.preview && a.mode === 'preview',
             line: keepPlace ? have.line : line, col: keepPlace ? have.col : col,
             go: keepPlace ? (p.active === a.path ? have.go : { line: have.line, col: have.col }) : { line, col },
@@ -142,16 +146,16 @@ export function loadTabs(scope: string): TabsState {
     const raw = localStorage.getItem(tabsKey(scope));
     if (!raw) return emptyTabs();
     const saved = JSON.parse(raw) as Saved;
-    const panes: Pane[] = (saved.panes ?? []).slice(0, 2).map((p) => {
+    const panes: Pane[] = (saved.panes ?? []).slice(0, 2).map((p, id) => {
       const tabs = (p.tabs ?? [])
         .filter((t) => typeof t?.path === 'string' && t.path)
         .slice(0, TABS_CAP)
         .map((t, i) => {
           const line = Number(t.line) || 1;
           const col = Number(t.col) || 1;
-          return { path: t.path, preview: !!t.preview, line, col, go: { line, col }, nonce: 0, used: i };
+          return { path: t.path, preview: !!t.preview, line, col, go: { line, col }, nonce: 0, used: i, restored: true };
         });
-      return { tabs, active: tabs.some((t) => t.path === p.active) ? p.active : tabs[0]?.path ?? null };
+      return { id, tabs, active: tabs.some((t) => t.path === p.active) ? p.active : tabs[0]?.path ?? null };
     }).filter((p) => p.tabs.length > 0);
     if (!panes.length) return emptyTabs();
     return { panes, focus: saved.focus === 1 && panes.length > 1 ? 1 : 0, clock: TABS_CAP };
