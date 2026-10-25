@@ -1021,7 +1021,7 @@ export function Dashboard(props: {
     <UiControlProvider wsId={wsId} openWorktree={openWorktreeForAgent}>
     <RendererOverlayContext.Provider value={overlays.report}>
     <FocusJarvisProvider wsId={wsId} focus={focusApi.active ?? null} focuses={focusApi.focuses} worktrees={state.worktrees} repos={state.repos}
-      workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed} app={appPort}
+      workspaces={allWorkspaces} stations={stations} lastActedOn={jarvisLastActed}
       onTreeChanged={() => {
         void Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)])
           .then(([repos, worktrees]) => { if (wsRef.current === wsId) commitTree(repos, worktrees); })

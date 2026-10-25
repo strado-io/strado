@@ -3,6 +3,7 @@ import type { Focus, StationDto } from '../../api';
 import { useIntercom } from '../../contexts/IntercomContext';
 import { useJarvisActionHandler, useUiHub } from '../../contexts/UiControlContext';
 import type { JarvisAppPort, JarvisNavPort } from '../../lib/jarvis/execute';
+import { api } from '../../api';
 import { runJarvisAction } from './windowAction';
 import { readShellNames } from '../../hooks/shellNames';
 import { buildModelContext } from '../../lib/jarvis/model';
@@ -30,7 +31,7 @@ const HostContext = createContext<Host | null>(null);
 /** One Jarvis chat per window, for the active Focus, shared by its sidebar
  * card and its main view. Sends carry this window's context, built exactly
  * as the ⌘K bar builds it. */
-export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, app, onTreeChanged, children }: {
+export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, onTreeChanged, children }: {
   wsId: string;
   focus: Focus | null;
   focuses: Focus[];
@@ -39,8 +40,6 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   workspaces: Workspace[];
   stations: StationDto[];
   lastActedOn: MutableRefObject<TabRef | null>;
-  /** The app's pages and Focus edits (focus.edit); Jarvis never navigates. */
-  app?: JarvisAppPort;
   /** Reload the worktree list: a Jarvis action made one on the server. */
   onTreeChanged?: () => void;
   children: ReactNode;
@@ -78,7 +77,7 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
       hub: hub()?.jarvis ?? null,
       server: jarvisServerPort(wsId),
       nav: NO_NAV,
-      ...(app ? { app } : {}),
+      app: jarvisApp(wsId),
     }),
   }));
   // A new worktree or a Focus edit lands in the sidebar now, not on the next reload.
@@ -112,6 +111,36 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
 }
 
 const STARTING_POLL_MS = 2_000;
+
+const refuseApp = () => { throw new Error('Jarvis does not move the window'); };
+/** W3: Jarvis's Focus edits go straight to the server and refresh the list;
+ * unlike the ⌘K box's, a create never activates the new Focus, so the window
+ * stays on this chat. Pages and settings are not Jarvis's (refused). */
+export function jarvisApp(wsId: string): JarvisAppPort {
+  return {
+    page: refuseApp,
+    settings: refuseApp,
+    set: async () => refuseApp(),
+    focus: async ({ op, focusId, name, worktreePaths }) => {
+      const members = worktreePaths.map((path) => `local:${path}`);
+      const id = () => { if (!focusId) throw new Error('Which Focus?'); return focusId; };
+      try {
+        if (op === 'create') {
+          if (!name?.trim()) throw new Error('A new Focus needs a name');
+          return { focusId: (await api.focuses.create(wsId, { name: name.trim(), members })).id };
+        }
+        if (op === 'rename') {
+          if (!name?.trim()) throw new Error('Rename it to what?');
+          await api.focuses.update(wsId, id(), { name: name.trim() });
+        } else if (op === 'delete') await api.focuses.remove(wsId, id());
+        else if (op === 'add') await api.focuses.update(wsId, id(), { addMembers: members });
+        else await api.focuses.update(wsId, id(), { removeMembers: members });
+      } finally {
+        void refreshFocuses(wsId);
+      }
+    },
+  };
+}
 export const ERRORS = {
   send: "Couldn't send that. Your message is still in the box.",
   approve: "Couldn't record your answer. The card shows where it stands now.",
