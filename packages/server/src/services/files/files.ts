@@ -147,7 +147,7 @@ function changeFor(st: GitStatus | null, rel: string, kind: 'dir' | 'file'): Fil
 
 /** Resolves `rel` through symlinks and refuses anything that lands outside
  *  the root or inside .git (403). Missing → 404. */
-async function resolveInside(root: string, rel: string): Promise<{ realRoot: string; real: string }> {
+export async function resolveInside(root: string, rel: string): Promise<{ realRoot: string; real: string }> {
   const realRoot = await fs.realpath(root);
   let real: string;
   try {
