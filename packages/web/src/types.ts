@@ -495,8 +495,9 @@ export type OpenInEditorBody = { worktreePath: string; path?: string; line?: num
 // Strado's actions as its tools. Mirrors server/src/services/jarvisChat/types.ts.
 export type JarvisAgent = 'claude';
 export type JarvisCardKind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'run' | 'browser';
-/** A tab Jarvis opened: `tab` is its session name ("claude-1"), `worktree` the worktree's name. */
-export type TabCardRef = { kind: JarvisCardKind; worktree: string; tab: string; label?: string; url?: string };
+/** A tab Jarvis opened: `tab` is its session name ("claude-1"), `worktree` the worktree's name as
+ * Jarvis says it, `worktreePath` its exact path (what wakes and the chat match on; older cards lack it). */
+export type TabCardRef = { kind: JarvisCardKind; worktree: string; worktreePath?: string; tab: string; label?: string; url?: string };
 export type ApprovalState = 'pending' | 'approved' | 'declined' | 'superseded';
 export type TurnState = 'running' | 'done' | 'interrupted' | 'failed' | 'stopped';
 export type ChatEntry =

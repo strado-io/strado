@@ -56,5 +56,5 @@ const openedUrl = (steps: Plan['steps']): string => {
 
 function cardOf(tab: TabRef, ctx: ParseContext, url: string): TabCardRef {
   const worktree = ctx.worktrees.find((w) => w.path === tab.worktreePath)?.name ?? tab.worktreePath.split('/').pop() ?? tab.worktreePath;
-  return { kind: tab.mode, worktree, tab: `${tab.mode}-${tab.sessionId}`, ...(url ? { url } : {}) };
+  return { kind: tab.mode, worktree, worktreePath: tab.worktreePath, tab: `${tab.mode}-${tab.sessionId}`, ...(url ? { url } : {}) };
 }

@@ -15,8 +15,11 @@ const CLOSED: ResolvedCard = { open: false };
  * is no longer live is closed. Browser tabs aren't peers, so they are open
  * while their worktree is. */
 export function resolveCard(card: TabCardRef, world: { worktrees: Worktree[]; repos: RepoConfig[]; peers: PeerDto[] }): ResolvedCard {
+  // The exact path when the card has one; an older card only has the name.
   const names = uniqueWorktreeNames(world.worktrees, world.repos);
-  const i = names.findIndex((n) => n.toLowerCase() === card.worktree.toLowerCase());
+  const i = card.worktreePath
+    ? world.worktrees.findIndex((x) => x.path === card.worktreePath)
+    : names.findIndex((n) => n.toLowerCase() === card.worktree.toLowerCase());
   const w = i >= 0 ? world.worktrees[i] : undefined;
   if (!w) return CLOSED;
   const prefix = `${card.worktree.toLowerCase()}/`;

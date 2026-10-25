@@ -27,4 +27,8 @@ describe('resolveCard', () => {
     expect(resolveCard({ kind: 'browser', worktree: 'web', tab: 'browser-1', url: 'http://localhost:3000' }, world))
       .toEqual({ open: true, worktreePath: '/w/web', mode: 'browser', sessionId: '1', busy: false });
   });
+  it('a card with worktreePath matches that exact worktree, whatever its name says', () => {
+    expect(resolveCard({ kind: 'claude', worktree: 'renamed', worktreePath: '/w/api', tab: 'claude-1' }, world)).toMatchObject({ open: true, worktreePath: '/w/api' });
+    expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', worktreePath: '/w/gone', tab: 'claude-1' }, world)).toEqual({ open: false });
+  });
 });

@@ -39,7 +39,9 @@ describe('runJarvisAction', () => {
     const r = await runJarvisAction({ action: 'tab.open', args: { mode: 'shell', worktree: 'fleetx-api', command: 'npm run dev' } }, { context: ctx, ports: () => ports(s) });
     expect(s.spawn).toHaveBeenCalledWith({ mode: 'shell', worktreePath: '/w/api' });
     expect(s.run).toHaveBeenCalledWith({ mode: 'shell', worktreePath: '/w/api', sessionId: '3' }, 'npm run dev');
-    expect(r).toMatchObject({ ok: true, card: { kind: 'shell', worktree: 'fleetx-api', tab: 'shell-3' } });
+    // worktreePath is what wakes match on (wakes.ts); worktree is the name Jarvis uses.
+    expect(r.card).toEqual({ kind: 'shell', worktree: 'fleetx-api', worktreePath: '/w/api', tab: 'shell-3' });
+    expect(r.ok).toBe(true);
     expect(r.text).toMatch(/opened/i);
   });
 
