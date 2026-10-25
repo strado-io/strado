@@ -19,6 +19,8 @@ import { createGitChangesService, GitChangesService } from './services/gitChange
 import { createLspManager, type LspManager } from './services/lsp/manager.js';
 import { createDetect } from './services/lsp/detect.js';
 import { createLspEnabledStore } from './services/lsp/store.js';
+import { createEditors, type Editors } from './services/editors/open.js';
+import { createEditorStore } from './services/editors/store.js';
 import { createActivityTracker, createAgentOutputBeats, ActivityTracker } from './services/activityTracker.js';
 import { createWorktreeWatcher, WorktreeWatcher } from './services/activityWatcher.js';
 import { createDiffStatsCache, DiffStatsCache } from './services/diffStatsCache.js';
@@ -101,6 +103,8 @@ export type Deps = {
   gitChanges: GitChangesService;
   /** Language servers for the Files tab; built in buildApp unless a test injects one. */
   lsp?: LspManager;
+  /** Open in editor; built in buildApp unless a test injects one. */
+  editors?: Editors;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
   // Worktree-list diff badges, cached on file/git changes (see diffStatsCache).
@@ -558,9 +562,11 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     : null;
 
   // Started on demand by the Files tab; every one is stopped with the app.
+  // One lookup of PATH and the common bin dirs, shared by language servers and editors.
+  const detect = createDetect();
   const lsp =
-    deps.lsp ??
-    createLspManager({ detect: createDetect(), store: createLspEnabledStore(), log: (line) => app.log.warn(line) });
+    deps.lsp ?? createLspManager({ detect, store: createLspEnabledStore(), log: (line) => app.log.warn(line) });
+  const editors = deps.editors ?? createEditors({ detect, store: createEditorStore() });
 
   // FSWatchers keep the event loop alive; close them with the app and flush
   // any activity accrued since the last debounced write.
@@ -677,6 +683,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerFilesRoutes(scoped);
     const { registerLspRoutes } = await import('./routes/lsp.js');
     await registerLspRoutes(scoped, lsp);
+    const { registerOpenInEditorRoute } = await import('./routes/editors.js');
+    await registerOpenInEditorRoute(scoped, editors);
     const { registerKnowledgeBaseRoutes } = await import('./routes/knowledgeBase.js');
     await registerKnowledgeBaseRoutes(scoped);
     const { registerLinkingRoutes } = await import('./routes/linking.js');
@@ -776,6 +784,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerProfileRoutes(app);
   const { registerLspAdminRoutes } = await import('./routes/lsp.js');
   await registerLspAdminRoutes(app, lsp);
+  const { registerEditorAdminRoutes } = await import('./routes/editors.js');
+  await registerEditorAdminRoutes(app, editors);
   const { registerVoiceRoutes } = await import('./routes/voice.js');
   await registerVoiceRoutes(app);
 
