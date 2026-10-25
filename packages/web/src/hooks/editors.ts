@@ -21,7 +21,7 @@ const listeners = new Set<(a: EditorsAnswer | null) => void>();
 
 function load(force = false): Promise<EditorsAnswer | null> {
   if (!cache || force) {
-    cache = api.editors.list().then(
+    cache = Promise.resolve().then(() => api.editors.list()).then(
       (a) => { current = a; for (const l of listeners) l(a); return a; },
       () => null,
     );

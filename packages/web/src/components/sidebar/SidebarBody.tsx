@@ -8,6 +8,8 @@ import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { sessionChips } from '../../hooks/sessions';
 import { useBrowserTabs } from '../../hooks/browserTabs';
+import { useCapabilities } from '../../hooks/capabilities';
+import { openInEditor, useEditors } from '../../hooks/editors';
 import type { AddRepoAnchor } from '../Sidebar';
 import { cardLines, worktreeLabel } from './labels';
 import { WorktreeCard } from './WorktreeCard';
@@ -209,6 +211,16 @@ export function SidebarBody({
     if (active) void setMembership(active.id, pinId, false).catch(report('Could not remove from focus'));
   };
 
+  // "Open in <editor>": a local worktree, in the person's own editor. A UI a
+  // runner box serves has no desktop editor; runner worktrees never get one.
+  const { chosen: editor } = useEditors();
+  const caps = useCapabilities();
+  const openWorktreeInEditor = editor && !caps.runner
+    ? (w: Worktree) => {
+        openInEditor(wsId, { worktreePath: w.path, editor: editor.id }).catch((err: unknown) => onError?.((err as Error).message));
+      }
+    : undefined;
+
   const localRow = (w: Worktree, repoName: string) => {
     const open: OpenWorktree = onOpenWorktree;
     const activeRow = w.path === activeWorktreePath;
@@ -217,6 +229,7 @@ export function SidebarBody({
     const testIdSuffix = w.path;
     const pinId = localPinId(w);
     const menuItems: MenuItem[] = [
+      ...(openWorktreeInEditor && editor ? [{ text: `Open in ${editor.label}`, onClick: () => openWorktreeInEditor(w) }] : []),
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
       { text: `Remove from ${active?.name ?? 'focus'}`, onClick: () => removeFromFocus(pinId) },
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
@@ -235,6 +248,8 @@ export function SidebarBody({
         onOpenMr={onOpenMr}
         onOpenDiff={onOpenDiff}
         onSettings={onWorktreeSettings}
+        onOpenInEditor={openWorktreeInEditor}
+        editorLabel={editor?.label}
         onContextMenu={(e) => openContextMenu(e, menuItems)}
         active={activeRow}
         waiting={agentWaiting(w)}
