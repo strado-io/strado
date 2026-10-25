@@ -205,7 +205,7 @@ function metaTitle(w: Pick<Worktree, 'meta'>): string {
 // (dev environments) — a broken-image glyph looks worse than the globe.
 function FaviconIcon({ src }: { src: string }) {
   const [broken, setBroken] = useState(false);
-  if (broken) return <GlobeIcon className={IDLE_ICON} />;
+  if (broken) return <GlobeIcon className={KIND_ICON.browser} />;
   return (
     <img
       src={src}
@@ -249,7 +249,7 @@ function groupTabs(
       return {
         tab: { path: g.path, mode, id },
         label: shellNames[sessionNameKey(g.path, mode, id)] ?? (id === '1' ? label : `${label} ${id}`),
-        icon: <Icon className={isParked ? PARKED_ICON : AGENT_ICON[status] ?? IDLE_ICON} />,
+        icon: <Icon className={isParked ? PARKED_ICON : status === 'idle' ? KIND_ICON[mode] : AGENT_ICON[status] ?? KIND_ICON[mode]} />,
         hint: isParked ? 'Parked to free memory, press a key in the tab to resume' : undefined,
       };
     });
@@ -271,7 +271,7 @@ function groupTabs(
       return {
         tab: { path: g.path, mode: 'shell' as const, id },
         label: shellNames[shellNameKey(g.path, id)] ?? runTabLabel(g, id) ?? (id === '1' ? 'Shell' : `Shell ${id}`),
-        icon: <Icon className={hosted ? AGENT_ICON[hosted.status] : IDLE_ICON} />,
+        icon: <Icon className={hosted ? AGENT_ICON[hosted.status] ?? KIND_ICON[hosted.mode] : KIND_ICON.shell} />,
         // the swapped icon needs a name on hover, or a Codex-hosted shell just
         // looks like a mislabelled Codex tab
         hint: hosted ? `${SHELL_HOST_LABEL[hosted.mode]} ${hosted.status}` : undefined,
