@@ -4,13 +4,12 @@
 // plain Node CHILD process, never inside Electron. That keeps node-pty on
 // the system Node ABI — no @electron/rebuild, no native-module drift — and
 // the same server keeps serving plain browser tabs in parallel.
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, globalShortcut, ipcMain, screen, session, shell, webContents } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, globalShortcut, ipcMain, screen, shell, webContents } = require('electron');
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const { resolveProfile } = require('./profile.cjs');
-const { vscodeOrigin, headersForRequest } = require('./vscode-frame-security.cjs');
 const { rotateIfOversized } = require('./log-rotate.cjs');
 const { createVoice, resolveHelper } = require('./voice.cjs');
 // Which instance is this? Packaged builds get `stable`; the repo's npm scripts
@@ -315,31 +314,6 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  // VS Code 1.136+ refuses cross-origin framing with both X-Frame-Options and
-  // CSP frame-ancestors. Keep an allowlist per dashboard webContents so only
-  // the localhost workbench origins returned by Strado get that restriction
-  // relaxed; Browser previews and arbitrary localhost pages remain untouched.
-  const vscodeOrigins = new Map(); // dashboard wc id -> Set<origin>
-  ipcMain.handle('strado:vscode-origin', (e, value) => {
-    // The preload belongs only to the local dashboard. Refuse registrations
-    // after an unexpected main-window navigation so external content can
-    // never use this bridge to weaken framing on a localhost service.
-    let senderOrigin = null;
-    try { senderOrigin = new globalThis.URL(e.sender.getURL()).origin; } catch { /* invalid/empty URL */ }
-    if (senderOrigin !== URL) return false;
-    const origin = vscodeOrigin(value);
-    if (!origin) return false;
-    const senderId = e.sender.id;
-    if (!vscodeOrigins.has(senderId)) {
-      e.sender.once('destroyed', () => vscodeOrigins.delete(senderId));
-    }
-    // There is one shared serve-web instance per Strado process. Replacing
-    // the prior origin prevents a dead port from remaining allowlisted if the
-    // daemon restarts on a different port.
-    vscodeOrigins.set(senderId, new Set([origin]));
-    return true;
-  });
-
   // Local dev servers often run HTTPS with self-signed certs (hosts-mapped
   // domains like dev.example.io) — Chrome lets you click through, an embed
   // silently blanks. Accept certificate errors ONLY for Browser previews;
@@ -382,33 +356,30 @@ if (!gotLock) {
   // rest of the hold (arrows, Cmd release) lands on the native path. Meta
   // keyups are forwarded too (no preventDefault) as a commit fallback for
   // releases that happen before the focus handoff.
-  const hotkeyCombo = (input, opts = {}) => {
+  const hotkeyCombo = (input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return null;
     if (input.key === ',' && !input.alt && !input.shift && input.meta !== input.control) return 'settings';
     if (!input.meta || input.control) return null;
     // Cmd+Arrow = tabs, Cmd+Shift+Arrow = spaces, Cmd+Opt+Arrow = Focuses.
     // Shift used to fall through to the tab move, which silently ate the space
-    // chord inside the Browser and VS Code embeds.
+    // chord inside the Browser embed.
     if (input.key === 'ArrowRight')
       return input.alt ? (input.shift ? null : 'focus-next') : input.shift ? 'space-next' : 'tab-next';
     if (input.key === 'ArrowLeft')
       return input.alt ? (input.shift ? null : 'focus-prev') : input.shift ? 'space-prev' : 'tab-prev';
-    // Shift+Cmd+N: a new Focus. Cmd+digit is left to the embed (VS Code's editor groups).
+    // Shift+Cmd+N: a new Focus. Cmd+digit is left to the embed.
     if (input.key.toLowerCase() === 'n' && !input.alt && input.shift) return 'new-focus';
     if (input.key.toLowerCase() === 'k' && !input.alt && !input.shift) return 'palette';
     if (input.key.toLowerCase() === 'l' && !input.alt && !input.shift) return 'changes';
     // Cmd+W inside a Browser preview: the renderer closes the active tab
-    // (mirrors a browser). NOT inside VS Code (editorKeys) — the workbench
-    // owns Cmd+W (close editor file); the menu deliberately keeps Close
-    // Window on Shift+Cmd+W so the chord reaches the iframe untouched.
+    // (mirrors a browser); the menu keeps Close Window on Shift+Cmd+W.
     // Renderer-focused tabs handle Cmd+W via their own keydown.
-    if (input.key.toLowerCase() === 'w' && !input.alt && !input.shift)
-      return opts.editorKeys ? null : 'close-tab';
+    if (input.key.toLowerCase() === 'w' && !input.alt && !input.shift) return 'close-tab';
     // Cmd+T inside an embed opens a new shell in the active worktree.
     if (input.key.toLowerCase() === 't' && !input.alt && !input.shift) return 'new-shell';
     return null;
   };
-  const wireEmbedHotkeys = (wc, win, isActive = () => true, opts = {}) => {
+  const wireEmbedHotkeys = (wc, win, isActive = () => true) => {
     wc.on('before-input-event', (ev, input) => {
       if (win.isDestroyed()) return;
       // NOTE: Cmd+Opt+I is NOT handled here. Chromium reserves it as the
@@ -419,19 +390,12 @@ if (!gotLock) {
         win.webContents.send('strado:hotkey', 'meta-up');
         return;
       }
-      const combo = hotkeyCombo(input, opts);
+      const combo = hotkeyCombo(input);
       if (!combo) return;
       ev.preventDefault();
       win.webContents.send('strado:hotkey', combo);
     });
   };
-  // renderer wc ids where the window's own keys should be intercepted
-  // (active tab is the VS Code iframe — toggled by the renderer)
-  const hotkeyScopes = new Set();
-  ipcMain.on('strado:hotkey-scope', (e, enabled) => {
-    if (enabled) hotkeyScopes.add(e.sender.id);
-    else hotkeyScopes.delete(e.sender.id);
-  });
   // Reliable Cmd-release signal. macOS never delivers the Meta keyup to a
   // webContents after one of its own Cmd-chords was consumed via
   // before-input-event (verified live: the release vanishes for the rest of
@@ -1435,12 +1399,6 @@ if (!gotLock) {
   // previews (kept alive: the rebooted renderer re-opens them with state)
   // and fully drop docked devtools (the renderer forgets dock state).
   const wireWindow = (win) => {
-    // VS Code iframe keys route through the window's webContents; intercept
-    // only while the renderer says the VS Code tab is active — otherwise
-    // Cmd+Arrow keeps its native meaning in dashboard text fields.
-    // editorKeys: this scope is only ever active for the VS Code iframe,
-    // where Cmd+W must stay VS Code's close-editor-file, not close-tab.
-    wireEmbedHotkeys(win.webContents, win, () => hotkeyScopes.has(win.webContents.id), { editorKeys: true });
     // window.open from the dashboard goes to the default browser — never a
     // child BrowserWindow (a bare window.open would spawn a blank Electron
     // window; the deb "Download update" link relies on this).
@@ -1454,7 +1412,6 @@ if (!gotLock) {
       const isMainFrame = typeof e?.isMainFrame === 'boolean' ? e.isMainFrame : legacyMainFrame;
       const isSameDocument = typeof e?.isSameDocument === 'boolean' ? e.isSameDocument : isInPlace;
       if (isMainFrame === false || isSameDocument) return;
-      hotkeyScopes.delete(win.webContents.id); // fresh renderer re-announces
       for (const entry of previews.values()) {
         if (entry.win !== win) continue;
         // park offscreen, don't detach — the surface stays alive so the
@@ -1482,12 +1439,6 @@ if (!gotLock) {
       return;
     }
     startCmdWatch();
-    session.defaultSession.webRequest.onHeadersReceived(
-      { urls: ['http://127.0.0.1:*/*'] },
-      (details, callback) => callback({
-        responseHeaders: headersForRequest(details, vscodeOrigins),
-      }),
-    );
     buildMenu({
       onReload: (win) => {
         const visible = [...previews.values()].filter(
