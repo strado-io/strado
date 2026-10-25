@@ -19,7 +19,7 @@ vi.mock('../../api', () => ({
 }));
 vi.mock('../../lib/uiControl', () => ({ uiClientId: () => 'win-1' }));
 
-import { useFocusJarvis, upsertEntry } from './useFocusJarvis';
+import { mergePage, useFocusJarvis, upsertEntry } from './useFocusJarvis';
 
 type Listener = (e: MessageEvent) => void;
 class FakeSource {
@@ -170,5 +170,52 @@ describe('useFocusJarvis', () => {
     await act(() => result.current.send('x'));
     await act(() => result.current.approve('a1', true));
     expect(log.mock.calls.length).toBe(before + 2);
+  });
+
+  describe('W1: a reload never rolls the chat back', () => {
+    const at = (id: string, t: string, over: Partial<ChatEntry> = {}) => ({ ...user(id, id), at: `2026-10-26T10:00:${t}Z`, ...over }) as ChatEntry;
+    it('keeps time order: entries older than the page stay above it', () => {
+      const merged = mergePage([at('a', '01'), at('b', '02')], [at('c', '03'), at('b', '02')]);
+      expect(merged.map((e) => e.id)).toEqual(['a', 'b', 'c']);
+    });
+    it('a finished reply is never replaced by an unfinished copy (nor a longer stream by a shorter one)', () => {
+      const done = { ...reply('j', 'Hello there', true) };
+      expect(mergePage([done], [reply('j', 'Hel', false)])).toEqual([done]);
+      expect(upsertEntry([done], reply('j', 'Hel', false))).toEqual([done]);
+      expect(mergePage([reply('j', 'Hello', false)], [reply('j', 'He', false)])[0]).toMatchObject({ text: 'Hello' });
+      expect(mergePage([reply('j', 'Hel', false)], [done])[0]).toBe(done);
+    });
+    it('a page started before a stream meta does not overwrite that meta', async () => {
+      let resolvePage: (v: unknown) => void = () => {};
+      log.mockReset();
+      log.mockResolvedValueOnce({ entries: [], meta });
+      const { result } = renderHook(() => useFocusJarvis('ws1', 'f1', () => ({})));
+      await waitFor(() => expect(result.current.meta).not.toBeNull());
+      log.mockImplementationOnce(() => new Promise((r) => { resolvePage = r; }));
+      act(() => result.current.reload());
+      act(() => FakeSource.last!.emit('meta', { ...meta, running: true }));
+      await act(async () => { resolvePage({ entries: [], meta: { ...meta, running: false } }); });
+      expect(result.current.meta?.running).toBe(true);
+    });
+  });
+
+  describe('W6: loadOlder', () => {
+    it('drops a page that lands after the Focus changed, and runs one at a time', async () => {
+      log.mockResolvedValue({ entries: [user('e5', 'five')], meta });
+      const { result, rerender } = renderHook(({ id }) => useFocusJarvis('ws1', id, () => ({})), { initialProps: { id: 'f1' } });
+      await waitFor(() => expect(result.current.entries).toHaveLength(1));
+      let resolveOlder: (v: unknown) => void = () => {};
+      log.mockImplementationOnce(() => new Promise((r) => { resolveOlder = r; }));
+      let first!: Promise<void>;
+      act(() => { first = result.current.loadOlder(); });
+      const calls = log.mock.calls.length;
+      await act(async () => { await result.current.loadOlder(); }); // a second while one is in flight: nothing
+      expect(log.mock.calls.length).toBe(calls);
+      log.mockResolvedValue({ entries: [user('g1', 'other focus')], meta: { ...meta, focusId: 'f2' } });
+      rerender({ id: 'f2' });
+      await waitFor(() => expect(result.current.entries.map((e) => e.id)).toEqual(['g1']));
+      await act(async () => { resolveOlder({ entries: [user('e1', 'old of f1')], meta }); await first; });
+      expect(result.current.entries.map((e) => e.id)).toEqual(['g1']);
+    });
   });
 });

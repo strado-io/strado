@@ -3,16 +3,35 @@ import { api } from '../../api';
 import { uiClientId } from '../../lib/uiControl';
 import type { ChatEntry, JarvisMeta } from '../../types';
 
+/** Of two copies of one entry, the one to keep: the incoming one, unless it
+ * is an earlier copy of a reply already finished (done:false over done:true),
+ * or a shorter unfinished copy of one still streaming. */
+function newer(have: ChatEntry, incoming: ChatEntry): ChatEntry {
+  if (have.type === 'jarvis' && incoming.type === 'jarvis') {
+    if (have.done && !incoming.done) return have;
+    if (!have.done && !incoming.done && incoming.text.length < have.text.length) return have;
+  }
+  return incoming;
+}
+
 /** Entries arrive whole and again as they grow (a streamed reply): replace by id, else append. */
 export function upsertEntry(entries: ChatEntry[], entry: ChatEntry): ChatEntry[] {
   const i = entries.findIndex((e) => e.id === entry.id);
   if (i === -1) return [...entries, entry];
+  const kept = newer(entries[i]!, entry);
+  if (kept === entries[i]) return entries;
   const next = [...entries];
-  next[i] = entry;
+  next[i] = kept;
   return next;
 }
 
-const merge = (entries: ChatEntry[], incoming: ChatEntry[]) => incoming.reduce(upsertEntry, entries);
+/** A reloaded page folded into what the chat holds: one copy per id (see
+ * `newer`), in time order, so entries older than the page stay above it. */
+export function mergePage(cur: ChatEntry[], page: ChatEntry[]): ChatEntry[] {
+  const all = page.reduce(upsertEntry, cur);
+  // A stable sort: equal times keep the order they had.
+  return all.map((e, i) => ({ e, i })).sort((a, b) => (a.e.at < b.e.at ? -1 : a.e.at > b.e.at ? 1 : a.i - b.i)).map(({ e }) => e);
+}
 
 export type FocusJarvis = {
   entries: ChatEntry[];
@@ -23,6 +42,8 @@ export type FocusJarvis = {
   approve: (entryId: string, approve: boolean) => Promise<void>;
   stop: () => Promise<void>;
   loadOlder: () => Promise<void>;
+  /** Re-fetch the latest page now (after a refused approval, say). */
+  reload: () => void;
 };
 
 const PAGE = 100;
@@ -56,12 +77,17 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
     reloadRef.current = () => {};
     if (!focusId) return;
     let live = true;
-    const load = () => api.focusJarvis.log(wsId, focusId, { limit: PAGE }).then((page) => {
-      if (!live) return;
-      setEntries((cur) => merge(page.entries, cur.filter((e) => !page.entries.some((p) => p.id === e.id))));
-      setMeta(page.meta);
-      setHasOlder(page.entries.length >= PAGE);
-    }).catch(() => { /* the stream's reconnect reloads */ });
+    // A stream `meta` that lands while a page is in flight is newer than the page's.
+    let metaSeq = 0;
+    const load = () => {
+      const seq = metaSeq;
+      return api.focusJarvis.log(wsId, focusId, { limit: PAGE }).then((page) => {
+        if (!live) return;
+        setEntries((cur) => mergePage(cur, page.entries));
+        if (metaSeq === seq) setMeta(page.meta);
+        setHasOlder((had) => had || page.entries.length >= PAGE);
+      }).catch(() => { /* the stream's reconnect reloads */ });
+    };
     reloadRef.current = () => { void load(); };
     void load();
 
@@ -101,7 +127,7 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
       }) as EventListener);
       source.addEventListener('meta', ((e: MessageEvent) => {
         alive();
-        try { setMeta(JSON.parse(e.data) as JarvisMeta); } catch { /* ignore malformed */ }
+        try { setMeta(JSON.parse(e.data) as JarvisMeta); metaSeq++; } catch { /* ignore malformed */ }
       }) as EventListener);
       return source;
     };
@@ -141,13 +167,31 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
     if (focusId) await api.focusJarvis.stop(wsId, focusId);
   }, [wsId, focusId]);
 
+  // W6: an older page lands only in the chat that asked for it (same Focus,
+  // still mounted), one at a time.
+  const chatRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = focusId ? `${wsId}\u0000${focusId}` : null;
+    chatRef.current = key;
+    return () => { if (chatRef.current === key) chatRef.current = null; };
+  }, [wsId, focusId]);
+  const olderInFlight = useRef(false);
   const loadOlder = useCallback(async () => {
     const first = entries[0];
-    if (!focusId || !first) return;
-    const page = await api.focusJarvis.log(wsId, focusId, { before: first.id, limit: PAGE });
-    setEntries((cur) => [...page.entries.filter((e) => !cur.some((c) => c.id === e.id)), ...cur]);
-    setHasOlder(page.entries.length >= PAGE);
+    if (!focusId || !first || olderInFlight.current) return;
+    const key = `${wsId}\u0000${focusId}`;
+    olderInFlight.current = true;
+    try {
+      const page = await api.focusJarvis.log(wsId, focusId, { before: first.id, limit: PAGE });
+      if (chatRef.current !== key) return;
+      setEntries((cur) => mergePage(cur, page.entries));
+      setHasOlder(page.entries.length >= PAGE);
+    } finally {
+      olderInFlight.current = false;
+    }
   }, [wsId, focusId, entries]);
 
-  return { entries, meta, hasOlder, send, approve, stop, loadOlder };
+  const reload = useCallback(() => reloadRef.current(), []);
+
+  return { entries, meta, hasOlder, send, approve, stop, loadOlder, reload };
 }
