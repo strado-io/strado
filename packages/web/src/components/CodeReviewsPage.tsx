@@ -110,7 +110,7 @@ function ReviewRow({ review, selected, onOpen }: {
   );
 }
 
-/** Match the centered launch state used by Claude, Codex, shells, and VS Code. */
+/** Match the centered launch state used by Claude, Codex and shells. */
 function ReviewListLoading() {
   return (
     <div role="status" aria-label="Loading code reviews" className="flex h-full min-h-[20rem] flex-col items-center justify-center gap-4 py-16">

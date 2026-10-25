@@ -70,10 +70,10 @@ describe('sortSessions', () => {
   it('keeps the original order among sessions of equal urgency', () => {
     const sorted = sortSessions([
       chip({ mode: 'shell', sessionId: '2' }),
-      chip({ mode: 'vscode', sessionId: '1' }),
+      chip({ mode: 'browser', sessionId: '1' }),
       chip({ mode: 'shell', sessionId: '1' }),
     ]);
-    expect(sorted.map((c) => `${c.mode}:${c.sessionId}`)).toEqual(['shell:2', 'vscode:1', 'shell:1']);
+    expect(sorted.map((c) => `${c.mode}:${c.sessionId}`)).toEqual(['shell:2', 'browser:1', 'shell:1']);
   });
 });
 

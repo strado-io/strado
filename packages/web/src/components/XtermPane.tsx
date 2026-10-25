@@ -474,7 +474,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       return minted.ticket;
     };
 
-    // Zero-size guard: while an embed tab (VS Code/Browser/KB) is active the
+    // Zero-size guard: while an embed tab (Browser/KB/Files) is active the
     // split stays mounted but display:none — fitting against a 0×0 box would
     // resize the user's live pty down to minimum dimensions.
     const fitIfVisible = () => {

@@ -11,14 +11,9 @@ vi.mock('../contexts/IntercomContext', () => ({
 }));
 
 // window.strado must exist BEFORE TerminalView is imported: isElectron is a
-// module-level const, and the VS Code tab only surfaces with desktop embeds.
-const { hotkeyScopeMock } = vi.hoisted(() => {
-  const hotkeyScope = vi.fn((_enabled: boolean) => undefined);
-  (globalThis as unknown as { window: { strado?: unknown } }).window.strado = {
-    hotkeyScope,
-    vscodeOrigin: () => Promise.resolve(true),
-  };
-  return { hotkeyScopeMock: hotkeyScope };
+// module-level const, and desktop-only tabs surface only with it.
+vi.hoisted(() => {
+  (globalThis as unknown as { window: { strado?: unknown } }).window.strado = {};
 });
 
 // Capture the hub's app-control bridge instead of mounting the provider.
@@ -101,10 +96,6 @@ vi.mock('../api', () => ({
         list: vi.fn().mockResolvedValue({ forwards: [] }),
         close: vi.fn().mockResolvedValue(undefined),
       },
-    },
-    vscode: {
-      open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' }),
-      close: vi.fn().mockResolvedValue({ ok: true }),
     },
     usage: { accounts: vi.fn().mockResolvedValue([]) },
   },

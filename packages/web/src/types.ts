@@ -323,14 +323,10 @@ export type SessionMetrics = {
   app: {
     server: AppProcMetric;
     daemon: AppProcMetric | null;
-    /** the shared `code serve-web` workbench and everything under it */
-    vscode: (AppProcMetric & { processes: number }) | null;
     /** Each running language server (Files tab), its process tree; absent from an older server. */
     languageServers?: LanguageServerMetric[];
   };
   sessions: SessionMetric[];
-  /** one per VS Code window whose extension host reported its folder */
-  vscodeWindows: Array<{ path: string; pid: number; cpu: number; rssBytes: number; processes: number }>;
   /** process tree of each pid asked for with ?pids= (worktree dev servers) */
   processes?: Array<{ pid: number; cpu: number; rssBytes: number; processes: number }>;
 };

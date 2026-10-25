@@ -18,7 +18,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInVsCode, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onOpenInEditor, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -30,7 +30,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   read: (path: string) => Promise<FileContent>;
   marks: (path: string) => Promise<FileMarks>;
   onAskAgent?: (ctx: FileAskContext) => void;
-  onOpenInVsCode?: (path: string, line: number) => void;
+  /** Hand the file, at the cursor's line, to the person's own editor. */
+  onOpenInEditor?: (path: string, line: number) => void;
   /** ⌘-click/F12 (definition) and ⇧F12 (references) at a place in this file. */
   onNavigate?: (kind: NavKind, at: FileAt) => void;
   /** The person moved the cursor here (click, keys, an outline pick) — for back/forward. */
@@ -193,10 +194,10 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
             Outline
           </button>
         )}
-        {onOpenInVsCode && (
-          <button type="button" className={iconBtn} onClick={() => onOpenInVsCode(path, cursorLine.current)} aria-label="Open in VS Code" title="Open in VS Code">
+        {onOpenInEditor && (
+          <button type="button" className={iconBtn} onClick={() => onOpenInEditor(path, cursorLine.current)} aria-label="Open in editor" title="Open in editor">
             <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17 3l4 2v14l-4 2L7 12l10-9z" /><path d="M7 12L3 9v6l4-3" />
+              <path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" />
             </svg>
           </button>
         )}
@@ -210,7 +211,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         <Empty title="Binary file" body={`${path} isn’t text, so it isn’t shown here.`} />
       ) : file.tooLarge ? (
         <Empty title="Too large to show" body={`${path} is ${mb(file.size)}; the viewer shows files up to 1 MB.`}
-          action={onOpenInVsCode ? { label: 'Open in VS Code', run: () => onOpenInVsCode(path, 1) } : undefined} />
+          action={onOpenInEditor ? { label: 'Open in editor', run: () => onOpenInEditor(path, 1) } : undefined} />
       ) : editorFailed ? (
         <pre className="min-h-0 flex-1 overflow-auto whitespace-pre p-3 font-mono text-[13px] text-zinc-200" data-testid="plain-text">{text}</pre>
       ) : (

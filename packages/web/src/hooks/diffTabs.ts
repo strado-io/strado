@@ -1,5 +1,5 @@
 // Which worktrees have a Changes (diff) tab open in the terminal hub. Like
-// VS Code it is client-side only, so this is its source of truth — persisted
+// Files it is client-side only, so this is its source of truth — persisted
 // so the tab survives panel reopen.
 const KEY = 'strado:diff-tabs';
 

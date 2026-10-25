@@ -1,6 +1,6 @@
 // Usage → Machine resources → Sessions: where this machine's memory goes, by repo, worktree and
-// session — every pty the daemon holds, each VS Code window, each Browser
-// preview, and Strado's own processes.
+// session — every pty the daemon holds, each Browser preview, each language
+// server, and Strado's own processes.
 //
 // The sidebar only shows sessions for worktrees in the current workspace.
 // Sessions whose worktree was deleted, or that belong to another workspace,
@@ -10,10 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
-import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
-import { closeVscodeTab } from '../../pages/vscodeTabClose';
 import type { LspServerId, RepoConfig, SessionMetrics, Worktree } from '../../types';
-import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
+import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon } from '../hub/icons';
 import { BranchIcon, RepoIcon } from '../sidebar/rowBits';
 import {
   KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, lspRows, memoryByKind, serverPids, sum,
@@ -34,7 +32,6 @@ function KindIcon({ kind, size = 13 }: { kind: Kind; size?: number }) {
   if (kind === 'codex') return <CodexIcon size={size} className={cls} />;
   if (kind === 'opencode') return <OpencodeIcon size={size} className={cls} />;
   if (kind === 'pi') return <PiIcon size={size} className={cls} />;
-  if (kind === 'vscode') return <VsCodeIcon size={size} className={cls} />;
   if (kind === 'browser') return <GlobeIcon className={`h-[13px] w-[13px] ${cls}`} />;
   if (kind === 'app') return <StradoMark className={cls} />;
   if (kind === 'server') return <ScreenIcon size={size} className={cls} />;
@@ -262,32 +259,22 @@ export function SessionsSection() {
     if (s.kind === 'server') {
       return run(s.key, () => (s.external ? api.worktrees.killExternal(workspace.id, s.path) : api.worktrees.stop(workspace.id, s.path)));
     }
-    // Same close the hub's ✕ does: forget the tab (the strip listens) and,
-    // for VS Code, tell the server so it ends that window's extension host.
-    if (s.kind === 'vscode') return run(s.key, async () => { closeVscodeTab(s.path); });
+    // Same close the hub's ✕ does: forget the tab (the strip listens).
     return run(s.key, async () => {
       await window.strado?.preview?.('close', s.key);
       if (s.id === '1') rememberBrowserTab(s.path, false);
       else rememberBrowserTabIds(s.path, (readBrowserTabIds()[s.path] ?? []).filter((i) => i !== s.id));
     });
   };
-  // Stopping the shared workbench strands every VS Code tab on a dead server,
-  // so close them all; reopening one boots a fresh workbench.
-  // Stops that server everywhere on this machine; the next lookup starts it again.
-  // Just this worktree's server; the others keep running.
+  // Just this worktree's language server; the others keep running, and the
+  // next lookup there starts it again.
   const stopLsp = (id: LspServerId, worktreePath: string, key: string) =>
     run(key, () => api.lspServers.stop(id, worktreePath), 'Couldn’t stop the language server.');
-  const stopVscode = () =>
-    run('vscode', async () => {
-      await api.sessions.stopVscode();
-      for (const path of readVscodeTabs()) rememberVscodeTab(path, false);
-    });
   const endGroup = (g: Group) =>
     run(`group:${g.id}`, async () => {
       for (const w of g.worktrees) for (const s of w.sessions) {
         if (s.kind === 'pty') await api.sessions.kill(s.key);
         else if (s.kind === 'server') continue; // orphan paths have no worktree to stop through
-        else if (s.kind === 'vscode') closeVscodeTab(s.path);
         else await window.strado?.preview?.('close', s.key);
       }
     });
@@ -301,7 +288,7 @@ export function SessionsSection() {
     });
 
   const groups = useMemo(
-    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, windows: metrics.vscodeWindows ?? [], processes: metrics.processes, worktrees, repos, sort }) : []),
+    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, processes: metrics.processes, worktrees, repos, sort }) : []),
     [metrics, appMetrics, worktrees, repos, sort],
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
@@ -376,7 +363,7 @@ export function SessionsSection() {
                   <td className="px-3 py-2">
                     <button type="button" onClick={() => toggle('strado')} aria-expanded={stradoOpen}
                       aria-label={`${stradoOpen ? 'Collapse' : 'Expand'} Strado`}
-                      title="The app, its server, the terminal daemon and the shared VS Code workbench"
+                      title="The app, its server and the terminal daemon"
                       className="flex items-center gap-2 whitespace-nowrap text-sm font-medium text-zinc-100">
                       <Chevron open={stradoOpen} />
                       <KindIcon kind="app" />
@@ -384,27 +371,14 @@ export function SessionsSection() {
                     </button>
                   </td>
                   <UsageCells usage={appTotal} max={maxRss} label="Strado" strong
-                    parts={[
-                      { kind: 'app', bytes: appTotal.rssBytes - (metrics.app.vscode?.rssBytes ?? 0) },
-                      { kind: 'vscode', bytes: metrics.app.vscode?.rssBytes ?? 0 },
-                    ]} />
+                    parts={[{ kind: 'app', bytes: appTotal.rssBytes }]} />
                   <td />
                 </tr>
                 {stradoOpen && app.map((r) => (
                   <tr key={r.id} data-testid={`sessions-row-${r.id}`} className="group hover:bg-zinc-900/40">
-                    <td className="py-1.5 pl-12 pr-3 text-[13px] text-zinc-400">
-                      <span className="flex items-center gap-2">
-                        {r.id === 'vscode' && <KindIcon kind="vscode" size={12} />}
-                        <span>{r.label}</span>
-                      </span>
-                    </td>
-                    <UsageCells usage={r.usage} max={maxRss} label={r.label}
-                      parts={[{ kind: r.id === 'vscode' ? 'vscode' : 'app', bytes: r.usage.rssBytes }]} />
-                    <td className="px-2 py-1 text-right">
-                      {r.id === 'vscode' && (
-                        <ActionButton label="Stop VS Code" busy={busy === 'vscode'} onRun={() => void stopVscode()} />
-                      )}
-                    </td>
+                    <td className="py-1.5 pl-12 pr-3 text-[13px] text-zinc-400">{r.label}</td>
+                    <UsageCells usage={r.usage} max={maxRss} label={r.label} parts={[{ kind: 'app', bytes: r.usage.rssBytes }]} />
+                    <td />
                   </tr>
                 ))}
               </tbody>
@@ -509,7 +483,7 @@ export function SessionsSection() {
                       const confirm = (s.kind === 'pty' && s.mode !== 'shell') || (s.kind === 'server' && s.external);
                       return (
                         <tr key={`${s.kind}:${s.key}`}
-                          data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : s.kind === 'vscode' ? `sessions-row-vscode:${s.path}` : `sessions-row-${s.key}`}
+                          data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : `sessions-row-${s.key}`}
                           className="group hover:bg-zinc-900/40">
                           <td className="py-1.5 pl-16 pr-3">
                             <span className="flex items-center gap-2 text-[13px] text-zinc-300"

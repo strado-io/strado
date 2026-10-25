@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-// Which worktrees have a Knowledge Base tab open. Like the VS Code tab, this is
+// Which worktrees have a Knowledge Base tab open. Like the Files tab, this is
 // a client-only tab with no server session, so localStorage is the single
 // source of truth — persisted so tabs survive a panel reopen or reload.
 const KEY = 'strado:kb-tabs';

@@ -41,7 +41,7 @@ describe('uiCommands', () => {
       ok: true, cmd: { op: 'place', worktreePath: '/w/a', tab: ref('shell', '2'), split: 'right', anchor: ref('claude', '1'), focus: false },
     });
     expect(parseUiCommand({ id: 'C', op: 'place', args: { tab: ref('shell', '2'), split: 'sideways', anchor: null } })).toEqual({ ok: false, reason: 'bad_args' });
-    expect(parseUiCommand({ id: 'C', op: 'place', args: { tab: { worktreePath: '/w/a', mode: 'vscode', sessionId: '1' }, split: 'tab' } })).toEqual({ ok: false, reason: 'bad_args' });
+    expect(parseUiCommand({ id: 'C', op: 'place', args: { tab: { worktreePath: '/w/a', mode: 'files', sessionId: '1' }, split: 'tab' } })).toEqual({ ok: false, reason: 'bad_args' });
     expect(parseUiCommand({ id: 'C', op: 'place', args: { tab: ref('shell', '2'), split: 'tab', anchor: { mode: 'shell' } } })).toEqual({ ok: false, reason: 'bad_args' });
     expect(parseUiCommand({ id: 'C', op: 'browser.open', args: { worktreePath: '/w/a', url: 'https://x.dev' } })).toEqual({
       ok: true, cmd: { op: 'browser.open', worktreePath: '/w/a', url: 'https://x.dev', place: null },

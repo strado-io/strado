@@ -50,7 +50,7 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); });
 
 const panel = (over: Partial<Parameters<typeof KnowledgeBasePanel>[0]> = {}) => (
-  <KnowledgeBasePanel wsId="default" worktreePath="/wt" active onOpenInVsCode={() => {}} {...over} />
+  <KnowledgeBasePanel wsId="default" worktreePath="/wt" active onOpenInFiles={() => {}} {...over} />
 );
 
 describe('KnowledgeBasePanel', () => {
@@ -244,7 +244,7 @@ describe('KnowledgeBasePanel', () => {
     let rerender!: (ui: Parameters<typeof render>[0]) => void;
     await act(async () => {
       const result = render(
-        <KnowledgeBasePanel wsId="default" worktreePath="/wtA" active onOpenInVsCode={() => {}} />,
+        <KnowledgeBasePanel wsId="default" worktreePath="/wtA" active onOpenInFiles={() => {}} />,
       );
       rerender = result.rerender;
     });
@@ -254,7 +254,7 @@ describe('KnowledgeBasePanel', () => {
     // outside of React's tracked updates.
     await act(async () => {
       rerender(
-        <KnowledgeBasePanel wsId="default" worktreePath="/wtB" active onOpenInVsCode={() => {}} />,
+        <KnowledgeBasePanel wsId="default" worktreePath="/wtB" active onOpenInFiles={() => {}} />,
       );
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -288,14 +288,14 @@ describe('KnowledgeBasePanel', () => {
     let rerender!: (ui: Parameters<typeof render>[0]) => void;
     await act(async () => {
       const result = render(
-        <KnowledgeBasePanel wsId="default" worktreePath="/wtA" active onOpenInVsCode={() => {}} />,
+        <KnowledgeBasePanel wsId="default" worktreePath="/wtA" active onOpenInFiles={() => {}} />,
       );
       rerender = result.rerender;
     });
 
     await act(async () => {
       rerender(
-        <KnowledgeBasePanel wsId="default" worktreePath="/wtB" active onOpenInVsCode={() => {}} />,
+        <KnowledgeBasePanel wsId="default" worktreePath="/wtB" active onOpenInFiles={() => {}} />,
       );
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -371,13 +371,13 @@ describe('KnowledgeBasePanel', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 
-  it('reports the selected path to Open in VS Code', async () => {
-    const onOpenInVsCode = vi.fn();
-    render(panel({ onOpenInVsCode }));
+  it('reports the selected path to Open in Files', async () => {
+    const onOpenInFiles = vi.fn();
+    render(panel({ onOpenInFiles }));
     await screen.findByRole('button', { name: 'README.md' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open in VS Code' }));
-    expect(onOpenInVsCode).toHaveBeenCalledWith('README.md');
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Files' }));
+    expect(onOpenInFiles).toHaveBeenCalledWith('README.md');
   });
 
   it('keeps a selection absent from the listing but still readable (e.g. a gitignored doc)', async () => {

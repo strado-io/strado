@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The Files tab in the hub: its mount (local and runner worktrees), ⌘P, paths
-// in terminal output, "Ask an agent" and "Open in VS Code". FilesTab itself is
+// in terminal output, "Ask an agent" and "Open in editor". FilesTab itself is
 // stubbed: these tests are about what the hub hands it.
 
 const peers = vi.hoisted(() => ({ list: [] as unknown[] }));
@@ -40,7 +40,7 @@ type FilesTabProps = {
   wsId: string; worktreePath: string; remote?: { runnerId: string; remoteWsId: string; name?: string };
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
-  onOpenInVsCode?: (path: string, line: number) => void;
+  onOpenInEditor?: (path: string, line: number) => void;
 };
 const filesTab = vi.hoisted(() => ({ last: null as FilesTabProps | null, fileTabOpen: false }));
 vi.mock('../components/files/FilesTab', () => ({
@@ -62,6 +62,7 @@ vi.mock('../lib/jarvis/serverPort', () => ({ jarvisServerPort: () => ({ message:
 
 const filesList = vi.fn();
 const runnerRpc = vi.fn();
+const editorOpen = vi.fn();
 vi.mock('../api', () => ({
   ApiClientError: class extends Error {},
   api: {
@@ -85,7 +86,7 @@ vi.mock('../api', () => ({
       rpc: (...a: unknown[]) => runnerRpc(...a),
       forwards: { list: vi.fn().mockResolvedValue({ forwards: [] }), open: vi.fn(), close: vi.fn() },
     },
-    vscode: { open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' }), close: vi.fn().mockResolvedValue({ ok: true }) },
+    editors: { open: (...a: unknown[]) => editorOpen(...a) },
   },
 }));
 
@@ -162,7 +163,21 @@ describe('Files tab in the hub', () => {
     render(<TerminalView worktree={remoteWt} mode="files" onClose={() => {}} />);
     await flush();
     expect(filesTab.last!.remote).toEqual({ runnerId: 'run1', remoteWsId: 'rw', name: 'runner-dev' });
-    expect(filesTab.last!.onOpenInVsCode).toBeUndefined();
+    // A runner worktree has no editor on this machine.
+    expect(filesTab.last!.onOpenInEditor).toBeUndefined();
+  });
+
+  it('Open in editor hands the file and line to this machine\'s editor; a failure says so in fixed words', async () => {
+    editorOpen.mockReset().mockResolvedValue(undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    await flush();
+    act(() => filesTab.last!.onOpenInEditor!('src/app.ts', 12));
+    expect(editorOpen).toHaveBeenCalledWith('default', { worktreePath: ROOT, path: 'src/app.ts', line: 12 });
+    editorOpen.mockRejectedValue(new Error('spawn /usr/bin/code ENOENT'));
+    act(() => filesTab.last!.onOpenInEditor!('src/app.ts', 3));
+    await flush();
+    expect(screen.getByRole('status')).toHaveTextContent('Couldn’t open the editor. Pick one in Settings › Files.');
   });
 
   it('⌘P lists the worktree files; Enter opens the pick in the Files tab', async () => {

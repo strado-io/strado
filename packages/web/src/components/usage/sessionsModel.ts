@@ -1,27 +1,27 @@
 // Pure model for Settings → Sessions: fold the server's pty metrics, the
-// shell's Electron process list and the VS Code window reports into
+// shell's Electron process list and the language servers into
 // repo → worktree → session rows, plus a by-kind breakdown for the memory map.
 import type { LanguageServerMetric, LspServerId, RepoConfig, SessionMetric, SessionMetrics, Worktree } from '../../types';
 
 export const MB = 1024 * 1024;
 
 /** What a row is, for icon, colour and the memory-map legend. */
-export type Kind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'vscode' | 'lsp' | 'browser' | 'server' | 'app';
+export type Kind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'lsp' | 'browser' | 'server' | 'app';
 
 export const KIND_LABEL: Record<Kind, string> = {
   claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi', shell: 'Shell',
-  vscode: 'VS Code', lsp: 'Language servers', browser: 'Browser', server: 'Dev servers', app: 'Strado app',
+  lsp: 'Language servers', browser: 'Browser', server: 'Dev servers', app: 'Strado app',
 };
 // Same hues as the tab strip and sidebar avatars (sessionAvatars.tsx).
 export const KIND_TEXT: Record<Kind, string> = {
   claude: 'text-amber-300', codex: 'text-sky-300', opencode: 'text-violet-300', pi: 'text-rose-300',
-  shell: 'text-zinc-300', vscode: 'text-blue-400', lsp: 'text-indigo-300', browser: 'text-emerald-400', server: 'text-teal-300', app: 'text-zinc-400',
+  shell: 'text-zinc-300', lsp: 'text-indigo-300', browser: 'text-emerald-400', server: 'text-teal-300', app: 'text-zinc-400',
 };
 export const KIND_BG: Record<Kind, string> = {
   claude: 'bg-amber-300', codex: 'bg-sky-300', opencode: 'bg-violet-300', pi: 'bg-rose-300',
-  shell: 'bg-zinc-400', vscode: 'bg-blue-400', lsp: 'bg-indigo-400', browser: 'bg-emerald-400', server: 'bg-teal-400', app: 'bg-zinc-600',
+  shell: 'bg-zinc-400', lsp: 'bg-indigo-400', browser: 'bg-emerald-400', server: 'bg-teal-400', app: 'bg-zinc-600',
 };
-export const KIND_ORDER: Kind[] = ['server', 'claude', 'codex', 'opencode', 'pi', 'vscode', 'lsp', 'browser', 'shell', 'app'];
+export const KIND_ORDER: Kind[] = ['server', 'claude', 'codex', 'opencode', 'pi', 'lsp', 'browser', 'shell', 'app'];
 
 export type Usage = { cpu: number; rssBytes: number };
 export type AppMetric = { pid: number; type: string; name?: string; cpu: number; memoryKb: number; preview?: string };
@@ -29,7 +29,6 @@ export type AppMetric = { pid: number; type: string; name?: string; cpu: number;
 export type SessionRow =
   | { kind: 'pty'; mode: SessionMetric['mode']; key: string; label: string; pid: number | null; processes: number; usage: Usage }
   | { kind: 'browser'; mode: 'browser'; key: string; label: string; path: string; id: string; usage: Usage }
-  | { kind: 'vscode'; mode: 'vscode'; key: string; label: string; path: string; pid: number; processes: number; usage: Usage }
   // the worktree's dev server: started by Strado, or found listening on its port
   | { kind: 'server'; mode: 'server'; key: string; label: string; path: string; pid: number; port: number | null; external: boolean; processes: number; usage: Usage };
 export type WorktreeRow = { path: string; label: string; usage: Usage; byKind: Partial<Record<Kind, number>>; sessions: SessionRow[] };
@@ -79,7 +78,6 @@ function compare(sort: SortKey) {
 export function groupSessions(input: {
   sessions: SessionMetric[];
   app: AppMetric[] | null;
-  windows: SessionMetrics['vscodeWindows'];
   processes?: SessionMetrics['processes'];
   worktrees: Worktree[];
   repos: RepoConfig[];
@@ -110,13 +108,6 @@ export function groupSessions(input: {
       usage: { cpu: m.cpu, rssBytes: m.memoryKb * 1024 },
     });
   }
-  for (const w of input.windows) {
-    push(w.path, {
-      kind: 'vscode', mode: 'vscode', key: `vscode:${w.path}:${w.pid}`, path: w.path, pid: w.pid,
-      processes: w.processes, label: 'VS Code', usage: { cpu: w.cpu, rssBytes: w.rssBytes },
-    });
-  }
-
   const procByPid = new Map((input.processes ?? []).map((p) => [p.pid, p]));
   for (const w of input.worktrees) {
     const pid = w.process?.pid;
@@ -170,7 +161,7 @@ export function groupSessions(input: {
 
 // Electron's process list folded into the rows people recognise. Browser
 // previews are listed under their worktree instead, so Renderer is the
-// dashboard alone. VS Code (shared) is the serve-web tree minus windows.
+// dashboard alone.
 export function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): AppRow[] {
   const rows: AppRow[] = [];
   if (app) {
@@ -183,7 +174,6 @@ export function appRows(app: AppMetric[] | null, m: SessionMetrics['app']): AppR
   }
   rows.push({ id: 'server', label: 'Server', usage: { cpu: m.server.cpu, rssBytes: m.server.rssBytes } });
   if (m.daemon) rows.push({ id: 'daemon', label: 'Daemon', usage: { cpu: m.daemon.cpu, rssBytes: m.daemon.rssBytes } });
-  if (m.vscode) rows.push({ id: 'vscode', label: 'VS Code (shared)', usage: { cpu: m.vscode.cpu, rssBytes: m.vscode.rssBytes } });
   return rows;
 }
 
@@ -214,7 +204,7 @@ export function memoryByKind(groups: Group[], app: AppRow[], lsp: LspRow[] = [])
   const acc: Partial<Record<Kind, number>> = {};
   for (const r of lsp) addKind(acc, 'lsp', r.usage.rssBytes);
   for (const g of groups) for (const [k, v] of Object.entries(g.byKind)) addKind(acc, k as Kind, v);
-  for (const r of app) addKind(acc, r.id === 'vscode' ? 'vscode' : 'app', r.usage.rssBytes);
+  for (const r of app) addKind(acc, 'app', r.usage.rssBytes);
   return KIND_ORDER.filter((k) => (acc[k] ?? 0) > 0).map((k) => ({ kind: k, bytes: acc[k]! }));
 }
 

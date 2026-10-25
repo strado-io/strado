@@ -10,11 +10,11 @@ const git = vi.hoisted(() => ({ changes: vi.fn() }));
 vi.mock('../../api', () => ({ api: { files, lsp, lspServers, runners, worktrees: { git } } }));
 vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
-  FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInVsCode?: unknown;
+  FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown; onOpenInEditor?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
     onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
-      data-ask={String(!!p.onAskAgent)} data-vscode={String(!!p.onOpenInVsCode)}>
+      data-ask={String(!!p.onAskAgent)} data-editor={String(!!p.onOpenInEditor)}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
       <button type="button" onClick={() => p.onNavigate?.('definition', { path: p.path, line: 2, col: 4 })}>F12</button>
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
@@ -166,11 +166,11 @@ describe('FilesTab', () => {
     }
   });
 
-  it('passes Ask agent and Open in VS Code through', async () => {
-    render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} onAskAgent={vi.fn()} onOpenInVsCode={vi.fn()} />);
+  it('passes Ask agent and Open in editor through', async () => {
+    render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} onAskAgent={vi.fn()} onOpenInEditor={vi.fn()} />);
     await flush();
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-ask', 'true');
-    expect(screen.getByTestId('viewer')).toHaveAttribute('data-vscode', 'true');
+    expect(screen.getByTestId('viewer')).toHaveAttribute('data-editor', 'true');
   });
 
   it('glass panes, 13/11px type, no raw hex', async () => {

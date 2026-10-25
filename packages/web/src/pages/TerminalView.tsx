@@ -19,15 +19,13 @@ import { api, type StationDto, type UiCommandAck, type UiTabRef } from '../api';
 import { subscribeWorktrees } from '../eventStream';
 import { useCapabilities } from '../hooks/capabilities';
 import { readClosedAgents, rememberClosedAgent } from '../hooks/agentTabs';
-import { readVscodeTabs, rememberVscodeTab } from '../hooks/vscodeTabs';
 import { readDiffTabs, rememberDiffTab } from '../hooks/diffTabs';
-import { readFilesTabs, rememberFilesTab } from '../hooks/filesTabs';
+import { migrateEditorTabs, readFilesTabs, rememberFilesTab } from '../hooks/filesTabs';
 import {
   forgetKbTabState, readKbTabIds, readKbTabs, rememberKbSelection,
   rememberKbTab, rememberKbTabIds,
 } from '../hooks/kbTabs';
 import { renameSession, sessionNameKey, shellNameKey, useShellNames, type NamedSessionMode } from '../hooks/shellNames';
-import { closeVscodeTab } from './vscodeTabClose';
 import {
   browserTabLabel, previewKey, readBrowserMeta, readBrowserTabIds, readBrowserTabs,
   migrateGuessedBrowserUrls, rememberBrowserMeta, rememberBrowserTab, rememberBrowserTabIds,
@@ -38,7 +36,6 @@ import { FilesTab } from '../components/files/FilesTab';
 import { FilePicker } from '../components/files/FilePicker';
 import { FileAskDialog } from '../components/files/FileAskDialog';
 import { jarvisServerPort } from '../lib/jarvis/serverPort';
-import { vscodeSrc } from '../lib/vscodeSrc';
 import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
@@ -47,7 +44,7 @@ import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
   ArrowLeftIcon, ArrowRightIcon, BookIcon, CameraIcon, ClaudeIcon, ClockIcon,
   CodexIcon, CopyIcon, ExternalIcon, FolderIcon, GitIcon, GlobeIcon, OpencodeIcon, PiIcon,
-  PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon, VsCodeIcon,
+  PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
 import { TabStrip, TabTile } from '../components/hub/TabStrip';
@@ -75,7 +72,7 @@ import { hubKeyOf, nextBrowserId, type ParsedUiCommand, type UiPlace } from '../
 
 type Tab = {
   path: string;
-  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb' | 'diff' | 'files';
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser' | 'kb' | 'diff' | 'files';
   id: string;
   /** Set when this session's pty lives on a runner rather than this machine. */
   remote?: RemoteTarget | null;
@@ -108,14 +105,11 @@ type Group = {
   codexOpen: boolean;
   opencodeOpen: boolean;
   piOpen: boolean;
-  // Purely client-side: VS Code web is an iframe, not a pty session, so the
-  // server never reports it — the tab lives and dies with this panel.
-  vscodeOpen: boolean;
   // Electron-only embedded preview (webview) of the worktree's dev server.
   browserOpen: boolean;
   // Extra Browser tabs beyond 1 (client-side, persisted in localStorage).
   browserIds: string[];
-  // Client-side, like vscodeOpen: the Knowledge Base tab has no server
+  // Client-side, like browserOpen: the Knowledge Base tab has no server
   // session — it just renders the worktree's markdown files.
   kbOpen: boolean;
   // Extra independently stateful document tabs beyond Knowledge Base 1.
@@ -163,8 +157,8 @@ function extraIds(ids: Iterable<string> | undefined): string[] {
 // Tab icons are the mode identity; their COLOR carries status only
 // (amber = agent working, blue = needs your input, neutral = idle).
 const IDLE_ICON = 'text-zinc-500';
-// How often a visible VS Code tab tells the server it is still in use.
-const VSCODE_HEARTBEAT_MS = 60_000;
+// Saved tabs from before the embedded VS Code was removed become Files tabs.
+migrateEditorTabs();
 // An agent command may not move or split a pane the human touched this recently.
 const HUMAN_ACTIVE_MS = 5_000;
 const SHELL_HOST_ICON = { claude: ClaudeIcon, codex: CodexIcon, opencode: OpencodeIcon, pi: PiIcon };
@@ -224,16 +218,14 @@ function groupTabs(
   shellNames: Record<string, string> = {},
   browserMeta: Record<string, { title?: string; favicon?: string | null }> = {},
   kbTitles: Record<string, string> = {},
-  // VS Code is served by the worktree's OWN machine, so on a self-hosted runner
-  // its tab must be ABSENT (a runner has no vscode-web) — this flag is false for
-  // a remote worktree.
+  // Desktop embeds (false for a remote worktree); the Browser default follows it.
   embeds = true,
   // Shells whose pty lives on a runner. They sit in this worktree's strip
   // alongside local ones — that adjacency is the whole point of the feature.
   remoteShells: RemoteShell[] = [],
   // The Browser preview is rendered by the LOCAL desktop (a WebContentsView
   // pointing at the forwarded 127.0.0.1 URL), not by the worktree's server, so
-  // it IS available for a remote worktree — gated separately from VS Code.
+  // it IS available for a remote worktree — gated separately from `embeds`.
   browserEmbeds = embeds,
 ): { tab: Tab; label: string; icon: React.ReactNode; hint?: string }[] {
   // saved drag order applies at the end, so every consumer (strip, switcher,
@@ -292,13 +284,6 @@ function groupTabs(
       label: rs.runnerId.replace(/-[a-z0-9]{4}$/, ''),
       icon: <ShellIcon className={IDLE_ICON} />,
     })),
-    ...(g.vscodeOpen && embeds
-      ? [{
-          tab: { path: g.path, mode: 'vscode' as const, id: '1' },
-          label: 'VS Code',
-          icon: <VsCodeIcon className={IDLE_ICON} />,
-        }]
-      : []),
     ...(browserEmbeds ? [...(g.browserOpen ? ['1'] : []), ...g.browserIds.filter((id) => id !== '1')] : []).map((id) => {
       const meta = browserMeta[previewKey(g.path, id)];
       return {
@@ -330,12 +315,12 @@ function groupTabs(
       : []),
   ];
   // A remote group's pty tabs all target the runner. The Browser tab is a LOCAL
-  // desktop surface (it renders the forwarded 127.0.0.1 URL), and VS Code/KB are
-  // absent on a runner — so none of those get the runner target; only pty modes
-  // do.
+  // desktop surface (it renders the forwarded 127.0.0.1 URL), and KB/Changes/
+  // Files are client-side — so none of those get the runner target; only pty
+  // modes do.
   const withTarget = g.remote
     ? entries.map((e) =>
-        e.tab.mode === 'vscode' || e.tab.mode === 'browser' || e.tab.mode === 'kb' || e.tab.mode === 'diff' || e.tab.mode === 'files'
+        e.tab.mode === 'browser' || e.tab.mode === 'kb' || e.tab.mode === 'diff' || e.tab.mode === 'files'
           ? e
           : { ...e, tab: { ...e.tab, remote: g.remote } },
       )
@@ -576,7 +561,7 @@ export function TerminalView({
   onClose: () => void;
   /** undefined = a generic open (sidebar row, palette) — restore the tab the
    *  user was on last time; an explicit mode always wins */
-  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb' | 'diff' | 'files';
+  mode?: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser' | 'kb' | 'diff' | 'files';
   sessionId?: string;
   /** Bumps on every explicit open request from the parent (for example, a
    *  notification). `mode`/`sessionId` are read once at mount, so this is what
@@ -616,8 +601,8 @@ export function TerminalView({
   const localCaps = useCapabilities();
   const caps = remote ? { ...localCaps, embeds: false, notifications: false } : localCaps;
   // The Browser preview is a LOCAL desktop surface (WebContentsView on the
-  // forwarded 127.0.0.1 URL), so it stays available for a REMOTE worktree —
-  // unlike VS Code, which the runner would have to serve. Keyed on the desktop's
+  // forwarded 127.0.0.1 URL), so it stays available for a REMOTE worktree.
+  // Keyed on the desktop's
   // own embed capability, never the runner's.
   const browserEmbeds = isElectron && localCaps.embeds;
   const tickets = useTickets();
@@ -641,7 +626,6 @@ export function TerminalView({
     if (t.mode === 'opencode') return (t.id === '1' ? !!w.hasOpencodeSession : (w.opencodeSessions ?? []).includes(t.id)) && !closed.opencode.has(w.path);
     if (t.mode === 'pi') return (t.id === '1' ? !!w.hasPiSession : (w.piSessions ?? []).includes(t.id)) && !closed.pi.has(w.path);
     if (t.mode === 'shell') return t.id === '1' || (w.shellSessions ?? []).includes(t.id);
-    if (t.mode === 'vscode') return readVscodeTabs().has(w.path);
     if (t.mode === 'kb') {
       return t.id === '1'
         ? readKbTabs().has(w.path)
@@ -677,7 +661,6 @@ export function TerminalView({
   };
 
   useEffect(() => {
-    if (mode === 'vscode') rememberVscodeTab(worktree.path, true);
     if (mode === 'kb' && sessionId === '1') rememberKbTab(worktree.path, true);
     if (mode === 'diff') rememberDiffTab(worktree.path, true);
     if (mode === 'files') rememberFilesTab(worktree.path, true);
@@ -692,8 +675,8 @@ export function TerminalView({
   // match the tabs the strip builds.
   const remoteFor = (path: string) => (remote ? { ...remote, path } : null);
   const [active, setActive] = useState<Tab>(
-    mode === 'vscode' || mode === 'browser' || mode === 'kb' || mode === 'diff' || mode === 'files'
-      ? { path: worktree.path, mode, id: mode === 'vscode' || mode === 'diff' || mode === 'files' ? '1' : sessionId }
+    mode === 'browser' || mode === 'kb' || mode === 'diff' || mode === 'files'
+      ? { path: worktree.path, mode, id: mode === 'diff' || mode === 'files' ? '1' : sessionId }
       : { path: worktree.path, mode, id: sessionId, remote: remoteFor(worktree.path) },
   );
   const activeRef = useRef(active);
@@ -731,7 +714,7 @@ export function TerminalView({
   const killedRemoteRef = useRef(new Set<string>());
   const remoteKillKey = (p: string, m: string, id: string) => `${p}\0${m}:${id}`;
 
-  // Viewing counts: the active tab (terminal or embedded VS Code) heartbeats
+  // Viewing counts: the active tab heartbeats
   // its worktree's activity clock while the window is focused.
   useActivityBeacon(active.path);
 
@@ -748,7 +731,6 @@ export function TerminalView({
     codexOpen: (mode === 'codex' || !!worktree.hasCodexSession) && !closedAgentsRef.current!.codex.has(worktree.path),
     opencodeOpen: (mode === 'opencode' || !!worktree.hasOpencodeSession) && !closedAgentsRef.current!.opencode.has(worktree.path),
     piOpen: (mode === 'pi' || !!worktree.hasPiSession) && !closedAgentsRef.current!.pi.has(worktree.path),
-    vscodeOpen: mode === 'vscode' || readVscodeTabs().has(worktree.path),
     browserOpen: isElectron && readBrowserTabs().has(worktree.path),
     browserIds: isElectron ? readBrowserTabIds()[worktree.path] ?? [] : [],
     kbOpen: (mode === 'kb' && sessionId === '1') || readKbTabs().has(worktree.path),
@@ -1082,7 +1064,7 @@ export function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remote, remoteForward.forward, groups, browserUrl, procs[worktree.path]?.status, procs[worktree.path]?.port, procs[worktree.path]?.detectedUrl, procs[worktree.path]?.proxyUrl]);
   // Custom shell-tab names (double-click a shell tab to rename; shell only —
-  // agent/vscode/browser tabs keep their fixed labels). `renaming` holds the
+  // agent/browser tabs keep their fixed labels). `renaming` holds the
   // tab being edited plus the draft text for the inline input.
   const shellNames = useShellNames();
   // Remote shells per worktree path, restored from storage so a reopened window
@@ -1232,7 +1214,6 @@ export function TerminalView({
               };
               continue;
             }
-            const storedVscode = readVscodeTabs().has(row.path);
             const storedBrowser = isElectron && readBrowserTabs().has(row.path);
             const storedKb = readKbTabs().has(row.path);
             const storedKbIds = readKbTabIds()[row.path] ?? [];
@@ -1240,7 +1221,7 @@ export function TerminalView({
             const storedFiles = readFilesTabs().has(row.path);
             const live =
               row.hasClaudeSession || row.hasCodexSession || row.hasOpencodeSession || row.hasPiSession ||
-              storedVscode || storedBrowser || storedDiff || storedFiles ||
+              storedBrowser || storedDiff || storedFiles ||
               storedKb || storedKbIds.length > 0 || (row.shellSessions?.length ?? 0) > 0;
             if (!live) continue;
             const meta = rowMetaRef.current.get(row.path)!;
@@ -1254,7 +1235,6 @@ export function TerminalView({
               codexOpen: !!row.hasCodexSession && !closedAgentsRef.current!.codex.has(row.path),
               opencodeOpen: !!row.hasOpencodeSession && !closedAgentsRef.current!.opencode.has(row.path),
               piOpen: !!row.hasPiSession && !closedAgentsRef.current!.pi.has(row.path),
-              vscodeOpen: storedVscode,
               browserOpen: storedBrowser,
               browserIds: isElectron ? readBrowserTabIds()[row.path] ?? [] : [],
               kbOpen: storedKb,
@@ -1342,7 +1322,6 @@ export function TerminalView({
             codexOpen: !!evt.data.hasCodexSession && !closedAgentsRef.current!.codex.has(path),
             opencodeOpen: !!evt.data.hasOpencodeSession && !closedAgentsRef.current!.opencode.has(path),
             piOpen: !!evt.data.hasPiSession && !closedAgentsRef.current!.pi.has(path),
-            vscodeOpen: false,
             browserOpen: false,
             browserIds: [],
             kbOpen: false,
@@ -1465,13 +1444,6 @@ export function TerminalView({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // VS Code web server base urls, keyed by worktree path, fetched the first
-  // time that worktree's VS Code tab becomes active. While the tab is visible
-  // the same call repeats as a heartbeat: the server stops a workbench nobody
-  // has looked at for a while (its tsserver holds GBs), and a new pid in the
-  // reply means it was restarted, so the frame (keyed by pid) remounts.
-  const [vscodeUrls, setVscodeUrls] = useState<Record<string, { url: string; pid: number | null }>>({});
-  const [vscodeError, setVscodeError] = useState<string | null>(null);
 
 
   // Phase 2: the hub is scoped to one worktree — render only its own group.
@@ -1487,7 +1459,7 @@ export function TerminalView({
 
   // ---------- split panes (Cmd+D / Cmd+Shift+D) ----------
   const isPtyMode = (m: Tab['mode']): m is PtyTab['mode'] =>
-    m !== 'vscode' && m !== 'browser' && m !== 'kb' && m !== 'diff' && m !== 'files';
+    m !== 'browser' && m !== 'kb' && m !== 'diff' && m !== 'files';
   // Resolve against the actual strip rather than reparsing the key. Besides
   // keeping remote runner identity exact, this lets Browser and Knowledge Base
   // leaves participate in the same layout tree as PTY sessions.
@@ -1518,10 +1490,6 @@ export function TerminalView({
   const activeLayoutIndex = layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey));
   const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]! : null;
   const paneTree: PaneNode = layout ?? { kind: 'leaf', key: activePaneKey };
-  // VS Code is an iframe leaf like any other dockable tab. It is "shown" when
-  // its leaf is in the rendered tree — as the full tab or docked in a split.
-  const vscodePaneKey = tabKeyOf({ mode: 'vscode', id: '1' });
-  const vscodeShown = active.path === worktree.path && hasLeaf(paneTree, vscodePaneKey);
   // Mount a PTY surface the first time its tab/group is shown, then retain it
   // until the tab closes. The flat persistent layer below prevents switching
   // groups from tearing down xterm and reconnecting its WebSocket.
@@ -1652,7 +1620,7 @@ export function TerminalView({
     pendingSurfaceRef.current = null;
     if (active.path !== p.path) return;
     const key = tabKeyOf(active);
-    // Lifted out of wherever it already sat (VS Code is one per worktree), then
+    // Lifted out of wherever it already sat (a one-per-worktree tab), then
     // put where the empty pane is.
     const current = withoutLeaf(paneLayoutsRef.current[p.path] ?? [], key);
     setLayouts(p.path, current.map((l) => (hasLeaf(l, p.placeholder) ? replaceLeaf(l, p.placeholder, key) : l)));
@@ -1827,64 +1795,6 @@ export function TerminalView({
       ? { position: 'absolute', left: rect.left, top: rect.top, width: rect.width, height: rect.height }
       : undefined;
   };
-  // Boot the workbench as soon as its pane is on screen — as the full tab or
-  // docked beside a terminal — so a restored split never shows a blank leaf.
-  // While it stays on screen, re-ask every VSCODE_HEARTBEAT_MS: that is the
-  // server's "still in use" signal (it stops an idle workbench), and a new
-  // pid means it was restarted, which remounts the frame.
-  const vscodeAllowedOrigins = useRef(new Set<string>());
-  useEffect(() => {
-    if (!vscodeShown) return;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const path = worktree.path;
-    setVscodeError(null);
-    // ready:false = serve-web is still downloading a VS Code update and would
-    // serve a raw placeholder page — keep OUR loading overlay and re-poll.
-    const attempt = () => {
-      api.vscode
-        .open(path)
-        .then(async (r) => {
-          if (!alive) return;
-          if (r.ready === false) { timer = setTimeout(attempt, 3000); return; }
-          // VS Code 1.136+ sends SAMEORIGIN/frame-ancestors headers. Electron
-          // relaxes them only after this exact loopback origin is registered;
-          // await the IPC so the first iframe navigation cannot race it.
-          if (window.strado?.vscodeOrigin && !vscodeAllowedOrigins.current.has(r.url)) {
-            let allowed = false;
-            try {
-              allowed = await window.strado.vscodeOrigin(r.url);
-            } catch (error) {
-              // During local development Vite can reload the new preload/web
-              // bundle while Electron main is still the previous build, which
-              // has no IPC handler yet. Make the required restart actionable.
-              if (/No handler registered for 'strado:vscode-origin'/i.test(String(error))) {
-                throw new Error('Restart Strado Dev to finish enabling the VS Code embed');
-              }
-              throw error;
-            }
-            if (!allowed) throw new Error('VS Code returned an unsupported embed URL');
-            vscodeAllowedOrigins.current.add(r.url);
-          }
-          if (!alive) return;
-          const pid = r.pid ?? null;
-          setVscodeError(null);
-          setVscodeUrls((m) => (m[path]?.url === r.url && m[path]?.pid === pid ? m : { ...m, [path]: { url: r.url, pid } }));
-          timer = setTimeout(attempt, VSCODE_HEARTBEAT_MS);
-        })
-        .catch((e) => {
-          if (!alive) return;
-          setVscodeError(e instanceof Error ? e.message : String(e));
-          // a failed heartbeat (server restarting) must not end the heartbeats
-          timer = setTimeout(attempt, VSCODE_HEARTBEAT_MS);
-        });
-    };
-    attempt();
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [vscodeShown, worktree.path]);
   // Diffstat for the active worktree, shown on the Changes toggle. The hub is
   // scoped to one worktree, so the active tab is normally this worktree — read
   // the `worktree` prop, which Dashboard keeps fresh (its 15s poll of the
@@ -1964,8 +1874,7 @@ export function TerminalView({
         return;
       }
       // Cmd+P: go to a file in the active worktree, in the Files tab. Only
-      // with focus in the hub: inside the VS Code frame Cmd+P stays its own
-      // Quick Open (the chord is never forwarded from an embed).
+      // with focus in the hub (the chord is never forwarded from an embed).
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'p') {
         if (e.repeat) return;
         e.preventDefault();
@@ -1974,7 +1883,7 @@ export function TerminalView({
         return;
       }
       // Cmd+W closes the active tab (terminal/shell/agent focus lands here;
-      // Browser/VS Code focus arrives via the 'close-tab' IPC combo below).
+      // Browser focus arrives via the 'close-tab' IPC combo below).
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'w') {
         // Inside the Files tab with a file tab open, ⌘W closes that file tab
         // (its own handler); the hub's tab stays.
@@ -1994,8 +1903,7 @@ export function TerminalView({
         return;
       }
       // Cmd+D splits the focused pane side-by-side; Cmd+Shift+D top/bottom.
-      // Renderer-focused only, on purpose: inside the VS Code embed Cmd+D is
-      // multi-cursor "add next match" and must stay VS Code's.
+      // Renderer-focused only, on purpose: an embed keeps its own Cmd+D.
       if (e.metaKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === 'd') {
         if (e.repeat) return;
         e.preventDefault();
@@ -2023,7 +1931,7 @@ export function TerminalView({
     // blur = focus moved elsewhere (another app, another webContents): the
     // Meta keyup will never arrive here, so cancel instead of committing
     window.addEventListener('blur', cancel);
-    // chords pressed inside an embed (Browser preview view, VS Code iframe)
+    // chords pressed inside an embed (the Browser preview view)
     // arrive via IPC instead of the listeners above; pull focus back to the
     // hub so the rest of the hold (arrows, Cmd release) lands natively
     const offHotkey = window.strado?.onHotkey?.((combo) => {
@@ -2060,28 +1968,6 @@ export function TerminalView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGroup, active, ordered]);
-  // Announce while a VS Code iframe is on screen (full tab or docked pane):
-  // the shell then intercepts the window's Cmd+Arrow keys (the cross-origin
-  // iframe would otherwise swallow them and the switcher could never open).
-  useEffect(() => {
-    const bridge = window.strado;
-    if (!bridge?.hotkeyScope) return;
-    bridge.hotkeyScope(vscodeShown);
-    return () => bridge.hotkeyScope?.(false);
-  }, [vscodeShown]);
-  // Clicks inside the cross-origin iframe never reach this document, so track
-  // pane focus via the window blur that fires when focus moves into a frame.
-  useEffect(() => {
-    if (!vscodeShown) return;
-    const onBlur = () => {
-      const el = document.activeElement;
-      if (el instanceof HTMLIFrameElement && el.dataset.vscodePath === worktree.path && active.mode !== 'vscode') {
-        setActive({ path: worktree.path, mode: 'vscode', id: '1' });
-      }
-    };
-    window.addEventListener('blur', onBlur);
-    return () => window.removeEventListener('blur', onBlur);
-  }, [vscodeShown, worktree.path, active.mode]);
   // Card previews load once per open: terminal tails + browser thumbnail.
   const switcherOpen = switcher !== null;
   useEffect(() => {
@@ -2103,7 +1989,7 @@ export function TerminalView({
             setSwitchCards((p) => ({ ...p, [cardKey]: { url, img: r } }));
           }
         });
-      } else if (t.mode !== 'vscode' && t.mode !== 'kb' && t.mode !== 'diff' && t.mode !== 'files') {
+      } else if (t.mode !== 'kb' && t.mode !== 'diff' && t.mode !== 'files') {
         // Hover previews read the LOCAL pty buffer; a remote session's buffer
         // lives on the runner, and asking here would return an empty preview
         // that looks like a dead session.
@@ -2547,9 +2433,6 @@ export function TerminalView({
       hint: 'Pi needs to be installed to use',
     },
     { mode: 'shell', label: 'Shell', icon: <ShellIcon />, run: addShell },
-    ...(caps.embeds
-      ? [{ mode: 'vscode', label: 'VS Code', icon: <VsCodeIcon />, run: () => openMode('vscode') }]
-      : []),
     { mode: 'kb', label: 'Knowledge Base', icon: <BookIcon />, run: () => addKb() },
     // The diff reads LOCAL git state; a runner worktree has none here.
     ...(!remote ? [{ mode: 'diff', label: 'Changes', icon: <GitIcon />, run: () => openMode('diff') }] : []),
@@ -2563,15 +2446,15 @@ export function TerminalView({
       : []),
   ];
 
-  // Header quick-launch: open (or jump to) a Claude/Codex/VS Code tab for the
+  // Header quick-launch: open (or jump to) a Claude/Codex/Files tab for the
   // ACTIVE worktree without leaving the panel. Marking the group open and
   // activating the tab is enough — the terminal WS spawns the pty on connect.
   const openMode = (
-    m: 'claude' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'kb' | 'diff' | 'files',
+    m: 'claude' | 'codex' | 'opencode' | 'pi' | 'browser' | 'kb' | 'diff' | 'files',
     opts?: { path?: string; id?: string },
   ) => {
     const path = opts?.path ?? active.path;
-    const id = m === 'vscode' || m === 'diff' || m === 'files' ? '1' : opts?.id ?? '1';
+    const id = m === 'diff' || m === 'files' ? '1' : opts?.id ?? '1';
     // Re-opening an agent lifts the user-closed suppression so SSE session
     // detection can drive the tab again.
     if (m === 'claude' || m === 'codex' || m === 'opencode' || m === 'pi') {
@@ -2579,7 +2462,6 @@ export function TerminalView({
       rememberClosedAgent(m, path, false);
       killedRemoteRef.current.delete(remoteKillKey(path, m, id));
     }
-    if (m === 'vscode') rememberVscodeTab(path, true);
     if (m === 'diff') rememberDiffTab(path, true);
     if (m === 'files') rememberFilesTab(path, true);
     if (m === 'kb') {
@@ -2608,7 +2490,6 @@ export function TerminalView({
               codexOpen: g.codexOpen || m === 'codex',
               opencodeOpen: g.opencodeOpen || m === 'opencode',
               piOpen: g.piOpen || m === 'pi',
-              vscodeOpen: g.vscodeOpen || m === 'vscode',
               browserOpen: g.browserOpen || m === 'browser',
               kbOpen: g.kbOpen || (m === 'kb' && id === '1'),
               kbIds: m === 'kb' && id !== '1' ? sortIds([...g.kbIds, id]) : g.kbIds,
@@ -2624,7 +2505,7 @@ export function TerminalView({
       path,
       mode: m,
       id,
-      remote: m === 'vscode' || m === 'browser' || m === 'kb' || m === 'diff' || m === 'files' ? null : remoteFor(path),
+      remote: m === 'browser' || m === 'kb' || m === 'diff' || m === 'files' ? null : remoteFor(path),
     });
   };
 
@@ -2654,6 +2535,14 @@ export function TerminalView({
     }));
     openMode('files', { path: worktreePath });
   };
+  // "Open in editor": the person's own desktop editor, on this machine only (a
+  // runner worktree has no local editor, so there is no button for one).
+  const openInEditor = remote ? undefined : (worktreePath: string, path: string, line: number) => {
+    api.editors.open(localWsId, { worktreePath, path, line }).catch((err: unknown) => {
+      console.warn('[files] open in editor failed:', err);
+      setHubHint('Couldn’t open the editor. Pick one in Settings › Files.');
+    });
+  };
   // A runner's worktree reads its files through the runner; wsId is then unused.
   // `name` lets the Files tab say which machine an install belongs on.
   const filesTarget = remote ? { runnerId: remote.runnerId, remoteWsId: remote.wsId, name: remote.runnerName } : undefined;
@@ -2676,48 +2565,12 @@ export function TerminalView({
   const [filePicker, setFilePicker] = useState<string | null>(null);
   openFilePickerRef.current = () => setFilePicker(activeRef.current.path);
   const [fileAsk, setFileAsk] = useState<FileAskContext | null>(null);
-  // VS Code web takes a file and line only when its frame first loads; a live
-  // frame is never reloaded (that would drop the Claude IDE bridge's context).
-  const [vscodeGoto, setVscodeGoto] = useState<Record<string, { path: string; line: number }>>({});
   const [hubHint, setHubHint] = useState<string | null>(null);
   useEffect(() => {
     if (!hubHint) return;
     const t = window.setTimeout(() => setHubHint(null), 5000);
     return () => window.clearTimeout(t);
   }, [hubHint]);
-  // Each frame's src, fixed when the frame first renders: a later change
-  // would navigate (reload) it. A pending goto rides on that first load only.
-  const vscodeSrcRef = useRef(new Map<string, string>());
-  const vscodeFrameSrc = (worktreePath: string): string => {
-    const v = vscodeUrls[worktreePath];
-    const key = `${worktreePath}:${v?.pid ?? ''}:${v?.url ?? ''}`;
-    let src = vscodeSrcRef.current.get(key);
-    if (src === undefined) {
-      const goto = vscodeGoto[worktreePath];
-      src = vscodeSrc(v?.url ?? '', worktreePath, goto);
-      vscodeSrcRef.current.set(key, src);
-    }
-    return src;
-  };
-  useEffect(() => {
-    // Consumed: a frame that has rendered with it must not take it again.
-    const used = Object.keys(vscodeGoto).filter((p) => vscodeUrls[p]);
-    if (used.length) setVscodeGoto((prev) => Object.fromEntries(Object.entries(prev).filter(([p]) => !used.includes(p))));
-  }, [vscodeGoto, vscodeUrls]);
-  const openInVsCode = (worktreePath: string, path: string, line: number) => {
-    const live = groupsRef.current.some((g) => g.path === worktreePath && g.vscodeOpen) && !!vscodeUrls[worktreePath];
-    if (live) {
-      navigator.clipboard?.writeText(`${path}:${line}`).catch(() => undefined);
-      setHubHint(`Copied ${path}:${line} — press ⌘P in VS Code and paste`);
-    } else {
-      // A frame that comes back (same server) must load afresh, with the goto.
-      for (const key of [...vscodeSrcRef.current.keys()]) {
-        if (key.startsWith(`${worktreePath}:`)) vscodeSrcRef.current.delete(key);
-      }
-      setVscodeGoto((prev) => ({ ...prev, [worktreePath]: { path, line } }));
-    }
-    openMode('vscode', { path: worktreePath });
-  };
 
   // Apply an explicit open request from the parent (such as a notification)
   // that lands while THIS worktree's hub is already open — the
@@ -2983,7 +2836,7 @@ export function TerminalView({
   };
   requestCloseTabRef.current = requestCloseTab;
 
-  // VS Code and Browser tabs are client-side state mirrored in localStorage.
+  // Browser tabs are client-side state mirrored in localStorage.
   // Settings → Sessions closes them by writing storage; run the normal close
   // for any tab here that storage no longer lists, so the strip updates live.
   const closeTabRef = useRef<(tab: Tab) => void>(() => {});
@@ -2993,9 +2846,6 @@ export function TerminalView({
     const sync = () => {
       const g = groupsForSyncRef.current.find((x) => x.path === worktree.path);
       if (!g) return;
-      if (g.vscodeOpen && !readVscodeTabs().has(g.path)) {
-        closeTabRef.current({ path: g.path, mode: 'vscode', id: '1' });
-      }
       if (isElectron) {
         if (g.browserOpen && !readBrowserTabs().has(g.path)) {
           closeTabRef.current({ path: g.path, mode: 'browser', id: '1' });
@@ -3006,10 +2856,8 @@ export function TerminalView({
         }
       }
     };
-    window.addEventListener('strado:vscode-tabs', sync);
     window.addEventListener('strado:browser-tabs', sync);
     return () => {
-      window.removeEventListener('strado:vscode-tabs', sync);
       window.removeEventListener('strado:browser-tabs', sync);
     };
   }, [worktree.path]);
@@ -3037,13 +2885,13 @@ export function TerminalView({
       }
       return;
     }
-    // VS Code / Browser / Knowledge Base are client-side embed tabs — nothing
+    // Browser / Knowledge Base / Changes / Files are client-side tabs — nothing
     // to kill server-side.
     // A run tab: its idle post-run shell ends; a live run only detaches (the
     // server refuses with 409 'running' and the dev server keeps running).
     const runTab = tab.mode === 'shell' && isRunTab(tab.id) && !tab.remote;
     if (runTab) api.worktrees.closeRunTab(localWsId, tab.path, runIdOfTab(tab.id) || undefined).catch(() => undefined);
-    if (tab.mode !== 'vscode' && tab.mode !== 'browser' && tab.mode !== 'kb' && tab.mode !== 'diff' && tab.mode !== 'files' && !runTab) {
+    if (tab.mode !== 'browser' && tab.mode !== 'kb' && tab.mode !== 'diff' && tab.mode !== 'files' && !runTab) {
       if (remote) {
         // The session lives on the runner — the local server has never heard
         // of this path. Suppress the id BEFORE the request so a poll snapshot
@@ -3148,15 +2996,6 @@ export function TerminalView({
             };
           }
           return { ...g, piOpen: false };
-        }
-        if (tab.mode === 'vscode') {
-          closeVscodeTab(tab.path);
-          setVscodeUrls((m) => {
-            const n = { ...m };
-            delete n[tab.path];
-            return n;
-          });
-          return { ...g, vscodeOpen: false };
         }
         if (tab.mode === 'browser') {
           const pk = previewKey(tab.path, tab.id);
@@ -3383,7 +3222,7 @@ export function TerminalView({
           })()}
           {/* Diff and the changes rail read LOCAL git state. For a worktree on a runner they would silently show
               nothing, so they are absent rather than inert — the same rule the
-              capability flag applies to VS Code and Browser. */}
+              capability flag applies to the Browser. */}
           {!remote && (
             <>
               <button
@@ -3641,43 +3480,6 @@ export function TerminalView({
           </>
         )}
         <div ref={paneSurfaceRef} className="relative min-h-0 flex-1">
-          {/* VS Code frames stay MOUNTED (css-hidden) while other tabs are
-              active: unmounting would kill the web workbench, and with it the
-              Claude IDE bridge's active-file/selection context. One frame per
-              worktree that has (or had) a VS Code tab open this session. */}
-          {groups
-            .filter((g) => g.vscodeOpen && vscodeUrls[g.path])
-            .map((g) => {
-              const shown = g.path === worktree.path && vscodeShown;
-              const placement = dockedSurfaceStyle(vscodePaneKey);
-              const placed = shown && !!placement;
-              return (
-                <iframe
-                  key={`${g.path}:${vscodeUrls[g.path]?.pid ?? ''}`}
-                  data-vscode-path={g.path}
-                  src={vscodeFrameSrc(g.path)}
-                  title={placed ? 'VS Code' : `VS Code — ${g.path}`}
-                  className={placed ? 'z-10 border-0 bg-pane-card' : 'hidden'}
-                  style={placement}
-                  allow="clipboard-read; clipboard-write"
-                />
-              );
-            })}
-          {vscodeShown && !vscodeUrls[worktree.path] && (
-            <div className="z-10 overflow-hidden bg-pane-card" style={dockedSurfaceStyle(vscodePaneKey)}>
-              {vscodeError ? (
-                <div className="p-4 text-sm text-zinc-500">VS Code web failed to start: {vscodeError}</div>
-              ) : (
-                // same loading treatment as the terminal tabs — the server holds
-                // the URL back while serve-web downloads/boots the workbench, so
-                // this overlay covers the whole warm-up
-                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4">
-                  <span className="animate-pulse text-zinc-400"><VsCodeIcon size={36} /></span>
-                  <span className="text-sm text-zinc-500">Starting VS Code…</span>
-                </div>
-              )}
-            </div>
-          )}
           {/* PTY tabs are mounted lazily on first view and then kept alive in
               this flat layer. The pane tree supplies geometry only, so moving
               between full tabs or split groups never destroys xterm/history
@@ -3939,10 +3741,7 @@ export function TerminalView({
                       });
                     }}
                     onOpenInNewTab={(rel) => addKb(rel)}
-                    onOpenInVsCode={(rel) => {
-                      navigator.clipboard?.writeText(rel).catch(() => undefined);
-                      openMode('vscode');
-                    }}
+                    onOpenInFiles={(rel) => openFile(g.path, rel)}
                   />
                 </div>
               );
@@ -3997,7 +3796,7 @@ export function TerminalView({
                     remote={filesTarget}
                     openPath={filesOpenPath[g.path]}
                     onAskAgent={setFileAsk}
-                    onOpenInVsCode={caps.embeds ? (path, line) => openInVsCode(g.path, path, line) : undefined}
+                    onOpenInEditor={openInEditor ? (path, line) => openInEditor(g.path, path, line) : undefined}
                   />
                 </div>
               );

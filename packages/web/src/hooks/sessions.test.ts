@@ -54,13 +54,13 @@ describe('session helpers', () => {
     ]);
   });
 
-  it('vscode tabs count as sessions and get a chip', () => {
+  it('browser tabs count as sessions and get a chip', () => {
     const tabs = new Set(['/v']);
     expect(hasSession(wt('/v'), tabs)).toBe(true);
     expect(hasSession(wt('/w'), tabs)).toBe(false);
     const chips = sessionChips([wt('/v'), wt('/w', { hasShellSession: true })], tabs);
     expect(chips).toEqual([
-      { path: '/v', mode: 'vscode', sessionId: '1', modeLabel: 'vs code', label: 'v', title: null },
+      { path: '/v', mode: 'browser', sessionId: '1', modeLabel: 'browser', label: 'v', title: null },
       { path: '/w', mode: 'shell', sessionId: '1', modeLabel: 'shell', label: 'w', title: null, hostedAgent: undefined },
     ]);
   });
@@ -105,7 +105,7 @@ describe('chipStatus', () => {
     expect(chipStatus({ ...base, mode: 'opencode', opencodeStatus: 'idle' })).toBe('idle');
     expect(chipStatus({ ...base, mode: 'pi', piStatus: 'working' })).toBe('working');
     expect(chipStatus({ ...base, mode: 'shell' })).toBeUndefined();
-    expect(chipStatus({ ...base, mode: 'vscode' })).toBeUndefined();
+    expect(chipStatus({ ...base, mode: 'browser' })).toBeUndefined();
   });
 });
 
@@ -116,7 +116,6 @@ describe('displayLabel', () => {
     expect(displayLabel({ ...base, mode: 'claude', sessionId: '2' })).toBe('Claude 2');
     expect(displayLabel({ ...base, mode: 'shell', sessionId: '2' })).toBe('Shell 2');
     expect(displayLabel({ ...base, mode: 'opencode', sessionId: '1' })).toBe('OpenCode');
-    expect(displayLabel({ ...base, mode: 'vscode', sessionId: '1' })).toBe('VS Code');
     expect(displayLabel({ ...base, mode: 'browser', sessionId: '1' })).toBe('Browser');
   });
 });

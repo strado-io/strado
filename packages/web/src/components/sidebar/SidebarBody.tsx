@@ -7,7 +7,6 @@ import type { FocusTicket, RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { sessionChips } from '../../hooks/sessions';
-import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import type { AddRepoAnchor } from '../Sidebar';
 import { cardLines, worktreeLabel } from './labels';
@@ -199,7 +198,6 @@ export function SidebarBody({
     { text: 'Add repo…', onClick: () => onAddRepo({ left: e.clientX, right: e.clientX, bottom: e.clientY }) },
     { text: 'New focus…', onClick: () => openComposer() },
   ]);
-  const vscodeTabs = useVscodeTabs();
   // Last-opened times for the cards; the same map ⌘K ranks by.
   const lru = readWorktreeLru();
   // Ticket summaries the Dashboard polls for every row: a card with no name of its own borrows its ticket's.
@@ -214,7 +212,7 @@ export function SidebarBody({
   const localRow = (w: Worktree, repoName: string) => {
     const open: OpenWorktree = onOpenWorktree;
     const activeRow = w.path === activeWorktreePath;
-    const chips = sessionChips([w], vscodeTabs, browserTabs);
+    const chips = sessionChips([w], browserTabs);
     const mr = mrByPath.get(w.path);
     const testIdSuffix = w.path;
     const pinId = localPinId(w);

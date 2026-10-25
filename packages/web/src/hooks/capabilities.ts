@@ -1,13 +1,13 @@
 // What the server we're talking to can actually do.
 //
-// A headless runner has no Electron, so the VS Code embed and the preview
-// browser genuinely do not exist there. The UI asks instead of inferring from
+// A headless runner has no Electron, so the preview browser genuinely does
+// not exist there. The UI asks instead of inferring from
 // "am I in Electron": the desktop shell could one day be pointed at a remote
 // server, and a tab that renders nothing is worse than no tab at all.
 import { useEffect, useState } from 'react';
 
 export interface Capabilities {
-  /** VS Code embed + preview browser (Electron WebContentsView features). */
+  /** The preview browser (an Electron WebContentsView feature). */
   embeds: boolean;
   notifications: boolean;
   /** True when served by a self-hosted runner rather than the desktop app. */

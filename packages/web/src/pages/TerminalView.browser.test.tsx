@@ -92,10 +92,6 @@ vi.mock('../api', () => ({
         close: vi.fn().mockResolvedValue(undefined),
       },
     },
-    vscode: {
-      open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' }),
-      close: vi.fn().mockResolvedValue({ ok: true }),
-    },
     usage: {
       // One account reporting a limit, so the toolbar shows the quota dial.
       accounts: vi.fn().mockResolvedValue([{

@@ -263,7 +263,7 @@ export function Dashboard(props: {
   const [selectedRemote, setSelectedRemote] = useState<RemoteWorktree | null>(null);
   // undefined = a generic open — TerminalView restores the worktree's
   // last-active tab instead of being forced onto one.
-  const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | 'files' | undefined>(undefined);
+  const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser' | 'files' | undefined>(undefined);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   // Bumped on every explicit open (for example, a notification) so the
   // hub switches to the requested tab even when it's already showing this
@@ -547,7 +547,7 @@ export function Dashboard(props: {
     // capture phase: xterm stops propagation of keys it handles, so a
     // bubble listener never sees ⌘K/⌘B while a terminal is focused
     window.addEventListener('keydown', onKeyDown, true);
-    // Shortcuts pressed inside an embed (Browser preview view, VS Code iframe)
+    // Shortcuts pressed inside an embed (the Browser preview view)
     // never reach window listeners; the shell forwards them over IPC.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
       if (combo === 'palette') focusCommandBar();

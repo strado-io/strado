@@ -792,26 +792,6 @@ export const api = {
       request<SessionMetrics>(`/api/sessions/metrics${pids.length ? `?pids=${pids.join(',')}` : ''}`),
     kill: (key: string) =>
       request<void>(`/api/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
-    stopVscode: () => request<void>('/api/sessions/vscode', { method: 'DELETE' }),
-  },
-  vscode: {
-    // Ensures the shared VS Code web server is running; returns its base URL.
-    // ready:false means serve-web is still downloading a VS Code update and
-    // would serve a placeholder page — callers should keep loading and re-poll.
-    // Doubles as the heartbeat: the server stops an unseen workbench after a
-    // while, and a changed pid means it was restarted (reload the frame).
-    open: (folder: string) =>
-      request<{ url: string; ready?: boolean; pid?: number }>('/api/vscode', {
-        method: 'POST',
-        body: JSON.stringify({ folder }),
-      }),
-    // Tears down the given worktree's VS Code web server daemon. Best-effort
-    // — server-side reap on startup/shutdown is the backstop.
-    close: (folder: string) =>
-      request<{ ok: boolean }>('/api/vscode', {
-        method: 'DELETE',
-        body: JSON.stringify({ folder }),
-      }),
   },
   workspaces: {
     list: () =>

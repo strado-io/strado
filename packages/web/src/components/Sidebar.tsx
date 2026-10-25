@@ -167,7 +167,7 @@ export function Sidebar({
 }: Props) {
   const { workspace, allWorkspaces, switchTo } = useWorkspace();
   // Drag the right edge to resize; pointer capture keeps the drag alive over
-  // the VS Code iframe, and the edge follows the cursor so it rarely strays
+  // an embed, and the edge follows the cursor so it rarely strays
   // onto a native preview view. 288 = the old fixed w-72.
   const { width, resizing, handleProps } = useResizableWidth({
     storageKey: 'strado.sidebarWidth', min: 220, max: 480, fallback: 288, edge: 'right',

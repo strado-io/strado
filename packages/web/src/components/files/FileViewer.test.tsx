@@ -21,7 +21,7 @@ function show(over: Partial<Parameters<typeof FileViewer>[0]> = {}, file: FileCo
   const props = {
     worktreePath: '/wt', path: 'src/app.ts',
     read: vi.fn(async () => file), marks: vi.fn(async () => marks),
-    onAskAgent: vi.fn(), onOpenInVsCode: vi.fn(), ...over,
+    onAskAgent: vi.fn(), onOpenInEditor: vi.fn(), ...over,
   };
   return { ...render(<FileViewer {...props} />), props };
 }
@@ -74,15 +74,15 @@ describe('FileViewer', () => {
     expect(screen.queryByRole('button', { name: /Ask agent/ })).toBeNull();
   });
 
-  it('"Open in VS Code" opens at the current line', async () => {
+  it('"Open in editor" opens at the current line', async () => {
     const { props } = show();
     await flush();
     act(() => cm.opts!.onSelection({ from: 9, to: 9, text: 'a' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in VS Code' }));
-    expect(props.onOpenInVsCode).toHaveBeenCalledWith('src/app.ts', 9);
+    fireEvent.click(screen.getByRole('button', { name: 'Open in editor' }));
+    expect(props.onOpenInEditor).toHaveBeenCalledWith('src/app.ts', 9);
     fireEvent.click(screen.getByRole('button', { name: 'Next change' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in VS Code' }));
-    expect(props.onOpenInVsCode).toHaveBeenLastCalledWith('src/app.ts', 5);
+    fireEvent.click(screen.getByRole('button', { name: 'Open in editor' }));
+    expect(props.onOpenInEditor).toHaveBeenLastCalledWith('src/app.ts', 5);
   });
 
   it('goes to the asked line once loaded, and again for a new nonce', async () => {
@@ -132,13 +132,13 @@ describe('FileViewer', () => {
     expect(cm.opts).toBeNull();
   });
 
-  it('too large: says the size and offers VS Code', async () => {
+  it('too large: says the size and offers the editor', async () => {
     const { props } = show({}, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
     await flush();
     expect(screen.getByTestId('file-empty')).toHaveTextContent('Too large to show');
     expect(screen.getByTestId('file-empty')).toHaveTextContent('3.0 MB');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Open in VS Code' }).at(-1)!);
-    expect(props.onOpenInVsCode).toHaveBeenCalledWith('src/app.ts', 1);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open in editor' }).at(-1)!);
+    expect(props.onOpenInEditor).toHaveBeenCalledWith('src/app.ts', 1);
   });
 
   it('a failed read says so in fixed words by its code, never the relayed message', async () => {

@@ -1,8 +1,8 @@
 // The Files tab: a light, read-only look at a worktree — its folders on the
 // left (loaded as they open), files in tabs on the right — one pane, or two
 // side by side (fileTabs.ts has the rules). The same for a runner's
-// worktree, read through the runner's own API. Instead of VS Code for "what's
-// in this file / what changed here"; VS Code stays one click away.
+// worktree, read through the runner's own API. For "what's in this file / what
+// changed here"; the person's own editor stays one click away (Open in editor).
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
@@ -42,10 +42,11 @@ export type FilesTabProps = {
   /** Open this file (and line); a new nonce opens it again. */
   openPath?: { path: string; line?: number; nonce: number };
   onAskAgent?: (ctx: FileAskContext) => void;
-  onOpenInVsCode?: (path: string, line: number) => void;
+  /** The person's own desktop editor, at a file and line (this machine only). */
+  onOpenInEditor?: (path: string, line: number) => void;
 };
 
-export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInVsCode }: FilesTabProps) {
+export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onOpenInEditor }: FilesTabProps) {
   const runnerId = remote?.runnerId;
   const remoteWsId = remote?.remoteWsId;
   const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
@@ -352,7 +353,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
                   <div role="tabpanel" id={tabIds(pane.id).panel} aria-labelledby={t ? tabIds(pane.id).tab(t.path) : undefined} className="flex min-h-0 flex-1 flex-col">
                   {t ? (
                     <FileViewer key={`${worktreePath}\0${t.path}`} onMissing={t.restored ? () => dispatch({ type: 'close', pane: pi, path: t.path }) : undefined} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
-                      read={read} marks={marks} onAskAgent={onAskAgent} onOpenInVsCode={onOpenInVsCode}
+                      read={read} marks={marks} onAskAgent={onAskAgent} onOpenInEditor={onOpenInEditor}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
                       headerStart={historyButtons}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (

@@ -63,12 +63,6 @@ interface Window {
     onHotkey?: (
       cb: (combo: 'tab-next' | 'tab-prev' | 'space-next' | 'space-prev' | 'palette' | 'settings' | 'meta-up' | 'devtools' | 'close-tab' | 'new-shell' | 'changes' | 'focus-next' | 'focus-prev' | 'new-focus') => void,
     ) => () => void;
-    // true while the VS Code iframe is the active tab (shell then intercepts
-    // the window's own Cmd+Arrow keys)
-    hotkeyScope?: (enabled: boolean) => void;
-    // Allow the exact localhost VS Code serve-web origin to be framed by this
-    // dashboard webContents. Resolves before the iframe is mounted.
-    vscodeOrigin?: (url: string) => Promise<boolean>;
     // Electron's own process metrics (main/renderer/gpu/utility) for the
     // Settings → Sessions view; absent on older shells and in a browser
     // `preview` = the Browser preview key when that renderer is a preview view

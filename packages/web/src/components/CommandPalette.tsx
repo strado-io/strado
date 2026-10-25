@@ -14,9 +14,8 @@ import { rankStations, type Station } from '../lib/mention/rank';
 import { statusText } from '../lib/dock/stations';
 import { api, type Focus, type RemoteWorktree } from '../api';
 import type { RepoConfig, Workspace, Worktree } from '../types';
-import { ShellIcon, ClaudeIcon, CodexIcon, VsCodeIcon, GlobeIcon, BookIcon } from './hub/icons';
+import { ShellIcon, ClaudeIcon, CodexIcon, GlobeIcon, BookIcon } from './hub/icons';
 import { hasSession } from '../hooks/sessions';
-import { readVscodeTabs } from '../hooks/vscodeTabs';
 import { readBrowserTabs } from '../hooks/browserTabs';
 import { readKbTabs } from '../hooks/kbTabs';
 import { readWorktreeLru, compareByActivityThenRecency, type RankableWorktree } from '../lib/worktreeLru';
@@ -357,10 +356,9 @@ export function CommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
 
   const repoName = useMemo(() => new Map(repos.map((r) => [r.id, r.name])), [repos]);
-  // Client-only embed tabs (VS Code / Browser / Knowledge Base) live in
+  // Client-only tabs (Browser / Knowledge Base) live in
   // localStorage, not on the Worktree — read once per palette open so rows
   // can badge them too.
-  const vscodeTabs = useMemo(() => readVscodeTabs(), [open]);
   const browserTabs = useMemo(() => readBrowserTabs(), [open]);
   const kbTabs = useMemo(() => readKbTabs(), [open]);
 
@@ -1372,7 +1370,6 @@ export function CommandPalette({
                     if (w.hasClaudeSession) badges.push(<span key="c" title="Claude"><ClaudeIcon size={12} /></span>);
                     if (w.hasCodexSession) badges.push(<span key="x" title="Codex"><CodexIcon size={12} /></span>);
                     if (w.hasShellSession) badges.push(<span key="s" title="Shell"><ShellIcon size={12} /></span>);
-                    if (vscodeTabs.has(w.path)) badges.push(<span key="v" title="VS Code"><VsCodeIcon size={12} /></span>);
                     if (browserTabs.has(w.path)) badges.push(<span key="b" title="Browser"><GlobeIcon /></span>);
                     if (kbTabs.has(w.path)) badges.push(<span key="k" title="Knowledge Base"><BookIcon size={12} /></span>);
                     if (!running && badges.length === 0) return null;
