@@ -98,6 +98,9 @@ export type JarvisUiActionArgs = {
   /** The Focus's member worktree paths. The window refuses any step whose
    * resolved worktree is outside them (worktree.create is the way in). */
   scope: string[];
+  /** The turn's Focus id. The window acts on this Focus, not the one it shows
+   * (a wake or a late reply can reach a window that has switched Focus). */
+  focusId: string;
 };
 /** The window's ack `result` for JARVIS_UI_OP. */
 export type JarvisUiActionResult = {
