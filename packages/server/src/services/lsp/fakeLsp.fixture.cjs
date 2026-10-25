@@ -29,7 +29,7 @@ function onMessage(m) {
   switch (m.method) {
     case 'initialize':
       root = decodeURIComponent(new URL(m.params.rootUri).pathname);
-      log({ env: Object.keys(process.env).filter((k) => k.startsWith('STRADO_') || k === 'PORT') });
+      log({ env: Object.keys(process.env).filter((k) => !k.startsWith('FAKE_LSP_')).sort() });
       if (mode === 'slow-init') return setTimeout(() => reply({ capabilities: {} }), 10000);
       return reply({ capabilities: { definitionProvider: true }, serverInfo: { name: 'fake' } });
     case 'initialized':

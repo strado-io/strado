@@ -278,21 +278,29 @@ describe('review fixes', () => {
     );
   });
 
-  it("the server never sees Strado's own identity or tokens", async () => {
+  it('the server gets an allowlisted env: toolchain yes, secrets and Strado identity never', async () => {
+    const set: Record<string, string> = {
+      STRADO_AGENT_TOKEN: 'tok', STRADO_HOME: '/x', PORT: '1234', ANTHROPIC_API_KEY: 'k', OPENAI_BASE: 'u',
+      GITHUB_TOKEN: 'g', GH_HOST: 'h', MY_SECRET: 's', NPM_TOKEN: 'n', AWS_ACCESS_KEY_ID: 'a', DB_PASSWORD: 'p',
+      GOOGLE_APPLICATION_CREDENTIALS: '/c', RANDOM_THING: 'r',
+      GOPATH: '/go', JAVA_HOME: '/jdk', LC_ALL: 'C', LANG: 'en_US.UTF-8', HOME: process.env.HOME ?? '/home/x',
+    };
     const prev = { ...process.env };
-    process.env.STRADO_AGENT_TOKEN = 'tok';
-    process.env.STRADO_HOME = '/x';
-    process.env.PORT = '1234';
+    Object.assign(process.env, set);
     try {
       const m = await make(await fakeBinary());
       await m.definition(root, 'src/use.ts', 2, 14);
     } finally {
-      for (const k of ['STRADO_AGENT_TOKEN', 'STRADO_HOME', 'PORT']) {
+      for (const k of Object.keys(set)) {
         if (prev[k] === undefined) delete process.env[k];
         else process.env[k] = prev[k];
       }
     }
-    expect((await received()).find((x: any) => x.env)).toEqual({ env: [] });
+    const env = ((await received()).find((x: any) => x.env) as any).env as string[];
+    for (const k of ['GOPATH', 'JAVA_HOME', 'LC_ALL', 'LANG', 'HOME', 'PATH']) expect(env).toContain(k);
+    for (const k of Object.keys(set).filter((k) => !['GOPATH', 'JAVA_HOME', 'LC_ALL', 'LANG', 'HOME'].includes(k))) {
+      expect(env).not.toContain(k);
+    }
   });
 
   it('a hit through a symlink that leaves the worktree is dropped', async () => {

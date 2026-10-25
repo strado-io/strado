@@ -97,6 +97,16 @@ describe('admin routes', () => {
     expect(calls).toEqual([]);
   });
 
+  // A laptop's POST /api/runners/:id/rpc reaches the runner's server through
+  // its relay client, which always sets x-strado-via: relay (relay/src/client.ts)
+  // and arrives from 127.0.0.1 with a loopback Host. It must not count as local.
+  it('a POST forwarded by the relay (how rpc reaches a runner) is refused', async () => {
+    const h = { host: '127.0.0.1:7777', 'x-strado-via': 'relay' };
+    expect((await app.inject({ method: 'POST', url: '/api/lsp/servers/gopls/enabled', headers: h, payload: { enabled: false } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/lsp/servers/gopls/stop', headers: h })).statusCode).toBe(403);
+    expect(calls).toEqual([]);
+  });
+
   it('closing the app stops every server', async () => {
     await app.close();
     expect(closed).toBe(true);

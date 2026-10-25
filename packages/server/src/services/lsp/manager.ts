@@ -160,6 +160,19 @@ async function wordAt(abs: string, line: number, col: number): Promise<string | 
   return text.slice(from, to);
 }
 
+const ENV_ALLOW = new Set([
+  'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'TERM',
+  'GOPATH', 'GOROOT', 'GOFLAGS', 'GOPROXY', 'CARGO_HOME', 'RUSTUP_HOME', 'JAVA_HOME',
+  'PYTHONPATH', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'NODE_PATH', 'NVM_DIR', 'GEM_HOME', 'GEM_PATH',
+]);
+
+/** Allowlisted, and even then never a name that looks like a secret. */
+export function envAllowed(name: string): boolean {
+  if (/TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/i.test(name)) return false;
+  if (/^(STRADO_|ANTHROPIC_|OPENAI_|GITHUB_|GH_)/i.test(name)) return false;
+  return ENV_ALLOW.has(name) || name.startsWith('LC_');
+}
+
 type Entry = {
   key: string;
   spec: LspServerSpec;
@@ -204,13 +217,13 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     await e.client.stop().catch(() => e.client.kill());
   }
 
-  /** The server's environment: the user's, minus Strado's own identity and
-   *  tokens (a language server runs repo code: build scripts, proc macros),
-   *  with node and the common bin dirs on PATH (a server's own
-   *  `#!/usr/bin/env node` must work from a dock launch's bare PATH). */
+  /** The server's environment: an allowlist (a language server runs repo
+   *  code: build scripts, proc macros, Gradle), so no token or key of the
+   *  user's or of Strado's reaches it. node and the common bin dirs go on PATH
+   *  (a server's own `#!/usr/bin/env node` must work from a dock launch). */
   async function serverEnv(): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = {};
-    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('STRADO_') && k !== 'PORT') env[k] = v;
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && envAllowed(k)) env[k] = v;
     env.PATH = [...new Set([path.dirname(process.execPath), ...(await deps.detect.dirs())])].join(path.delimiter);
     return env;
   }
