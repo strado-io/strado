@@ -102,8 +102,8 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
     return jarvis.meta(id);
   });
 
-  // `meta` first, then `entry` (upsert by id) and `meta` as they change. The
-  // stream ends when the Focus is deleted.
+  // `meta` first, then `entry` (upsert by id) and `meta` as they change, and
+  // `heartbeat` every 15 s. The stream ends when the Focus is deleted.
   app.get<{ Params: Params }>('/focuses/:id/jarvis/events', async (req, reply) => {
     const id = await focusOf(req);
     const { jarvis } = req.workspace!.stores;
@@ -111,7 +111,11 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     reply.raw.flushHeaders();
     writeEvent(reply, 'meta', meta);
-    const beat = setInterval(() => reply.raw.write(': heartbeat\n\n'), HEARTBEAT_MS);
+    // A named event, not an SSE comment: EventSource never surfaces comments,
+    // and the window reopens a stream that has gone quiet past two beats.
+    const heartbeat = () => writeEvent(reply, 'heartbeat', {});
+    heartbeat();
+    const beat = setInterval(heartbeat, HEARTBEAT_MS);
     const off = jarvis.onChange((focusId, change) => {
       if (focusId !== id) return;
       if (change.removed) return close();

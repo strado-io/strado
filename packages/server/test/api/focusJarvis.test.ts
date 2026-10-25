@@ -207,8 +207,11 @@ describe('SSE', () => {
   it('SSE sends entry events on append', async () => {
     const { res, ac } = await open(`${base()}/events`);
     expect(res.headers.get('content-type')).toBe('text/event-stream');
-    const first = await events(res, 1);
+    const first = await events(res, 2);
     expect(first[0]).toMatchObject({ event: 'meta', data: { focusId } });
+    // A named heartbeat at once and every 15 s: EventSource never shows
+    // comments, so the window can only tell a dead stream by its absence.
+    expect(first[1]).toEqual({ event: 'heartbeat', data: {} });
     const s = await store();
     await s.append('someoneelse', { type: 'event', text: 'not mine' });
     await s.append(focusId, { type: 'user', text: 'hi', windowId: 'w' });
@@ -252,7 +255,7 @@ describe('SSE', () => {
     await s.append(focusId, { type: 'user', text: 'hi', windowId: 'w' });
     await s.setMeta(focusId, { sessionId: 'sess' });
     const { res } = await open(`${base()}/events`);
-    await events(res, 1);
+    await events(res, 2);
     const del = await app.inject({ method: 'DELETE', url: `/api/w/default/focuses/${focusId}` });
     expect(del.statusCode).toBe(204);
     expect(calls).toEqual([['forget', 'default', focusId]]);
