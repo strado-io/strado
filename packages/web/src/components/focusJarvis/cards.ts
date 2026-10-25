@@ -4,10 +4,14 @@ import { uniqueWorktreeNames } from '../jarvis/jarvisContext';
 
 export type CardMode = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'browser';
 export type ResolvedCard =
-  | { open: true; worktreePath: string; mode: CardMode; sessionId: string; busy: boolean }
+  | { open: true; worktreePath: string; mode: CardMode; sessionId: string; busy: boolean;
+      /** What the tab is doing, for the card's second line ("starting", "working", "needs you", "idle"); empty for a Browser tab. */
+      status: string }
   | { open: false };
 
 const CLOSED: ResolvedCard = { open: false };
+// A tab stuck on "starting" is one that never came up (a trust or login screen): the card says so.
+const STATUS: Record<string, string> = { starting: 'starting', working: 'working', needs_input: 'needs you', idle: 'idle', ready: 'idle' };
 
 /** Finds a card's tab again in this window: the worktree by the name Jarvis
  * used (the same unique names its context gives it), the tab by its session
@@ -26,11 +30,11 @@ export function resolveCard(card: TabCardRef, world: { worktrees: Worktree[]; re
   const tab = card.tab.toLowerCase().startsWith(prefix) ? card.tab.slice(prefix.length) : card.tab;
   if (card.kind === 'browser') {
     const id = /^browser-(.+)$/i.exec(tab)?.[1] ?? tab;
-    return { open: true, worktreePath: w.path, mode: 'browser', sessionId: id, busy: false };
+    return { open: true, worktreePath: w.path, mode: 'browser', sessionId: id, busy: false, status: '' };
   }
   const want = tab.toLowerCase();
   const p = world.peers.find((x) => x.live && x.worktreePath === w.path && (
     `${x.mode}-${x.sessionId}`.toLowerCase() === want || x.agentId.split('@')[0]!.toLowerCase() === want || x.alias?.toLowerCase() === want));
   if (!p) return CLOSED;
-  return { open: true, worktreePath: w.path, mode: p.mode, sessionId: p.sessionId, busy: p.lifecycle === 'working' };
+  return { open: true, worktreePath: w.path, mode: p.mode, sessionId: p.sessionId, busy: p.lifecycle === 'working', status: STATUS[p.lifecycle] ?? 'idle' };
 }

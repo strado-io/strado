@@ -26,7 +26,9 @@ export function TabCard({ card, resolved, onOpen }: { card: TabCardRef; resolved
         <div className="truncate text-[13px] font-medium text-zinc-200">{title}</div>
         <div className="truncate text-[11px] text-zinc-500">
           {card.worktree}
-          {resolved.open && resolved.busy && <span className="text-amber-300"> · working</span>}
+          {resolved.open && resolved.status && (
+            <span className={resolved.status === 'working' || resolved.status === 'needs you' ? 'text-amber-300' : ''}> · {resolved.status}</span>
+          )}
         </div>
       </div>
       {resolved.open

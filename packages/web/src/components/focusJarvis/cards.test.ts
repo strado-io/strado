@@ -10,11 +10,11 @@ const world = { worktrees: [wt('/w/api', 'fleetx-api'), wt('/w/web', 'web')], re
 describe('resolveCard', () => {
   it('finds a live agent tab by its session name', () => {
     expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', tab: 'claude-1' }, world))
-      .toEqual({ open: true, worktreePath: '/w/api', mode: 'claude', sessionId: '1', busy: false });
+      .toEqual({ open: true, worktreePath: '/w/api', mode: 'claude', sessionId: '1', busy: false, status: 'idle' });
   });
   it('a worktree-qualified tab name works too, and alias matches', () => {
     const w = { ...world, peers: [peer({ alias: 'rev', lifecycle: 'working' })] };
-    expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', tab: 'fleetx-api/rev' }, w)).toMatchObject({ open: true, sessionId: '1', busy: true });
+    expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', tab: 'fleetx-api/rev' }, w)).toMatchObject({ open: true, sessionId: '1', busy: true, status: 'working' });
   });
   it('a tab no longer live is closed, and so is a missing worktree', () => {
     expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', tab: 'claude-2' }, world)).toEqual({ open: false });
@@ -25,7 +25,7 @@ describe('resolveCard', () => {
     const w = { ...world, peers: [peer({ agentId: 'shell-3@a', mode: 'shell', sessionId: '3' })] };
     expect(resolveCard({ kind: 'run', worktree: 'fleetx-api', tab: 'shell-3', label: 'dev' }, w)).toMatchObject({ open: true, mode: 'shell', sessionId: '3' });
     expect(resolveCard({ kind: 'browser', worktree: 'web', tab: 'browser-1', url: 'http://localhost:3000' }, world))
-      .toEqual({ open: true, worktreePath: '/w/web', mode: 'browser', sessionId: '1', busy: false });
+      .toEqual({ open: true, worktreePath: '/w/web', mode: 'browser', sessionId: '1', busy: false, status: '' });
   });
   it('a card with worktreePath matches that exact worktree, whatever its name says', () => {
     expect(resolveCard({ kind: 'claude', worktree: 'renamed', worktreePath: '/w/api', tab: 'claude-1' }, world)).toMatchObject({ open: true, worktreePath: '/w/api' });

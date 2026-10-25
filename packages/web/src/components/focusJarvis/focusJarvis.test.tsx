@@ -6,7 +6,7 @@ import { TabCard } from './TabCard';
 import { ApprovalCard } from './ApprovalCard';
 import { JarvisComposer } from './JarvisComposer';
 import { JarvisSidebarCard, latestLine } from './JarvisSidebarCard';
-import { FocusJarvisView } from './FocusJarvisView';
+import { FocusJarvisView, displayOrder } from './FocusJarvisView';
 
 const at = '2026-10-26T10:00:00Z';
 const meta: JarvisMeta = { focusId: 'f1', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false };
@@ -34,9 +34,9 @@ describe('ChatEntryView', () => {
 describe('TabCard', () => {
   it('open on a card selects its worktree and tab', () => {
     const onOpen = vi.fn();
-    render(<TabCard card={{ kind: 'claude', worktree: 'fleetx-api', tab: 'claude-1' }} resolved={{ open: true, worktreePath: '/w/api', mode: 'claude', sessionId: '1', busy: false }} onOpen={onOpen} />);
+    render(<TabCard card={{ kind: 'claude', worktree: 'fleetx-api', tab: 'claude-1' }} resolved={{ open: true, worktreePath: '/w/api', mode: 'claude', sessionId: '1', busy: false, status: 'idle' }} onOpen={onOpen} />);
     fireEvent.click(screen.getByRole('button', { name: /open/i }));
-    expect(onOpen).toHaveBeenCalledWith({ open: true, worktreePath: '/w/api', mode: 'claude', sessionId: '1', busy: false });
+    expect(onOpen).toHaveBeenCalledWith({ open: true, worktreePath: '/w/api', mode: 'claude', sessionId: '1', busy: false, status: 'idle' });
   });
   it('a closed tab card is greyed and says closed', () => {
     render(<TabCard card={{ kind: 'shell', worktree: 'web', tab: 'shell-2' }} resolved={{ open: false }} onOpen={noop} />);
@@ -116,5 +116,27 @@ describe('FocusJarvisView', () => {
       onOpenCard={noop} onApprove={noop} onSend={noop} onStop={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
     expect(screen.getByRole('region', { name: /jarvis/i })).toHaveTextContent(/what should we do in billing/i);
     expect(screen.getByRole('textbox', { name: /message jarvis/i })).toBeInTheDocument();
+  });
+});
+
+describe('displayOrder', () => {
+  it('within a turn, Jarvis\'s text comes before its approvals, actions and cards; turns and messages keep their places', () => {
+    const e = (id: string, type: string, turnId?: string) => ({ id, at, type, ...(turnId ? { turnId } : {}) }) as unknown as ChatEntry;
+    const order = displayOrder([
+      e('u1', 'user'), e('t1', 'turn', 'A'), e('ap', 'approval', 'A'), e('j1', 'jarvis', 'A'), e('ac', 'action', 'A'),
+      e('t2', 'turn', 'B'), e('ac2', 'action', 'B'), e('j2', 'jarvis', 'B'), e('u2', 'user'), e('ac3', 'action', 'A'),
+    ]).map((x) => x.id);
+    expect(order).toEqual(['u1', 'j1', 't1', 'ap', 'ac', 'j2', 't2', 'ac2', 'u2', 'ac3']);
+  });
+});
+
+describe('TabCard status', () => {
+  it('says what the tab is doing', () => {
+    const { rerender } = render(<TabCard card={{ kind: 'claude', worktree: 'api', tab: 'claude-1' }} resolved={{ open: true, worktreePath: '/w', mode: 'claude', sessionId: '1', busy: false, status: 'starting' }} onOpen={noop} />);
+    expect(screen.getByTestId('tab-card')).toHaveTextContent('api · starting');
+    rerender(<TabCard card={{ kind: 'claude', worktree: 'api', tab: 'claude-1' }} resolved={{ open: true, worktreePath: '/w', mode: 'claude', sessionId: '1', busy: true, status: 'working' }} onOpen={noop} />);
+    expect(screen.getByTestId('tab-card')).toHaveTextContent('api · working');
+    rerender(<TabCard card={{ kind: 'claude', worktree: 'api', tab: 'claude-1' }} resolved={{ open: true, worktreePath: '/w', mode: 'claude', sessionId: '1', busy: false, status: 'needs you' }} onOpen={noop} />);
+    expect(screen.getByTestId('tab-card')).toHaveTextContent('api · needs you');
   });
 });

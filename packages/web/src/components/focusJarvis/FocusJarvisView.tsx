@@ -3,6 +3,23 @@ import type { ChatEntry, JarvisMeta } from '../../types';
 import { ChatEntryView, type EntryHandlers } from './ChatEntryView';
 import { JarvisComposer, type AgentChip, type WorktreeChip } from './JarvisComposer';
 
+/** The log as read: within each run of one turn's entries, Jarvis's text
+ * first, then what it did (approvals, actions, cards) in their order. Runs
+ * stay where they are, so a later message never moves above a turn. */
+export function displayOrder(entries: ChatEntry[]): ChatEntry[] {
+  const out: ChatEntry[] = [];
+  const turnOf = (e: ChatEntry) => ('turnId' in e ? e.turnId : null);
+  for (let i = 0; i < entries.length;) {
+    const t = turnOf(entries[i]!);
+    let j = i + 1;
+    if (t !== null) while (j < entries.length && turnOf(entries[j]!) === t) j++;
+    const run = entries.slice(i, j);
+    out.push(...run.filter((e) => e.type === 'jarvis'), ...run.filter((e) => e.type !== 'jarvis'));
+    i = j;
+  }
+  return out;
+}
+
 /** A Focus's Jarvis in the main area, T3 Code style: one centred column, the
  * chat scrolling above, the composer pinned below. */
 export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onLoadOlder, agents, worktrees, ...handlers }: {
@@ -45,7 +62,7 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
               <div className="mt-1 text-[12px] text-zinc-500">Jarvis can open worktrees and tabs, run scripts and talk to your agents.</div>
             </div>
           )}
-          {entries.map((e) => <ChatEntryView key={e.id} entry={e} {...handlers} />)}
+          {displayOrder(entries).map((e) => <ChatEntryView key={e.id} entry={e} {...handlers} />)}
           {meta?.running && <div aria-live="polite" className="text-[12px] text-zinc-500"><span className="animate-pulse">Working…</span></div>}
         </div>
       </div>
