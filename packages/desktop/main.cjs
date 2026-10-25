@@ -136,7 +136,7 @@ async function ensureServer() {
           // (/usr/bin:/bin:/usr/sbin:/sbin) — missing Homebrew, nvm, and the
           // npm global bin where claude/codex/code live. Resolve the user's
           // real login-shell PATH so everything the server spawns (agent
-          // ptys, dev servers, `code serve-web`) can actually find them.
+          // ptys, dev servers, editors) can actually find them.
           ...(userShellPath() ? { PATH: userShellPath() } : {}),
           STRADO_WEB_DIST: path.join(RESOURCES, 'web'),
           STRADO_HOOKS_DIR: path.join(RESOURCES, 'server', 'hooks'),
@@ -179,9 +179,8 @@ async function ensureServer() {
       // The child resolves the same profile rather than inferring one.
       STRADO_PROFILE: PROFILE.name,
       // /api/capabilities reports embeds:true only for a server hosted by this
-      // shell — the VS Code embed and preview browser are WebContentsView
-      // features. A headless runner leaves it unset and its UI hides those
-      // tabs. Applies to dev runs too, or the local app would hide its own.
+      // shell — the preview browser is a WebContentsView feature. A headless
+      // runner leaves it unset and its UI hides those tabs. Applies to dev runs too, or the local app would hide its own.
       STRADO_EMBEDS: '1',
     },
     stdio: ['ignore', logFd, logFd],
@@ -208,8 +207,7 @@ async function ensureServer() {
 
 function buildMenu({ onReload, onToggleDevtools }) {
   // Stock menus minus the Cmd+W "close window" accelerator: with no browser
-  // tab strip in the way, Cmd+W flows to the page — i.e. to the embedded
-  // VS Code editor — which is the whole reason this shell exists.
+  // tab strip in the way, Cmd+W flows to the page, which closes its own tabs.
   // Closing the window moved to Shift+Cmd+W.
   /** @type {import('electron').MenuItemConstructorOptions[]} */
   const template = [
@@ -275,7 +273,7 @@ function createWindow() {
       // Browser preview tabs render as <webview> (own process, real DevTools).
       webviewTag: true,
       // Chromium throttles a window's requestAnimationFrame/timers when it deems
-      // the window occluded — and we overlay WebContentsViews (browser/VS Code/
+      // the window occluded — and we overlay WebContentsViews (browser/
       // preview) on this one. xterm's DOM renderer paints on rAF, so a throttled
       // window silently stops repainting: a full-screen TUI (opencode) that
       // redraws in a burst then goes quiet paints nothing until a resize or tab
@@ -349,8 +347,8 @@ if (!gotLock) {
     if (!entry.win.isDestroyed()) entry.win.contentView.removeChildView(entry.view);
     return entry.view.webContents;
   };
-  // App shortcuts pressed inside an embedded surface (Browser preview view,
-  // cross-origin VS Code iframe) never reach the dashboard's window listeners.
+  // App shortcuts pressed inside an embedded surface (the Browser preview
+  // view) never reach the dashboard's window listeners.
   // Intercept them here and forward them. For switcher chords, opening the
   // switcher parks the preview and hands focus back to the renderer, so the
   // rest of the hold (arrows, Cmd release) lands on the native path. Meta
@@ -852,7 +850,7 @@ if (!gotLock) {
         wc.on('focus', () => {
           // Not chosen: the page took focus by itself (a reload after a dev
           // server restart, autofocus, HMR). Hand the keyboard straight back
-          // and stay on the tab the user is on (VS Code, a terminal, …).
+          // and stay on the tab the user is on (a terminal, Files, …).
           if (Date.now() - pressedAt > PREVIEW_CLICK_MS) {
             if (!win.isDestroyed()) win.webContents.focus();
             return;
