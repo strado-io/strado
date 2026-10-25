@@ -106,8 +106,8 @@ describe('LanguageServersSection', () => {
     expect(detail.tagName).toBe('DETAILS');
     expect(detail).not.toHaveAttribute('open');
     await act(async () => { fireEvent.click(r.getByRole('button', { name: 'Retry TypeScript and JavaScript language server' })); });
-    expect(c.setEnabled).toHaveBeenCalledWith('typescript', true);
-    expect(c.stop).not.toHaveBeenCalled();
+    expect(c.stop).toHaveBeenCalledWith('typescript');
+    expect(c.setEnabled).not.toHaveBeenCalled();
     expect(c.list).toHaveBeenCalledTimes(2);
   });
 
