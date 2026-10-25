@@ -41,6 +41,8 @@ function resultOf(raw: unknown): JarvisUiActionResult | null {
     ? {
         kind: c.kind as TabCardRef['kind'], worktree: str(c.worktree)!, tab: str(c.tab)!,
         ...(str(c.label) ? { label: str(c.label)! } : {}), ...(str(c.url, 2048) ? { url: str(c.url, 2048)! } : {}),
+        // The exact worktree (absolute path): wakes match cards on it.
+        ...(str(c.worktreePath, 4096)?.startsWith('/') ? { worktreePath: str(c.worktreePath, 4096)! } : {}),
       }
     : null;
   const askId = str(r.askId, 100);

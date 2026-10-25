@@ -145,6 +145,13 @@ describe('jarvis tool gateway', () => {
     expect(wake.json()).toEqual({ text: 'Failed: No Strado window is open' });
   });
 
+  it('the card keeps the exact worktree path the window gave (wakes match on it)', async () => {
+    openWindow('win1');
+    ack = () => ({ ok: true, text: 'Opened', card: { kind: 'claude', worktree: 'api', worktreePath: '/repos/api.worktrees/fix', tab: 'claude-1' } });
+    await call('jarvis_open_tab', { mode: 'shell', worktree: 'api' });
+    expect(of(await log(), 'action')[0]!.card).toEqual({ kind: 'claude', worktree: 'api', worktreePath: '/repos/api.worktrees/fix', tab: 'claude-1' });
+  });
+
   it('a window answer outside the declared shape is not trusted', async () => {
     openWindow('win1');
     ack = () => ({ ok: true, text: 'Opened', card: { kind: 'evil', worktree: 'api', tab: 'x' } });
