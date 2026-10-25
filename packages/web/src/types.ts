@@ -514,7 +514,8 @@ export type JarvisMeta = {
 export const JARVIS_MESSAGE_MAX = 16 * 1024;
 /** The ui command a Focus Jarvis turn sends this window: one action, in model args. */
 export const JARVIS_UI_OP = 'jarvis.action';
-/** `scope`: the Focus's member worktree paths; a step outside them is refused. */
-export type JarvisUiActionArgs = { action: string; args: Record<string, unknown>; scope: string[] };
+/** `scope`: the Focus's member worktree paths; a step outside them is refused. `focusId`: the
+ * turn's Focus, which may not be the one the window shows (a wake, a late reply). */
+export type JarvisUiActionArgs = { action: string; args: Record<string, unknown>; scope: string[]; focusId: string };
 /** The ack's `result` for JARVIS_UI_OP. `askId`: agent.ask's intercom message id. */
 export type JarvisUiActionResult = { ok: boolean; text: string; card?: TabCardRef; askId?: string };

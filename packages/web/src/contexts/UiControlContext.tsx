@@ -90,8 +90,9 @@ export function UiControlProvider({ wsId, openWorktree, children }: {
       if (!run) return { applied: false, reason: 'no_jarvis' };
       // No scope, no action: the window never guesses which worktrees Jarvis may touch.
       if (typeof a.action !== 'string' || !a.args || typeof a.args !== 'object'
-        || !Array.isArray(a.scope) || !a.scope.every((p) => typeof p === 'string')) return { applied: false, reason: 'bad_args' };
-      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown>, scope: a.scope }) };
+        || !Array.isArray(a.scope) || !a.scope.every((p) => typeof p === 'string')
+        || typeof a.focusId !== 'string' || !a.focusId) return { applied: false, reason: 'bad_args' };
+      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown>, scope: a.scope, focusId: a.focusId }) };
     }
     const deadline = Date.now() + UI_COMMAND_BUDGET_MS;
     const parsed = parseUiCommand(raw);

@@ -73,18 +73,23 @@ export async function runJarvisAction(input: JarvisUiActionArgs, deps: ActionDep
 type ActionDeps = {
   context: () => ParseContext;
   ports: () => Omit<JarvisPorts, 'verify' | 'onStep' | 'ensureWorktree' | 'shellIdle'>;
-  /** The Focus this chat belongs to: the only one focus.edit may change. */
-  focusId: string | null;
 };
 
+/** The context as the turn's Focus sees it: "this Focus" is the turn's, not
+ * whichever one the window shows now. */
+function forFocus(ctx: ParseContext, focusId: string): ParseContext {
+  const f = ctx.focuses.find((x) => x.id === focusId);
+  return { ...ctx, currentFocus: f ? { id: f.id, name: f.name } : null };
+}
+
 async function runAction(
-  { action, args: given, scope: scopePaths }: JarvisUiActionArgs,
+  { action, args: given, scope: scopePaths, focusId }: JarvisUiActionArgs,
   deps: ActionDeps,
 ): Promise<JarvisUiActionResult> {
   let args = given;
   if (WINDOW_ONLY.test(action)) return { ok: false, text: `${action} is not one of Jarvis's actions` };
   const scope = new Set(scopePaths);
-  const ctx = deps.context();
+  const ctx = forFocus(deps.context(), focusId);
   // No worktree named and none on screen in this Focus: its only one, else ask.
   const shown = here(ctx);
   if (IN_A_WORKTREE.has(action) && args.worktree == null && !(shown && scope.has(shown))) {
@@ -94,7 +99,7 @@ async function runAction(
   }
   const planned = planFromModel([{ action, args }], ctx);
   if (planned.steps.length === 0) return { ok: false, text: planned.summary };
-  const confined = confine(planned, ctx, scope, deps.focusId);
+  const confined = confine(planned, ctx, scope, focusId);
   if ('refuse' in confined) return { ok: false, text: confined.refuse };
   const plan = confined.plan;
   const ports = deps.ports();

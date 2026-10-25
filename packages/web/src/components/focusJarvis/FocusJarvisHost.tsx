@@ -72,8 +72,8 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   const getContext = () => buildModelContext(parseContext());
   // The turn's tool calls come back to this window as `jarvis.action`: run
   // them here, in the background, with whatever hub is on screen (if any).
+  // The action names its turn's Focus; the window may be showing another one.
   useJarvisActionHandler((action) => runJarvisAction(action, {
-    focusId: focus?.id ?? null,
     context: parseContext,
     ports: () => ({
       hub: hub()?.jarvis ?? null,
