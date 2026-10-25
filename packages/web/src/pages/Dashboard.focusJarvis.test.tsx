@@ -137,4 +137,36 @@ describe('Dashboard: Focus Jarvis', () => {
       vi.useRealTimers();
     }
   });
+
+  it('W2/W4: a failed send or approval shows fixed words, never the server\'s; a refused approval reloads the chat', async () => {
+    const { api } = await import('../api');
+    focusList.members = ['local:/a/A-1'];
+    renderDashboard();
+    await act(async () => {});
+    fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+    vi.mocked(api.focusJarvis.send).mockRejectedValueOnce(new Error('ENOENT /Users/secret/.strado/jarvis'));
+    const box = screen.getByRole('textbox', { name: /message jarvis/i });
+    fireEvent.change(box, { target: { value: 'hello' } });
+    await act(async () => { fireEvent.keyDown(box, { key: 'Enter' }); });
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't send that. Your message is still in the box.");
+    expect(screen.queryByText(/secret/)).toBeNull();
+    expect(box).toHaveValue('hello');
+  });
+
+  it('W4: an approval refused by the server (409) reloads the chat and says so in fixed words', async () => {
+    const { api } = await import('../api');
+    focusList.members = ['local:/a/A-1'];
+    const pending = { id: 'ap1', at: 't', type: 'approval', turnId: 't1', action: 'server.stop', args: {}, summary: 'Stop dev in A-1', state: 'pending' };
+    const metaNow = { focusId: 'f-a', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 1, running: false };
+    vi.mocked(api.focusJarvis.log).mockResolvedValueOnce({ entries: [pending], meta: metaNow } as never);
+    renderDashboard();
+    await act(async () => {});
+    fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+    const calls = vi.mocked(api.focusJarvis.log).mock.calls.length;
+    vi.mocked(api.focusJarvis.approve).mockRejectedValueOnce(Object.assign(new Error('approval ap1 is not pending (superseded by x)'), { code: 'CONFLICT' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Approve' })); });
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't record your answer. The card shows where it stands now.");
+    expect(screen.queryByText(/superseded by/)).toBeNull();
+    expect(vi.mocked(api.focusJarvis.log).mock.calls.length).toBeGreaterThan(calls);
+  });
 });

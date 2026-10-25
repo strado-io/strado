@@ -20,7 +20,8 @@ const MENTION_MAX = 8;
 export function JarvisComposer({ running, agent, onSend, onStop, agents, worktrees, placeholder }: {
   running: boolean;
   agent: JarvisAgent;
-  onSend: (text: string) => void;
+  /** Resolves once sent; a rejection keeps the draft in the box. */
+  onSend: (text: string) => Promise<void>;
   onStop: () => void;
   agents: AgentChip[];
   worktrees: WorktreeChip[];
@@ -56,13 +57,17 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
     requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(next.caret, next.caret); });
   };
 
+  // W7: the draft stays until the server has it; a failed send leaves it as typed.
+  const [sending, setSending] = useState(false);
   const send = () => {
     const wire = toWire(text, chips).trim();
-    if (!wire) return;
-    onSend(wire);
-    setText('');
-    setChips([]);
+    if (!wire || sending) return;
+    setSending(true);
     setMention(null);
+    onSend(wire).then(() => {
+      setText((now) => (now === text ? '' : now));
+      setChips([]);
+    }, () => { /* kept: the error line says so */ }).finally(() => setSending(false));
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

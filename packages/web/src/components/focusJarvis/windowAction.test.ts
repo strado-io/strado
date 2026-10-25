@@ -161,4 +161,10 @@ describe('runJarvisAction', () => {
       expect(focusPort).toHaveBeenCalledTimes(2);
     });
   });
+
+  it('W2: a window failure reaches Jarvis as fixed words, never the error text', async () => {
+    const r = await runJarvisAction({ action: 'tab.open', args: { mode: 'claude', worktree: 'fleetx-api' }, scope: SCOPE },
+      { focusId: 'f1', context: () => { throw new Error('/Users/secret/path exploded'); }, ports: () => ports(server()) });
+    expect(r).toEqual({ ok: false, text: "The Strado window couldn't do that." });
+  });
 });

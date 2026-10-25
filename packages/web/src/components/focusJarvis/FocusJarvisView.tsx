@@ -29,7 +29,8 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
   hasOlder: boolean;
   /** The last send/approve/stop that failed, said above the composer. */
   error?: string | null;
-  onSend: (text: string) => void;
+  /** Resolves once the server has the message; rejects to keep the draft. */
+  onSend: (text: string) => Promise<void>;
   onStop: () => void;
   onLoadOlder: () => void;
   agents: AgentChip[];

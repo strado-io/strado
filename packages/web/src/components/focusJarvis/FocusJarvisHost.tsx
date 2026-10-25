@@ -112,6 +112,12 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
 }
 
 const STARTING_POLL_MS = 2_000;
+export const ERRORS = {
+  send: "Couldn't send that. Your message is still in the box.",
+  approve: "Couldn't record your answer. The card shows where it stands now.",
+  stop: "Couldn't stop Jarvis.",
+  older: "Couldn't load earlier messages.",
+} as const;
 
 const refuseNav = () => { throw new Error('Jarvis does not move the window'); };
 const NO_NAV: JarvisNavPort = { worktree: refuseNav, focus: refuseNav, workspace: refuseNav, repo: refuseNav, addRepo: refuseNav, newWorktree: refuseNav };
@@ -133,14 +139,21 @@ export function FocusJarvisMain({ onOpenCard }: { onOpenCard: OpenCard }) {
 function MainView({ host, onOpenCard }: { host: Host; onOpenCard: OpenCard }) {
   const { chat } = host;
   const [error, setError] = useState<string | null>(null);
-  const report = (p: Promise<void>) => { setError(null); p.catch((e: Error) => setError(e.message)); };
+  // W2: fixed words per operation; the server's own text never reaches the page.
+  const report = (p: Promise<void>, words: string, after?: () => void): Promise<void> => {
+    setError(null);
+    return p.catch((err: unknown) => { setError(words); after?.(); throw err; });
+  };
+  const quiet = (p: Promise<void>) => { p.catch(() => {}); };
   return (
     <FocusJarvisView focusName={host.focus.name} entries={chat.entries} meta={chat.meta} hasOlder={chat.hasOlder}
       resolve={host.resolve} onOpenCard={onOpenCard} error={error}
-      onApprove={(id, yes) => report(chat.approve(id, yes))}
-      onSend={(text) => report(chat.send(text))}
-      onStop={() => report(chat.stop())}
-      onLoadOlder={() => report(chat.loadOlder())}
+      // A refused answer (409: decided elsewhere, or superseded) shows the card as the server has it.
+      onApprove={(id, yes) => report(chat.approve(id, yes), ERRORS.approve, chat.reload)}
+      // The composer keeps the draft when this rejects (W7).
+      onSend={(text) => report(chat.send(text), ERRORS.send)}
+      onStop={() => quiet(report(chat.stop(), ERRORS.stop))}
+      onLoadOlder={() => quiet(report(chat.loadOlder(), ERRORS.older))}
       agents={host.agents} worktrees={host.worktrees} />
   );
 }

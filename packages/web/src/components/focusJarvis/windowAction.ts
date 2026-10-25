@@ -59,14 +59,27 @@ function confine(plan: Plan, ctx: ParseContext, scope: Set<string>, focusId: str
  * With no worktree named and none of the Focus's on screen, its only worktree
  * is meant; with several, Jarvis is asked which. The ack says what happened
  * with real tab names, the tab it opened as a card, and agent.ask's question id. */
-export async function runJarvisAction(
+/** W2: what Jarvis hears when the window itself failed, never the error's own text. */
+export const WINDOW_FAILED = "The Strado window couldn't do that.";
+
+export async function runJarvisAction(input: JarvisUiActionArgs, deps: ActionDeps): Promise<JarvisUiActionResult> {
+  try {
+    return await runAction(input, deps);
+  } catch {
+    return { ok: false, text: WINDOW_FAILED };
+  }
+}
+
+type ActionDeps = {
+  context: () => ParseContext;
+  ports: () => Omit<JarvisPorts, 'verify' | 'onStep' | 'ensureWorktree' | 'shellIdle'>;
+  /** The Focus this chat belongs to: the only one focus.edit may change. */
+  focusId: string | null;
+};
+
+async function runAction(
   { action, args: given, scope: scopePaths }: JarvisUiActionArgs,
-  deps: {
-    context: () => ParseContext;
-    ports: () => Omit<JarvisPorts, 'verify' | 'onStep' | 'ensureWorktree' | 'shellIdle'>;
-    /** The Focus this chat belongs to: the only one focus.edit may change. */
-    focusId: string | null;
-  },
+  deps: ActionDeps,
 ): Promise<JarvisUiActionResult> {
   let args = given;
   if (WINDOW_ONLY.test(action)) return { ok: false, text: `${action} is not one of Jarvis's actions` };

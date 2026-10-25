@@ -7,7 +7,8 @@ import type { ResolvedCard } from './cards';
 export type EntryHandlers = {
   resolve: (card: TabCardRef) => ResolvedCard;
   onOpenCard: (r: Extract<ResolvedCard, { open: true }>) => void;
-  onApprove: (entryId: string, approve: boolean) => void;
+  /** Resolves once the server has the answer; the card waits for it (W4). */
+  onApprove: (entryId: string, approve: boolean) => Promise<void>;
 };
 
 const quiet = 'text-[12px] text-zinc-500';
