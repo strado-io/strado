@@ -178,9 +178,13 @@ describe('open: which editor, and refusals', () => {
   it('an editor that is not installed is a 400 naming it', async () => {
     const { editors } = make();
     await expect(editors.open({ worktreePath: root, editor: 'cursor' })).rejects.toMatchObject({ httpStatus: 400, message: 'Cursor is not installed' });
-    // A preferred editor that has since been uninstalled says so too, rather than opening something else.
+  });
+
+  it('a preferred editor that has since been uninstalled falls back, as the web does', async () => {
+    const { editors, calls } = make({ clis: { cursor: '/bin/cursor' } });
     await editors.setPreferred('zed');
-    await expect(editors.open({ worktreePath: root })).rejects.toMatchObject({ httpStatus: 400, message: 'Zed is not installed' });
+    await editors.open({ worktreePath: root });
+    expect(calls[0]!.file).toBe('/bin/cursor');
   });
 
   it('paths: escape refused, missing 404, .git refused', async () => {

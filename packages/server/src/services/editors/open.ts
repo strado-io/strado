@@ -93,13 +93,19 @@ export function createEditors(deps: EditorsDeps): Editors {
     return out;
   }
 
-  /** The asked-for editor, else the preferred one, else the first installed, else the default app. */
+  /** The asked-for editor (400 when it is not installed), else the preferred
+   *  one if still installed, else the first installed, else the default app:
+   *  the same fallback the web's chooser shows. */
   async function choose(id: EditorId | undefined): Promise<FoundEditor> {
-    const wanted = id ?? (await deps.store.get());
-    if (wanted) {
-      const found = await findEditor(EDITORS.find((e) => e.id === wanted)!, detectDeps);
+    if (id) {
+      const found = await findEditor(EDITORS.find((e) => e.id === id)!, detectDeps);
       if (!found.available) throw new AppError('VALIDATION', `${found.spec.label} is not installed`);
       return found;
+    }
+    const preferred = await deps.store.get();
+    if (preferred) {
+      const found = await findEditor(EDITORS.find((e) => e.id === preferred)!, detectDeps);
+      if (found.available) return found;
     }
     for (const spec of EDITORS) {
       if (spec.id === 'system') continue;
