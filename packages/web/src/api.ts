@@ -198,6 +198,8 @@ export type PeerDto = {
   executionId?: string | null;
   lifecycle: string;
   live: boolean;
+  /** Waiting on the person before it can start: 'trust' = Claude's folder-trust question. */
+  attention?: 'trust';
 };
 
 export type TicketProviderId = 'jira' | 'linear';

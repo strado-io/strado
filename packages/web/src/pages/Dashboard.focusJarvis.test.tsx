@@ -4,11 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({ workspace: { id: 'ws-a', name: 'A', color: 'zinc', icon: 'A', defaultPortBase: 3000, logDir: null }, allWorkspaces: [], switchTo: vi.fn() }),
 }));
+const intercom = vi.hoisted(() => ({
+  peer: { agentId: 'claude-1@a', alias: null, mode: 'claude', worktreePath: '/a/A-1', sessionId: '1', executionId: 'E', lifecycle: 'idle', live: true } as Record<string, unknown>,
+  refresh: vi.fn(async () => {}),
+}));
 vi.mock('../contexts/IntercomContext', () => ({
-  useIntercom: () => ({
-    peers: [{ agentId: 'claude-1@a', alias: null, mode: 'claude', worktreePath: '/a/A-1', sessionId: '1', executionId: 'E', lifecycle: 'idle', live: true }],
-    loaded: true, error: null, refresh: vi.fn(),
-  }),
+  useIntercom: () => ({ peers: [intercom.peer], loaded: true, error: null, refresh: intercom.refresh }),
 }));
 
 const focusList = vi.hoisted(() => ({ members: [] as string[] }));
@@ -75,6 +76,9 @@ describe('Dashboard: Focus Jarvis', () => {
     localStorage.setItem('strado:active-focus-by-ws', JSON.stringify({ 'ws-a': 'f-a' }));
     __resetFocuses();
     hubProps.last = null;
+    intercom.peer = { ...intercom.peer, lifecycle: 'idle' };
+    delete intercom.peer.attention;
+    intercom.refresh.mockClear();
   });
 
   it('a blank Focus opens on its Jarvis', async () => {
@@ -116,5 +120,21 @@ describe('Dashboard: Focus Jarvis', () => {
     });
     await act(async () => {});
     expect(within(screen.getByRole('region', { name: 'Focus' })).getByText('B-2')).toBeInTheDocument();
+  });
+
+  it('while a card\'s tab is starting, peers are polled; a folder-trust question reads "needs you"', async () => {
+    focusList.members = ['local:/a/A-1'];
+    intercom.peer = { ...intercom.peer, lifecycle: 'starting' };
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      renderDashboard();
+      await act(async () => {});
+      fireEvent.click(within(screen.getByRole('region', { name: 'Focus' })).getByTestId('jarvis-card'));
+      expect(screen.getByTestId('tab-card')).toHaveTextContent('A-1 · starting');
+      await act(async () => { vi.advanceTimersByTime(2_000); });
+      expect(intercom.refresh).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

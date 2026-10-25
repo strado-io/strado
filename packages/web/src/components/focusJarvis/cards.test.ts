@@ -31,4 +31,8 @@ describe('resolveCard', () => {
     expect(resolveCard({ kind: 'claude', worktree: 'renamed', worktreePath: '/w/api', tab: 'claude-1' }, world)).toMatchObject({ open: true, worktreePath: '/w/api' });
     expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', worktreePath: '/w/gone', tab: 'claude-1' }, world)).toEqual({ open: false });
   });
+  it('a tab waiting on Claude\'s folder-trust question needs you', () => {
+    expect(resolveCard({ kind: 'claude', worktree: 'fleetx-api', tab: 'claude-1' }, { ...world, peers: [peer({ lifecycle: 'starting', attention: 'trust' })] }))
+      .toMatchObject({ open: true, status: 'needs you' });
+  });
 });

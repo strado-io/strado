@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import type { Focus, StationDto } from '../../api';
 import { useIntercom } from '../../contexts/IntercomContext';
 import { useJarvisActionHandler, useUiHub } from '../../contexts/UiControlContext';
@@ -46,7 +46,7 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   children: ReactNode;
 }) {
   const hub = useUiHub();
-  const { peers } = useIntercom();
+  const { peers, refresh: refreshPeers } = useIntercom();
   const latest = useRef({ focuses, worktrees, repos, workspaces, stations, peers });
   latest.current = { focuses, worktrees, repos, workspaces, stations, peers };
   const parseContext = () => {
@@ -86,6 +86,15 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
     void refreshFocuses(wsId);
     onTreeChanged?.();
   });
+  // Nothing pushes when a starting tab hits Claude's folder-trust question
+  // (peer.attention): poll the peers while any card's tab is still starting.
+  const starting = chat.entries.some((e) => e.type === 'action' && e.card
+    && (() => { const r = resolveCard(e.card, { worktrees, repos, peers }); return r.open && r.status === 'starting'; })());
+  useEffect(() => {
+    if (!starting) return;
+    const id = setInterval(() => { void refreshPeers().catch(() => {}); }, STARTING_POLL_MS);
+    return () => clearInterval(id);
+  }, [starting, refreshPeers]);
   const value = useMemo<Host | null>(() => {
     if (!focus) return null;
     const inFocus = worktrees.filter((w) => focus.members.includes(`local:${w.path}`));
@@ -100,6 +109,8 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   }, [focus, chat, worktrees, repos, peers]);
   return <HostContext.Provider value={value}>{children}</HostContext.Provider>;
 }
+
+const STARTING_POLL_MS = 2_000;
 
 const refuseNav = () => { throw new Error('Jarvis does not move the window'); };
 const NO_NAV: JarvisNavPort = { worktree: refuseNav, focus: refuseNav, workspace: refuseNav, repo: refuseNav, addRepo: refuseNav, newWorktree: refuseNav };

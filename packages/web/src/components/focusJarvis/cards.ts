@@ -36,5 +36,5 @@ export function resolveCard(card: TabCardRef, world: { worktrees: Worktree[]; re
   const p = world.peers.find((x) => x.live && x.worktreePath === w.path && (
     `${x.mode}-${x.sessionId}`.toLowerCase() === want || x.agentId.split('@')[0]!.toLowerCase() === want || x.alias?.toLowerCase() === want));
   if (!p) return CLOSED;
-  return { open: true, worktreePath: w.path, mode: p.mode, sessionId: p.sessionId, busy: p.lifecycle === 'working', status: STATUS[p.lifecycle] ?? 'idle' };
+  return { open: true, worktreePath: w.path, mode: p.mode, sessionId: p.sessionId, busy: p.lifecycle === 'working', status: p.attention === 'trust' ? 'needs you' : STATUS[p.lifecycle] ?? 'idle' };
 }
