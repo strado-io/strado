@@ -7,7 +7,7 @@ import { CloseIcon } from './icons';
 // positions it over the body element, so moving panes never remounts it.
 export function PaneCard({
   paneKey, title, icon, subtitle, focused, docked, hostRef, bodyRef, onActivate,
-  onSplitRight, onSplitDown, onFullTab, onClose, children,
+  onSplitRight, onSplitDown, onFullTab, onClose, actions, children,
 }: {
   paneKey: string;
   title: string;
@@ -26,6 +26,8 @@ export function PaneCard({
   onSplitDown?: (anchor: HTMLElement) => void;
   onFullTab?: () => void;
   onClose?: () => void;
+  /** Drawn before the pane buttons, always at full strength (e.g. Open in editor). */
+  actions?: React.ReactNode;
   /** Drawn in the body, for a pane with no live surface (the empty "New pane"). */
   children?: React.ReactNode;
 }) {
@@ -45,7 +47,8 @@ export function PaneCard({
         <span className="flex shrink-0 items-center">{icon}</span>
         <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-200">{title}</span>
         {subtitle && <span className="min-w-0 truncate text-xs text-zinc-500">{subtitle}</span>}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+        {actions && <span className="ml-auto flex shrink-0 items-center">{actions}</span>}
+        <span className={`${actions ? '' : 'ml-auto '}flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100`}>
           {onSplitRight && <PaneButton label={`Split ${title} right`} onClick={onSplitRight}><SplitRightIcon /></PaneButton>}
           {onSplitDown && <PaneButton label={`Split ${title} down`} onClick={onSplitDown}><SplitDownIcon /></PaneButton>}
           {onFullTab && <PaneButton label={`Open ${title} as full tab`} onClick={onFullTab}><MaximizeIcon /></PaneButton>}

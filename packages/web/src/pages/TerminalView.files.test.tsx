@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The Files tab in the hub: its mount (local and runner worktrees), ⌘P, paths
@@ -134,7 +134,7 @@ beforeEach(() => {
     editors: [
       { id: 'vscode', label: 'VS Code', available: false, lines: true },
       { id: 'cursor', label: 'Cursor', available: true, lines: true },
-      { id: 'system', label: 'Default app', available: true, lines: false },
+      { id: 'system', label: 'Finder', available: true, lines: false },
     ],
   });
   peers.list = [];
@@ -209,6 +209,14 @@ describe('Files tab in the hub', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open in Cursor' }));
     await flush();
     expect(screen.getByRole('status')).toHaveTextContent('Couldn’t open the editor. Pick one in Settings › Files.');
+  });
+
+  it('⌘O inside a dialog (the palette\'s agent cards) is left to it', async () => {
+    editorOpen.mockReset().mockResolvedValue(undefined);
+    render(<><TerminalView worktree={worktree} mode="files" onClose={() => {}} /><div role="dialog"><input aria-label="box" /></div></>);
+    await flush();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'box' }), { key: 'o', metaKey: true });
+    expect(editorOpen).not.toHaveBeenCalled();
   });
 
   it('a shell tab of a local worktree has it too, opening the worktree', async () => {
