@@ -104,7 +104,9 @@ async function runAction(
     ensureWorktree: async (path) => (ports.hub?.path === path ? ports.hub : storedHubPort(path)),
   });
   const after = deps.context();
-  const opened = run.opened.filter((t): t is TabRef => t != null).pop();
+  // The tab it opened, else the existing tab it acted on (shell.run, tab.focus…):
+  // the server matches that exact tab (a run's output, a wake).
+  const opened = run.opened.filter((t): t is TabRef => t != null).pop() ?? run.lastActedOn ?? undefined;
   const text = [describeRun(plan, run, after), run.recap ?? ''].filter(Boolean).join('\n\n');
   return {
     ok: run.ok,

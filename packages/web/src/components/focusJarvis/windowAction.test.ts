@@ -167,4 +167,11 @@ describe('runJarvisAction', () => {
       { focusId: 'f1', context: () => { throw new Error('/Users/secret/path exploded'); }, ports: () => ports(server()) });
     expect(r).toEqual({ ok: false, text: "The Strado window couldn't do that." });
   });
+
+  it('shell.run in an existing tab returns that tab as the card', async () => {
+    const s = server();
+    const r = await runJarvisAction({ action: 'shell.run', args: { tab: 'fleetx-api/shell-3', command: 'git status' }, scope: SCOPE }, { focusId: 'f1', context: ctx, ports: () => ports(s) });
+    expect(s.run).toHaveBeenCalledWith(expect.objectContaining({ worktreePath: '/w/api', mode: 'shell', sessionId: '3' }), 'git status');
+    expect(r).toMatchObject({ ok: true, card: { kind: 'shell', worktree: 'fleetx-api', worktreePath: '/w/api', tab: 'shell-3' } });
+  });
 });
