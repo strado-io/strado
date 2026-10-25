@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { storedHubPort } from './storedHub';
+import { storedBrowserTabs, storedHubPort } from './storedHub';
 import { readActiveTab } from '../../hooks/tabOrder';
-import { readBrowserTabIds, readBrowserTabs, readBrowserUrls, previewKey } from '../../hooks/browserTabs';
+import { readBrowserMeta, readBrowserTabIds, readBrowserTabs, readBrowserUrls, rememberBrowserMeta, previewKey } from '../../hooks/browserTabs';
 import { readPaneLayouts, leafKeys } from '../../hooks/paneLayout';
 import { readClosedAgents } from '../../hooks/agentTabs';
 
@@ -52,5 +52,29 @@ describe('storedHubPort', () => {
     expect(readBrowserTabIds()[P] ?? []).toEqual([]);
     hub.closeLocal({ worktreePath: P, mode: 'browser', sessionId: '1' });
     expect(readBrowserTabs().has(P)).toBe(false);
+  });
+
+  it('lists the worktree\'s stored Browser tabs with page and title', async () => {
+    const hub = storedHubPort(P);
+    await hub.openBrowser('https://google.com/', null, Date.now() + 1000);
+    rememberBrowserMeta(previewKey(P, '1'), { title: 'Google' });
+    await hub.openBrowser('http://localhost:3000/', null, Date.now() + 1000);
+    expect(storedBrowserTabs(P)).toEqual([
+      { id: '1', url: 'https://google.com/', label: 'Google' },
+      { id: '2', url: 'http://localhost:3000/', label: expect.any(String) },
+    ]);
+  });
+
+  it('closing a stored Browser tab drops its page, title and pane', async () => {
+    const hub = storedHubPort(P);
+    hub.focus({ worktreePath: P, mode: 'claude', sessionId: '1' });
+    const tab = (await hub.openBrowser('https://google.com/', { split: 'right', anchor: null, focus: false }, Date.now() + 1000))!;
+    rememberBrowserMeta(previewKey(P, tab.sessionId), { title: 'Google' });
+    expect(leafKeys(readPaneLayouts()[P]![0]!)).toContain('browser:1');
+    hub.closeLocal(tab);
+    expect(readBrowserTabs().has(P)).toBe(false);
+    expect(readBrowserUrls()[previewKey(P, '1')]).toBeUndefined();
+    expect(readBrowserMeta()[previewKey(P, '1')]).toBeUndefined();
+    expect((readPaneLayouts()[P] ?? []).flatMap(leafKeys)).not.toContain('browser:1');
   });
 });

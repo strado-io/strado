@@ -166,4 +166,18 @@ describe('buildParseContext', () => {
     expect(buildParseContext({ ...base, activeWorkspaceId: 'gone' }).currentWorkspace).toBeNull();
     expect(buildParseContext(base).currentWorkspace).toBeNull();
   });
+
+  it('stored Browser tabs of worktrees not on screen are listed off screen; the shown worktree\'s come from its hub', () => {
+    const wt = (path: string) => ({ path, branch: path.split('/').pop() } as never);
+    const ctx = buildParseContext({
+      hub: { path: '/w/a', context: { tabs: [], focused: null } }, peers: [], lastActedOn: null,
+      worktrees: [wt('/w/a'), wt('/w/b')], focuses: [], workspaces: [], repos: [], scripts: null,
+      storedBrowsers: [
+        { worktreePath: '/w/b', sessionId: '2', label: 'Google' },
+        { worktreePath: '/w/a', sessionId: '1', label: 'Shown already' },
+        { worktreePath: '/elsewhere', sessionId: '1', label: 'Not local' },
+      ],
+    });
+    expect(ctx.tabs).toEqual([{ worktreePath: '/w/b', mode: 'browser', sessionId: '2', label: 'Google', busy: false, onScreen: false }]);
+  });
 });

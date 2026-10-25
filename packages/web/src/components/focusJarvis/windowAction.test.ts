@@ -4,7 +4,8 @@ import { buildParseContext } from '../jarvis/jarvisContext';
 import type { JarvisPorts, JarvisServerPort } from '../../lib/jarvis/execute';
 import type { Worktree } from '../../types';
 import { readActiveTab } from '../../hooks/tabOrder';
-import { readBrowserUrls, previewKey } from '../../hooks/browserTabs';
+import { readBrowserTabs, readBrowserUrls, previewKey } from '../../hooks/browserTabs';
+import { storedBrowserTabs } from './storedHub';
 import { readPaneLayouts, leafKeys } from '../../hooks/paneLayout';
 import { beforeEach, afterEach } from 'vitest';
 
@@ -190,5 +191,49 @@ describe('runJarvisAction', () => {
     expect(focusPort).toHaveBeenCalledWith(expect.objectContaining({ op: 'rename', focusId: 'f1' }));
     expect(await runJarvisAction({ action: 'focus.edit', args: { op: 'rename', focus: 'Other', name: 'x' }, scope: SCOPE, focusId: 'f1' }, d))
       .toEqual({ ok: false, text: "That Focus isn't this one." });
+  });
+
+  describe('a card ref ("this" resolved by the server)', () => {
+    beforeEach(() => { localStorage.clear(); (window as unknown as { strado?: unknown }).strado = {}; });
+    afterEach(() => { delete (window as unknown as { strado?: unknown }).strado; });
+    const withBrowsers = () => buildParseContext({
+      hub: null, lastActedOn: null, focuses: [focus(['local:/w/api'])], activeFocusId: 'f1', workspaces: [], repos: [], scripts: null,
+      worktrees: [wt('/w/api', 'fleetx-api'), wt('/w/web', 'web')], peers: [],
+      storedBrowsers: ['/w/api', '/w/web'].flatMap((p) => storedBrowserTabs(p).map((b) => ({ worktreePath: p, sessionId: b.id, label: b.label }))),
+    });
+    const d = () => ({ context: withBrowsers, ports: () => ports(server()) });
+
+    it('closes a Browser tab of a worktree not on screen: gone from its stored tabs', async () => {
+      const opened = await runJarvisAction({ action: 'browser.open', args: { url: 'google.com', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
+      expect(opened.card).toMatchObject({ kind: 'browser', worktreePath: '/w/api', tab: 'browser-1' });
+      const r = await runJarvisAction({ action: 'tab.close', args: { card: { worktreePath: '/w/api', tab: 'browser-1' } }, scope: SCOPE, focusId: 'f1' }, d());
+      expect(r.ok).toBe(true);
+      expect(readBrowserTabs().has('/w/api')).toBe(false);
+      expect(readBrowserUrls()[previewKey('/w/api', '1')]).toBeUndefined();
+    });
+
+    it('focuses it: the worktree\'s active tab', async () => {
+      await runJarvisAction({ action: 'browser.open', args: { url: 'google.com', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
+      await runJarvisAction({ action: 'tab.open', args: { mode: 'shell', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
+      const r = await runJarvisAction({ action: 'tab.focus', args: { card: { worktreePath: '/w/api', tab: 'browser-1' } }, scope: SCOPE, focusId: 'f1' }, d());
+      expect(r.ok).toBe(true);
+      expect(readActiveTab('/w/api')).toEqual({ mode: 'browser', id: '1' });
+    });
+
+    it('a card for a tab that is gone, or outside the Focus, is refused in fixed words', async () => {
+      expect(await runJarvisAction({ action: 'tab.close', args: { card: { worktreePath: '/w/api', tab: 'browser-4' } }, scope: SCOPE, focusId: 'f1' }, d()))
+        .toEqual({ ok: false, text: "That tab isn't open any more." });
+      await runJarvisAction({ action: 'browser.open', args: { url: 'x.dev', worktree: 'web' }, scope: ['/w/web'], focusId: 'f1' }, d());
+      expect(await runJarvisAction({ action: 'tab.close', args: { card: { worktreePath: '/w/web', tab: 'browser-1' } }, scope: SCOPE, focusId: 'f1' }, d()))
+        .toEqual({ ok: false, text: "That worktree isn't in this Focus." });
+      expect(readBrowserTabs().has('/w/web')).toBe(true);
+    });
+
+    it('the stored Browser tab is in Jarvis\'s context by name too', async () => {
+      await runJarvisAction({ action: 'browser.open', args: { url: 'google.com', worktree: 'fleetx-api' }, scope: SCOPE, focusId: 'f1' }, d());
+      const r = await runJarvisAction({ action: 'tab.close', args: { tab: 'fleetx-api/browser-1' }, scope: SCOPE, focusId: 'f1' }, d());
+      expect(r.ok).toBe(true);
+      expect(readBrowserTabs().has('/w/api')).toBe(false);
+    });
   });
 });

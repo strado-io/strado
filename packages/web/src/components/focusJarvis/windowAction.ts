@@ -1,6 +1,6 @@
 import { describeRun, planFromModel } from '../../lib/jarvis/model';
 import { runPlan, type JarvisPorts } from '../../lib/jarvis/execute';
-import { here } from '../../lib/jarvis/parse';
+import { here, tabStep } from '../../lib/jarvis/parse';
 import { storedHubPort } from './storedHub';
 import type { ParseContext, Plan, Step, TabRef } from '../../lib/jarvis/types';
 import type { JarvisUiActionArgs, JarvisUiActionResult, TabCardRef } from '../../types';
@@ -12,6 +12,21 @@ const IN_A_WORKTREE = new Set(['tab.open', 'browser.open', 'server.start', 'serv
 /** Fixed words: what Jarvis is told when a step reaches outside its Focus. */
 export const OUT_OF_SCOPE = "That worktree isn't in this Focus.";
 export const OTHER_FOCUS = "That Focus isn't this one.";
+export const TAB_GONE = "That tab isn't open any more.";
+
+/** Tab actions that may name their tab by a card ref (`card: { worktreePath, tab }`, the
+ * server's resolution of "this"/"it" to the chat's newest card) instead of by name. */
+const BY_CARD = { 'tab.close': 'close', 'tab.focus': 'focus', 'tab.interrupt': 'interrupt' } as const;
+
+/** The tab a card ref names, as this window knows it (on screen, a live
+ * session, or a stored Browser tab of a Focus worktree); null when gone. */
+function cardTab(card: unknown, ctx: ParseContext): TabRef | null {
+  const c = card as { worktreePath?: unknown; tab?: unknown } | null;
+  if (!c || typeof c.worktreePath !== 'string' || typeof c.tab !== 'string') return null;
+  const t = ctx.tabs.find((x) => x.worktreePath === c.worktreePath && `${x.mode}-${x.sessionId}` === c.tab);
+  if (!t) return null;
+  return { worktreePath: t.worktreePath, mode: t.mode, sessionId: t.sessionId, ...(t.executionId ? { executionId: t.executionId } : {}) };
+}
 
 /** Every worktree a step acts in: its own, its tab's, its anchor's, and the
  * worktree of any agent (or call's agent) it addresses. Unknown agents count
@@ -97,12 +112,23 @@ async function runAction(
     if (names.length !== 1) return { ok: false, text: names.length ? `Which worktree? ${names.join(', ')}` : 'Which worktree? This Focus has none yet' };
     args = { ...args, worktree: names[0] };
   }
-  const planned = planFromModel([{ action, args }], ctx);
+  let planned: Plan;
+  if (args.card != null && action in BY_CARD) {
+    const ref = cardTab(args.card, ctx);
+    if (!ref) return { ok: false, text: TAB_GONE };
+    planned = { steps: [tabStep(ctx, BY_CARD[action as keyof typeof BY_CARD], { kind: 'tab', ref })], source: 'model', summary: '', executable: true };
+  } else {
+    planned = planFromModel([{ action, args }], ctx);
+  }
   if (planned.steps.length === 0) return { ok: false, text: planned.summary };
   const confined = confine(planned, ctx, scope, focusId);
   if ('refuse' in confined) return { ok: false, text: confined.refuse };
   const plan = confined.plan;
-  const ports = deps.ports();
+  const base = deps.ports();
+  // A tab in a worktree no hub shows is acted on in its stored layout (a Browser tab's close, say).
+  const target = plan.steps.find((s) => s.target.kind === 'tab')?.target;
+  const offScreen = target?.kind === 'tab' && target.ref.worktreePath !== base.hub?.path ? target.ref.worktreePath : null;
+  const ports = offScreen ? { ...base, hub: storedHubPort(offScreen) } : base;
   const run = await runPlan(plan, {
     ...ports,
     // The on-screen hub when it shows that worktree, else its stored layout: never navigate.

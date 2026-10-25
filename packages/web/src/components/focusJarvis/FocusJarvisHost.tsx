@@ -5,6 +5,7 @@ import { useJarvisActionHandler, useUiHub } from '../../contexts/UiControlContex
 import type { JarvisAppPort, JarvisNavPort } from '../../lib/jarvis/execute';
 import { api } from '../../api';
 import { runJarvisAction } from './windowAction';
+import { storedBrowserTabs } from './storedHub';
 import { readShellNames } from '../../hooks/shellNames';
 import { buildModelContext } from '../../lib/jarvis/model';
 import { jarvisServerPort } from '../../lib/jarvis/serverPort';
@@ -50,9 +51,12 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   const { peers, refresh: refreshPeers } = useIntercom();
   const latest = useRef({ focuses, worktrees, repos, workspaces, stations, peers });
   latest.current = { focuses, worktrees, repos, workspaces, stations, peers };
-  const parseContext = () => {
+  /** The context Jarvis sees; `paths` are the Focus worktrees whose stored
+   * Browser tabs it lists (the active Focus's, or an action's scope). */
+  const parseContext = (paths?: string[]) => {
     const l = latest.current;
     const h = hub();
+    const members = paths ?? (focus?.members ?? []).filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length));
     return buildParseContext({
       hub: h ? { path: h.path, context: h.jarvis?.context() ?? null } : null,
       peers: l.peers,
@@ -67,6 +71,7 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
       repos: l.repos,
       scripts: h ? jarvisServerPort(wsId).cachedScripts(h.path) : null,
       stations: l.stations,
+      storedBrowsers: members.flatMap((p) => storedBrowserTabs(p).map((b) => ({ worktreePath: p, sessionId: b.id, label: b.label }))),
     });
   };
   const getContext = () => buildModelContext(parseContext());
@@ -74,7 +79,7 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   // them here, in the background, with whatever hub is on screen (if any).
   // The action names its turn's Focus; the window may be showing another one.
   useJarvisActionHandler((action) => runJarvisAction(action, {
-    context: parseContext,
+    context: () => parseContext(action.scope),
     ports: () => ({
       hub: hub()?.jarvis ?? null,
       server: jarvisServerPort(wsId),

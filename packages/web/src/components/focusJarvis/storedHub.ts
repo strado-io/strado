@@ -1,6 +1,10 @@
 import type { UiTabRef } from '../../api';
 import { rememberClosedAgent } from '../../hooks/agentTabs';
-import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
+import {
+  browserTabLabel, previewKey, readBrowserMeta, readBrowserTabIds, readBrowserTabs, readBrowserUrls,
+  rememberBrowserMeta, rememberBrowserTab, rememberBrowserTabIds, rememberBrowserUrl,
+} from '../../hooks/browserTabs';
+import { readPaneLayouts, rememberPaneLayouts, removeLeaf, type PaneNode } from '../../hooks/paneLayout';
 import { rememberActiveTab, tabKeyOf } from '../../hooks/tabOrder';
 import type { JarvisHubPort, ResolvedPlace } from '../../lib/jarvis/execute';
 import type { TabRef } from '../../lib/jarvis/types';
@@ -8,6 +12,14 @@ import { applyStoredBrowserOpen, applyStoredPlace } from '../../lib/uiCommands';
 
 const keyOf = (tab: TabRef) => tabKeyOf({ mode: tab.mode, id: tab.sessionId });
 const asUi = (p: ResolvedPlace) => ({ split: p.split, anchor: p.anchor as UiTabRef | null, focus: p.focus });
+
+/** A worktree's stored Browser tabs (id, page, title), as its hub would show them. */
+export function storedBrowserTabs(path: string): { id: string; url: string | null; label: string }[] {
+  const ids = [...(readBrowserTabs().has(path) ? ['1'] : []), ...(readBrowserTabIds()[path] ?? [])];
+  const urls = readBrowserUrls();
+  const meta = readBrowserMeta();
+  return ids.map((id) => ({ id, url: urls[previewKey(path, id)] ?? null, label: browserTabLabel(meta[previewKey(path, id)]?.title, id) }));
+}
 
 /** A hub port for a worktree no hub shows, so Focus Jarvis can lay it out
  * without moving the window: placements go to its stored layout, focus to its
@@ -51,6 +63,12 @@ export function storedHubPort(path: string): JarvisHubPort {
       if (tab.worktreePath !== path || tab.mode !== 'browser') return;
       if (tab.sessionId === '1') rememberBrowserTab(path, false);
       else rememberBrowserTabIds(path, (readBrowserTabIds()[path] ?? []).filter((id) => id !== tab.sessionId));
+      // Gone everywhere: its page, its title, and its pane in the stored layout.
+      const key = previewKey(path, tab.sessionId);
+      try { rememberBrowserUrl(key, null); } catch { /* storage off */ }
+      rememberBrowserMeta(key, null);
+      const nodes = readPaneLayouts()[path];
+      if (nodes) rememberPaneLayouts(path, nodes.map((n) => removeLeaf(n, keyOf(tab))).filter((n): n is PaneNode => n !== null));
     },
   };
 }
