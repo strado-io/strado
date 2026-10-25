@@ -13,11 +13,13 @@ const ProfileSchema = z.object({
   telemetryOptOut: z.boolean().default(false),
   // Jarvis: never send command-box text to a model (enforced by /jarvis/plan).
   jarvisLocalOnly: z.boolean().default(false),
+  // Focus Jarvis speaks up (a short wake turn) when an agent it started finishes.
+  jarvisWakes: z.boolean().default(true),
 });
 
 export type Profile = z.infer<typeof ProfileSchema>;
 
-const DEFAULTS: Profile = { fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false };
+const DEFAULTS: Profile = { fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false, jarvisWakes: true };
 
 export function profilePath(): string {
   const home = process.env.STRADO_HOME || path.join(os.homedir(), '.strado');
