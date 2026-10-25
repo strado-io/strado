@@ -1,7 +1,10 @@
 import { createContext, useContext, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import type { Focus, StationDto } from '../../api';
 import { useIntercom } from '../../contexts/IntercomContext';
-import { useUiHub } from '../../contexts/UiControlContext';
+import { useJarvisActionHandler, useUiHub } from '../../contexts/UiControlContext';
+import { api } from '../../api';
+import type { JarvisAppPort, JarvisNavPort } from '../../lib/jarvis/execute';
+import { runJarvisAction } from './windowAction';
 import { readShellNames } from '../../hooks/shellNames';
 import { buildModelContext } from '../../lib/jarvis/model';
 import { jarvisServerPort } from '../../lib/jarvis/serverPort';
@@ -22,7 +25,7 @@ const HostContext = createContext<Host | null>(null);
 /** One Jarvis chat per window, for the active Focus, shared by its sidebar
  * card and its main view. Sends carry this window's context, built exactly
  * as the ⌘K bar builds it. */
-export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, children }: {
+export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, workspaces, stations, lastActedOn, app, children }: {
   wsId: string;
   focus: Focus | null;
   focuses: Focus[];
@@ -31,16 +34,18 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   workspaces: Workspace[];
   stations: StationDto[];
   lastActedOn: MutableRefObject<TabRef | null>;
+  /** The app's pages and Focus edits (focus.edit); Jarvis never navigates. */
+  app?: JarvisAppPort;
   children: ReactNode;
 }) {
   const hub = useUiHub();
   const { peers } = useIntercom();
   const latest = useRef({ focuses, worktrees, repos, workspaces, stations, peers });
   latest.current = { focuses, worktrees, repos, workspaces, stations, peers };
-  const getContext = () => {
+  const parseContext = () => {
     const l = latest.current;
     const h = hub();
-    return buildModelContext(buildParseContext({
+    return buildParseContext({
       hub: h ? { path: h.path, context: h.jarvis?.context() ?? null } : null,
       peers: l.peers,
       lastActedOn: lastActedOn.current,
@@ -54,8 +59,21 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
       repos: l.repos,
       scripts: h ? jarvisServerPort(wsId).cachedScripts(h.path) : null,
       stations: l.stations,
-    }));
+    });
   };
+  const getContext = () => buildModelContext(parseContext());
+  // The turn's tool calls come back to this window as `jarvis.action`: run
+  // them here, in the background, with whatever hub is on screen (if any).
+  useJarvisActionHandler((action) => runJarvisAction(action, {
+    context: parseContext,
+    ports: () => ({
+      hub: hub()?.jarvis ?? null,
+      server: jarvisServerPort(wsId),
+      nav: NO_NAV,
+      ...(app ? { app } : {}),
+      shellIdle: async (ref) => !(await api.worktrees.sessionBusy(wsId, ref.worktreePath, 'shell', ref.sessionId)).busy,
+    }),
+  }));
   const chat = useFocusJarvis(wsId, focus?.id ?? null, getContext);
   const value = useMemo<Host | null>(() => {
     if (!focus) return null;
@@ -71,6 +89,9 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   }, [focus, chat, worktrees, repos, peers]);
   return <HostContext.Provider value={value}>{children}</HostContext.Provider>;
 }
+
+const refuseNav = () => { throw new Error('Jarvis does not move the window'); };
+const NO_NAV: JarvisNavPort = { worktree: refuseNav, focus: refuseNav, workspace: refuseNav, repo: refuseNav, addRepo: refuseNav, newWorktree: refuseNav };
 
 /** The ✦ Jarvis card for the sidebar's Focus section; nothing without a Focus. */
 export function FocusJarvisCard({ active, onSelect }: { active: boolean; onSelect: () => void }) {
