@@ -6,6 +6,8 @@ import { IntegrationsSection, type IntegrationId } from './IntegrationsSection';
 import { OrganizationSection } from './OrganizationSection';
 import { PrivacySection } from './PrivacySection';
 import { CommandBoxSection } from './CommandBoxSection';
+import { LanguageServersSection } from './LanguageServersSection';
+import { EditorSection } from './EditorSection';
 import { ProfileSection } from './ProfileSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
 import { RunnersPanel } from '../RunnersPanel';
@@ -14,7 +16,7 @@ import { useEntitlements } from '../../hooks/entitlements';
 import { TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from '../SidebarToggle';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'editor' | 'languageServers' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -66,6 +68,12 @@ function SettingsNavIcon({ id }: { id: SettingsSection | 'feedback' }) {
   if (id === 'agents') {
     return <svg {...props}><rect x="4" y="7" width="16" height="13" rx="3" /><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" /></svg>;
   }
+  if (id === 'editor') {
+    return <svg {...props}><path d="M12 20h9M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z" /></svg>;
+  }
+  if (id === 'languageServers') {
+    return <svg {...props}><path d="m16 18 6-6-6-6M8 6l-6 6 6 6" /></svg>;
+  }
   if (id === 'runners') {
     return (
       <svg {...props}>
@@ -109,6 +117,7 @@ const GROUPS: NavGroup[] = [
     items: [{ id: 'workspaces', label: 'Workspaces' }],
   },
   { title: 'Agents', items: [{ id: 'agents', label: 'Coding agents' }] },
+  { title: 'Files', items: [{ id: 'editor', label: 'Editor' }, { id: 'languageServers', label: 'Language servers' }] },
   { title: 'Infrastructure', items: [{ id: 'runners', label: 'Runners' }] },
   { title: 'Connections', items: [{ id: 'integrations', label: 'Integrations' }] },
   { title: 'System', items: [{ id: 'commandbox', label: 'Command box' }, { id: 'privacy', label: 'Privacy' }] },
@@ -148,6 +157,7 @@ export function SettingsPage({
   onJiraConnected,
   onOpenFeedback,
   bottomInset = false,
+  lspInstall = null,
 }: {
   section?: SettingsSection;
   /** With section 'runners': open that runner's host page, on this tab. */
@@ -157,6 +167,8 @@ export function SettingsPage({
   onClose: () => void;
   onJiraConnected?: () => void;
   onOpenFeedback?: () => void;
+  /** Settings › Language servers' Install: the worktree a shell opens in (null: none open on this Mac). */
+  lspInstall?: { label: string; run: (command: string) => void } | null;
 }) {
   const [search, setSearch] = useState('');
   const backButton = useRef<HTMLButtonElement>(null);
@@ -280,6 +292,8 @@ export function SettingsPage({
             {active === 'appearance' && <AppearanceSection />}
             {active === 'workspaces' && <WorkspaceManagementSection />}
             {active === 'agents' && <AgentsSection />}
+            {active === 'editor' && <EditorSection />}
+            {active === 'languageServers' && <LanguageServersSection install={lspInstall} />}
             {active === 'runners' && (locked('runners') ? <ProUpsell name="Runners" /> : <RunnersPanel initialHost={host} />)}
             {active === 'integrations' && (
               <IntegrationsSection

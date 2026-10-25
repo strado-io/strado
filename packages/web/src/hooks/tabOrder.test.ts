@@ -8,16 +8,16 @@ describe('tabOrder', () => {
 
   it('round-trips a saved order per path', () => {
     rememberTabOrder('/wt/a', ['shell:2', 'claude:1']);
-    rememberTabOrder('/wt/b', ['vscode:1']);
+    rememberTabOrder('/wt/b', ['files:1']);
     expect(readTabOrder('/wt/a')).toEqual(['shell:2', 'claude:1']);
-    expect(readTabOrder('/wt/b')).toEqual(['vscode:1']);
+    expect(readTabOrder('/wt/b')).toEqual(['files:1']);
     expect(readTabOrder('/wt/none')).toEqual([]);
   });
 
   it('applyTabOrder sorts saved keys first and keeps unsaved structural order', () => {
-    const tabs = [t('claude', '1'), t('shell', '1'), t('shell', '2'), t('vscode', '1')];
+    const tabs = [t('claude', '1'), t('shell', '1'), t('shell', '2'), t('files', '1')];
     const out = applyTabOrder(['shell:2', 'claude:1'], tabs);
-    expect(out.map((x) => tabKeyOf(x.tab))).toEqual(['shell:2', 'claude:1', 'shell:1', 'vscode:1']);
+    expect(out.map((x) => tabKeyOf(x.tab))).toEqual(['shell:2', 'claude:1', 'shell:1', 'files:1']);
   });
 
   it('applyTabOrder with no saved order is identity', () => {

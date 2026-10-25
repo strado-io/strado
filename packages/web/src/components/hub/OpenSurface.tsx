@@ -15,7 +15,7 @@ export type NewSessionOption = {
 
 /** The one-letter shortcut per kind in a new pane. */
 export const SURFACE_KEYS: Record<string, string> = {
-  claude: 'C', codex: 'X', opencode: 'O', pi: 'P', shell: 'T', vscode: 'V', kb: 'K', browser: 'B', diff: 'D',
+  claude: 'C', codex: 'X', opencode: 'O', pi: 'P', shell: 'T', kb: 'K', browser: 'B', diff: 'D',
 };
 
 // What fills a new, empty split pane: "Open a surface", the + menu's kinds as

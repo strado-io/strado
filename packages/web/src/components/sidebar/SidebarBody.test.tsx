@@ -1,13 +1,15 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RepoConfig, Worktree } from '../../types';
 import type { Focus, RemoteWorktree } from '../../api';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { publishTickets } from '../../hooks/tickets';
 import { SidebarBody, type SidebarBodyProps } from './SidebarBody';
+import { resetEditorsCache } from '../../hooks/editors';
 
 vi.mock('../../hooks/mrSummaries', () => ({ useMrSummaries: vi.fn(() => new Map()) }));
-vi.mock('../../api', () => ({ api: { tickets: { myIssues: vi.fn(async () => []) } } }));
+const editorsApi = vi.hoisted(() => ({ list: vi.fn(), open: vi.fn() }));
+vi.mock('../../api', () => ({ api: { tickets: { myIssues: vi.fn(async () => []) }, editors: editorsApi } }));
 
 // The Focus list is a shared server-backed store; here it is a plain in-memory
 // one so each test can say which Focuses exist and which is active.
@@ -58,6 +60,9 @@ beforeEach(() => {
   focusMock.rename.mockResolvedValue(undefined);
   focusMock.remove.mockResolvedValue(undefined);
   vi.mocked(useMrSummaries).mockReturnValue(new Map());
+  resetEditorsCache();
+  editorsApi.list.mockReset().mockRejectedValue(new Error('down'));
+  editorsApi.open.mockReset();
 });
 
 describe('SidebarBody: the active Focus', () => {
@@ -135,6 +140,37 @@ describe('SidebarBody: the active Focus', () => {
     render(<SidebarBody {...props({ worktrees: [ticketed, pr] })} />);
     expect(screen.getByRole('button', { name: 'FD-9' })).toHaveTextContent('Fix login redirect');
     expect(screen.getByRole('button', { name: 'feat/x' })).toHaveTextContent('Add rate limiting');
+  });
+
+  it('Open in <editor>: in a local card\'s menu, opens the worktree; a failure reports fixed words', async () => {
+    editorsApi.list.mockResolvedValue({ preferred: null, editors: [{ id: 'zed', label: 'Zed', available: true, lines: true }] });
+    editorsApi.open.mockResolvedValue(undefined);
+    withFocus('local:/r1/wt');
+    const onError = vi.fn();
+    render(<SidebarBody {...props({ onError })} />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
+    expect(editorsApi.open).toHaveBeenCalledWith('w1', { worktreePath: '/r1/wt', editor: 'zed' });
+    editorsApi.open.mockRejectedValue(new Error('spawn zed ENOENT /secret'));
+    fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
+    await act(async () => {});
+    expect(onError).toHaveBeenCalledWith("Couldn't open the editor");
+  });
+
+  it('a runner worktree\'s menu has no Open in <editor>', async () => {
+    editorsApi.list.mockResolvedValue({ preferred: null, editors: [{ id: 'zed', label: 'Zed', available: true, lines: true }] });
+    const remote = {
+      runnerId: 'rn1', runnerName: 'gpu-box', wsBase: 'wss://rn1', remoteWsId: 'default',
+      path: '/srv/wt/FX-77', name: 'FX-77', branch: 'fx-77', head: 'h', remoteRepoId: null,
+      isRepoRoot: false, cloneUrl: null, localRepoId: 'r1', remoteRepoName: null,
+    } as RemoteWorktree;
+    withFocus('remote:rn1:/srv/wt/FX-77');
+    render(<SidebarBody {...props({ remoteWorktrees: [remote], runnerStatuses: [{ runnerId: 'rn1', name: 'gpu-box', online: true, error: null }] as never })} />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'fx-77 on gpu-box actions' }));
+    expect(screen.queryByRole('button', { name: 'Open in Zed' })).toBeNull();
   });
 
   it('shows a runner worktree in the Focus and lets it be removed', () => {

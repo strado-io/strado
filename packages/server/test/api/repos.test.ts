@@ -48,7 +48,7 @@ describe('POST /api/w/default/repos', () => {
     expect(res.json().id).toBe('react-app');
   });
 
-  it('rejects unsupported editor', async () => {
+  it("ignores an older client's editor field (retired: the editor is chosen per machine)", async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/w/default/repos',
@@ -62,8 +62,8 @@ describe('POST /api/w/default/repos', () => {
         editor: 'vim',
       },
     });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('VALIDATION');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty('editor');
   });
 });
 

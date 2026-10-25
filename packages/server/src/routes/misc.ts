@@ -6,7 +6,6 @@ import path from 'node:path';
 import { FastifyInstance } from 'fastify';
 import { AppError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
-import { ALLOWED_EDITORS } from '../repoConfig.js';
 
 function encodeClaudeProjectDir(absPath: string): string {
   return absPath.replace(/[/.]/g, '-');
@@ -42,24 +41,6 @@ async function pickClaudeCwd(candidates: string[]): Promise<string> {
 }
 
 export async function registerMiscRoutes(app: FastifyInstance) {
-  app.post<{ Params: { encodedPath: string } }>(
-    '/worktrees/:encodedPath/open-editor',
-    async (req, reply) => {
-      const { repos } = req.workspace!.stores;
-      const target = decodeURIComponent(req.params.encodedPath);
-      const repoList = await repos.list();
-      const repo = findOwningRepo(repoList, target, app.deps.homeStateDir, { includeRepoRoot: true });
-      if (!repo) throw new AppError('NOT_FOUND', `no repo owns ${target}`);
-      assertPathUnder(target, [repo.path, ...worktreeRootsFor(app.deps.homeStateDir, repo)]);
-      if (!ALLOWED_EDITORS.includes(repo.editor)) {
-        throw new AppError('VALIDATION', `editor ${repo.editor} not allowed`);
-      }
-      const child = spawn(repo.editor, [target], { stdio: 'ignore', detached: true });
-      child.unref();
-      return reply.code(204).send();
-    },
-  );
-
   app.post<{ Params: { encodedPath: string } }>(
     '/worktrees/:encodedPath/open-terminal',
     async (req, reply) => {

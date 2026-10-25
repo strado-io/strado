@@ -10,7 +10,6 @@ export function NewWorkspaceDialog({
 }) {
   const [id, setId] = useState('');
   const [name, setName] = useState('');
-  const [defaultEditor, setEditor] = useState<Workspace['defaultEditor']>('code');
   const [defaultPortBase, setPortBase] = useState(8000);
   const [submitting, setSubmitting] = useState(false);
 
@@ -25,7 +24,6 @@ export function NewWorkspaceDialog({
         // compatibility, but they are no longer user-facing settings.
         color: '#71717a',
         icon: name.trim().charAt(0).toUpperCase() || 'W',
-        defaultEditor,
         defaultPortBase,
         logDir: null,
       });
@@ -53,16 +51,6 @@ export function NewWorkspaceDialog({
           <label className={labelCls}>
             Name
             <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} required />
-          </label>
-          <label className={labelCls}>
-            Editor
-            <select className={inputCls} value={defaultEditor}
-                    onChange={(e) => setEditor(e.target.value as Workspace['defaultEditor'])}>
-              <option value="code">VS Code</option>
-              <option value="cursor">Cursor</option>
-              <option value="subl">Sublime</option>
-              <option value="webstorm">WebStorm</option>
-            </select>
           </label>
           <label className={labelCls}>
             Default port base

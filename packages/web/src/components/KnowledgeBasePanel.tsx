@@ -61,7 +61,7 @@ export function KnowledgeBasePanel({
   worktreePath,
   instanceId = '1',
   active,
-  onOpenInVsCode,
+  onOpenInFiles,
   onOpenInNewTab,
   onSelectedPath,
 }: {
@@ -69,7 +69,8 @@ export function KnowledgeBasePanel({
   worktreePath: string;
   instanceId?: string;
   active: boolean;
-  onOpenInVsCode: (relPath: string) => void;
+  /** Show the document in the Files tab. */
+  onOpenInFiles: (relPath: string) => void;
   onOpenInNewTab?: (relPath: string) => void;
   onSelectedPath?: (relPath: string | null) => void;
 }) {
@@ -403,10 +404,10 @@ export function KnowledgeBasePanel({
               </button>
             )}
             <button
-              onClick={() => onOpenInVsCode(selected)}
+              onClick={() => onOpenInFiles(selected)}
               className="shrink-0 text-xs text-sky-400 hover:underline"
             >
-              Open in VS Code
+              Open in Files
             </button>
           </header>
         )}

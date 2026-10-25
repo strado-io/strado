@@ -5,7 +5,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { buildApp, buildDeps } from '../app.js';
 
 let tmp: string;
@@ -54,13 +55,47 @@ describe('GET /api/sessions/metrics', () => {
     expect(body.app.server.rssBytes).toBeGreaterThan(0);
     // The suite runs the in-process manager (STRADO_INPROC_PTY=1): no daemon.
     expect(body.app.daemon).toBeNull();
-    expect(body.app.vscode).toBeNull(); // no workbench in tests
+    // The embedded VS Code is gone, and its rows with it.
+    expect(body.app.vscode).toBeUndefined();
+    expect(body.vscodeWindows).toBeUndefined();
     const row = body.sessions.find((s: { key: string }) => s.key === `${orphan}\0shell`);
     expect(row).toMatchObject({ path: orphan, mode: 'shell', id: '1' });
     expect(row.pid).toBeGreaterThan(0);
     expect(row.processes).toBeGreaterThanOrEqual(1);
     expect(row.rssBytes).toBeGreaterThan(0);
   }, 20_000);
+});
+
+describe('GET /api/sessions/metrics: language servers', () => {
+  it("lists the LSP manager's running servers with their process-tree usage", async () => {
+    await app.close();
+    const deps = await buildDeps({ configDir: path.join(tmp, 'config2'), homeStateDir: state });
+    // A real process of its own, not this test runner, stands in for the server.
+    const child = spawn('sleep', ['60'], { stdio: 'ignore' });
+    onTestFinished(() => void child.kill('SIGKILL'));
+    const running = [{
+      id: 'typescript' as const, lang: 'TypeScript and JavaScript', worktreePath: '/wt/a', pid: child.pid!,
+      startedAt: '2026-10-25T10:00:00.000Z', lastUsedAt: '2026-10-25T10:05:00.000Z',
+    }];
+    const lsp = {
+      running: () => running,
+      definition: async () => ({ source: 'lsp' as const, hits: [] }),
+      references: async () => ({ source: 'lsp' as const, hits: [] }),
+      hover: async () => null,
+      outline: async () => ({ server: null, symbols: [] as [] }),
+      servers: async () => [],
+      setEnabled: async () => {},
+      stop: async () => {},
+      sweep: async () => {},
+      closeAll: async () => {},
+    };
+    app = await buildApp({ ...deps, lsp });
+    const body = (await app.inject({ method: 'GET', url: '/api/sessions/metrics' })).json();
+    expect(body.app.languageServers).toEqual([
+      expect.objectContaining({ ...running[0], processes: expect.any(Number), rssBytes: expect.any(Number), cpu: expect.any(Number) }),
+    ]);
+    expect(body.app.languageServers[0].rssBytes).toBeGreaterThan(0);
+  });
 });
 
 describe('DELETE /api/sessions/:key', () => {
@@ -80,52 +115,6 @@ describe('DELETE /api/sessions/:key', () => {
   it('rejects a key that is not a live session', async () => {
     const res = await app.inject({ method: 'DELETE', url: `/api/sessions/${encodeURIComponent('/nope\0shell')}` });
     expect(res.statusCode).toBe(404);
-  }, 20_000);
-});
-
-describe('DELETE /api/sessions/vscode', () => {
-  it('stops the shared VS Code workbench (idempotent when none is running)', async () => {
-    const res = await app.inject({ method: 'DELETE', url: '/api/sessions/vscode' });
-    expect(res.statusCode).toBe(204);
-  }, 20_000);
-});
-
-describe('VS Code window reports', () => {
-  it('POST /api/vscode/window attributes an extension host to a folder; metrics list it; DELETE withdraws it', async () => {
-    const folder = path.join(tmp, 'wt-a');
-    const post = await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: process.pid, folder } });
-    expect(post.statusCode).toBe(204);
-    const res = await app.inject({ method: 'GET', url: '/api/sessions/metrics' });
-    const win = res.json().vscodeWindows.find((w: { path: string }) => w.path === folder);
-    expect(win).toMatchObject({ pid: process.pid });
-    expect(win.rssBytes).toBeGreaterThan(0);
-    const del = await app.inject({ method: 'DELETE', url: '/api/vscode/window', payload: { pid: process.pid } });
-    expect(del.statusCode).toBe(204);
-    const after = await app.inject({ method: 'GET', url: '/api/sessions/metrics' });
-    expect(after.json().vscodeWindows).toEqual([]);
-  }, 20_000);
-
-  it('rejects a report without an absolute folder or a numeric pid', async () => {
-    expect((await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: 'x', folder: '/a' } })).statusCode).toBe(400);
-    expect((await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: 1, folder: 'rel' } })).statusCode).toBe(400);
-  }, 20_000);
-});
-
-describe('closing a VS Code tab ends its window', () => {
-  it('DELETE /api/vscode kills the extension-host tree that reported that folder', async () => {
-    // VS Code keeps a disconnected window's extension host alive for hours
-    // (reconnection grace), so closing the tab alone frees nothing.
-    const { spawn } = await import('node:child_process');
-    const host = spawn('/bin/sh', ['-c', 'sleep 60 & wait'], { stdio: 'ignore' });
-    const folder = path.join(tmp, 'wt-close');
-    await new Promise((r) => setTimeout(r, 200)); // let the child sleep spawn
-    await app.inject({ method: 'POST', url: '/api/vscode/window', payload: { pid: host.pid, folder } });
-    const exited = new Promise<void>((r) => host.once('exit', () => r()));
-    const res = await app.inject({ method: 'DELETE', url: '/api/vscode', payload: { folder } });
-    expect(res.statusCode).toBe(200);
-    await Promise.race([exited, new Promise((_, rej) => setTimeout(() => rej(new Error('host still alive')), 3000))]);
-    const after = await app.inject({ method: 'GET', url: '/api/sessions/metrics' });
-    expect(after.json().vscodeWindows.some((w: { path: string }) => w.path === folder)).toBe(false);
   }, 20_000);
 });
 

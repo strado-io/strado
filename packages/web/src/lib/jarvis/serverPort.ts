@@ -74,7 +74,9 @@ export function createJarvisServerPort(wsId: string): JarvisServer {
     },
     interrupt: (tab) => call('/interrupt', { target: pty(tab) }),
     close: (tab) => call('/close', { target: pty(tab) }),
-    message: (agentId, text, opts) => call('/message', { to: agentId, body: text, ...(opts?.ask ? { ask: true } : {}) }),
+    message: (agentId, text, opts) => call('/message', {
+      to: agentId, body: text, ...(opts?.ask ? { ask: true } : {}), ...(opts?.context?.length ? { context: opts.context } : {}),
+    }),
     recap: async (agents, question) => {
       try {
         return await call<{ text: string }>('/recap', { ...(agents === 'all' ? { all: true } : { agents }), ...(question ? { question } : {}) });

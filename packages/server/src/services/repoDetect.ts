@@ -15,7 +15,6 @@ export type DetectedRepo = {
   projectSubdir: string | null;
   startCommand: string;
   defaultPort: number;
-  editor: 'code';
   /** One per env file found (else one "dev"); the first is the default. */
   runCommands: RunCommand[];
   warnings: string[];
@@ -178,7 +177,6 @@ export async function detectRepo(inputPath: string): Promise<DetectedRepo> {
     projectSubdir,
     startCommand,
     defaultPort: port ?? 8080,
-    editor: 'code',
     runCommands: deriveRunCommands({ startCommand, envProfiles } as RepoConfig),
     warnings,
   };

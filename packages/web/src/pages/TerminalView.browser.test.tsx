@@ -33,6 +33,7 @@ vi.mock('@xterm/xterm', () => ({
     focus = vi.fn();
     dispose = vi.fn();
     parser = { registerCsiHandler: vi.fn() };
+    registerLinkProvider = vi.fn();
     write = vi.fn();
     onData() {
       return { dispose: vi.fn() };
@@ -90,10 +91,6 @@ vi.mock('../api', () => ({
         list: vi.fn().mockResolvedValue({ forwards: [] }),
         close: vi.fn().mockResolvedValue(undefined),
       },
-    },
-    vscode: {
-      open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' }),
-      close: vi.fn().mockResolvedValue({ ok: true }),
     },
     usage: {
       // One account reporting a limit, so the toolbar shows the quota dial.

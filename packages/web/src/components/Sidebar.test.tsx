@@ -57,7 +57,7 @@ function swipe(px: number) {
   }
 }
 
-const ws: Workspace ={ id: 'w1', name: 'W', color: '#333', icon: 'W', defaultEditor: 'code', defaultPortBase: 8080, logDir: null };
+const ws: Workspace ={ id: 'w1', name: 'W', color: '#333', icon: 'W', defaultPortBase: 8080, logDir: null };
 const repo = { id: 'r1', name: 'Repo One', path: '/r1' } as RepoConfig;
 const wt = (
   path: string,
@@ -68,13 +68,13 @@ const wt = (
   ({ path, repoId: 'r1', branch: 'feat/x', meta: ticketId ? ({ ticketId } as Worktree['meta']) : null, diffStats,
      process: { status, pid: null, startedAt: null, port: null, detectedUrl: null, exitCode: null, external: false } } as Worktree);
 
-const ws2: Workspace = { id: 'w2', name: 'Second', color: '#444', icon: 'S', defaultEditor: 'code', defaultPortBase: 9090, logDir: null };
+const ws2: Workspace = { id: 'w2', name: 'Second', color: '#444', icon: 'S', defaultPortBase: 9090, logDir: null };
 // Every space's pane renders the same chrome (the search box among it), so a
 // query for chrome has to say which pane it means. The active space is the
 // first workspace in these tests, hence pane 0.
 const activePane = () => within(screen.getAllByTestId('carousel-pane')[0]!);
 
-const ws3: Workspace ={ id: 'w3', name: 'Third', color: '#555', icon: 'T', defaultEditor: 'code', defaultPortBase: 9100, logDir: null };
+const ws3: Workspace ={ id: 'w3', name: 'Third', color: '#555', icon: 'T', defaultPortBase: 9100, logDir: null };
 const switchTo = vi.fn();
 
 function wrap(ui: React.ReactNode, workspaces: Workspace[] = [ws, ws2]) {
@@ -462,6 +462,21 @@ describe('Sidebar tree', () => {
       // click opens the worktree itself rather than pretending otherwise.
       fireEvent.click(within(card).getByRole('button', { name: /Shell/ }));
       expect(onOpenRemoteWorktree).toHaveBeenCalledWith(w);
+      vi.useRealTimers();
+    });
+
+    it("a runner worktree's card opens its Files tab by name", () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const onOpenRemoteWorktree = vi.fn();
+      const w = remote();
+      wrap(
+        <Sidebar {...base} remoteWorktrees={[w]}
+          runnerStatuses={statuses(true)} onOpenRemoteWorktree={onOpenRemoteWorktree} />,
+      );
+      fireEvent.pointerEnter(within(screen.getByRole('complementary')).getByText('FD-9').closest('.group')!);
+      act(() => { vi.advanceTimersByTime(250); });
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Files' }));
+      expect(onOpenRemoteWorktree).toHaveBeenCalledWith(w, 'files');
       vi.useRealTimers();
     });
 
@@ -862,7 +877,7 @@ describe('worktree hover card', () => {
     wrap(<Sidebar {...base} worktrees={[worktree]} onOpenDiff={onOpenDiff}
       onWorktreeSettings={onWorktreeSettings} onOpenWorktree={onOpenWorktree}
       />);
-    for (const action of ['Changes', 'New shell', 'Settings']) {
+    for (const action of ['Changes', 'Files', 'New shell', 'Settings']) {
       hoverRow();
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: action }));
       // acting on the card dismisses it — the work continues in a modal or the hub
@@ -870,6 +885,7 @@ describe('worktree hover card', () => {
     }
     expect(onOpenDiff).toHaveBeenCalledWith(worktree);
     expect(onOpenWorktree).toHaveBeenCalledWith(worktree, 'shell', undefined);
+    expect(onOpenWorktree).toHaveBeenCalledWith(worktree, 'files', undefined);
     expect(onWorktreeSettings).toHaveBeenCalledWith(worktree);
   });
 

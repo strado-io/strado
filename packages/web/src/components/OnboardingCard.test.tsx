@@ -20,7 +20,6 @@ const DETECTED = {
   projectSubdir: null,
   startCommand: 'npm run dev',
   defaultPort: 5173,
-  editor: 'code',
   runCommands: [{ id: 'dev', name: 'dev', command: 'npm run dev', envFile: '.env.dev' }, { id: 'storybook', name: 'storybook', command: 'npm run storybook' }],
   warnings: ['could not detect a port — defaulted to 8080'],
 };

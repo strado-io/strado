@@ -7,14 +7,13 @@ const worktreesList = vi.hoisted(() => vi.fn());
 const wtStop = vi.hoisted(() => vi.fn());
 const wtKillExternal = vi.hoisted(() => vi.fn());
 const reposList = vi.hoisted(() => vi.fn());
-const stopVscode = vi.hoisted(() => vi.fn());
-const vscodeClose = vi.hoisted(() => vi.fn());
+const lspStop = vi.hoisted(() => vi.fn());
 vi.mock('../../api', () => ({
   api: {
-    sessions: { metrics, kill, stopVscode },
-    vscode: { close: vscodeClose },
+    sessions: { metrics, kill },
     worktrees: { list: worktreesList, stop: wtStop, killExternal: wtKillExternal },
     repos: { list: reposList },
+    lspServers: { stop: lspStop },
   },
 }));
 
@@ -25,7 +24,7 @@ import type { Workspace } from '../../types';
 const MB = 1024 * 1024;
 const workspace: Workspace = {
   id: 'default', name: 'Default', color: '#333333', icon: 'D',
-  defaultEditor: 'code', defaultPortBase: 8080, logDir: null,
+  defaultPortBase: 8080, logDir: null,
 };
 
 const WT = '/Users/me/.strado/worktrees/fleetx-react-app/master';
@@ -37,14 +36,10 @@ const sample = () => ({
   app: {
     server: { pid: 10, cpu: 2.7, rssBytes: 119.7 * MB },
     daemon: { pid: 11, cpu: 0.4, rssBytes: 35 * MB },
-    vscode: { pid: 12, cpu: 3.0, rssBytes: 410 * MB, processes: 5 },
   },
   processes: [
     { pid: 800, cpu: 12.5, rssBytes: 1500 * MB, processes: 7 },
     { pid: 900, cpu: 0.5, rssBytes: 180 * MB, processes: 2 },
-  ],
-  vscodeWindows: [
-    { path: WT, pid: 700, cpu: 2.0, rssBytes: 600 * MB, processes: 4 },
   ],
   sessions: [
     { key: WT, path: WT, mode: 'claude', id: '1', pid: 500, cpu: 1.0, rssBytes: 235 * MB, processes: 3 },
@@ -64,8 +59,7 @@ function renderSection() {
 beforeEach(() => {
   metrics.mockReset().mockResolvedValue(sample());
   kill.mockReset().mockResolvedValue(undefined);
-  stopVscode.mockReset().mockResolvedValue(undefined);
-  vscodeClose.mockReset().mockResolvedValue({ ok: true });
+  lspStop.mockReset().mockResolvedValue(undefined);
   localStorage.clear();
   worktreesList.mockReset().mockResolvedValue([
     { path: WT, repoId: 'fleetx-react-app', branch: 'master', meta: { ticketId: null, title: null },
@@ -99,9 +93,9 @@ describe('SessionsSection', () => {
     const wt = screen.getByTestId(`sessions-worktree-${WT}`);
     expect(within(wt).getByText('master')).toBeInTheDocument();
     // worktree totals = its pty sessions (1.0 + 0.2, 235 + 12) plus its Browser preview (0.7, 150)
-    // pty (1.0 + 0.2, 235 + 12) + Browser preview (0.7, 150) + VS Code window (2.0, 600) + dev server (12.5, 1500)
-    expect(within(wt).getByText('16.4%')).toBeInTheDocument();
-    expect(within(wt).getByText('2.44 GB')).toBeInTheDocument();
+    // pty (1.0 + 0.2, 235 + 12) + Browser preview (0.7, 150) + dev server (12.5, 1500)
+    expect(within(wt).getByText('14.4%')).toBeInTheDocument();
+    expect(within(wt).getByText('1.85 GB')).toBeInTheDocument();
     const claude = screen.getByTestId(`sessions-row-${WT}`);
     expect(within(claude).getByText('Claude')).toBeInTheDocument();
     expect(within(claude).getByText('1.0%')).toBeInTheDocument();
@@ -147,26 +141,11 @@ describe('SessionsSection', () => {
   });
 
   it('says so when the daemon holds no sessions', async () => {
-    metrics.mockResolvedValue({ ...sample(), sessions: [], vscodeWindows: [], processes: [] });
+    metrics.mockResolvedValue({ ...sample(), sessions: [], processes: [] });
     worktreesList.mockResolvedValue([]);
     (window as unknown as { strado: { appMetrics: ReturnType<typeof vi.fn> } }).strado.appMetrics.mockResolvedValue([]);
     renderSection();
     expect(await screen.findByText(/no terminal sessions/i)).toBeInTheDocument();
-  });
-
-  it('shows the shared VS Code workbench under Strado, with a Stop action', async () => {
-    renderSection();
-    const app = await screen.findByTestId('sessions-group-strado');
-    fireEvent.click(within(app).getByRole('button', { name: /expand strado/i }));
-    const row = within(app).getByTestId('sessions-row-vscode');
-    // what is left of the serve-web tree after the per-window rows below
-    expect(within(row).getByText('VS Code (shared)')).toBeInTheDocument();
-    expect(within(row).getByText('410.0 MB')).toBeInTheDocument();
-    localStorage.setItem('strado:vscode-tabs', JSON.stringify([WT, ORPHAN]));
-    fireEvent.click(within(row).getByRole('button', { name: /stop vs code/i }));
-    await waitFor(() => expect(stopVscode).toHaveBeenCalled());
-    // Every VS Code tab pointed at the stopped workbench: close them all.
-    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]')).toEqual([]));
   });
 
   it('lists Browser previews under their worktree and keeps them out of the Renderer row', async () => {
@@ -175,8 +154,8 @@ describe('SessionsSection', () => {
     const browser = screen.getByTestId(`sessions-row-browser:${WT}`);
     expect(within(browser).getByText('Browser')).toBeInTheDocument();
     expect(within(browser).getByText('150.0 MB')).toBeInTheDocument();
-    // worktree total includes the preview, the VS Code window and the dev server
-    expect(within(wt).getByText('2.44 GB')).toBeInTheDocument();
+    // worktree total includes the preview and the dev server
+    expect(within(wt).getByText('1.85 GB')).toBeInTheDocument();
     // Renderer row is the dashboard only.
     const app = screen.getByTestId('sessions-group-strado');
     fireEvent.click(within(app).getByRole('button', { name: /expand strado/i }));
@@ -196,25 +175,12 @@ describe('SessionsSection', () => {
     expect(JSON.parse(localStorage.getItem('strado:browser-tabs') ?? '[]')).toEqual([]);
   });
 
-  it('shows each VS Code window under its worktree, and Close forgets that VS Code tab', async () => {
-    localStorage.setItem('strado:vscode-tabs', JSON.stringify([WT, ORPHAN]));
-    renderSection();
-    const row = await screen.findByTestId(`sessions-row-vscode:${WT}`);
-    expect(within(row).getByText('VS Code')).toBeInTheDocument();
-    expect(within(row).getByText('600.0 MB')).toBeInTheDocument();
-    expect(within(row).getByText('2.0%')).toBeInTheDocument();
-    fireEvent.click(within(row).getByRole('button', { name: /close vs code in master/i }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]')).toEqual([ORPHAN]));
-    // and the server ends that window's extension host (the hub may not be mounted)
-    expect(vscodeClose).toHaveBeenCalledWith(WT);
-  });
-
   it('the memory map totals everything by kind, and a legend item filters the table to that kind', async () => {
     renderSection();
     const map = await screen.findByTestId('sessions-memory-map');
-    // Claude 235 MB, VS Code window 600 + shared 410, Browser 150 + 90, Shell 12 + 8
+    // Claude 235 MB, Browser 150 + 90, Shell 12 + 8
     expect(within(map).getByRole('button', { name: /Claude.*235\.0 MB/ })).toBeInTheDocument();
-    expect(within(map).getByRole('button', { name: /VS Code.*1010\.0 MB/ })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: /Browser.*240\.0 MB/ })).toBeInTheDocument();
     fireEvent.click(within(map).getByRole('button', { name: /^Claude/ }));
     expect(within(map).getByRole('button', { name: /^Claude/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId(`sessions-row-${WT}`)).toBeInTheDocument(); // Claude row stays
@@ -225,12 +191,12 @@ describe('SessionsSection', () => {
   it('sorts sessions by memory by default, and by name on request', async () => {
     renderSection();
     await screen.findByTestId(`sessions-worktree-${WT}`);
-    const order = () => screen.getAllByTestId(/^sessions-row-(vscode:|browser:|\/)/)
+    const order = () => screen.getAllByTestId(/^sessions-row-(browser:|\/)/)
       .filter((r) => r.getAttribute('data-testid')!.includes(WT))
-      .map((r) => within(r).getAllByText(/^(Claude|Shell|VS Code|Browser)$/)[0]!.textContent);
-    expect(order()).toEqual(['VS Code', 'Claude', 'Browser', 'Shell']);
+      .map((r) => within(r).getAllByText(/^(Claude|Shell|Browser)$/)[0]!.textContent);
+    expect(order()).toEqual(['Claude', 'Browser', 'Shell']);
     fireEvent.click(screen.getByRole('button', { name: 'Name' }));
-    expect(order()).toEqual(['Browser', 'Claude', 'Shell', 'VS Code']);
+    expect(order()).toEqual(['Browser', 'Claude', 'Shell']);
   });
 
   it('search narrows to matching repos and branches', async () => {
@@ -294,4 +260,79 @@ describe('SessionsSection', () => {
     expect(worktreesList).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: /refresh now/i })).not.toBeInTheDocument();
   }, 8000);
+
+  describe('language servers', () => {
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    const withLsp = () => {
+      const m = sample();
+      return { ...m, app: { ...m.app, languageServers: [
+        { id: 'typescript', lang: 'TypeScript', worktreePath: WT, pid: 1200, cpu: 1.5, rssBytes: 700 * MB, processes: 2, startedAt: ago(30), lastUsedAt: ago(3) },
+        { id: 'pyright', lang: 'Python', worktreePath: WT2, pid: 1300, cpu: 0.5, rssBytes: 300 * MB, processes: 1, startedAt: ago(30), lastUsedAt: new Date().toISOString() },
+      ] } };
+    };
+
+    it('hidden when none run, and absent from the map', async () => {
+      renderSection();
+      const map = await screen.findByTestId('sessions-memory-map');
+      expect(screen.queryByTestId('sessions-group-lsp')).not.toBeInTheDocument();
+      expect(within(map).queryByRole('button', { name: /Language servers/ })).not.toBeInTheDocument();
+    });
+
+    it('one row with the total, expanding to each server by worktree with idle time; Stop stops it', async () => {
+      metrics.mockResolvedValue(withLsp());
+      renderSection();
+      const group = await screen.findByTestId('sessions-group-lsp');
+      expect(within(group).getByText('1000.0 MB')).toBeInTheDocument();
+      expect(within(group).getByText('2.0%')).toBeInTheDocument();
+      fireEvent.click(within(group).getByRole('button', { name: /expand language servers/i }));
+      const ts = within(group).getByTestId(`sessions-row-lsp:typescript:${WT}:1200`);
+      expect(within(ts).getByText('TypeScript · master')).toBeInTheDocument();
+      expect(within(ts).getByText('idle 3m')).toBeInTheDocument();
+      expect(within(ts).getByText('700.0 MB')).toBeInTheDocument();
+      expect(within(group).getByText('Python · feature')).toBeInTheDocument();
+      expect(within(group).getByText('in use')).toBeInTheDocument();
+      fireEvent.click(within(ts).getByRole('button', { name: 'Stop TypeScript · master' }));
+      // Only this worktree's TypeScript server.
+      await waitFor(() => expect(lspStop).toHaveBeenCalledWith('typescript', WT));
+    });
+
+    it('the map shows them as their own kind; its legend shows them alone', async () => {
+      metrics.mockResolvedValue(withLsp());
+      renderSection();
+      const map = await screen.findByTestId('sessions-memory-map');
+      const legend = within(map).getAllByRole('button').map((b) => b.textContent);
+      const at = legend.findIndex((t) => t?.startsWith('Language servers'));
+      expect(legend[at]).toContain('1000.0 MB');
+      expect(legend[at - 1]).toMatch(/^Claude/); // KIND_ORDER: after the agents
+      fireEvent.click(within(map).getByRole('button', { name: /^Language servers/ }));
+      expect(screen.getByTestId('sessions-group-lsp')).toBeInTheDocument();
+      expect(screen.queryByTestId('sessions-group-fleetx-react-app')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Nothing matches/)).not.toBeInTheDocument();
+    });
+
+    it('stopping the last one while filtered to them drops the filter instead of a blank table', async () => {
+      metrics.mockResolvedValue(withLsp());
+      renderSection();
+      const map = await screen.findByTestId('sessions-memory-map');
+      fireEvent.click(within(map).getByRole('button', { name: /^Language servers/ }));
+      metrics.mockResolvedValue(sample());
+      fireEvent.click(screen.getByRole('button', { name: /expand language servers/i }));
+      fireEvent.click(screen.getAllByRole('button', { name: /^Stop / })[0]!);
+      await waitFor(() => expect(screen.queryByTestId('sessions-group-lsp')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId('sessions-group-strado')).toBeInTheDocument());
+      expect(screen.getByTestId('sessions-group-fleetx-react-app')).toBeInTheDocument();
+    });
+
+    it('a failed Stop says so in fixed words, never the server\'s text', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      metrics.mockResolvedValue(withLsp());
+      lspStop.mockRejectedValue(new Error('<b>relay</b> said /etc/passwd'));
+      renderSection();
+      const group = await screen.findByTestId('sessions-group-lsp');
+      fireEvent.click(within(group).getByRole('button', { name: /expand language servers/i }));
+      fireEvent.click(within(group).getAllByRole('button', { name: /^Stop / })[0]!);
+      expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t stop the language server.');
+      expect(screen.getByRole('alert')).not.toHaveTextContent('passwd');
+    });
+  });
 });

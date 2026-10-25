@@ -46,6 +46,9 @@ const props = () => ({
   onOpenSession: vi.fn(),
   onOpenMr: vi.fn(),
   onOpenDiff: vi.fn(),
+  onOpenFiles: vi.fn(),
+  onOpenInEditor: vi.fn(),
+  editorLabel: 'Cursor',
   onOpenShell: vi.fn(),
   onOpenSettings: vi.fn(),
   onClose: vi.fn(),
@@ -67,10 +70,10 @@ describe('sortSessions', () => {
   it('keeps the original order among sessions of equal urgency', () => {
     const sorted = sortSessions([
       chip({ mode: 'shell', sessionId: '2' }),
-      chip({ mode: 'vscode', sessionId: '1' }),
+      chip({ mode: 'browser', sessionId: '1' }),
       chip({ mode: 'shell', sessionId: '1' }),
     ]);
-    expect(sorted.map((c) => `${c.mode}:${c.sessionId}`)).toEqual(['shell:2', 'vscode:1', 'shell:1']);
+    expect(sorted.map((c) => `${c.mode}:${c.sessionId}`)).toEqual(['shell:2', 'browser:1', 'shell:1']);
   });
 });
 
@@ -157,10 +160,14 @@ describe('WorktreeHoverCard', () => {
     expect(screen.getByRole('dialog')).not.toHaveTextContent(/uncommitted/);
   });
 
-  it('offers changes, a new shell and settings as quick actions', () => {
+  it('offers changes, files, a new shell and settings as quick actions', () => {
     const p = props();
     render(<WorktreeHoverCard {...p} />);
     fireEvent.click(screen.getByRole('button', { name: 'Changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+    expect(p.onOpenFiles).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Cursor' }));
+    expect(p.onOpenInEditor).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'New shell' }));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(p.onOpenDiff).toHaveBeenCalledTimes(1);
@@ -171,8 +178,10 @@ describe('WorktreeHoverCard', () => {
   it('drops quick actions the caller has no handler for', () => {
     const p = props();
     render(
-      <WorktreeHoverCard {...p} onOpenDiff={undefined} onOpenSettings={undefined} />,
+      <WorktreeHoverCard {...p} onOpenDiff={undefined} onOpenSettings={undefined} onOpenFiles={undefined} onOpenInEditor={undefined} />,
     );
+    expect(screen.queryByRole('button', { name: /Open in/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
     // A worktree on a runner has no local diff or settings — a dead button
     // reads as a broken one.
     expect(screen.queryByRole('button', { name: 'Changes' })).not.toBeInTheDocument();

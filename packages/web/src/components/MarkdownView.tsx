@@ -181,7 +181,7 @@ export function MarkdownView({
         <p className="mb-3 text-xs text-amber-500/80">
           This document is {formatBytes(effectiveSize)} — too large to render
           as formatted markdown without risking a long freeze. Shown as plain
-          text; use "Open in VS Code" to view it formatted.
+          text; use "Open in editor" to view it formatted.
         </p>
         <pre className="whitespace-pre-wrap break-words text-xs text-zinc-300">{content}</pre>
       </div>

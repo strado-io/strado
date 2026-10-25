@@ -50,6 +50,8 @@ import { RendererOverlayContext, useRendererOverlayRegistry } from '../contexts/
 import { UsagePage } from '../components/usage/UsagePage';
 import { WorktreesPage } from '../components/worktrees/WorktreesPage';
 import { useCodeReviews } from '../hooks/codeReviews';
+import { requestRunInShell } from '../lib/runInShell';
+import { worktreeLabel } from '../components/sidebar/labels';
 
 type State = {
   repos: RepoConfig[];
@@ -261,7 +263,7 @@ export function Dashboard(props: {
   const [selectedRemote, setSelectedRemote] = useState<RemoteWorktree | null>(null);
   // undefined = a generic open — TerminalView restores the worktree's
   // last-active tab instead of being forced onto one.
-  const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser' | undefined>(undefined);
+  const [selectedMode, setSelectedMode] = useState<'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser' | 'files' | undefined>(undefined);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   // Bumped on every explicit open (for example, a notification) so the
   // hub switches to the requested tab even when it's already showing this
@@ -290,7 +292,7 @@ export function Dashboard(props: {
   const noteOpenedRef = useRef<(pinId: string) => void>(() => {});
   // 'open' when a Focus is active, 'wait' until the list has loaded, 'ask' when there is none.
   const focusGateRef = useRef<() => 'open' | 'wait' | 'ask'>(() => 'wait');
-  type PendingFocusOpen = { kind: 'local'; w: Worktree; mode?: typeof selectedMode; sessionId?: string } | { kind: 'remote'; w: RemoteWorktree };
+  type PendingFocusOpen = { kind: 'local'; w: Worktree; mode?: typeof selectedMode; sessionId?: string } | { kind: 'remote'; w: RemoteWorktree; mode?: 'files' };
   const pendingFocusOpenRef = useRef<PendingFocusOpen | null>(null);
   // Pin ids whose join is still in flight: the gate effect must not close
   // the hub in the beat between the open and the server's answer.
@@ -545,7 +547,7 @@ export function Dashboard(props: {
     // capture phase: xterm stops propagation of keys it handles, so a
     // bubble listener never sees ⌘K/⌘B while a terminal is focused
     window.addEventListener('keydown', onKeyDown, true);
-    // Shortcuts pressed inside an embed (Browser preview view, VS Code iframe)
+    // Shortcuts pressed inside an embed (the Browser preview view)
     // never reach window listeners; the shell forwards them over IPC.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
       if (combo === 'palette') focusCommandBar();
@@ -578,14 +580,19 @@ export function Dashboard(props: {
   // True until this workspace's FIRST remote fetch settles — the sidebar shows
   // a quiet loading hint instead of runner rows popping in a beat late.
   const [remoteLoading, setRemoteLoading] = useState(true);
-  const openRemoteWorktree = useCallback((w: RemoteWorktree) => {
+  // mode: the hover card's Files button; otherwise the hub restores the worktree's last tab.
+  const openRemoteWorktree = useCallback((w: RemoteWorktree, mode?: 'files') => {
     const gate = focusGateRef.current();
     if (gate !== 'open') {
-      pendingFocusOpenRef.current = { kind: 'remote', w };
+      pendingFocusOpenRef.current = { kind: 'remote', w, mode };
       if (gate === 'ask') window.dispatchEvent(new CustomEvent(NEW_FOCUS_EVENT, { detail: { seedPinId: `remote:${w.runnerId}:${w.path}` } }));
       return;
     }
     noteOpenedRef.current(`remote:${w.runnerId}:${w.path}`);
+    // A local open's mode must not carry over onto this hub.
+    setSelectedMode(mode);
+    setSelectedSessionId(undefined);
+    setOpenSeq((n) => n + 1);
     setSelectedPath(null); // one hub at a time
     setSelectedRemote(w);
     setActiveView(INITIAL_VIEW);
@@ -624,7 +631,7 @@ export function Dashboard(props: {
     if (!pending || !focusApi.loaded || !focusApi.active) return;
     pendingFocusOpenRef.current = null;
     if (pending.kind === 'local') openInlineHub(pending.w, pending.mode, pending.sessionId);
-    else openRemoteWorktree(pending.w);
+    else openRemoteWorktree(pending.w, pending.mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusApi.loaded, focusApi.active]);
   // A Focus becoming active (load, switch, creation) brings back the worktree
@@ -1204,6 +1211,15 @@ export function Dashboard(props: {
             refreshTicketProviders();
           }}
           onOpenFeedback={() => setFeedbackOpen(true)}
+          // Install types into a new shell in the worktree open behind Settings
+          // (this Mac's only: a runner's hub has its own machine).
+          lspInstall={selectedWorktree && !selectedRemote ? {
+            label: worktreeLabel(selectedWorktree),
+            run: (command) => {
+              setSettingsSection(null);
+              requestRunInShell({ worktreePath: selectedWorktree.path, command });
+            },
+          } : null}
         />
       )}
       {settingsSection && (

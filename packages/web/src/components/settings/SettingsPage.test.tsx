@@ -13,7 +13,7 @@ vi.mock('../../api', () => ({
     gitlab: { config: vi.fn().mockResolvedValue({ hosts: [] }) },
     github: { config: vi.fn().mockResolvedValue({ hosts: [] }) },
     workspaces: { list: vi.fn().mockResolvedValue({ activeWorkspaceId: 'default', workspaces: [] }) },
-    sessions: { metrics: vi.fn().mockResolvedValue({ sampledAt: 0, app: { server: { pid: 1, cpu: 0, rssBytes: 0 }, daemon: null, vscode: null }, sessions: [], vscodeWindows: [] }), kill: vi.fn() },
+    sessions: { metrics: vi.fn().mockResolvedValue({ sampledAt: 0, app: { server: { pid: 1, cpu: 0, rssBytes: 0 }, daemon: null }, sessions: [] }), kill: vi.fn() },
     worktrees: { list: vi.fn().mockResolvedValue([]) },
     repos: { list: vi.fn().mockResolvedValue([]) },
   },
@@ -25,7 +25,7 @@ import type { Workspace } from '../../types';
 
 const workspace: Workspace = {
   id: 'default', name: 'Default', color: '#333333', icon: 'D',
-  defaultEditor: 'code', defaultPortBase: 8080, logDir: null,
+  defaultPortBase: 8080, logDir: null,
 };
 
 describe('SettingsPage', () => {

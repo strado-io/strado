@@ -3,7 +3,7 @@ import { agentTabStatus, shellHostedAgent } from './agentTabStatus';
 
 export type SessionChip = {
   path: string;
-  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'vscode' | 'browser';
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' | 'browser';
   sessionId: string;
   modeLabel: string;
   label: string;
@@ -25,16 +25,16 @@ function title(w: Worktree): string | null {
   return t && t !== label(w) ? t : null;
 }
 
-export function hasSession(w: Worktree, vscodeTabs?: Set<string>, browserTabs?: Set<string>): boolean {
+export function hasSession(w: Worktree, browserTabs?: Set<string>): boolean {
   return !!(
     w.hasClaudeSession || w.hasCodexSession || w.hasOpencodeSession || w.hasPiSession || w.hasShellSession ||
-    vscodeTabs?.has(w.path) || browserTabs?.has(w.path)
+    browserTabs?.has(w.path)
   );
 }
 
-// vscodeTabs: client-side VS Code iframe tabs (see hooks/vscodeTabs) — the
+// browserTabs: client-side Browser preview tabs (see hooks/browserTabs) — the
 // server doesn't know about them, so callers pass them in.
-export function sessionChips(worktrees: Worktree[], vscodeTabs?: Set<string>, browserTabs?: Set<string>): SessionChip[] {
+export function sessionChips(worktrees: Worktree[], browserTabs?: Set<string>): SessionChip[] {
   const chips: SessionChip[] = [];
   for (const w of worktrees) {
     // One chip PER session, coloured by that session's own status (falling back
@@ -95,12 +95,6 @@ export function sessionChips(worktrees: Worktree[], vscodeTabs?: Set<string>, br
         ...(hosted ? { [`${hosted.mode}Status`]: hosted.status } : {}),
       });
     }
-    if (vscodeTabs?.has(w.path)) {
-      chips.push({
-        path: w.path, mode: 'vscode', sessionId: '1', modeLabel: 'vs code',
-        label: label(w), title: title(w),
-      });
-    }
     if (browserTabs?.has(w.path)) {
       chips.push({
         path: w.path, mode: 'browser', sessionId: '1', modeLabel: 'browser',
@@ -131,7 +125,7 @@ export function chipStatus(c: SessionChip): 'idle' | 'working' | 'waiting' | und
 
 const DISPLAY_BASE: Record<SessionChip['mode'], string> = {
   claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi',
-  shell: 'Shell', vscode: 'VS Code', browser: 'Browser',
+  shell: 'Shell', browser: 'Browser',
 };
 
 export function displayLabel(c: SessionChip): string {

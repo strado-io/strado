@@ -12,7 +12,7 @@ beforeEach(async () => { tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'runcmd-'
 afterEach(async () => { await fs.rm(tmp, { recursive: true, force: true }); });
 
 const repo = (over: Partial<RepoConfig> = {}): RepoConfig => ({
-  id: 'r', name: 'r', path: '/tmp/r', projectSubdir: null, startCommand: 'npm run dev', defaultPort: 3000, editor: 'code', ...over,
+  id: 'r', name: 'r', path: '/tmp/r', projectSubdir: null, startCommand: 'npm run dev', defaultPort: 3000, ...over,
 });
 
 describe('deriveRunCommands: migrating env profiles', () => {

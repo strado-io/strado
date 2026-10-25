@@ -40,7 +40,7 @@ export function useSpaceShortcut(move: (dir: -1 | 1) => void, enabled = true) {
     // writes to the pty before a bubble-phase listener here would ever run.
     // Capturing puts preventDefault() ahead of that handler on the way down.
     window.addEventListener('keydown', onKeyDown, { capture: true });
-    // The same chord pressed inside the Browser or VS Code embeds arrives from
+    // The same chord pressed inside the Browser embed arrives from
     // the main process instead — the embed's webContents swallows the real key.
     const offHotkey = window.strado?.onHotkey?.((combo) => {
       if (combo === 'space-next') latest.current(1);

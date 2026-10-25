@@ -31,6 +31,7 @@ vi.mock('@xterm/xterm', () => ({
     dispose = vi.fn();
     // XtermPane registers CSI handlers (2026 sync-output swallow + DECRQM answer)
     parser = { registerCsiHandler: vi.fn() };
+    registerLinkProvider = vi.fn();
     write = termWrite;
     onData(cb: (d: string) => void) {
       onDataHandlers.push(cb);
@@ -82,8 +83,6 @@ const reposList = vi.fn().mockResolvedValue([]);
 const worktreesList = vi.fn().mockResolvedValue([]);
 const gitChanges = vi.fn().mockResolvedValue({ files: [] });
 const mergeRequests = vi.fn().mockResolvedValue({ kind: 'absent' });
-const vscodeOpen = vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:7788/' });
-const vscodeClose = vi.fn().mockResolvedValue({ ok: true });
 const procStart = vi.fn().mockResolvedValue({});
 const procStop = vi.fn().mockResolvedValue(undefined);
 const closeRunTab = vi.fn().mockResolvedValue({ ok: true });
@@ -136,10 +135,6 @@ vi.mock('../api', () => ({
       socketTicket: (...a: unknown[]) => socketTicket(...a),
       rpc: (...a: unknown[]) => runnerRpc(...a),
     },
-    vscode: {
-      open: (...a: unknown[]) => vscodeOpen(...a),
-      close: (...a: unknown[]) => vscodeClose(...a),
-    },
   },
 }));
 
@@ -190,7 +185,7 @@ function pushSse(data: Record<string, unknown> & { path: string }) {
 }
 
 beforeEach(() => {
-  localStorage.clear(); // isolate persisted tab state (closed-agents, vscode/browser tabs)
+  localStorage.clear(); // isolate persisted tab state (closed-agents, browser/files tabs)
   FakeWS.instances = [];
   onDataHandlers.length = 0;
   termWrite.mockClear();
@@ -199,8 +194,6 @@ beforeEach(() => {
   worktreesList.mockReset().mockResolvedValue([]);
   gitChanges.mockReset().mockResolvedValue({ files: [] });
   mergeRequests.mockReset().mockResolvedValue({ kind: 'absent' });
-  vscodeOpen.mockReset().mockResolvedValue({ url: 'http://127.0.0.1:7788/' });
-  vscodeClose.mockReset().mockResolvedValue({ ok: true });
   procStart.mockReset().mockResolvedValue({});
   closeRunTab.mockReset().mockResolvedValue({ ok: true });
   procStop.mockReset().mockResolvedValue(undefined);
@@ -228,27 +221,11 @@ describe('TerminalView', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
   });
 
-  it('hides VS Code when the server has no Electron embeds (a runner)', async () => {
-    // The M3 contract: a self-hosted runner reports embeds:false, and the tab
-    // must be ABSENT rather than present-but-broken.
-    vi.stubGlobal('fetch', async (url: string) =>
-      String(url).includes('/api/capabilities')
-        ? ({ ok: true, json: async () => ({ embeds: false, notifications: false, runner: true }) } as Response)
-        : ({ ok: false, json: async () => ({}) } as Response));
+  it('offers no embedded editor: Files is the code view (Open in editor hands off to the person\'s own)', async () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     fireEvent.click(screen.getByLabelText('New session'));
-    await vi.waitFor(() =>
-      expect(screen.queryByRole('menuitem', { name: 'VS Code' })).not.toBeInTheDocument());
-    // Terminals still work on a runner — only the Electron surfaces go.
-    expect(screen.getByRole('menuitem', { name: 'Shell' })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    vi.unstubAllGlobals();
-  });
-
-  it('offers VS Code on a normal local server', async () => {
-    render(<TerminalView worktree={worktree} onClose={() => {}} />);
-    fireEvent.click(screen.getByLabelText('New session'));
-    expect(await screen.findByRole('menuitem', { name: 'VS Code' })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: 'Files' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /VS Code/ })).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Escape' });
   });
 
@@ -465,7 +442,7 @@ describe('TerminalView', () => {
   });
 
   it('toggles the Changes rail from the embed hotkey bridge', () => {
-    // Inside the Browser preview / VS Code iframe the chord never reaches the
+    // Inside the Browser preview the chord never reaches the
     // window listener — main.cjs forwards it as the 'changes' combo instead.
     const handlers: ((combo: string) => void)[] = [];
     (window as any).strado = { onHotkey: (cb: (combo: string) => void) => { handlers.push(cb); return () => {}; } };
@@ -1497,135 +1474,15 @@ describe('TerminalView', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('opened in vscode mode shows a VS Code tab next to the sessions and embeds the editor', async () => {
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="vscode"
-        onClose={vi.fn()}
-      />,
-    );
-    // tab strip has both the live shell and the VS Code tab
-    expect(screen.getByText('Shell')).toBeInTheDocument();
-    expect(strip().getByText('VS Code')).toBeInTheDocument();
-    const frame = await screen.findByTitle('VS Code');
-    expect(frame).toHaveAttribute(
-      'src',
-      `http://127.0.0.1:7788/?folder=${encodeURIComponent(baseWorktree.path)}`,
-    );
-    // no terminal websocket for the iframe tab
-    expect(FakeWS.instances.length).toBe(0);
-
-    // switching to the shell tab shows a live terminal but keeps the VS Code
-    // frame MOUNTED (css-hidden) so the workbench + Claude IDE bridge survive
-    fireEvent.click(screen.getByText('Shell'));
-    expect(FakeWS.instances.length).toBe(1);
-    expect(lastWsUrl()).toContain('mode=shell');
-    expect(screen.getByTitle(`VS Code — ${baseWorktree.path}`)).toBeInTheDocument();
-
-    // closing the VS Code tab needs no server kill
-    fireEvent.click(screen.getByLabelText('Close VS Code session'));
-    expect(killSession).not.toHaveBeenCalled();
-    expect(screen.queryByText('VS Code')).not.toBeInTheDocument();
-  });
-
-  it('drops the VS Code tab when it is closed elsewhere (Settings → Sessions), without a reload', async () => {
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="vscode"
-        onClose={vi.fn()}
-      />,
-    );
-    expect(strip().getByText('VS Code')).toBeInTheDocument();
-    const { rememberVscodeTab } = await import('../hooks/vscodeTabs');
-    act(() => rememberVscodeTab(baseWorktree.path, false));
-    await vi.waitFor(() => expect(screen.queryByText('VS Code')).not.toBeInTheDocument());
-    // focus falls back to a surviving tab
-    expect(strip().getByText('Shell')).toBeInTheDocument();
-  });
-
-  it('heartbeats while VS Code is visible and reloads the frame when the workbench was restarted', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      vscodeOpen
-        .mockResolvedValueOnce({ url: 'http://127.0.0.1:7788/', pid: 101 })
-        .mockResolvedValueOnce({ url: 'http://127.0.0.1:7788/', pid: 101 })
-        .mockResolvedValue({ url: 'http://127.0.0.1:7788/', pid: 202 });
-      render(
-        <TerminalView
-          worktree={baseWorktree}
-          mode="vscode"
-          onClose={vi.fn()}
-        />,
-      );
-      const first = await screen.findByTitle('VS Code');
-      expect(vscodeOpen).toHaveBeenCalledTimes(1);
-
-      // same daemon: the heartbeat must not touch the frame
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(vscodeOpen).toHaveBeenCalledTimes(2);
-      expect(screen.getByTitle('VS Code')).toBe(first);
-
-      // idle-stopped and rebooted on the server: a new pid remounts the frame
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(vscodeOpen).toHaveBeenCalledTimes(3);
-      await vi.waitFor(() => expect(screen.getByTitle('VS Code')).not.toBe(first));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('registers the VS Code origin with Electron before mounting the iframe', async () => {
-    let finishRegistration: (allowed: boolean) => void = () => {};
-    const vscodeOrigin = vi.fn(() => new Promise<boolean>((resolve) => {
-      finishRegistration = resolve;
-    }));
-    (window as any).strado = { vscodeOrigin };
-    try {
-      render(
-        <TerminalView
-          worktree={baseWorktree}
-          mode="vscode"
-          onClose={vi.fn()}
-        />,
-      );
-
-      await vi.waitFor(() =>
-        expect(vscodeOrigin).toHaveBeenCalledWith('http://127.0.0.1:7788/'));
-      expect(screen.queryByTitle('VS Code')).not.toBeInTheDocument();
-
-      await act(async () => { finishRegistration(true); });
-      expect(await screen.findByTitle('VS Code')).toHaveAttribute(
-        'src',
-        `http://127.0.0.1:7788/?folder=${encodeURIComponent(baseWorktree.path)}`,
-      );
-    } finally {
-      delete (window as any).strado;
-    }
-  });
-
-  it('asks for a desktop restart when the reloaded preload has no main-process handler', async () => {
-    (window as any).strado = {
-      vscodeOrigin: vi.fn().mockRejectedValue(
-        new Error("Error invoking remote method 'strado:vscode-origin': Error: No handler registered for 'strado:vscode-origin'"),
-      ),
-    };
-    try {
-      render(
-        <TerminalView
-          worktree={baseWorktree}
-          mode="vscode"
-          onClose={vi.fn()}
-        />,
-      );
-      expect(await screen.findByText(
-        'VS Code web failed to start: Restart Strado Dev to finish enabling the VS Code embed',
-      )).toBeInTheDocument();
-      expect(screen.queryByTitle('VS Code')).not.toBeInTheDocument();
-    } finally {
-      delete (window as any).strado;
-    }
+  it('a saved tab from the removed VS Code embed comes back as the Files tab', async () => {
+    localStorage.setItem('strado:vscode-tabs', JSON.stringify([baseWorktree.path]));
+    localStorage.setItem('strado.activeTab', JSON.stringify({ [baseWorktree.path]: 'vscode:1' }));
+    const { migrateEditorTabs } = await import('../hooks/filesTabs');
+    migrateEditorTabs();
+    render(<TerminalView worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree} onClose={vi.fn()} />);
+    expect(strip().getByText('Files')).toBeInTheDocument();
+    expect(screen.getByTestId('files-tab')).toBeInTheDocument();
+    expect(localStorage.getItem('strado:vscode-tabs')).toBeNull();
   });
 
   it('header run button starts the dev server and flips to stop when SSE reports it running', () => {
@@ -2056,8 +1913,7 @@ describe('TerminalView', () => {
     });
   });
 
-  it('header quick-launch buttons open Claude/Codex/VS Code tabs for the active worktree', async () => {
-    localStorage.removeItem('strado:vscode-tabs');
+  it('header quick-launch buttons open Claude/Codex tabs for the active worktree', async () => {
     render(
       <TerminalView
         worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
@@ -2077,41 +1933,6 @@ describe('TerminalView', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect(strip().getByText('Codex')).toBeInTheDocument();
     expect(lastWsUrl()).toContain('mode=codex');
-
-    fireEvent.click(screen.getByLabelText('New session'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'VS Code' }));
-    expect(await screen.findByTitle('VS Code')).toBeInTheDocument();
-    localStorage.removeItem('strado:vscode-tabs');
-  });
-
-  it('a VS Code tab survives closing and reopening the panel', async () => {
-    localStorage.removeItem('strado:vscode-tabs');
-    const first = render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="vscode"
-        onClose={vi.fn()}
-      />,
-    );
-    await screen.findByTitle('VS Code');
-    first.unmount();
-
-    // reopened on the shell session — the VS Code tab must come back too
-    render(
-      <TerminalView
-        worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
-        mode="shell"
-        sessionId="1"
-        onClose={vi.fn()}
-      />,
-    );
-    expect(screen.getByText('VS Code')).toBeInTheDocument();
-
-    // ✕ forgets it for the next open
-    fireEvent.click(screen.getByLabelText('Close VS Code session'));
-    expect(
-      JSON.parse(localStorage.getItem('strado:vscode-tabs') ?? '[]'),
-    ).toEqual([]);
   });
 
   it('renders a Codex tab when a codex session is live and connects with mode=codex when opened on it', () => {

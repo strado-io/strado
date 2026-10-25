@@ -31,7 +31,6 @@ const detected = {
   projectSubdir: null,
   startCommand: 'cargo run',
   defaultPort: 8080,
-  editor: 'code',
   warnings: ['a warning that should not block registration'],
 };
 

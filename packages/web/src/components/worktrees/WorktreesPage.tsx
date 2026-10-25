@@ -10,7 +10,6 @@ import type { RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
 import { sessionChips } from '../../hooks/sessions';
-import { useVscodeTabs } from '../../hooks/vscodeTabs';
 import { useBrowserTabs } from '../../hooks/browserTabs';
 import { ticketRef, useTickets } from '../../hooks/tickets';
 import { useFocuses } from '../../hooks/useFocuses';
@@ -63,7 +62,6 @@ export function WorktreesPage({
 }: WorktreesPageProps) {
   const mrByPath = useMrSummaries(wsId, worktrees.map((w) => w.path));
   const { focuses, active, setMembership } = useFocuses(wsId);
-  const vscodeTabs = useVscodeTabs();
   const browserTabs = useBrowserTabs();
   const tickets = useTickets();
   const lru = readWorktreeLru();
@@ -104,7 +102,7 @@ export function WorktreesPage({
 
   const localRow = (w: Worktree, repoName: string) => {
     const activeRow = w.path === activeWorktreePath;
-    const chips = sessionChips([w], vscodeTabs, browserTabs);
+    const chips = sessionChips([w], browserTabs);
     const mr = mrByPath.get(w.path);
     const pinId = localPinId(w);
     const ticketId = w.meta?.ticketId?.trim();

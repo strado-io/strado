@@ -6,8 +6,8 @@ import { byLastActive } from '../components/sidebar/FocusSwitcher';
 // ⌘⌥← / ⌘⌥→ step to the previous / next one, wrapping, and ⇧⌘N asks the
 // sidebar to open its switcher ready for a new name (NEW_FOCUS_EVENT). Text
 // fields keep their keys, except the terminal's hidden textarea; the Browser
-// and VS Code embeds swallow the real keys, so the shell forwards the arrow
-// and ⇧⌘N chords over IPC (⌘digit stays with the embed: VS Code uses it).
+// embed swallows the real keys, so the shell forwards the arrow and ⇧⌘N
+// chords over IPC (⌘digit stays with the embed).
 export const NEW_FOCUS_EVENT = 'strado:new-focus';
 
 export function useFocusShortcut({ focuses, activeId, activate, enabled = true }: {

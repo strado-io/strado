@@ -10,7 +10,7 @@ import { SessionAvatarStack } from './sidebar/sessionAvatars';
 export type Density = 'comfy' | 'compact';
 
 // The row is deliberately lean: everything actionable (start/stop, agents,
-// VS Code, logs, env) lives in the hub the row click opens. Only glanceable
+// Files, logs, env) lives in the hub the row click opens. Only glanceable
 // state stays here — status, time, changes, run dot.
 export type Props = {
   worktree: Worktree;

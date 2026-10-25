@@ -213,6 +213,26 @@ describe('jarvis: actions as the human', () => {
     expect(feed).toContainEqual(expect.objectContaining({ kind: 'reply', replyTo: id, body: 'Yes, all 42 pass.' }));
   });
 
+  it('an ask can carry context (the Files tab sends the lines it is about); a malformed context is refused', async () => {
+    const context = [
+      { kind: 'file', value: 'src/app.ts:3-5', label: 'src/app.ts' },
+      { kind: 'text', value: 'const a = 1;\nconst b = 2;', label: 'snippet' },
+    ];
+    const asked = await post('/jarvis/message', { to: 'claude-1@repo', body: 'why is b 2?', ask: true, context });
+    expect(asked.statusCode).toBe(201);
+    const pulled = (await app.inject({ method: 'POST', url: '/api/intercom/pull', headers: { authorization: `Bearer ${tok}` }, payload: {} })).json().messages;
+    expect(pulled).toEqual([expect.objectContaining({ kind: 'request', body: 'why is b 2?', context })]);
+
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: [{ kind: 'shell', value: 'rm -rf /' }] })).statusCode).toBe(400);
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: 'nope' })).statusCode).toBe(400);
+    // Capped well under the intercom's own limit: a few items, each at most 8 KB (bytes, not chars).
+    const big = (n: number) => [{ kind: 'text', value: 'é'.repeat(n) }];
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: big(4096) })).statusCode).toBe(201);
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: big(4097) })).statusCode).toBe(400);
+    const many = Array.from({ length: 5 }, () => ({ kind: 'text', value: 'a' }));
+    expect((await post('/jarvis/message', { to: 'claude-1@repo', body: 'x', context: many })).statusCode).toBe(400);
+  });
+
   it('recap: reads saved turns (nothing is sent to the agent), hides secret-looking lines, and asks the model for a short answer', async () => {
     const recap = vi.fn(async () => ({ text: 'claude-1 fixed the redirect.', model: 'm', ms: 1 }));
     deps.jarvisModel = { plan: vi.fn(), recap };

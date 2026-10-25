@@ -9,7 +9,7 @@ const wsMock = vi.hoisted(() => ({
 }));
 vi.mock('../hooks/useWorkspace', () => ({
   useWorkspace: () => ({
-    workspace: { id: wsMock.id, name: wsMock.id === 'default' ? 'Default' : 'Other', color: 'zinc', icon: 'DF', defaultEditor: 'vscode', defaultPortBase: 3000, logDir: null },
+    workspace: { id: wsMock.id, name: wsMock.id === 'default' ? 'Default' : 'Other', color: 'zinc', icon: 'DF', defaultPortBase: 3000, logDir: null },
     allWorkspaces: wsMock.all,
     switchTo: (id: string) => wsMock.switchTo(id),
   }),

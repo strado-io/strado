@@ -3,14 +3,29 @@ import type React from 'react';
 // The tile under each tab's icon, tinted by kind (the icon keeps its status colour).
 const TILE: Record<string, string> = {
   claude: 'bg-[#d97757]/15 ring-[#d97757]/25',
-  codex: 'bg-white/[0.06] ring-white/10',
-  opencode: 'bg-white/[0.06] ring-white/10',
-  pi: 'bg-white/[0.06] ring-white/10',
-  shell: 'bg-emerald-400/10 ring-emerald-400/20',
-  browser: 'bg-sky-400/10 ring-sky-400/20',
-  vscode: 'bg-blue-500/10 ring-blue-500/25',
-  kb: 'bg-violet-400/10 ring-violet-400/20',
-  diff: 'bg-amber-400/10 ring-amber-400/20',
+  codex: 'bg-white/10 ring-white/25',
+  opencode: 'bg-lime-400/15 ring-lime-400/30',
+  pi: 'bg-fuchsia-400/15 ring-fuchsia-400/30',
+  // One clear hue per kind, none shared: orange Claude, white Codex, lime
+  // OpenCode, fuchsia Pi, green Shell, blue Browser, purple KB, yellow
+  // Changes, pink Files.
+  shell: 'bg-emerald-400/15 ring-emerald-400/30',
+  browser: 'bg-sky-400/15 ring-sky-400/30',
+  kb: 'bg-violet-400/15 ring-violet-400/30',
+  diff: 'bg-amber-400/15 ring-amber-400/30',
+  files: 'bg-rose-400/15 ring-rose-400/30',
+};
+/** A kind's icon colour at rest, matching its tile. An agent's working/waiting status colour replaces it while it runs. */
+export const KIND_ICON: Record<'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'browser' | 'kb' | 'diff' | 'files', string> = {
+  claude: 'text-[#e8906f]',
+  codex: 'text-zinc-100',
+  opencode: 'text-lime-300',
+  pi: 'text-fuchsia-300',
+  shell: 'text-emerald-300',
+  browser: 'text-sky-300',
+  kb: 'text-violet-300',
+  diff: 'text-amber-300',
+  files: 'text-rose-300',
 };
 /** A tab's icon on its small rounded tile, tinted by kind (the icon keeps its status colour). Shared with the pane cards. */
 export function TabTile({ mode, icon }: { mode: string; icon: React.ReactNode }) {
@@ -23,7 +38,7 @@ export function TabTile({ mode, icon }: { mode: string; icon: React.ReactNode })
 
 // The edge a member behind the front tile shows: its kind's colour, solid.
 const EDGE: Record<string, string> = {
-  claude: '#b8644a', shell: '#2f8f6a', browser: '#2b7fb3', vscode: '#2f5fc4', kb: '#7457c2', diff: '#a8782f',
+  claude: '#b8644a', codex: '#a1a1aa', opencode: '#65a30d', pi: '#c026d3', shell: '#2f8f6a', browser: '#2b7fb3', kb: '#7457c2', diff: '#a8782f', files: '#c2536a',
 };
 
 /** A group's members as a deck, like Rex: the first member's tile in front,

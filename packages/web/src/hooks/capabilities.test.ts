@@ -24,7 +24,7 @@ describe('fetchCapabilities', () => {
   });
 
   it('assumes embeds are available when the endpoint is missing', async () => {
-    // An older server has no /api/capabilities. Hiding VS Code and Browser
+    // An older server has no /api/capabilities. Hiding the Browser
     // from every existing install during the upgrade window would be a far
     // worse failure than briefly offering a tab a runner cannot honour.
     mockFetch({ ok: false });

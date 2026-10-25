@@ -1,6 +1,6 @@
 // Usage → Machine resources → Sessions: where this machine's memory goes, by repo, worktree and
-// session — every pty the daemon holds, each VS Code window, each Browser
-// preview, and Strado's own processes.
+// session — every pty the daemon holds, each Browser preview, each language
+// server, and Strado's own processes.
 //
 // The sidebar only shows sessions for worktrees in the current workspace.
 // Sessions whose worktree was deleted, or that belong to another workspace,
@@ -10,13 +10,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { readBrowserTabIds, rememberBrowserTab, rememberBrowserTabIds } from '../../hooks/browserTabs';
 import { useWorkspace } from '../../hooks/useWorkspace';
-import { readVscodeTabs, rememberVscodeTab } from '../../hooks/vscodeTabs';
-import { closeVscodeTab } from '../../pages/vscodeTabClose';
-import type { RepoConfig, SessionMetrics, Worktree } from '../../types';
-import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon, VsCodeIcon } from '../hub/icons';
+import type { LspServerId, RepoConfig, SessionMetrics, Worktree } from '../../types';
+import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ScreenIcon, ShellIcon } from '../hub/icons';
 import { BranchIcon, RepoIcon } from '../sidebar/rowBits';
 import {
-  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, memoryByKind, serverPids, sum,
+  KIND_BG, KIND_LABEL, KIND_TEXT, MB, appRows, filterGroups, fmtCpu, fmtMem, groupSessions, lspRows, memoryByKind, serverPids, sum,
   type AppMetric, type Group, type Kind, type SessionRow, type SortKey, type Usage,
 } from './sessionsModel';
 
@@ -34,10 +32,10 @@ function KindIcon({ kind, size = 13 }: { kind: Kind; size?: number }) {
   if (kind === 'codex') return <CodexIcon size={size} className={cls} />;
   if (kind === 'opencode') return <OpencodeIcon size={size} className={cls} />;
   if (kind === 'pi') return <PiIcon size={size} className={cls} />;
-  if (kind === 'vscode') return <VsCodeIcon size={size} className={cls} />;
   if (kind === 'browser') return <GlobeIcon className={`h-[13px] w-[13px] ${cls}`} />;
   if (kind === 'app') return <StradoMark className={cls} />;
   if (kind === 'server') return <ScreenIcon size={size} className={cls} />;
+  if (kind === 'lsp') return <BracesMark className={cls} />;
   return <ShellIcon size={size} className={cls} />;
 }
 
@@ -46,6 +44,15 @@ function StradoMark({ className = '' }: { className?: string }) {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden className={className}>
       <rect x="3" y="4" width="18" height="16" rx="3" />
       <path d="M3 9h18" />
+    </svg>
+  );
+}
+
+function BracesMark({ className = '' }: { className?: string }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={className}>
+      <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1" />
+      <path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
     </svg>
   );
 }
@@ -182,7 +189,7 @@ export function SessionsSection() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // Strado's own processes start folded: the page is about sessions.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(['strado']));
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(['strado', 'lsp']));
   const [sort, setSort] = useState<SortKey>('memory');
   const [kindFilter, setKindFilter] = useState<Kind | null>(null);
   const [query, setQuery] = useState('');
@@ -232,13 +239,15 @@ export function SessionsSection() {
     };
   }, [load]);
 
-  const run = async (id: string, action: () => Promise<unknown>) => {
+  // Fixed words on failure: the error's own text can be whatever a server relayed.
+  const run = async (id: string, action: () => Promise<unknown>, failed = 'That didn’t work. Try again.') => {
     setBusy(id);
     try {
       await action();
       await load(true);
     } catch (err) {
-      setError((err as Error).message);
+      console.warn('[usage] action failed:', err);
+      setError(failed);
     } finally {
       setBusy(null);
     }
@@ -250,28 +259,22 @@ export function SessionsSection() {
     if (s.kind === 'server') {
       return run(s.key, () => (s.external ? api.worktrees.killExternal(workspace.id, s.path) : api.worktrees.stop(workspace.id, s.path)));
     }
-    // Same close the hub's ✕ does: forget the tab (the strip listens) and,
-    // for VS Code, tell the server so it ends that window's extension host.
-    if (s.kind === 'vscode') return run(s.key, async () => { closeVscodeTab(s.path); });
+    // Same close the hub's ✕ does: forget the tab (the strip listens).
     return run(s.key, async () => {
       await window.strado?.preview?.('close', s.key);
       if (s.id === '1') rememberBrowserTab(s.path, false);
       else rememberBrowserTabIds(s.path, (readBrowserTabIds()[s.path] ?? []).filter((i) => i !== s.id));
     });
   };
-  // Stopping the shared workbench strands every VS Code tab on a dead server,
-  // so close them all; reopening one boots a fresh workbench.
-  const stopVscode = () =>
-    run('vscode', async () => {
-      await api.sessions.stopVscode();
-      for (const path of readVscodeTabs()) rememberVscodeTab(path, false);
-    });
+  // Just this worktree's language server; the others keep running, and the
+  // next lookup there starts it again.
+  const stopLsp = (id: LspServerId, worktreePath: string, key: string) =>
+    run(key, () => api.lspServers.stop(id, worktreePath), 'Couldn’t stop the language server.');
   const endGroup = (g: Group) =>
     run(`group:${g.id}`, async () => {
       for (const w of g.worktrees) for (const s of w.sessions) {
         if (s.kind === 'pty') await api.sessions.kill(s.key);
         else if (s.kind === 'server') continue; // orphan paths have no worktree to stop through
-        else if (s.kind === 'vscode') closeVscodeTab(s.path);
         else await window.strado?.preview?.('close', s.key);
       }
     });
@@ -285,17 +288,27 @@ export function SessionsSection() {
     });
 
   const groups = useMemo(
-    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, windows: metrics.vscodeWindows ?? [], processes: metrics.processes, worktrees, repos, sort }) : []),
+    () => (metrics ? groupSessions({ sessions: metrics.sessions, app: appMetrics, processes: metrics.processes, worktrees, repos, sort }) : []),
     [metrics, appMetrics, worktrees, repos, sort],
   );
   const app = metrics ? appRows(appMetrics, metrics.app) : [];
   const appTotal = sum(app.map((r) => r.usage));
-  const map = memoryByKind(groups, app);
+  const lsp = metrics ? lspRows(metrics.app.languageServers, worktrees, sort, Date.now()) : [];
+  const lspTotal = sum(lsp.map((r) => r.usage));
+  const map = memoryByKind(groups, app, lsp);
   const shown = filterGroups(groups, kindFilter, query);
-  const maxRss = Math.max(appTotal.rssBytes, ...groups.map((g) => g.usage.rssBytes), 1);
+  const maxRss = Math.max(appTotal.rssBytes, lspTotal.rssBytes, ...groups.map((g) => g.usage.rssBytes), 1);
   const sessionCount = groups.reduce((a, g) => a + g.worktrees.reduce((b, w) => b + w.sessions.length, 0), 0);
   const stradoOpen = !collapsed.has('strado');
   const showApp = !kindFilter && !query;
+  // A kind that leaves the map (its last server stopped) can't stay the filter: that would be a blank table.
+  const mapKinds = map.map((p) => p.kind).join();
+  useEffect(() => {
+    if (metrics && kindFilter && !map.some((p) => p.kind === kindFilter)) setKindFilter(null);
+  }, [mapKinds, kindFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Hidden when none run; the map's legend can show them alone.
+  const showLsp = lsp.length > 0 && !query && (!kindFilter || kindFilter === 'lsp');
+  const lspOpen = !collapsed.has('lsp');
 
   return (
     <section className="flex flex-col gap-4" data-testid="sessions-section">
@@ -350,7 +363,7 @@ export function SessionsSection() {
                   <td className="px-3 py-2">
                     <button type="button" onClick={() => toggle('strado')} aria-expanded={stradoOpen}
                       aria-label={`${stradoOpen ? 'Collapse' : 'Expand'} Strado`}
-                      title="The app, its server, the terminal daemon and the shared VS Code workbench"
+                      title="The app, its server and the terminal daemon"
                       className="flex items-center gap-2 whitespace-nowrap text-sm font-medium text-zinc-100">
                       <Chevron open={stradoOpen} />
                       <KindIcon kind="app" />
@@ -358,33 +371,55 @@ export function SessionsSection() {
                     </button>
                   </td>
                   <UsageCells usage={appTotal} max={maxRss} label="Strado" strong
-                    parts={[
-                      { kind: 'app', bytes: appTotal.rssBytes - (metrics.app.vscode?.rssBytes ?? 0) },
-                      { kind: 'vscode', bytes: metrics.app.vscode?.rssBytes ?? 0 },
-                    ]} />
+                    parts={[{ kind: 'app', bytes: appTotal.rssBytes }]} />
                   <td />
                 </tr>
                 {stradoOpen && app.map((r) => (
                   <tr key={r.id} data-testid={`sessions-row-${r.id}`} className="group hover:bg-zinc-900/40">
-                    <td className="py-1.5 pl-12 pr-3 text-[13px] text-zinc-400">
-                      <span className="flex items-center gap-2">
-                        {r.id === 'vscode' && <KindIcon kind="vscode" size={12} />}
-                        <span>{r.label}</span>
+                    <td className="py-1.5 pl-12 pr-3 text-[13px] text-zinc-400">{r.label}</td>
+                    <UsageCells usage={r.usage} max={maxRss} label={r.label} parts={[{ kind: 'app', bytes: r.usage.rssBytes }]} />
+                    <td />
+                  </tr>
+                ))}
+              </tbody>
+            )}
+
+            {showLsp && (
+              <tbody data-testid="sessions-group-lsp">
+                <tr className="[&>td]:border-t [&>td]:border-zinc-800 [&>td]:bg-zinc-900/30">
+                  <td className="px-3 py-2">
+                    <button type="button" onClick={() => toggle('lsp')} aria-expanded={lspOpen}
+                      aria-label={`${lspOpen ? 'Collapse' : 'Expand'} Language servers`}
+                      title="Go to definition, references and hover in the Files tab"
+                      className="flex items-center gap-2 whitespace-nowrap text-[13px] font-medium text-zinc-100">
+                      <Chevron open={lspOpen} />
+                      <KindIcon kind="lsp" />
+                      <span>Language servers</span>
+                      <span className="text-[11px] font-normal tabular-nums text-zinc-600">{lsp.length}</span>
+                    </button>
+                  </td>
+                  <UsageCells usage={lspTotal} max={maxRss} label="Language servers" strong parts={[{ kind: 'lsp', bytes: lspTotal.rssBytes }]} />
+                  <td />
+                </tr>
+                {lspOpen && lsp.map((r) => (
+                  <tr key={r.key} data-testid={`sessions-row-${r.key}`} className="group hover:bg-zinc-900/40">
+                    <td className="py-1.5 pl-12 pr-3">
+                      <span className="flex min-w-0 items-center gap-2 text-[13px] text-zinc-300" title={`${r.worktreePath} · pid ${r.pid}`}>
+                        <span className="truncate">{r.label}</span>
+                        <span className="shrink-0 text-[11px] tabular-nums text-zinc-600">{r.idle}</span>
+                        {r.processes > 1 && <span className="shrink-0 text-[11px] tabular-nums text-zinc-600">{r.processes} processes</span>}
                       </span>
                     </td>
-                    <UsageCells usage={r.usage} max={maxRss} label={r.label}
-                      parts={[{ kind: r.id === 'vscode' ? 'vscode' : 'app', bytes: r.usage.rssBytes }]} />
+                    <UsageCells usage={r.usage} max={maxRss} label={r.label} parts={[{ kind: 'lsp', bytes: r.usage.rssBytes }]} />
                     <td className="px-2 py-1 text-right">
-                      {r.id === 'vscode' && (
-                        <ActionButton label="Stop VS Code" busy={busy === 'vscode'} onRun={() => void stopVscode()} />
-                      )}
+                      <ActionButton label={`Stop ${r.label}`} busy={busy === r.key} onRun={() => void stopLsp(r.id, r.worktreePath, r.key)} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             )}
 
-            {shown.length === 0 && (
+            {shown.length === 0 && !(kindFilter === 'lsp' && showLsp) && (
               <tbody>
                 <tr>
                   <td colSpan={5} className="px-3 py-6 text-center text-xs text-zinc-500">
@@ -448,7 +483,7 @@ export function SessionsSection() {
                       const confirm = (s.kind === 'pty' && s.mode !== 'shell') || (s.kind === 'server' && s.external);
                       return (
                         <tr key={`${s.kind}:${s.key}`}
-                          data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : s.kind === 'vscode' ? `sessions-row-vscode:${s.path}` : `sessions-row-${s.key}`}
+                          data-testid={s.kind === 'browser' ? `sessions-row-browser:${s.key}` : `sessions-row-${s.key}`}
                           className="group hover:bg-zinc-900/40">
                           <td className="py-1.5 pl-16 pr-3">
                             <span className="flex items-center gap-2 text-[13px] text-zinc-300"

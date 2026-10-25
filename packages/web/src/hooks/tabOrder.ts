@@ -41,7 +41,7 @@ export function tabKeyOf(t: { mode: string; id: string; remote?: { runnerId: str
 // (keyed by path), so without this the tab selection dies with the unmount —
 // R1 on tab 3 → R2 → back to R1 landed on tab 1.
 const ACTIVE_STORE = 'strado.activeTab';
-const TAB_MODES = ['claude', 'shell', 'codex', 'opencode', 'pi', 'vscode', 'browser', 'kb', 'diff'] as const;
+const TAB_MODES = ['claude', 'shell', 'codex', 'opencode', 'pi', 'browser', 'kb', 'diff', 'files'] as const;
 export type TabMode = (typeof TAB_MODES)[number];
 
 export function readActiveTab(path: string): { mode: TabMode; id: string } | null {

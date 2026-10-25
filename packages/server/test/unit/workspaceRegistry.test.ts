@@ -11,7 +11,7 @@ async function tmpRoot(): Promise<string> {
 
 const DEFAULT = {
   id: 'default', name: 'Acme', color: '#3b82f6', icon: 'F',
-  defaultEditor: 'code' as const, defaultPortBase: 8080, logDir: null,
+  defaultPortBase: 8080, logDir: null,
 };
 
 describe('WorkspaceStoreRegistry', () => {
@@ -32,7 +32,7 @@ describe('WorkspaceStoreRegistry', () => {
     expect(stores.state).toBeDefined();
     await stores.repos.add({
       id: 'r1', name: 'r1', path: '/x', projectSubdir: null,
-      startCommand: 'echo', defaultPort: 8080, editor: 'code',
+      startCommand: 'echo', defaultPort: 8080,
     });
     const stat = await fs.stat(path.join(root, 'workspaces', 'default'));
     expect(stat.isDirectory()).toBe(true);
@@ -83,7 +83,7 @@ describe('WorkspaceStoreRegistry', () => {
     const b = await reg.get('strado');
     await a.repos.add({
       id: 'r1', name: 'r1', path: '/x', projectSubdir: null,
-      startCommand: 'echo', defaultPort: 8080, editor: 'code',
+      startCommand: 'echo', defaultPort: 8080,
     });
     expect(await a.repos.list()).toHaveLength(1);
     expect(await b.repos.list()).toHaveLength(0);

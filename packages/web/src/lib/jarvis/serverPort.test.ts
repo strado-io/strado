@@ -69,6 +69,8 @@ describe('Jarvis server port', () => {
     jf.mockResolvedValue(res(201, { id: 'M1', to: { agentId: 'claude-1@a', alias: null } }));
     await port.message('claude-1@a', 'fix the test');
     expect(bodyOf()).toEqual({ to: 'claude-1@a', body: 'fix the test' });
+    await port.message('claude-1@a', 'why?', { ask: true, context: [{ kind: 'file', value: '/w/a/x.ts:1-2', label: 'x.ts' }] });
+    expect(bodyOf(1)).toEqual({ to: 'claude-1@a', body: 'why?', ask: true, context: [{ kind: 'file', value: '/w/a/x.ts:1-2', label: 'x.ts' }] });
     await port.startServer('/w/a', 'npm run dev', 'dev');
     await port.stopServer('/w/a');
     expect(wt.start).toHaveBeenCalledWith('ws1', '/w/a');

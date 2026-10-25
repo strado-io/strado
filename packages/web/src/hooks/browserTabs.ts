@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 // Which worktrees have a Browser preview tab open in the hub (Electron
-// webview — client-side only, like VS Code tabs). Persisted so the tab and
+// webview — client-side only, like Files tabs). Persisted so the tab and
 // its URL survive panel reopen; broadcast so the sessions dock stays live.
 const KEY = 'strado:browser-tabs';
 const URL_KEY = 'strado:browser-urls';

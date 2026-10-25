@@ -27,10 +27,12 @@ describe('/api/workspaces', () => {
   it('POST creates a workspace + its dir', async () => {
     const res = await ctx.app.inject({
       method: 'POST', url: '/api/workspaces',
+      // defaultEditor is retired; an older client still sending it must not get a 400.
       payload: { id: 'strado', name: 'Strado', color: '#10b981', icon: 'S',
                  defaultEditor: 'code', defaultPortBase: 4000, logDir: null },
     });
     expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty('defaultEditor');
     await fs.access(path.join(ctx.root, 'config', 'workspaces', 'strado', 'repos.json'));
   });
 
@@ -43,7 +45,7 @@ describe('/api/workspaces', () => {
     await ctx.app.inject({
       method: 'POST', url: '/api/workspaces',
       payload: { id: 'strado', name: 'Strado', color: '#10b981', icon: 'S',
-                 defaultEditor: 'code', defaultPortBase: 4000, logDir: null },
+                 defaultPortBase: 4000, logDir: null },
     });
     const res = await ctx.app.inject({ method: 'DELETE', url: '/api/workspaces/strado?confirm=1' });
     expect(res.statusCode).toBe(204);
@@ -54,7 +56,7 @@ describe('/api/workspaces', () => {
     await ctx.app.inject({
       method: 'POST', url: '/api/workspaces',
       payload: { id: 'strado', name: 'Strado', color: '#10b981', icon: 'S',
-                 defaultEditor: 'code', defaultPortBase: 4000, logDir: null },
+                 defaultPortBase: 4000, logDir: null },
     });
     const res = await ctx.app.inject({
       method: 'POST', url: '/api/workspaces/active', payload: { id: 'strado' },

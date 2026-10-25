@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -72,6 +72,28 @@ async function request<T>(url: string, init?: RequestInit, opts?: RequestOpts): 
 function wsBase(wsId: string): string {
   return `/api/w/${encodeURIComponent(wsId)}`;
 }
+
+/** A worktree on a runner: its files are read through the runner's own API. */
+export type RemoteFilesTarget = { runnerId: string; remoteWsId: string };
+
+/** One Files-tab GET: on this machine, or on the runner through its rpc proxy. */
+function filesGet<T>(wsId: string, worktreePath: string, route: string, query: Record<string, string | undefined>, remote?: RemoteFilesTarget, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (v !== undefined) qs.set(k, v);
+  const tail = `/worktrees/${encodeURIComponent(worktreePath)}/${route}${qs.toString() ? `?${qs}` : ''}`;
+  const init = signal ? { signal } : undefined;
+  const opts = timeoutMs ? { timeoutMs } : undefined;
+  if (remote) {
+    return request<T>(`/api/runners/${encodeURIComponent(remote.runnerId)}/rpc?path=${encodeURIComponent(`/api/w/${encodeURIComponent(remote.remoteWsId)}${tail}`)}`, init, opts);
+  }
+  return request<T>(`${wsBase(wsId)}${tail}`, init, opts);
+}
+
+/** A navigation request: where the cursor is, and a way to cancel it when a newer one supersedes it. */
+export type NavAt = { path: string; line: number; col: number };
+/** A language server may take up to a minute to start before its first answer. */
+const LSP_TIMEOUT_MS = 75_000;
+const at = (p: NavAt) => ({ path: p.path, line: String(p.line), col: String(p.col) });
 
 export type DetectedRepo = RepoConfig & { warnings: string[] };
 
@@ -524,8 +546,6 @@ export const api = {
       request<ProcInfo>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/status`),
     logs: (wsId: string, p: string, tail = 500) =>
       request<{ lines: string[] }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/logs?tail=${tail}`),
-    openEditor: (wsId: string, p: string) =>
-      request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/open-editor`, { method: 'POST' }),
     openTerminal: (wsId: string, p: string) =>
       request<void>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/open-terminal`, { method: 'POST' }),
     resumeClaude: (wsId: string, p: string) =>
@@ -706,6 +726,53 @@ export const api = {
         request<{ head: string; summary: string }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
     },
   },
+  /** The Files tab: a read-only view of a worktree's folders and files. Pass
+   * `remote` for a runner's worktree (wsId is then unused). */
+  files: {
+    tree: (wsId: string, worktreePath: string, dir: string, opts: { ignored?: boolean } = {}, remote?: RemoteFilesTarget) =>
+      filesGet<FileTreePage>(wsId, worktreePath, 'files/tree', { dir, ignored: opts.ignored ? '1' : undefined }, remote),
+    list: (wsId: string, worktreePath: string, remote?: RemoteFilesTarget) =>
+      filesGet<FileList>(wsId, worktreePath, 'files/list', {}, remote),
+    read: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
+      filesGet<FileContent>(wsId, worktreePath, 'files/read', { path }, remote),
+    marks: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
+      filesGet<FileMarks>(wsId, worktreePath, 'files/marks', { path }, remote),
+    /** ⌘⇧F, and the guess behind a navigation with no language server. */
+    search: (wsId: string, worktreePath: string, q: SearchQuery, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<SearchAnswer>(wsId, worktreePath, 'files/search', {
+        q: q.q, word: q.word ? '1' : undefined, case: q.case ? '1' : undefined, regex: q.regex ? '1' : undefined, glob: q.glob || undefined,
+      }, remote, signal),
+  },
+  /** Code navigation through a language server (search when there is none). Pass
+   * a signal so a newer request cancels the one it supersedes. */
+  lsp: {
+    definition: (wsId: string, worktreePath: string, p: NavAt, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<NavAnswer>(wsId, worktreePath, 'lsp/definition', at(p), remote, signal, LSP_TIMEOUT_MS),
+    references: (wsId: string, worktreePath: string, p: NavAt, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<NavAnswer>(wsId, worktreePath, 'lsp/references', at(p), remote, signal, LSP_TIMEOUT_MS),
+    hover: (wsId: string, worktreePath: string, p: NavAt, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<HoverAnswer>(wsId, worktreePath, 'lsp/hover', at(p), remote, signal, LSP_TIMEOUT_MS),
+    outline: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
+      filesGet<OutlineAnswer>(wsId, worktreePath, 'lsp/outline', { path }, remote, signal, LSP_TIMEOUT_MS),
+  },
+  /** This machine's language servers (Settings › Files › Language servers). */
+  lspServers: {
+    list: (signal?: AbortSignal) =>
+      request<{ servers: LspServerStatus[] }>('/api/lsp/servers', signal ? { signal } : undefined).then((b) => b.servers),
+    setEnabled: (id: LspServerId, enabled: boolean) =>
+      request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+    /** With `worktreePath`, only that worktree's instance; without, every one. */
+    stop: (id: LspServerId, worktreePath?: string) =>
+      request<void>(`/api/lsp/servers/${encodeURIComponent(id)}/stop`, { method: 'POST', body: JSON.stringify(worktreePath ? { worktreePath } : {}) }),
+  },
+  /** "Open in editor": this machine's desktop editors, and handing a worktree or file to one. */
+  editors: {
+    list: () => request<EditorsAnswer>('/api/editors'),
+    setPreferred: (editor: EditorId | null) =>
+      request<void>('/api/editors/preferred', { method: 'POST', body: JSON.stringify({ editor }) }),
+    open: (wsId: string, body: OpenInEditorBody) =>
+      request<void>(`${wsBase(wsId)}/open-in-editor`, { method: 'POST', body: JSON.stringify(body) }),
+  },
   kb: {
     files: (wsId: string, p: string) =>
       request<{ files: KbFile[]; truncated: boolean; cap: number }>(
@@ -723,26 +790,6 @@ export const api = {
       request<SessionMetrics>(`/api/sessions/metrics${pids.length ? `?pids=${pids.join(',')}` : ''}`),
     kill: (key: string) =>
       request<void>(`/api/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
-    stopVscode: () => request<void>('/api/sessions/vscode', { method: 'DELETE' }),
-  },
-  vscode: {
-    // Ensures the shared VS Code web server is running; returns its base URL.
-    // ready:false means serve-web is still downloading a VS Code update and
-    // would serve a placeholder page — callers should keep loading and re-poll.
-    // Doubles as the heartbeat: the server stops an unseen workbench after a
-    // while, and a changed pid means it was restarted (reload the frame).
-    open: (folder: string) =>
-      request<{ url: string; ready?: boolean; pid?: number }>('/api/vscode', {
-        method: 'POST',
-        body: JSON.stringify({ folder }),
-      }),
-    // Tears down the given worktree's VS Code web server daemon. Best-effort
-    // — server-side reap on startup/shutdown is the backstop.
-    close: (folder: string) =>
-      request<{ ok: boolean }>('/api/vscode', {
-        method: 'DELETE',
-        body: JSON.stringify({ folder }),
-      }),
   },
   workspaces: {
     list: () =>

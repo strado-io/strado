@@ -2,6 +2,7 @@
 // memory of the process tree under each one. One `ps` sample per request;
 // the rollup is pure so it can be pinned in tests.
 import { execFile } from 'node:child_process';
+import type { LspRunning } from './lsp/manager.js';
 import {
   claudeKey,
   codexKey,
@@ -23,19 +24,18 @@ export type SessionMetric = LiveSession & {
 
 export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
 
-export type VsCodeWindowMetric = { path: string; pid: number } & ProcTotals;
+/** A running language server and its whole process tree (tsserver, a JVM). */
+export type LanguageServerMetric = LspRunning & ProcTotals;
 
 export type SessionMetrics = {
   sampledAt: number;
   app: {
     server: AppProcMetric;
     daemon: AppProcMetric | null;
-    /** the shared `code serve-web` workbench, minus the windows attributed below */
-    vscode: (AppProcMetric & { processes: number }) | null;
+    /** Files-tab language servers. Started by this server but not counted in `server`, which is its own process only. */
+    languageServers: LanguageServerMetric[];
   };
   sessions: SessionMetric[];
-  /** one entry per VS Code window whose extension host reported its folder */
-  vscodeWindows: VsCodeWindowMetric[];
   /** process tree of each pid the caller asked about (worktree dev servers) */
   processes: Array<{ pid: number } & ProcTotals>;
 };
@@ -104,9 +104,8 @@ export function buildSessionMetrics(input: {
   procs: ProcSample[];
   serverPid: number;
   daemonPid: number | null;
-  vscodePid?: number | null;
-  vscodeWindows?: Array<{ pid: number; folder: string }>;
   extraPids?: number[];
+  languageServers?: LspRunning[];
   now?: number;
 }): SessionMetrics {
   const one = (pid: number): AppProcMetric => {
@@ -119,21 +118,22 @@ export function buildSessionMetrics(input: {
     const totals = pid ? subtreeTotals(input.procs, pid) : { cpu: 0, rssBytes: 0, processes: 0 };
     return { ...s, key, pid, ...totals };
   });
-  // Windows whose extension host is in the sample; dead hosts drop out.
+  // Pids in the sample: one that has gone since it was listed drops out.
   const known = new Set(input.procs.map((p) => p.pid));
-  const vscodeWindows: VsCodeWindowMetric[] = (input.vscodeWindows ?? [])
-    .filter((w) => known.has(w.pid))
-    .map((w) => ({ path: w.folder, pid: w.pid, ...subtreeTotals(input.procs, w.pid) }));
-  const windowPids = new Set(vscodeWindows.map((w) => w.pid));
   return {
     sampledAt: input.now ?? Date.now(),
     app: {
       server: one(input.serverPid),
       daemon: input.daemonPid ? one(input.daemonPid) : null,
-      vscode: input.vscodePid ? { pid: input.vscodePid, ...subtreeTotals(input.procs, input.vscodePid, windowPids) } : null,
+      // Gone between the manager's list and the sample: dropped.
+      // The tree is walked by ppid, so a process that outlives its server (a
+      // Gradle daemon re-parented to launchd after jdtls exits) is in no row at all.
+      // Accepted: it is no longer the server's to show.
+      languageServers: (input.languageServers ?? [])
+        .filter((l) => known.has(l.pid))
+        .map((l) => ({ ...l, ...subtreeTotals(input.procs, l.pid) })),
     },
     sessions,
-    vscodeWindows,
     processes: (input.extraPids ?? []).filter((pid) => known.has(pid)).map((pid) => ({ pid, ...subtreeTotals(input.procs, pid) })),
   };
 }

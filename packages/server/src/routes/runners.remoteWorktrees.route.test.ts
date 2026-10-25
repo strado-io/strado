@@ -70,7 +70,6 @@ function repoConfig(id: string, cloneUrl: string | null) {
     projectSubdir: null,
     startCommand: 'npm run dev',
     defaultPort: 3000,
-    editor: 'code' as const,
   };
 }
 
@@ -166,7 +165,7 @@ describe('GET /api/w/:ws/remote-worktrees', () => {
   it('omits a worktree whose repo lives in a DIFFERENT workspace — it shows nested there', async () => {
     await app.deps.workspaces.add({
       id: 'other', name: 'Other', color: '#112233', icon: 'O',
-      defaultEditor: 'code', defaultPortBase: 9080, logDir: null,
+      defaultPortBase: 9080, logDir: null,
     });
     const other = await app.deps.registry.get('other');
     await other.repos.add(repoConfig('r-site', 'https://github.com/o/site.git'));

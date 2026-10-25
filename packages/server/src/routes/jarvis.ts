@@ -8,7 +8,7 @@ import type { AgentMode } from '../services/handoffStore.js';
 import { cutUtf8 } from '../services/intercomContext.js';
 import { HUMAN } from '../services/intercomStore.js';
 import { NUDGE } from '../services/intercomPush.js';
-import { BODY_MAX, HUMAN_AGENT_ID, STRADO_SENDER_ID } from '../services/intercomSchema.js';
+import { BODY_MAX, ContextItem, HUMAN_AGENT_ID, STRADO_SENDER_ID } from '../services/intercomSchema.js';
 import { createTabOps, keyOfRef, type CommandResult } from '../services/tabOps.js';
 import { assertHubRequest } from './appControl.js';
 import { ACTIONS } from '../services/actions.js';
@@ -134,11 +134,20 @@ export async function readScripts(worktreePath: string): Promise<{ packageManage
   return { packageManager, scripts };
 }
 
+/** The box's context is small by design (a file and up to 8 KB of its lines). */
+// The body limit allows for JSON escaping (up to 6 bytes a character).
+const ASK_CONTEXT_VALUE_MAX = 8 * 1024;
+
 const MessageBody = z.object({
   to: z.string().min(1).max(200),
   body: z.string().min(1).max(BODY_MAX),
   // A question: the agent answers through the intercom, and the box shows it.
   ask: z.literal(true).optional(),
+  // What it is about (the Files tab's "Ask about these lines"): rides on a new
+  // message, as intercom context; an answer to an open call carries none.
+  context: z.array(ContextItem.extend({
+    value: z.string().min(1).refine((v) => Buffer.byteLength(v, 'utf8') <= ASK_CONTEXT_VALUE_MAX, 'context value too large'),
+  })).max(4).optional(),
 }).strict();
 
 const RecapBody = z.object({
@@ -362,7 +371,7 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
     return open.filter((e) => e.to === HUMAN_AGENT_ID && e.from.agentId === agentId).at(-1) ?? null;
   };
 
-  app.post('/jarvis/message', { bodyLimit: BODY_MAX + 16 * 1024 }, async (req, reply) => {
+  app.post('/jarvis/message', { bodyLimit: BODY_MAX + 4 * ASK_CONTEXT_VALUE_MAX * 6 + 16 * 1024 }, async (req, reply) => {
     requireHub(app, req);
     const b = MessageBody.parse(req.body);
     const scopeId = req.workspace!.id;
@@ -385,7 +394,7 @@ export async function registerJarvisScopedRoutes(app: FastifyInstance): Promise<
       ? app.deps.intercom.resolveEscalation(scopeId, call.id, HUMAN, b.body).replyMessageId ?? call.id
       : app.deps.intercom.send({
         scopeId, fromAgentId: HUMAN.agentId, fromExecutionId: HUMAN.executionId, toAgentId: to.agentId,
-        kind: b.ask ? 'request' : 'message', replyTo: null, body: b.body, context: [], idempotencyKey: null, expiresInMs: null,
+        kind: b.ask ? 'request' : 'message', replyTo: null, body: b.body, context: b.context ?? [], idempotencyKey: null, expiresInMs: null,
       }).receipt.id;
     const me = (await app.deps.agents.list(scopeId)).find((a) => a.agentId === to.agentId);
     const atRest = !!me && me.live && me.lifecycle !== 'working' && me.lifecycle !== 'needs_input';

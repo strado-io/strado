@@ -97,6 +97,36 @@ describe('/api/runners/:id/rpc denylist', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it.each(['/api/w/y/worktrees/%2F..%2F..%2F..%2F..%2Fsandbox/agent-logins', '/api/w/x/..%252F..%252Fsandbox/box-key', '/api/w/..%252Fsandbox'])(
+    'an encoded path that decodes onto the sandbox routes is refused: %s',
+    async (p) => {
+      const calls = stubRunner();
+      const url = `/api/runners/runner-1/rpc?path=${encodeURIComponent(p)}`;
+      expect((await app.inject({ method: 'GET', url })).statusCode).toBe(403);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("passes the Files tab's reads, whose worktree path is an encoded segment", async () => {
+    const tail = `/worktrees/${encodeURIComponent('/home/strado/.strado/worktrees/r/my wt')}/files/read?path=${encodeURIComponent('src/a.ts')}`;
+    const seen: string[] = [];
+    const calls = stubRunner({
+      extra: (u) => {
+        seen.push(u.slice(RUNNER.length));
+        return new Response('{"path":"src/a.ts"}', { headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/runners/runner-1/rpc?path=${encodeURIComponent(`/api/w/default${tail}`)}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ path: 'src/a.ts' });
+    expect(calls).toHaveLength(1);
+    // Arrives unchanged, apart from the relay ticket.
+    expect(seen).toEqual([`/api/w/default${tail}&ticket=tkt-1`]);
+  });
+
   it('other paths still pass through', async () => {
     const calls = stubRunner({ extra: (u) => (new URL(u).pathname === '/api/workspaces' ? new Response('{"workspaces":[]}', { headers: { 'content-type': 'application/json' } }) : undefined) });
     const res = await app.inject({ method: 'GET', url: `/api/runners/runner-1/rpc?path=${encodeURIComponent('/api/workspaces')}` });

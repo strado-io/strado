@@ -16,6 +16,11 @@ import { createDaemonTerminalManager } from './services/ptyDaemon/manager.js';
 import { createGitStatusService, GitStatusService } from './services/gitStatus.js';
 import { createAgentStatusStore, ClaudeStatusStore } from './services/claudeStatusStore.js';
 import { createGitChangesService, GitChangesService } from './services/gitChanges.js';
+import { createLspManager, type LspManager } from './services/lsp/manager.js';
+import { createDetect } from './services/lsp/detect.js';
+import { createLspEnabledStore } from './services/lsp/store.js';
+import { createEditors, type Editors } from './services/editors/open.js';
+import { createEditorStore } from './services/editors/store.js';
 import { createActivityTracker, createAgentOutputBeats, ActivityTracker } from './services/activityTracker.js';
 import { createWorktreeWatcher, WorktreeWatcher } from './services/activityWatcher.js';
 import { createDiffStatsCache, DiffStatsCache } from './services/diffStatsCache.js';
@@ -24,7 +29,6 @@ import { toResponse, AppError } from './errors.js';
 import { runMigration } from './migration.js';
 import { createWorkspaceConfigStore, WorkspaceConfigStore } from './workspaceConfig.js';
 import { createWorkspaceStoreRegistry, WorkspaceStoreRegistry } from './workspaceRegistry.js';
-import { closeAll as closeVsCodeWeb } from './services/vscodeWeb.js';
 import { detectRuntime, sandboxEnabled, type SandboxRuntime } from './services/sandbox/runtime.js';
 import { createSandboxService, type SandboxService } from './services/sandbox/sandboxes.js';
 import { createSandboxSlugMap, hydrateSandboxSlugs, type SandboxSlugMap } from './services/sandbox/slugMap.js';
@@ -97,6 +101,10 @@ export type Deps = {
   // separate from homeStateDir (~/.strado) and overridable in tests.
   agentHomeDir: string;
   gitChanges: GitChangesService;
+  /** Language servers for the Files tab; built in buildApp unless a test injects one. */
+  lsp?: LspManager;
+  /** Open in editor; built in buildApp unless a test injects one. */
+  editors?: Editors;
   activity: ActivityTracker;
   activityWatch: WorktreeWatcher;
   // Worktree-list diff badges, cached on file/git changes (see diffStatsCache).
@@ -553,15 +561,22 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       })
     : null;
 
+  // Started on demand by the Files tab; every one is stopped with the app.
+  // One lookup of PATH and the common bin dirs, shared by language servers and editors.
+  const detect = createDetect();
+  const lsp =
+    deps.lsp ?? createLspManager({ detect, store: createLspEnabledStore(), log: (line) => app.log.warn(line) });
+  const editors = deps.editors ?? createEditors({ detect, store: createEditorStore() });
+
   // FSWatchers keep the event loop alive; close them with the app and flush
   // any activity accrued since the last debounced write.
   app.addHook('onClose', async () => {
+    await lsp.closeAll();
     stopParkSweep?.();
     claudeParkSweep?.stop();
     deps.activityWatch.close();
     await deps.devProxy.close();
     await deps.activity.flush();
-    await closeVsCodeWeb();
     // Leaves no socket file behind for the next boot to trip over.
     await deps.closeSandboxSocket?.();
     clearInterval(sweepTimer);
@@ -619,7 +634,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   }
   // Machine-wide pty sessions, outside any workspace scope (see the module).
   const { registerSessionRoutes } = await import('./routes/sessions.js');
-  await registerSessionRoutes(app);
+  await registerSessionRoutes(app, lsp);
 
   // Self-hosted runner management (proxies strado-api with the stored token).
   // Returns its runnerFetch client (ticket cache + relay fetch) so a later
@@ -664,6 +679,12 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     await registerWorktreesRoutes(scoped);
     const { registerGitChangesRoutes } = await import('./routes/gitChanges.js');
     await registerGitChangesRoutes(scoped);
+    const { registerFilesRoutes } = await import('./routes/files.js');
+    await registerFilesRoutes(scoped);
+    const { registerLspRoutes } = await import('./routes/lsp.js');
+    await registerLspRoutes(scoped, lsp);
+    const { registerOpenInEditorRoute } = await import('./routes/editors.js');
+    await registerOpenInEditorRoute(scoped, editors);
     const { registerKnowledgeBaseRoutes } = await import('./routes/knowledgeBase.js');
     await registerKnowledgeBaseRoutes(scoped);
     const { registerLinkingRoutes } = await import('./routes/linking.js');
@@ -705,10 +726,6 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerAppControlRoutes(app);
   const { registerJarvisRoutes } = await import('./routes/jarvis.js');
   await registerJarvisRoutes(app);
-
-  // VS Code web server control — workspace-agnostic, outside the prefix scope
-  const { registerVsCodeRoutes } = await import('./routes/vscode.js');
-  await registerVsCodeRoutes(app);
 
   // Jira proxy — credentials are per machine (~/.strado/jira.json)
   const { registerJiraRoutes } = await import('./routes/jira.js');
@@ -765,6 +782,10 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await registerUpdateCheckRoutes(app);
   const { registerProfileRoutes } = await import('./routes/profile.js');
   await registerProfileRoutes(app);
+  const { registerLspAdminRoutes } = await import('./routes/lsp.js');
+  await registerLspAdminRoutes(app, lsp);
+  const { registerEditorAdminRoutes } = await import('./routes/editors.js');
+  await registerEditorAdminRoutes(app, editors);
   const { registerVoiceRoutes } = await import('./routes/voice.js');
   await registerVoiceRoutes(app);
 

@@ -1,6 +1,3 @@
-export type Editor = 'code' | 'cursor' | 'subl' | 'webstorm';
-
-
 /** A named way to run a worktree of a repo (the header's Run menu): several can run at once, each in its own tab.
  * A repo's list order is its tab order; the first is the default (the header's main Run). */
 export type RunCommand = { id: string; name: string; command: string; envFile?: string | null };
@@ -15,7 +12,6 @@ export type RepoConfig = {
   startCommand: string;
   defaultPort: number;
   fixedPort?: boolean;
-  editor: Editor;
   openUrl?: string | null;
   /** Named run commands (startCommand mirrors the first). The first is the default. */
   runCommands?: RunCommand[];
@@ -126,7 +122,6 @@ export type Workspace = {
   name: string;
   color: string;
   icon: string;
-  defaultEditor: Editor;
   defaultPortBase: number;
   logDir: string | null;
   /**
@@ -314,17 +309,19 @@ export type SessionMetric = {
   processes: number;
 };
 export type AppProcMetric = { pid: number; cpu: number; rssBytes: number };
+export type LanguageServerMetric = {
+  id: LspServerId; lang: string; worktreePath: string; pid: number;
+  cpu: number; rssBytes: number; processes: number; startedAt: string; lastUsedAt: string;
+};
 export type SessionMetrics = {
   sampledAt: number;
   app: {
     server: AppProcMetric;
     daemon: AppProcMetric | null;
-    /** the shared `code serve-web` workbench and everything under it */
-    vscode: (AppProcMetric & { processes: number }) | null;
+    /** Each running language server (Files tab), its process tree; absent from an older server. */
+    languageServers?: LanguageServerMetric[];
   };
   sessions: SessionMetric[];
-  /** one per VS Code window whose extension host reported its folder */
-  vscodeWindows: Array<{ path: string; pid: number; cpu: number; rssBytes: number; processes: number }>;
   /** process tree of each pid asked for with ?pids= (worktree dev servers) */
   processes?: Array<{ pid: number; cpu: number; rssBytes: number; processes: number }>;
 };
@@ -416,3 +413,80 @@ export type SandboxList = { sandboxes: SandboxRow[]; runtime: 'podman' | 'docker
 export type LogLine = { ts: number; level: 'info' | 'warn' | 'error' | 'debug'; text: string };
 export type LogQuery = { lines?: number; grep?: string; since?: number };
 export type LogPage = { lines: LogLine[]; source: 'journal' | 'file' | 'none'; nextSince: number | null };
+
+// Files tab — mirrors packages/server/src/services/files/types.ts. Every path
+// is relative to the worktree root, uses '/', and never leaves it.
+export type FileChange = 'M' | 'A' | 'D' | 'R' | '?';
+export type FileTreeEntry = {
+  name: string;
+  /** Relative to the worktree root, e.g. "src/app.ts". */
+  path: string;
+  kind: 'dir' | 'file';
+  size?: number;
+  /** Files: its own change. Dirs: set when anything under it changed. */
+  change?: FileChange;
+  /** Matched by .gitignore (only listed when ignored files were asked for). */
+  ignored?: boolean;
+};
+export type FileTreePage = { dir: string; entries: FileTreeEntry[]; truncated: boolean };
+export type FileList = { files: string[]; truncated: boolean };
+export type FileContent = {
+  path: string;
+  size: number;
+  binary: boolean;
+  tooLarge: boolean;
+  text?: string;
+  /** A CodeMirror language hint, e.g. "typescript"; null = plain. */
+  language: string | null;
+  change?: FileChange;
+};
+/** 1-based lines in the current file where it differs from HEAD. */
+export type FileMarks = {
+  path: string;
+  added: [number, number][];
+  modified: [number, number][];
+  /** Lines AFTER which something was deleted (0 = before the first line). */
+  deletedAfter: number[];
+};
+export const FILES_LIMITS = { treeEntries: 2000, listFiles: 50_000, readBytes: 1024 * 1024 } as const;
+export type FileAskContext = { worktreePath: string; path: string; from: number; to: number; snippet: string };
+
+// Code navigation in the Files tab — mirrors packages/server/src/services/lsp/types.ts.
+// Lines and columns are 1-based; paths are relative to the worktree.
+export type LspServerId =
+  | 'typescript' | 'pyright' | 'gopls' | 'rust-analyzer' | 'clangd'
+  | 'jdtls' | 'solargraph' | 'lua' | 'zls' | 'omnisharp' | 'texlab';
+export type NavHit = { path: string; line: number; col: number; endLine?: number; endCol?: number; preview: string };
+/** Why an answer came from search instead of a language server. */
+export type NavFallback = 'no-server' | 'not-installed' | 'disabled' | 'starting' | 'failed' | 'timeout';
+export type NavAnswer = { source: 'lsp' | 'search'; server?: LspServerId; fallback?: NavFallback; hits: NavHit[] };
+export type HoverAnswer = { server: LspServerId; markdown: string } | null;
+export type OutlineSymbol = { name: string; kind: string; line: number; col: number; children?: OutlineSymbol[] };
+export type OutlineAnswer = { server: LspServerId; symbols: OutlineSymbol[] } | { server: null; symbols: [] };
+export type SearchQuery = { q: string; word?: boolean; case?: boolean; regex?: boolean; glob?: string };
+export type SearchAnswer = { hits: NavHit[]; truncated: boolean; engine: 'rg' | 'git-grep' };
+
+// Settings › Files › Language servers (this machine) — mirrors LspServerStatus in server/src/services/lsp/types.ts.
+export type LspInstall = { command: string; os?: 'darwin' | 'linux'; needs?: string };
+export type LspServerStatus = {
+  id: LspServerId;
+  lang: string;
+  enabled: boolean;
+  installed: boolean;
+  binary?: string;
+  /** Install commands for this machine's OS; `available` = its `needs` tool is present. */
+  install: (LspInstall & { available: boolean })[];
+  running: { worktreePath: string; pid: number; rssBytes: number | null; startedAt: string; lastUsedAt: string }[];
+  /** Why it last failed to start or answer (cleared by a Stop or a good start). */
+  lastError?: string;
+};
+
+// "Open in editor" (replaces the embedded VS Code) — mirrors server/src/services/editors/types.ts.
+export type EditorId =
+  | 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf' | 'antigravity' | 'zed' | 'sublime'
+  | 'webstorm' | 'idea' | 'pycharm' | 'goland' | 'xcode' | 'system';
+export type EditorStatus = { id: EditorId; label: string; available: boolean; lines: boolean };
+/** preferred: the person's choice; null = first available, then 'system'. */
+export type EditorsAnswer = { editors: EditorStatus[]; preferred: EditorId | null };
+/** path omitted = open the worktree folder; line/col 1-based. */
+export type OpenInEditorBody = { worktreePath: string; path?: string; line?: number; col?: number; editor?: EditorId };

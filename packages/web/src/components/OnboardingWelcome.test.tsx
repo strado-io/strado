@@ -160,14 +160,14 @@ describe('OnboardingWelcome', () => {
     expect(screen.queryByRole('button', { name: /^install$/i })).not.toBeInTheDocument();
   });
 
-  // Plenty of developers don't use VS Code, and Codex is one agent among
-  // several. Gating entry on either stranded them on this screen with no way
-  // forward but installing an editor they didn't want.
+  // Plenty of developers don't use the GitHub CLI, and Codex is one agent
+  // among several. Gating entry on either stranded people on this screen with no way
+  // forward but installing a tool they didn't want.
   it('lets an optional tool stay missing without blocking entry', async () => {
     envCheck.mockResolvedValue([
       { id: 'git', label: 'git', found: true, version: 'git version 2.44.0', optional: false, hint: null, installable: false, installCommand: null },
       { id: 'claude', label: 'Claude Code', found: true, version: '2.1.0', optional: false, hint: null, installable: true, installCommand: 'npm install -g @anthropic-ai/claude-code' },
-      { id: 'vscode', label: 'VS Code (embedded editor)', found: false, version: null, optional: true, hint: "VS Code → Cmd+Shift+P → \"Shell Command: Install 'code'\"", installable: false, installCommand: null },
+      { id: 'gh', label: 'GitHub CLI', found: false, version: null, optional: true, hint: 'brew install gh', installable: false, installCommand: null },
       { id: 'codex', label: 'Codex CLI', found: false, version: null, optional: true, hint: 'npm i -g @openai/codex', installable: true, installCommand: 'npm install -g @openai/codex' },
     ]);
     const onContinue = vi.fn();

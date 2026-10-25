@@ -4,7 +4,7 @@ import type { SessionChip } from '../../hooks/sessions';
 import { WorktreeHoverCard, useHoverCard, type HoverCardMode } from './WorktreeHoverCard';
 import { useRendererOverlay } from '../../contexts/RendererOverlay';
 
-export type OpenWorktree = (w: Worktree, mode?: HoverCardMode, sessionId?: string) => void;
+export type OpenWorktree = (w: Worktree, mode?: HoverCardMode | 'files', sessionId?: string) => void;
 
 type Rects = { anchor: DOMRect; sidebarLeft?: number; sidebarRight?: number };
 
@@ -53,6 +53,9 @@ export type WorktreeRowItemProps = {
   onOpen: OpenWorktree;
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
   onOpenDiff?: (w: Worktree) => void;
+  /** Open in the person's desktop editor; leave unset for a runner's worktree. */
+  onOpenInEditor?: (w: Worktree) => void;
+  editorLabel?: string;
   onSettings?: (w: Worktree) => void;
   /** The row markup itself — rendered inside the hover-tracked container. */
   children: React.ReactNode;
@@ -69,7 +72,7 @@ export type WorktreeRowItemProps = {
 };
 
 export function WorktreeRowItem({
-  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onSettings, children, className, runnerName, onContextMenu, active, waiting,
+  worktree, chips, mr, onOpen, onOpenMr, onOpenDiff, onOpenInEditor, editorLabel, onSettings, children, className, runnerName, onContextMenu, active, waiting,
 }: WorktreeRowItemProps) {
   // Theme colours only: the pane glass and the edge colour (--pane-edge) both
   // have light-theme values, so the card holds on every preset.
@@ -99,6 +102,9 @@ export function WorktreeRowItem({
           onOpenSession={(mode, sessionId) => { hover.close(); onOpen(worktree, mode, sessionId); }}
           onOpenMr={mr && onOpenMr ? () => { hover.close(); onOpenMr(worktree, mr); } : undefined}
           onOpenDiff={onOpenDiff ? () => { hover.close(); onOpenDiff(worktree); } : undefined}
+          onOpenFiles={() => { hover.close(); onOpen(worktree, 'files', undefined); }}
+          onOpenInEditor={onOpenInEditor ? () => { hover.close(); onOpenInEditor(worktree); } : undefined}
+          editorLabel={editorLabel}
           onOpenShell={() => { hover.close(); onOpen(worktree, 'shell', undefined); }}
           onOpenSettings={onSettings ? () => { hover.close(); onSettings!(worktree); } : undefined}
           onClose={hover.close}
