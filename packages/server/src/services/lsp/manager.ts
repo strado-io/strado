@@ -185,6 +185,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
   const rss = deps.rss ?? readRss;
   const search: SearchFallback = deps.search ?? { searchWord, isDefinition, classifyDefinitions };
   const entries = new Map<string, Entry>();
+  /** A start in flight, so concurrent first requests share one server. */
+  const starting = new Map<string, Promise<Entry>>();
   /** Crashes per key since its last good answer: one retry, then 'failed'. */
   const crashes = new Map<string, number>();
 
@@ -202,17 +204,26 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     await e.client.stop().catch(() => e.client.kill());
   }
 
-  async function start(spec: LspServerSpec, root: string, binary: string): Promise<Entry> {
+  /** The server's environment: the user's, minus Strado's own identity and
+   *  tokens (a language server runs repo code: build scripts, proc macros),
+   *  with node and the common bin dirs on PATH (a server's own
+   *  `#!/usr/bin/env node` must work from a dock launch's bare PATH). */
+  async function serverEnv(): Promise<NodeJS.ProcessEnv> {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('STRADO_') && k !== 'PORT') env[k] = v;
+    env.PATH = [...new Set([path.dirname(process.execPath), ...(await deps.detect.dirs())])].join(path.delimiter);
+    return env;
+  }
+
+  /** Everything up to entries.set runs without an await, so the size check
+   *  and the insert cannot interleave with another start. */
+  function start(spec: LspServerSpec, root: string, binary: string, env: NodeJS.ProcessEnv): Entry {
     // Make room: the least recently used goes first.
     while (entries.size >= limits.maxServers) {
       const lru = [...entries.values()].sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0]!;
-      await stopEntry(lru);
+      void stopEntry(lru);
     }
     const key = `${root}\0${spec.id}`;
-    const dirs = await deps.detect.dirs();
-    // The server's own shebang (#!/usr/bin/env node) needs node on PATH,
-    // and a dock-launched app's PATH may not have it.
-    const PATH = [...new Set([path.dirname(process.execPath), ...dirs])].join(path.delimiter);
     const t = now();
     const entry: Entry = {
       key, spec, root, state: 'starting', startedAt: t, lastUsedAt: t, stopping: false,
@@ -220,7 +231,7 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       client: new LspClient({
         argv: [binary, ...spec.cmd.slice(1)],
         root,
-        env: { ...process.env, PATH },
+        env,
         onExit: () => {
           if (entries.get(key) === entry) entries.delete(key);
           if (!entry.stopping) {
@@ -254,10 +265,18 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     const key = `${realRoot}\0${spec.id}`;
     let entry = entries.get(key);
     if (!entry) {
-      const binary = await deps.detect.which(spec.cmd[0]!);
-      if (!binary) throw new Fallback('not-installed', spec);
-      if ((crashes.get(key) ?? 0) >= 2) throw new Fallback('failed', spec);
-      entry = await start(spec, realRoot, binary);
+      let pending = starting.get(key);
+      if (!pending) {
+        pending = (async () => {
+          const binary = await deps.detect.which(spec.cmd[0]!);
+          if (!binary) throw new Fallback('not-installed', spec);
+          if ((crashes.get(key) ?? 0) >= 2) throw new Fallback('failed', spec);
+          return start(spec, realRoot, binary, await serverEnv());
+        })();
+        starting.set(key, pending);
+        void pending.finally(() => starting.delete(key)).catch(() => {});
+      }
+      entry = await pending;
     }
     entry.lastUsedAt = now();
     if (entry.state === 'failed') throw new Fallback('failed', spec);
@@ -299,19 +318,24 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       } catch {
         continue;
       }
-      // Outside the worktree (a library, the stdlib) or inside .git: the tab
-      // cannot open it, so it is not offered.
+      // Outside the worktree (a library, the stdlib), inside .git, or through
+      // a symlink that leaves it: the tab cannot open it, so it is not offered.
       const rel = path.relative(root, abs);
       if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) continue;
       const relPosix = rel.split(path.sep).join('/');
-      if (relPosix.split('/').includes('.git')) continue;
+      let real: string;
+      try {
+        real = (await resolveInside(root, safeRel(relPosix))).real;
+      } catch {
+        continue;
+      }
       const line = l.range.start.line + 1;
       const col = l.range.start.character + 1;
       const id = `${relPosix}:${line}:${col}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      if (!lines.has(abs)) lines.set(abs, (await fs.readFile(abs, 'utf8').catch(() => '')).split('\n'));
-      const text = lines.get(abs)![line - 1] ?? '';
+      if (!lines.has(real)) lines.set(real, (await fs.readFile(real, 'utf8').catch(() => '')).split('\n'));
+      const text = lines.get(real)![line - 1] ?? '';
       hits.push({
         path: relPosix,
         line,

@@ -1,11 +1,17 @@
 // A tiny language server for tests: Content-Length framed JSON-RPC on stdio.
 // FAKE_LSP_LOG: append every message it receives (one JSON per line).
-// FAKE_LSP_MODE: 'normal' | 'slow-init' | 'crash-on-request' | 'hang' | 'exit-at-start'.
+// FAKE_LSP_MODE: 'normal' | 'slow-init' | 'crash-on-request' | 'hang' | 'exit-at-start' | 'grandchild'.
+// FAKE_LSP_PIDFILE: 'grandchild' writes the pid of a child it leaves running.
 const fs = require('fs');
 
 const mode = process.env.FAKE_LSP_MODE || 'normal';
 const log = (m) => process.env.FAKE_LSP_LOG && fs.appendFileSync(process.env.FAKE_LSP_LOG, JSON.stringify(m) + '\n');
 if (mode === 'exit-at-start') process.exit(3);
+if (mode === 'grandchild') {
+  // Like a wrapper script's JVM: a process of its own that outlives a kill of this one.
+  const kid = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  fs.writeFileSync(process.env.FAKE_LSP_PIDFILE, String(kid.pid));
+}
 
 let root = '';
 let nextId = 1000;
@@ -23,7 +29,8 @@ function onMessage(m) {
   switch (m.method) {
     case 'initialize':
       root = decodeURIComponent(new URL(m.params.rootUri).pathname);
-      if (mode === 'slow-init') return setTimeout(() => reply({ capabilities: {} }), 3000);
+      log({ env: Object.keys(process.env).filter((k) => k.startsWith('STRADO_') || k === 'PORT') });
+      if (mode === 'slow-init') return setTimeout(() => reply({ capabilities: {} }), 10000);
       return reply({ capabilities: { definitionProvider: true }, serverInfo: { name: 'fake' } });
     case 'initialized':
       // Ask the client for things it must answer, and things it must refuse.
@@ -41,6 +48,9 @@ function onMessage(m) {
   if (mode === 'hang') return;
   switch (m.method) {
     case 'textDocument/definition':
+      if (process.env.FAKE_LSP_ESCAPE) {
+        return reply([{ uri: uri('link/secret.ts'), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } }]);
+      }
       return reply([
         { uri: uri('src/def.ts'), range: { start: { line: 1, character: 13 }, end: { line: 1, character: 16 } } },
         { uri: 'file:///definitely/outside/x.ts', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } },

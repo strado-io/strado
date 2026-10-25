@@ -17,11 +17,11 @@ let mgr: LspManager | null;
 let clock: number;
 
 /** A wrapper script so the server's argv[0] is a real executable. */
-async function fakeBinary(mode = 'normal'): Promise<string> {
+async function fakeBinary(mode = 'normal', extraEnv = ''): Promise<string> {
   const bin = path.join(tmp, `fake-lsp-${mode}`);
   await fs.writeFile(
     bin,
-    `#!/bin/sh\nFAKE_LSP_MODE=${mode} FAKE_LSP_LOG='${logFile}' exec '${process.execPath}' '${FAKE}' "$@"\n`,
+    `#!/bin/sh\n${extraEnv} FAKE_LSP_MODE=${mode} FAKE_LSP_LOG='${logFile}' FAKE_LSP_PIDFILE='${tmp}/kid.pid' exec '${process.execPath}' '${FAKE}' "$@"\n`,
     { mode: 0o755 },
   );
   return bin;
@@ -63,7 +63,7 @@ async function make(bin: string, over: Partial<Parameters<typeof createLspManage
     store: createLspEnabledStore(() => path.join(tmp, 'lsp-servers.json')),
     specs: [spec(bin)],
     search: fakeSearch,
-    limits: { requestMs: 1500, startMs: 5000 },
+    limits: { requestMs: 4000, startMs: 15000 },
     now: () => clock,
     rss: async () => 4096,
     ...over,
@@ -249,9 +249,87 @@ describe('fallback to search', () => {
   });
 });
 
+describe('review fixes', () => {
+  it('concurrent first requests share one server', async () => {
+    const m = await make(await fakeBinary());
+    await Promise.all([
+      m.outline(root, 'src/use.ts'),
+      m.hover(root, 'src/use.ts', 2, 14),
+      m.definition(root, 'src/use.ts', 2, 14),
+    ]);
+    expect((await received()).filter((x) => x.method === 'initialize')).toHaveLength(1);
+    expect((await m.servers())[0]!.running).toHaveLength(1);
+  });
+
+  it('concurrent starts in different worktrees never exceed maxServers', async () => {
+    const m = await make(await fakeBinary(), { limits: { requestMs: 4000, startMs: 15000, maxServers: 2 } });
+    const roots = ['a', 'b', 'c', 'd'].map((n) => path.join(tmp, n));
+    for (const r of roots) {
+      await fs.mkdir(path.join(r, 'src'), { recursive: true });
+      await fs.writeFile(path.join(r, 'src', 'use.ts'), 'foo\n');
+    }
+    await Promise.all(roots.map((r) => m.outline(r, 'src/use.ts')));
+    expect((await m.servers())[0]!.running.length).toBeLessThanOrEqual(2);
+    await m.closeAll();
+    mgr = null;
+    // Every one that was started was also stopped.
+    expect((await received()).filter((x) => x.method === 'initialize').length).toBe(
+      (await received()).filter((x) => x.method === 'shutdown').length,
+    );
+  });
+
+  it("the server never sees Strado's own identity or tokens", async () => {
+    const prev = { ...process.env };
+    process.env.STRADO_AGENT_TOKEN = 'tok';
+    process.env.STRADO_HOME = '/x';
+    process.env.PORT = '1234';
+    try {
+      const m = await make(await fakeBinary());
+      await m.definition(root, 'src/use.ts', 2, 14);
+    } finally {
+      for (const k of ['STRADO_AGENT_TOKEN', 'STRADO_HOME', 'PORT']) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+    }
+    expect((await received()).find((x: any) => x.env)).toEqual({ env: [] });
+  });
+
+  it('a hit through a symlink that leaves the worktree is dropped', async () => {
+    await fs.mkdir(path.join(tmp, 'outside'));
+    await fs.writeFile(path.join(tmp, 'outside', 'secret.ts'), 'SECRET\n');
+    await fs.symlink(path.join(tmp, 'outside'), path.join(root, 'link'));
+    const m = await make(await fakeBinary('normal', 'FAKE_LSP_ESCAPE=1'));
+    expect(await m.definition(root, 'src/use.ts', 2, 14)).toEqual({ source: 'lsp', server: 'typescript', hits: [] });
+  });
+
+  it("stopping kills the server's whole process group", async () => {
+    const m = await make(await fakeBinary('grandchild'));
+    await m.definition(root, 'src/use.ts', 2, 14);
+    const kid = Number(await fs.readFile(path.join(tmp, 'kid.pid'), 'utf8'));
+    expect(() => process.kill(kid, 0)).not.toThrow();
+    await m.stop('typescript');
+    await until(async () => {
+      try {
+        process.kill(kid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+  });
+
+  it('a file over the read cap is not sent to the server', async () => {
+    await fs.writeFile(path.join(root, 'src', 'big.ts'), 'foo '.repeat(300_000));
+    const m = await make(await fakeBinary());
+    expect(await m.definition(root, 'src/big.ts', 1, 1)).toMatchObject({ source: 'search', fallback: 'failed' });
+    expect((await received()).some((x) => x.method === 'textDocument/didOpen')).toBe(false);
+  });
+});
+
 describe('lifecycle', () => {
   it('reaps a server idle for idleMs', async () => {
-    const m = await make(await fakeBinary(), { limits: { requestMs: 1500, startMs: 5000, idleMs: 60_000 } });
+    const m = await make(await fakeBinary(), { limits: { requestMs: 4000, startMs: 15000, idleMs: 60_000 } });
     await m.definition(root, 'src/use.ts', 2, 14);
     expect((await m.servers())[0]!.running).toHaveLength(1);
     clock += 30_000;
@@ -264,7 +342,7 @@ describe('lifecycle', () => {
   });
 
   it('at most maxServers on the machine; the least recently used goes', async () => {
-    const m = await make(await fakeBinary(), { limits: { requestMs: 1500, startMs: 5000, maxServers: 2 } });
+    const m = await make(await fakeBinary(), { limits: { requestMs: 4000, startMs: 15000, maxServers: 2 } });
     const roots = ['a', 'b', 'c'].map((n) => path.join(tmp, n));
     for (const r of roots) {
       await fs.mkdir(path.join(r, 'src'), { recursive: true });

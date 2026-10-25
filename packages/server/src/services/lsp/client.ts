@@ -5,11 +5,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { FILES_LIMITS } from '../files/types.js';
 
 /** JSON-RPC "method not found". */
 const METHOD_NOT_FOUND = -32601;
 /** A body over this is a broken or hostile server, not a real answer. */
 const MAX_BODY = 64 * 1024 * 1024;
+/** Documents kept open on the server; the least recently used is closed. */
+const MAX_OPEN_DOCS = 50;
 
 /** Server → client requests we answer; everything else (workspace/applyEdit,
  *  workspace/executeCommand, window/showDocument, …) is refused. */
@@ -51,6 +54,9 @@ export class LspClient {
       cwd: o.root,
       env: o.env ?? process.env,
       stdio: ['pipe', 'pipe', 'ignore'],
+      // Its own process group, so a stop also reaches what a wrapper script
+      // started (jdtls' and OmniSharp's JVM / mono).
+      detached: true,
     });
     this.child.stdout!.on('data', (b: Buffer) => this.onData(b));
     this.child.stdin!.on('error', () => {});
@@ -100,8 +106,15 @@ export class LspClient {
   async sync(abs: string, languageId: string): Promise<string> {
     const uri = pathToFileURL(abs).href;
     const st = await fs.stat(abs);
+    // The Files tab never shows a file this big; it is not worth a server's memory.
+    if (st.size > FILES_LIMITS.readBytes) throw new LspError('file too large', 'rpc');
     const known = this.docs.get(uri);
-    if (known && known.mtimeMs === st.mtimeMs && known.size === st.size) return uri;
+    // Re-inserted on every use: the Map's order is least recently used first.
+    this.docs.delete(uri);
+    if (known && known.mtimeMs === st.mtimeMs && known.size === st.size) {
+      this.docs.set(uri, known);
+      return uri;
+    }
     const text = await fs.readFile(abs, 'utf8');
     if (!known) {
       this.notify('textDocument/didOpen', { textDocument: { uri, languageId, version: 1, text } });
@@ -110,6 +123,11 @@ export class LspClient {
       const version = known.version + 1;
       this.notify('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text }] });
       this.docs.set(uri, { version, mtimeMs: st.mtimeMs, size: st.size });
+    }
+    while (this.docs.size > MAX_OPEN_DOCS) {
+      const oldest = this.docs.keys().next().value!;
+      this.docs.delete(oldest);
+      this.notify('textDocument/didClose', { textDocument: { uri: oldest } });
     }
     return uri;
   }
@@ -146,10 +164,22 @@ export class LspClient {
     const timer = setTimeout(() => this.kill(), graceMs);
     await gone;
     clearTimeout(timer);
+    // The server left on its own; whatever it started may not have.
+    this.killGroup();
   }
 
   kill(): void {
+    this.killGroup();
     if (!this.exited) this.child.kill('SIGKILL');
+  }
+
+  private killGroup(): void {
+    if (this.child.pid === undefined) return;
+    try {
+      process.kill(-this.child.pid, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
   }
 
   private write(msg: unknown): void {
