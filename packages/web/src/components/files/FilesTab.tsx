@@ -81,6 +81,10 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
   }, []);
 
   const open = useCallback((to: { path: string; line?: number; col?: number }) => {
+    // Going somewhere else drops a definition still being looked up (a starting
+    // server can take a while), so it can't pull you away later.
+    navAbort.current?.abort();
+    setNav((n) => (n && !n.answer && !n.error ? null : n));
     const nonce = ++seq.current;
     setSelected(to.path);
     setTarget({ line: to.line, col: to.col, nonce });
@@ -165,18 +169,24 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
         }
         setNav({ kind, at, answer, error: null });
       })
-      .catch((err: unknown) => { if (!ac.signal.aborted) setNav({ kind, at, answer: null, error: filesError(err, 'search') }); });
+      .catch((err: unknown) => { if (!ac.signal.aborted) setNav({ kind, at, answer: null, error: filesError(err, 'nav') }); });
   };
-  const closeNav = () => { navAbort.current?.abort(); setNav(null); };
+  /** Back to the code after a panel closes, so the keys keep working. */
+  const focusCode = () => requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('.cm-content')?.focus());
+  const closeNav = () => { navAbort.current?.abort(); setNav(null); focusCode(); };
   useEffect(() => () => navAbort.current?.abort(), []);
   const pickHit = (h: NavHit, from: FileAt | null) => jump(from, { path: h.path, line: h.line, col: h.col });
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const mod = e.metaKey || e.ctrlKey;
+    // Alt←/→ moves by word in a text box or the code; only elsewhere is it back/forward.
+    const t = e.target as HTMLElement;
+    const typing = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || !!t.closest?.('.cm-editor');
+    const alt = e.altKey && !typing;
     // Ctrl+- / Ctrl+Shift+- are VS Code's Mac defaults (Shift turns '-' into '_').
     const minus = e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.key === '-' || e.key === '_');
-    if ((mod && !e.shiftKey && e.key === '[') || (e.altKey && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
-    else if ((mod && !e.shiftKey && e.key === ']') || (e.altKey && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
+    if ((mod && !e.shiftKey && e.key === '[') || (alt && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
+    else if ((mod && !e.shiftKey && e.key === ']') || (alt && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearching(true); }
   };
 
@@ -199,7 +209,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onO
             className="rounded-md px-1 text-[13px] leading-none text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100">↻</button>
         </div>
         {searching ? (
-          <SearchPanel search={search} onClose={() => setSearching(false)} onPick={(h) => pickHit(h, selected ? here.current : null)} />
+          <SearchPanel search={search} onClose={() => { setSearching(false); focusCode(); }} onPick={(h) => pickHit(h, selected ? here.current : null)} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
             onSelect={(p) => jump(selected ? here.current : null, { path: p, line: 1, col: 1 })} />

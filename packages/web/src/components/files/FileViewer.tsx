@@ -123,6 +123,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
           appliedAsk.current = askKey;
           v.goToLine(line!, col);
           cursorLine.current = line!;
+          focusIfLost(v);
         } else if (cursorLine.current > 1) {
           v.goToLine(cursorLine.current);
         }
@@ -145,6 +146,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     appliedAsk.current = askKey;
     viewRef.current.goToLine(line!, col);
     cursorLine.current = line!;
+    focusIfLost(viewRef.current);
   }, [askKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const starts = changeStarts(marks);
@@ -204,13 +206,20 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         <div className="flex min-h-0 flex-1">
           <div ref={host} className="min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="code-host" />
           {outlineOpen && outline && (
-            <OutlinePanel path={path} load={outline} onClose={() => setOutlineOpen(false)}
+            <OutlinePanel path={path} load={outline} onClose={() => { setOutlineOpen(false); viewRef.current?.focus(); }}
               onPick={(s) => { viewRef.current?.goToLine(s.line, s.col); cursorLine.current = s.line; onCursor?.({ path, line: s.line, col: s.col }); }} />
           )}
         </div>
       )}
     </section>
   );
+}
+
+/** After a jump, keys (⌘[ ⌘] ⌘⇧F) keep working: if the jump took focus with it
+ *  (a closed panel, a rebuilt viewer), it comes to the code. */
+function focusIfLost(v: CodeView) {
+  const a = document.activeElement;
+  if (!a || a === document.body) v.focus();
 }
 
 function Empty({ title, body, action }: { title: string; body: string; action?: { label: string; run: () => void } }) {

@@ -260,5 +260,43 @@ describe('FilesTab', () => {
       fireEvent.keyDown(screen.getByTestId('search-panel'), { key: 'Escape' });
       expect(screen.getByTestId('file-tree')).toBeInTheDocument();
     });
+
+    it('Alt←/→ in a text box moves by word, not back; ⌘[ still goes back', async () => {
+      lsp.definition.mockResolvedValue({ source: 'lsp', server: 'typescript', hits: [hit('lib/util.ts', 40, 7)] });
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      await flush();
+      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: 'ArrowLeft', altKey: true });
+      expect(where()[0]).toBe('lib/util.ts');
+      fireEvent.keyDown(screen.getByLabelText('cursor'), { key: '[', metaKey: true });
+      expect(where()[0]).toBe('a.ts');
+    });
+
+    it('opening another file drops a definition still being looked up', async () => {
+      let resolve!: (a: unknown) => void;
+      lsp.definition.mockReturnValue(new Promise((r) => { resolve = r; }));
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'F12' }));
+      expect(screen.getByTestId('nav-panel')).toBeInTheDocument();
+      const signal = lsp.definition.mock.calls[0]![4] as AbortSignal;
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'b.ts', nonce: 2 }} />);
+      expect(signal.aborted).toBe(true);
+      expect(screen.queryByTestId('nav-panel')).toBeNull();
+      resolve({ source: 'lsp', server: 'typescript', hits: [hit('lib/util.ts', 40, 7)] });
+      await flush();
+      expect(where()[0]).toBe('b.ts');
+    });
+
+    it('a failed lookup says so in navigation words', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      lsp.references.mockRejectedValue({ code: 'TIMEOUT', message: 'relay said <b>x</b>' });
+      render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'Shift-F12' }));
+      await flush();
+      expect(screen.getByTestId('nav-panel')).toHaveTextContent('That took too long — try again.');
+    });
   });
 });

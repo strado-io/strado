@@ -5,7 +5,7 @@ import type { FileContent, FileMarks } from '../../types';
 type Opts = { doc: string; path: string; language: string | null; onSelection: (s: { from: number; to: number; text: string } | null) => void };
 const cm = vi.hoisted(() => ({
   opts: null as Opts | null,
-  view: { goToLine: vi.fn(), step: vi.fn(), setMarks: vi.fn(), destroy: vi.fn() },
+  view: { goToLine: vi.fn(), focus: vi.fn(), step: vi.fn(), setMarks: vi.fn(), destroy: vi.fn() },
 }));
 vi.mock('./codeView', () => ({
   createCodeView: vi.fn(async (_el: HTMLElement, o: Opts) => { cm.opts = o; return cm.view; }),
@@ -91,6 +91,18 @@ describe('FileViewer', () => {
     expect(cm.view.goToLine).toHaveBeenCalledWith(12, undefined);
     rerender(<FileViewer {...props} line={30} nonce={2} />);
     expect(cm.view.goToLine).toHaveBeenLastCalledWith(30, undefined);
+  });
+
+  it('a jump brings focus to the code only when focus was lost (not stolen from a box)', async () => {
+    const { props, rerender } = show({ line: 12, nonce: 1 });
+    await flush();
+    expect(cm.view.focus).toHaveBeenCalledTimes(1);
+    const box = document.createElement('input');
+    document.body.append(box);
+    box.focus();
+    rerender(<FileViewer {...props} line={30} nonce={2} />);
+    expect(cm.view.focus).toHaveBeenCalledTimes(1);
+    box.remove();
   });
 
   it('a reload that rebuilds the editor goes back to where the person was, not the old asked line', async () => {

@@ -12,6 +12,10 @@ import type { FileMarks } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
 import { renderHover } from './hoverMarkdown';
 
+// Ctrl-click on a Mac is a right-click (context menu), so there only ⌘ navigates.
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+const navMod = (e: MouseEvent | KeyboardEvent) => (isMac ? e.metaKey : e.ctrlKey);
+
 const v = (name: string, alpha?: number) => `rgb(var(--${name})${alpha != null ? ` / ${alpha}` : ''})`;
 
 const theme = EditorView.theme({
@@ -92,6 +96,7 @@ export type NavKind = 'definition' | 'references';
 
 export type CodeView = {
   goToLine(line: number, col?: number): void;
+  focus(): void;
   /** Where the cursor is (1-based). */
   cursor(): Pos;
   /** Jump to the next/previous change; returns the line it landed on, or null. */
@@ -145,7 +150,7 @@ export async function createCodeView(parent: HTMLElement, o: {
   }, { hoverTime: 400 }) : [];
   const modClick = EditorView.domEventHandlers({
     mousedown(e, v) {
-      if (!o.onNavigate || e.button !== 0 || !(e.metaKey || e.ctrlKey)) return false;
+      if (!o.onNavigate || e.button !== 0 || !navMod(e)) return false;
       const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return false;
       e.preventDefault();
@@ -153,8 +158,10 @@ export async function createCodeView(parent: HTMLElement, o: {
       o.onNavigate('definition', posOf(pos));
       return true;
     },
-    keydown(e, v) { v.dom.classList.toggle('cm-nav-mod', e.metaKey || e.ctrlKey); return false; },
-    keyup(e, v) { v.dom.classList.toggle('cm-nav-mod', e.metaKey || e.ctrlKey); return false; },
+    keydown(e, v) { v.dom.classList.toggle('cm-nav-mod', navMod(e)); return false; },
+    keyup(e, v) { v.dom.classList.toggle('cm-nav-mod', navMod(e)); return false; },
+    // The pointer left: a hover still being looked up is no longer wanted.
+    mouseleave() { hoverAbort?.abort(); return false; },
   });
   const step = (dir: 1 | -1) => {
     const to = stepChange(changeStarts(view.state.field(marksField)), current(), dir);
@@ -206,6 +213,7 @@ export async function createCodeView(parent: HTMLElement, o: {
 
   return {
     goToLine,
+    focus: () => view.focus(),
     cursor: () => posOf(view.state.selection.main.head),
     step,
     setMarks: (marks) => view.dispatch({ effects: setMarks.of(marks) }),
