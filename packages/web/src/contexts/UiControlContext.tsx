@@ -88,8 +88,10 @@ export function UiControlProvider({ wsId, openWorktree, children }: {
       const run = jarvisRef.current;
       const a = raw.args as Partial<JarvisUiActionArgs>;
       if (!run) return { applied: false, reason: 'no_jarvis' };
-      if (typeof a.action !== 'string' || !a.args || typeof a.args !== 'object') return { applied: false, reason: 'bad_args' };
-      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown> }) };
+      // No scope, no action: the window never guesses which worktrees Jarvis may touch.
+      if (typeof a.action !== 'string' || !a.args || typeof a.args !== 'object'
+        || !Array.isArray(a.scope) || !a.scope.every((p) => typeof p === 'string')) return { applied: false, reason: 'bad_args' };
+      return { applied: true, result: await run({ action: a.action, args: a.args as Record<string, unknown>, scope: a.scope }) };
     }
     const deadline = Date.now() + UI_COMMAND_BUDGET_MS;
     const parsed = parseUiCommand(raw);

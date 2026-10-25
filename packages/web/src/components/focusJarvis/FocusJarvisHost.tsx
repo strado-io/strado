@@ -72,6 +72,7 @@ export function FocusJarvisProvider({ wsId, focus, focuses, worktrees, repos, wo
   // The turn's tool calls come back to this window as `jarvis.action`: run
   // them here, in the background, with whatever hub is on screen (if any).
   useJarvisActionHandler((action) => runJarvisAction(action, {
+    focusId: focus?.id ?? null,
     context: parseContext,
     ports: () => ({
       hub: hub()?.jarvis ?? null,

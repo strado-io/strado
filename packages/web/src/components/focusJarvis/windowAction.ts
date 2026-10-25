@@ -2,35 +2,88 @@ import { describeRun, planFromModel } from '../../lib/jarvis/model';
 import { runPlan, type JarvisPorts } from '../../lib/jarvis/execute';
 import { here } from '../../lib/jarvis/parse';
 import { storedHubPort } from './storedHub';
-import type { ParseContext, Plan, TabRef } from '../../lib/jarvis/types';
+import type { ParseContext, Plan, Step, TabRef } from '../../lib/jarvis/types';
 import type { JarvisUiActionArgs, JarvisUiActionResult, TabCardRef } from '../../types';
 
 /** Jarvis's tools never move the window: no navigation, pages or settings. */
 const WINDOW_ONLY = /^(nav|settings|ui)\./;
 /** Actions that take a `worktree` arg and, without one, mean the one on screen. */
 const IN_A_WORKTREE = new Set(['tab.open', 'browser.open', 'server.start', 'server.stop']);
+/** Fixed words: what Jarvis is told when a step reaches outside its Focus. */
+export const OUT_OF_SCOPE = "That worktree isn't in this Focus.";
+export const OTHER_FOCUS = "That Focus isn't this one.";
+
+/** Every worktree a step acts in: its own, its tab's, its anchor's, and the
+ * worktree of any agent (or call's agent) it addresses. Unknown agents count
+ * as outside (''), so they are refused too. */
+function worktreesOf(step: Step, ctx: ParseContext): string[] {
+  const out: string[] = [];
+  const agentWt = (agentId: string) => ctx.peers.find((p) => p.agentId === agentId)?.worktreePath ?? '';
+  if (step.target.kind === 'tab') out.push(step.target.ref.worktreePath);
+  const a = step.args as Record<string, unknown>;
+  if (typeof a.worktreePath === 'string') out.push(a.worktreePath);
+  const place = a.place as { anchor?: { kind: string; ref?: TabRef } } | null | undefined;
+  if (place?.anchor?.kind === 'tab' && place.anchor.ref) out.push(place.anchor.ref.worktreePath);
+  if (typeof a.agentId === 'string') out.push(agentWt(a.agentId));
+  if (Array.isArray(a.agentIds)) for (const id of a.agentIds) out.push(agentWt(String(id)));
+  return out;
+}
+
+/** D1: Jarvis acts only inside its Focus — the server's `scope` (the Focus's
+ * worktree paths) — and edits only this Focus (a new one may be created).
+ * A recap of "all" agents is narrowed to the agents in scope. Returns the
+ * plan to run, or the fixed refusal. */
+function confine(plan: Plan, ctx: ParseContext, scope: Set<string>, focusId: string | null): { plan: Plan } | { refuse: string } {
+  const steps: Step[] = [];
+  for (const step of plan.steps) {
+    if (step.action === 'focus.edit') {
+      if (step.args.op !== 'create' && (!focusId || step.args.focusId !== focusId)) return { refuse: OTHER_FOCUS };
+      steps.push(step);
+      continue;
+    }
+    if (step.action === 'agent.recap' && step.args.agentIds === 'all') {
+      const ids = ctx.peers.filter((p) => scope.has(p.worktreePath)).map((p) => p.agentId);
+      steps.push({ ...step, args: { ...step.args, agentIds: ids } });
+      continue;
+    }
+    if (worktreesOf(step, ctx).some((wt) => !scope.has(wt))) return { refuse: OUT_OF_SCOPE };
+    steps.push(step);
+  }
+  return { plan: { ...plan, steps } };
+}
 
 /** One Focus Jarvis action, run in this window the way the ⌘K box runs a
  * model plan (model args → Step → runPlan), in the background: a step for a
  * worktree no hub shows works on its stored layout (storedHubPort), never by
- * showing it. With no worktree named and none on screen, the Focus's only
- * worktree is meant; with several, Jarvis is asked which. The ack says what happened with real tab names, the tab it
- * opened as a card, and agent.ask's question id. */
+ * showing it. Every step must stay inside the Focus (`scope`, see confine).
+ * With no worktree named and none of the Focus's on screen, its only worktree
+ * is meant; with several, Jarvis is asked which. The ack says what happened
+ * with real tab names, the tab it opened as a card, and agent.ask's question id. */
 export async function runJarvisAction(
-  { action, args: given }: JarvisUiActionArgs,
-  deps: { context: () => ParseContext; ports: () => Omit<JarvisPorts, 'verify' | 'onStep' | 'ensureWorktree' | 'shellIdle'> },
+  { action, args: given, scope: scopePaths }: JarvisUiActionArgs,
+  deps: {
+    context: () => ParseContext;
+    ports: () => Omit<JarvisPorts, 'verify' | 'onStep' | 'ensureWorktree' | 'shellIdle'>;
+    /** The Focus this chat belongs to: the only one focus.edit may change. */
+    focusId: string | null;
+  },
 ): Promise<JarvisUiActionResult> {
   let args = given;
   if (WINDOW_ONLY.test(action)) return { ok: false, text: `${action} is not one of Jarvis's actions` };
+  const scope = new Set(scopePaths);
   const ctx = deps.context();
-  if (IN_A_WORKTREE.has(action) && args.worktree == null && !here(ctx)) {
-    const paths = ctx.focuses.find((f) => f.id === ctx.currentFocus?.id)?.worktreePaths ?? [];
-    const names = paths.map((p) => ctx.worktrees.find((w) => w.path === p)?.name).filter((n): n is string => !!n);
+  // No worktree named and none on screen in this Focus: its only one, else ask.
+  const shown = here(ctx);
+  if (IN_A_WORKTREE.has(action) && args.worktree == null && !(shown && scope.has(shown))) {
+    const names = scopePaths.map((p) => ctx.worktrees.find((w) => w.path === p)?.name).filter((n): n is string => !!n);
     if (names.length !== 1) return { ok: false, text: names.length ? `Which worktree? ${names.join(', ')}` : 'Which worktree? This Focus has none yet' };
     args = { ...args, worktree: names[0] };
   }
-  const plan = planFromModel([{ action, args }], ctx);
-  if (plan.steps.length === 0) return { ok: false, text: plan.summary };
+  const planned = planFromModel([{ action, args }], ctx);
+  if (planned.steps.length === 0) return { ok: false, text: planned.summary };
+  const confined = confine(planned, ctx, scope, deps.focusId);
+  if ('refuse' in confined) return { ok: false, text: confined.refuse };
+  const plan = confined.plan;
   const ports = deps.ports();
   const run = await runPlan(plan, {
     ...ports,
