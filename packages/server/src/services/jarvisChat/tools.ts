@@ -111,7 +111,8 @@ export function approvalFor(action: string, a: Record<string, unknown>, o: { wak
     risk === 'exec' || risk === 'destructive'
     // A new shell that runs a line is running a shell line.
     || (action === 'tab.open' && !!command)
-    || (action === 'focus.edit' && a.op === 'delete')
+    // Adding a worktree widens what Jarvis may act in: the person decides (D1).
+    || (action === 'focus.edit' && (a.op === 'delete' || a.op === 'add'))
     // A wake turn must not start or question agents on its own: wakes cannot loop.
     || (o.wake && ((action === 'tab.open' && a.mode !== 'shell') || action === 'agent.ask'));
   return needs ? (danger ? { danger } : {}) : null;

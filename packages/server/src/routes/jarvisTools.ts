@@ -75,7 +75,7 @@ export function createJarvisExecutor(deps: {
     const off = command ? commandRuns.on((run) => { if (run.command === command) runs.push(run); }) : () => undefined;
     let r: Awaited<ReturnType<UiClients['dispatch']>>;
     try {
-      const ui: JarvisUiActionArgs = { action: call.action, args: call.args, scope };
+      const ui: JarvisUiActionArgs = { action: call.action, args: call.args, scope, focusId: call.focusId };
       r = await deps.uiClients.dispatch(call.ws, JARVIS_UI_OP, ui, null, null, {
         ...(call.windowId ? { clientId: call.windowId } : {}),
         timeoutMs: deps.timeoutMs ?? JARVIS_ACTION_TIMEOUT_MS,
@@ -205,18 +205,44 @@ export function outsideFocus(action: string, args: Record<string, unknown>, scop
   return null;
 }
 
-/** A Focus's scope from the store: its members' folder names, plus the names
- *  its window last showed for them (a display name can differ from the folder). */
+/** Worktree names an approved focus.edit add put in a Focus, by `ws\0focusId`:
+ *  the window names worktrees (a main checkout shows as "main"), and the
+ *  resumed turn's context predates the add. Dropped by a remove of that name. */
+export type FocusGrants = Map<string, Set<string>>;
+
+/** Records what an approved add (or remove) changed, once it ran. */
+export function grantAdds(execute: JarvisExecutor, grants: FocusGrants): JarvisExecutor {
+  return async (call) => {
+    const r = await execute(call);
+    const names = Array.isArray(call.args.worktrees) ? (call.args.worktrees as unknown[]).filter((n): n is string => typeof n === 'string') : [];
+    if (r.ok && call.action === 'focus.edit' && names.length) {
+      const k = `${call.ws}\0${call.focusId}`;
+      const set = grants.get(k) ?? new Set<string>();
+      if (call.args.op === 'add') for (const n of names) set.add(n);
+      if (call.args.op === 'remove') for (const n of names) set.delete(n);
+      if (set.size) grants.set(k, set);
+      else grants.delete(k);
+    }
+    return r;
+  };
+}
+
+/** A Focus's scope, read from the store on every call: its members' folder
+ *  names, the names its window last showed for them (a display name can differ
+ *  from the folder), and the names approved adds put in it. The window checks
+ *  resolved paths against the store's members again. */
 export function focusScopeOf(
   stores: (ws: string) => Promise<WorkspaceStores>,
   lastContext: (ws: string, focusId: string) => JarvisContext | null,
+  grants: FocusGrants = new Map(),
 ): (ws: string, focusId: string) => Promise<FocusScope | null> {
   return async (ws, focusId) => {
     const f = (await (await stores(ws)).focuses.list()).find((x) => x.id === focusId);
     if (!f) return null;
     const names = f.members.filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length).split('/').pop()!);
     const shown = lastContext(ws, focusId)?.focuses.find((x) => x.name === f.name)?.worktrees ?? [];
-    return { name: f.name, worktrees: new Set([...names, ...shown]) };
+    const granted = grants.get(`${ws}\0${focusId}`) ?? [];
+    return { name: f.name, worktrees: new Set([...names, ...shown, ...granted]) };
   };
 }
 

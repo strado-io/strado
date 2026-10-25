@@ -668,7 +668,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   // finish or answer. Actions run in the turn's window; a new worktree is the
   // server's own job.
   {
-    const { createJarvisExecutor, createJarvisWorktree, focusScopeOf, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
+    const { createJarvisExecutor, createJarvisWorktree, focusScopeOf, grantAdds, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
     const { createApprovalArgs } = await import('./services/jarvisChat/approvalArgs.js');
     const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
     const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
@@ -677,7 +677,8 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const stores = (ws: string) => deps.registry.get(ws);
     let wakes: ReturnType<typeof createJarvisWakes> | null = null;
     const approvalArgs = createApprovalArgs();
-    const execute = trackAsks(
+    const grants = new Map<string, Set<string>>();
+    const execute = grantAdds(trackAsks(
       watchTrust(createJarvisExecutor({
         uiClients: deps.uiClients,
         createWorktree: createJarvisWorktree(app, stores),
@@ -685,7 +686,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
           .filter((m) => m.startsWith('local:')).map((m) => m.slice('local:'.length)),
       }), trustWatcher(app)),
       (ws, focusId, askId) => wakes?.asked(ws, focusId, askId),
-    );
+    ), grants);
     deps.jarvis ??= createJarvisRunner({
       stores,
       spawnHeadless: (o) => runClaudeHeadless(o),
@@ -711,7 +712,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       runner: { byToken: (t) => ('byToken' in runner && typeof runner.byToken === 'function' ? runner.byToken(t) : null) },
       stores,
       execute,
-      scope: focusScopeOf(stores, (ws, focusId) => ('lastContext' in runner && typeof runner.lastContext === 'function' ? runner.lastContext(ws, focusId) : null)),
+      scope: focusScopeOf(stores, (ws, focusId) => ('lastContext' in runner && typeof runner.lastContext === 'function' ? runner.lastContext(ws, focusId) : null), grants),
       approvalArgs,
     });
   }

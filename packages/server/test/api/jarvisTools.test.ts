@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
-import { createJarvisExecutor, createJarvisWorktree, outputText, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
+import { createJarvisExecutor, createJarvisWorktree, focusScopeOf, grantAdds, outputText, outsideFocus, trackAsks, trustWatcher, watchTrust } from '../../src/routes/jarvisTools';
 import { commandRuns } from '../../src/services/tabOps';
 import { sessionKeyFor } from '../../src/services/terminalManager';
 import type { FastifyInstance } from 'fastify';
@@ -94,7 +94,7 @@ describe('jarvis tool gateway', () => {
     openWindow('win1');
     const res = await call('jarvis_open_tab', { mode: 'shell', worktree: 'api' });
     expect(res.json()).toEqual({ text: 'Opened shell-1 in api' });
-    expect(sent).toEqual([expect.objectContaining({ op: 'jarvis.action', args: { action: 'tab.open', args: shell, scope: ['/w/api'] } })]);
+    expect(sent).toEqual([expect.objectContaining({ op: 'jarvis.action', args: { action: 'tab.open', args: shell, scope: ['/w/api'], focusId: FOCUS } })]);
     expect(of(await log(), 'action')).toEqual([expect.objectContaining({
       turnId: 't1', action: 'tab.open', summary: 'Open a shell in api', ok: true, card: { kind: 'shell', worktree: 'api', tab: 'shell-1' },
     })]);
@@ -166,9 +166,39 @@ describe('jarvis tool gateway', () => {
     expect((await edit({ op: 'rename', focus: 'Billing', name: 'x' })).json().text).toBe('Jarvis only edits this Focus (or creates a new one).');
     expect((await edit({ op: 'add', focus: null, worktrees: ['api'] })).json().text).toBe('Jarvis only edits this Focus (or creates a new one).');
     expect(sent).toEqual([]);
-    expect((await edit({ op: 'add', focus: 'Login', worktrees: ['web'] })).json().text).toBe('Done');
+    expect((await edit({ op: 'rename', focus: 'Login', name: 'Login v2' })).json().text).toBe('Done');
     expect((await edit({ op: 'create', name: 'New' })).json().text).toBe('Done');
     expect(sent).toHaveLength(2);
+  });
+
+  it('focus.edit add widens the Focus, so it is an approval in every turn; nothing changes until then', async () => {
+    openWindow('win1');
+    const add = { op: 'add', focus: 'Login', name: null, worktrees: ['main'] };
+    const res = await call('jarvis_edit_focus', add);
+    expect(res.json().text).toMatch(/^Waiting for the person's approval/);
+    expect(of(await log(), 'approval')).toEqual([expect.objectContaining({ action: 'focus.edit', summary: 'Add main to Login', state: 'pending' })]);
+    expect(sent).toEqual([]);
+    expect((await (await app.deps.registry.get('default')).focuses.list()).find((f) => f.id === FOCUS)!.members).toEqual(['local:/w/api']);
+    expect((await call('jarvis_edit_focus', add, WAKE)).json().text).toMatch(/^Waiting for the person's approval/);
+  });
+
+  it('once an add is approved and ran, the resumed turn may open a tab in that worktree; a remove takes it back', async () => {
+    const grants = new Map<string, Set<string>>();
+    const stores = (ws: string) => app.deps.registry.get(ws);
+    const scope = focusScopeOf(stores, () => null, grants);
+    const ref = turns.get(TOKEN)!;
+    const open = { mode: 'shell', worktree: 'main' };
+    expect(outsideFocus('tab.open', open, await scope('default', FOCUS))).toBe("That worktree isn't in this Focus.");
+    // The approved run: the window adds /repos/demo (shown as "main") to the Focus.
+    const execute = grantAdds(async (c) => {
+      if (c.args.op === 'add') await (await stores('default')).focuses.update(FOCUS, { addMembers: ['local:/repos/demo'] });
+      return { ok: true, text: 'Done' };
+    }, grants);
+    await execute({ ...ref, action: 'focus.edit', args: { op: 'add', focus: 'Login', name: null, worktrees: ['main'] } });
+    expect(outsideFocus('tab.open', open, await scope('default', FOCUS))).toBeNull();
+    expect(outsideFocus('tab.open', open, await scope('default', 'other'))).toBe("That worktree isn't in this Focus.");
+    await execute({ ...ref, action: 'focus.edit', args: { op: 'remove', focus: 'Login', name: null, worktrees: ['main'] } });
+    expect(outsideFocus('tab.open', open, await scope('default', FOCUS))).toBe("That worktree isn't in this Focus.");
   });
 
   it('two gated calls at once in one turn make one approval card', async () => {
