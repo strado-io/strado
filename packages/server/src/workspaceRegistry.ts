@@ -3,9 +3,10 @@ import { AppError } from './errors.js';
 import { createRepoConfigStore, RepoConfigStore } from './repoConfig.js';
 import { createFocusStore, FocusStore } from './focuses.js';
 import { createStateStore, StateStore } from './state.js';
+import { createJarvisChatStore, type JarvisChatStore } from './services/jarvisChat/store.js';
 import { WorkspaceConfigStore } from './workspaceConfig.js';
 
-export type WorkspaceStores = { repos: RepoConfigStore; state: StateStore; focuses: FocusStore };
+export type WorkspaceStores = { repos: RepoConfigStore; state: StateStore; focuses: FocusStore; jarvis: JarvisChatStore };
 
 export type WorkspaceStoreRegistry = {
   get(wsId: string): Promise<WorkspaceStores>;
@@ -38,6 +39,7 @@ export function createWorkspaceStoreRegistry(
           repos: createRepoConfigStore(path.join(dir, 'repos.json')),
           state: createStateStore(path.join(dir, 'state.json')),
           focuses: createFocusStore(path.join(dir, 'focuses.json')),
+          jarvis: createJarvisChatStore(path.join(dir, 'jarvis')),
         };
       })();
       cache.set(wsId, p);
