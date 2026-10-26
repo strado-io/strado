@@ -29,6 +29,7 @@ vi.mock('./FileViewer', () => ({
 import { FilesTab } from './FilesTab';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { registerSelection } from './codeSelection';
 
 const flush = () => act(async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); });
 const page = (dir: string) => ({ dir, truncated: false, entries: dir === '' ? [{ name: 'a.ts', path: 'a.ts', kind: 'file', change: 'M' }, { name: 'b.ts', path: 'b.ts', kind: 'file' }] : [] });
@@ -330,6 +331,7 @@ describe('FilesTab', () => {
       // The code view (FileViewer is stubbed here): a real editor in the focused pane, "needle" selected.
       const doc = 'const needle = 1;\nnext line';
       const view = new EditorView({ state: EditorState.create({ doc, selection: { anchor: 6, head: 12 } }), parent: screen.getByTestId('files-pane-0') });
+      registerSelection(view.dom, () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)); // as codeView does
       rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} searchRequest={1} />);
       expect(screen.getByTestId('search-panel')).toBeInTheDocument();
       expect(screen.getByLabelText('Search text')).toHaveValue('needle');

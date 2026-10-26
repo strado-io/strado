@@ -7,7 +7,7 @@
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { EditorView } from '@codemirror/view';
+import { selectionIn } from './codeSelection';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
 import { requestRunInShell } from '../../lib/runInShell';
@@ -125,11 +125,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   // ⌘⇧F starts from the code's selection, as VS Code does: one line only.
   const [searchSeed, setSearchSeed] = useState({ text: '', nonce: 0 });
   const selectedLine = () => {
-    const el = root.current?.querySelector<HTMLElement>(`[data-testid="files-pane-${tabsRef.current.focus}"] .cm-editor`);
-    const view = el ? EditorView.findFromDOM(el) : null;
-    if (!view) return '';
-    const { from, to } = view.state.selection.main;
-    const text = view.state.sliceDoc(from, to);
+    const text = selectionIn(root.current?.querySelector(`[data-testid="files-pane-${tabsRef.current.focus}"]`));
     return text.includes('\n') ? '' : text;
   };
   const openSearch = () => {

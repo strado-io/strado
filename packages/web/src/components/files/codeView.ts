@@ -11,6 +11,7 @@ import { tags as t } from '@lezer/highlight';
 import type { FileMarks, SearchQuery } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
 import { createFindPanel } from './findPanel';
+import { registerSelection } from './codeSelection';
 import { renderHover } from './hoverMarkdown';
 
 // Ctrl-click on a Mac is a right-click (context menu), so there only ⌘ navigates.
@@ -276,6 +277,7 @@ export async function createCodeView(parent: HTMLElement, o: {
     }),
   });
 
+  registerSelection(view.dom, () => { const { from, to } = view.state.selection.main; return view.state.sliceDoc(from, to); });
   return {
     goToLine,
     focus: () => view.focus(),
