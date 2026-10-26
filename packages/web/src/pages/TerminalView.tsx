@@ -39,6 +39,7 @@ import { jarvisServerPort } from '../lib/jarvis/serverPort';
 import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
+import { filesSearchKey } from '../components/TerminalSearchBar';
 import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
@@ -72,6 +73,8 @@ import { useUiHubBridge, type JarvisHubContext } from '../contexts/UiControlCont
 import type { JarvisHubPort } from '../lib/jarvis/execute';
 import type { TabInfo as JTabInfo, TabRef as JTabRef } from '../lib/jarvis/types';
 import { hubKeyOf, nextBrowserId, type ParsedUiCommand, type UiPlace } from '../lib/uiCommands';
+
+const isMacPlatform = () => window.strado?.platform === 'darwin' || /Mac/i.test(navigator.platform);
 
 type Tab = {
   path: string;
@@ -698,6 +701,8 @@ export function TerminalView({
   const openChangesRef = useRef<() => void>(() => undefined);
   // Cmd+P: go to a file in the active worktree (ref for the same reason).
   const openFilePickerRef = useRef<() => void>(() => undefined);
+  // Cmd+Shift+F: search the worktree's files from any tab (ref for the same reason).
+  const openFilesSearchRef = useRef<() => void>(() => undefined);
   const openWorktreeInEditorRef = useRef<() => void>(() => undefined);
   // Each Files tab's open file and cursor line (FilesTab reports it), for Open in editor.
   const activeFileRef = useRef(new Map<string, { path: string; line: number } | null>());
@@ -1886,6 +1891,17 @@ export function TerminalView({
         openFilePickerRef.current();
         return;
       }
+      // Cmd+Shift+F (Ctrl+Shift+F off a Mac): search the worktree's files,
+      // from any tab (a terminal, an agent, Files itself), as in VS Code. A
+      // dialog keeps its keys. Cmd+F stays each pane's own find.
+      if (filesSearchKey(e, isMacPlatform())) {
+        if ((e.target as Element | null)?.closest?.('[role="dialog"], [aria-modal="true"]')) return;
+        if (e.repeat) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openFilesSearchRef.current();
+        return;
+      }
       // Cmd+O (Cmd+Shift+O too) opens the active tab in the person's editor:
       // a Files tab's open file at its cursor, else the worktree. A dialog (the
       // palette's agent cards open with ⌘O) keeps its own.
@@ -1968,6 +1984,10 @@ export function TerminalView({
       }
       if (combo === 'changes') {
         openChangesRef.current();
+        return;
+      }
+      if (combo === 'files-search') {
+        openFilesSearchRef.current();
         return;
       }
       const dir = combo === 'tab-next' ? 1 : combo === 'tab-prev' ? -1 : null;
@@ -2548,6 +2568,13 @@ export function TerminalView({
       ...prev,
       [worktreePath]: { path, ...(line ? { line } : {}), nonce: (prev[worktreePath]?.nonce ?? 0) + 1 },
     }));
+    openMode('files', { path: worktreePath });
+  };
+  // ⌘⇧F: the active worktree's Files tab (opened if it isn't), its search panel up.
+  const [filesSearch, setFilesSearch] = useState<Record<string, number>>({});
+  openFilesSearchRef.current = () => {
+    const worktreePath = activeRef.current.path;
+    setFilesSearch((prev) => ({ ...prev, [worktreePath]: (prev[worktreePath] ?? 0) + 1 }));
     openMode('files', { path: worktreePath });
   };
   // "Open in editor": the person's own desktop editor, on this machine only (a
@@ -3829,6 +3856,7 @@ export function TerminalView({
                     worktreePath={g.path}
                     remote={filesTarget}
                     openPath={filesOpenPath[g.path]}
+                    searchRequest={filesSearch[g.path]}
                     onAskAgent={setFileAsk}
                     onActiveFile={(f) => activeFileRef.current.set(g.path, f)}
                   />

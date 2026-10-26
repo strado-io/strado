@@ -7,6 +7,7 @@
 // Code navigation lives here: go to definition (one exact answer jumps, else a
 // picker), references, ⌘⇧F search, and back/forward through where you went.
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { EditorView } from '@codemirror/view';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
 import { requestRunInShell } from '../../lib/runInShell';
@@ -46,12 +47,14 @@ export type FilesTabProps = {
   remote?: { runnerId: string; remoteWsId: string; name?: string };
   /** Open this file (and line); a new nonce opens it again. */
   openPath?: { path: string; line?: number; nonce: number };
+  /** ⌘⇧F from anywhere in the worktree: each new number opens the search panel. */
+  searchRequest?: number;
   onAskAgent?: (ctx: FileAskContext) => void;
   /** The active file and its cursor line (1-based), or null with none open: for the pane title bar's editor button. */
   onActiveFile?: (file: { path: string; line: number } | null) => void;
 };
 
-export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onActiveFile }: FilesTabProps) {
+export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest = 0, onAskAgent, onActiveFile }: FilesTabProps) {
   const runnerId = remote?.runnerId;
   const remoteWsId = remote?.remoteWsId;
   const where: RemoteFilesTarget | undefined = runnerId && remoteWsId ? { runnerId, remoteWsId } : undefined;
@@ -119,7 +122,22 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
     return n;
   };
   const drag = useRef<{ x: number; w: number } | null>(null);
-  const openSearch = () => { if (explorerHidden) setSearchPeek(true); setSearching(true); };
+  // ⌘⇧F starts from the code's selection, as VS Code does: one line only.
+  const [searchSeed, setSearchSeed] = useState({ text: '', nonce: 0 });
+  const selectedLine = () => {
+    const el = root.current?.querySelector<HTMLElement>(`[data-testid="files-pane-${tabsRef.current.focus}"] .cm-editor`);
+    const view = el ? EditorView.findFromDOM(el) : null;
+    if (!view) return '';
+    const { from, to } = view.state.selection.main;
+    const text = view.state.sliceDoc(from, to);
+    return text.includes('\n') ? '' : text;
+  };
+  const openSearch = () => {
+    setSearchSeed((s) => ({ text: selectedLine(), nonce: s.nonce + 1 }));
+    if (explorerHidden) setSearchPeek(true);
+    setSearching(true);
+  };
+  useEffect(() => { if (searchRequest > 0) openSearch(); }, [searchRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   const closeSearch = () => { setSearching(false); setSearchPeek(false); focusCode(); };
   // Refresh: agents change files all the time; re-list the open folders and re-read the open file.
   const [reloadKey, setReloadKey] = useState(0);
@@ -376,7 +394,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, onAskAgent, onA
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
-          <SearchPanel search={search} onClose={closeSearch} onPick={(h, side) => pickHit(h, fromHere(), side)} />
+          <SearchPanel search={search} seed={searchSeed} onClose={closeSearch} onPick={(h, side) => pickHit(h, fromHere(), side)} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
             onSelect={(p) => jump(fromHere(), { path: p }, 'preview')}

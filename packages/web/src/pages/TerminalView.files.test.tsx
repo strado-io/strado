@@ -39,6 +39,7 @@ vi.mock('../eventStream', () => ({ subscribeWorktrees: () => () => {}, subscribe
 type FilesTabProps = {
   wsId: string; worktreePath: string; remote?: { runnerId: string; remoteWsId: string; name?: string };
   openPath?: { path: string; line?: number; nonce: number };
+  searchRequest?: number;
   onAskAgent?: (ctx: { worktreePath: string; path: string; from: number; to: number; snippet: string }) => void;
   onActiveFile?: (f: { path: string; line: number } | null) => void;
 };
@@ -49,7 +50,7 @@ vi.mock('../components/files/FilesTab', () => ({
     // The real FilesTab marks its root, and whether a file tab is open (the hub's ⌘W defers to it).
     return (
       <div data-testid="files-tab" data-files-tab="" {...(filesTab.fileTabOpen ? { 'data-file-tab-open': '' } : {})}
-        data-path={p.worktreePath} data-open={p.openPath ? `${p.openPath.path}:${p.openPath.line ?? ''}` : ''}>
+        data-path={p.worktreePath} data-open={p.openPath ? `${p.openPath.path}:${p.openPath.line ?? ''}` : ''} data-search={p.searchRequest ?? 0}>
         <button type="button">inside files</button>
       </div>
     );
@@ -266,6 +267,66 @@ describe('Files tab in the hub', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(screen.queryByRole('combobox', { name: 'Go to file' })).toBeNull();
     expect(screen.getByTestId('files-tab')).toHaveAttribute('data-open', 'src/app.ts:12');
+  });
+
+  describe('⌘⇧F (Ctrl+Shift+F off a Mac): search the worktree\'s files from any tab', () => {
+    const filesInFront = () => document.querySelector('[data-tab-key="files:1"]')?.getAttribute('data-active') === 'true';
+    afterEach(() => { delete (window as { strado?: unknown }).strado; });
+
+    it('from a terminal tab with no Files tab: one opens, in front, with its search asked for; again asks again', async () => {
+      render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
+      expect(screen.queryByTestId('files-tab')).toBeNull();
+      const e = new KeyboardEvent('keydown', { key: 'F', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+      act(() => { window.dispatchEvent(e); });
+      expect(e.defaultPrevented).toBe(true);
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-search', '1');
+      expect(strip().getAllByText('Files')).toHaveLength(1);
+      expect(filesInFront()).toBe(true);
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true, shiftKey: true });
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-search', '2');
+      expect(strip().getAllByText('Files')).toHaveLength(1);
+    });
+
+    it('on a Mac it is ⌘⇧F; an existing Files tab comes to the front (no second one)', async () => {
+      (window as unknown as { strado: unknown }).strado = { platform: 'darwin' };
+      render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+      fireEvent.click(strip().getByText(/^Shell/));
+      expect(filesInFront()).toBe(false);
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true, shiftKey: true }); // not the Mac chord
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-search', '0');
+      fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true });
+      expect(filesInFront()).toBe(true);
+      expect(strip().getAllByText('Files')).toHaveLength(1);
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-search', '1');
+    });
+
+    it('inside the Files tab it works as before (the hub asks the Files tab for its search)', async () => {
+      render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+      fireEvent.keyDown(screen.getByRole('button', { name: 'inside files' }), { key: 'f', ctrlKey: true, shiftKey: true });
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-search', '1');
+    });
+
+    it('forwarded from a Browser embed (the desktop\'s files-search hotkey) it does the same', async () => {
+      const handlers: Array<(combo: string) => void> = [];
+      (window as unknown as { strado: unknown }).strado = { platform: 'darwin', onHotkey: (cb: (combo: string) => void) => { handlers.push(cb); return () => {}; } };
+      render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
+      act(() => { handlers.forEach((h) => h('files-search')); });
+      expect(screen.getByTestId('files-tab')).toHaveAttribute('data-search', '1');
+    });
+
+    it('⌘F is left alone, and a dialog keeps its keys', async () => {
+      render(<TerminalView worktree={worktree} mode="shell" sessionId="1" onClose={() => {}} />);
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+      expect(screen.queryByTestId('files-tab')).toBeNull();
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      const input = document.createElement('input');
+      dialog.appendChild(input);
+      document.body.appendChild(dialog);
+      fireEvent.keyDown(input, { key: 'f', ctrlKey: true, shiftKey: true });
+      expect(screen.queryByTestId('files-tab')).toBeNull();
+      dialog.remove();
+    });
   });
 
   it('a path in terminal output: ⌘-click opens it at its line; a plain click does nothing', async () => {

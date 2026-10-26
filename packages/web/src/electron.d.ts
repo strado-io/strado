@@ -61,7 +61,7 @@ interface Window {
     ) => () => void;
     // app shortcuts intercepted inside embeds, forwarded by the shell
     onHotkey?: (
-      cb: (combo: 'tab-next' | 'tab-prev' | 'space-next' | 'space-prev' | 'palette' | 'settings' | 'meta-up' | 'devtools' | 'close-tab' | 'new-shell' | 'changes' | 'focus-next' | 'focus-prev' | 'new-focus') => void,
+      cb: (combo: 'tab-next' | 'tab-prev' | 'space-next' | 'space-prev' | 'palette' | 'settings' | 'meta-up' | 'devtools' | 'close-tab' | 'new-shell' | 'changes' | 'focus-next' | 'focus-prev' | 'new-focus' | 'files-search') => void,
     ) => () => void;
     // Electron's own process metrics (main/renderer/gpu/utility) for the
     // Settings → Sessions view; absent on older shells and in a browser

@@ -94,6 +94,21 @@ describe('Dashboard: Focus Jarvis', () => {
     expect(hubProps.last).toBeNull();
   });
 
+  it('in the chat, ⌘⇧F / Ctrl+Shift+F does nothing: no worktree opens and the composer keeps its text', async () => {
+    focusList.members = ['local:/a/A-1'];
+    renderDashboard();
+    await act(async () => {});
+    const box = screen.getByRole('textbox', { name: /message jarvis/i });
+    fireEvent.change(box, { target: { value: 'find' } });
+    const e = new KeyboardEvent('keydown', { key: 'F', metaKey: true, shiftKey: true, bubbles: true, cancelable: true });
+    box.dispatchEvent(e);
+    fireEvent.keyDown(box, { key: 'F', ctrlKey: true, shiftKey: true });
+    expect(e.defaultPrevented).toBe(false);
+    expect(hubProps.last).toBeNull();
+    expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
+    expect(box).toHaveValue('find');
+  });
+
   it('app open restores the worktree the Focus had open', async () => {
     focusList.members = ['local:/a/A-1'];
     leftOn('/a/A-1');

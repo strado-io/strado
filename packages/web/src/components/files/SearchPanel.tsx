@@ -8,8 +8,10 @@ import { byFile } from './NavPanel';
 
 const DEBOUNCE_MS = 250;
 
-export function SearchPanel({ search, onPick, onClose }: {
+export function SearchPanel({ search, onPick, onClose, seed }: {
   search: (q: SearchQuery, signal: AbortSignal) => Promise<SearchAnswer>;
+  /** Each ⌘⇧F (a new nonce): focus the box and select it, starting from `text` when there is one. */
+  seed?: { text: string; nonce: number };
   /** `side`: ⌥-click, open it beside the current file. */
   onPick: (hit: NavHit, side: boolean) => void;
   onClose: () => void;
@@ -22,7 +24,12 @@ export function SearchPanel({ search, onPick, onClose }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => {
+    if (seed?.text) setQ(seed.text);
+    // After the value lands, so the selection covers it.
+    requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); });
+    input.current?.focus();
+  }, [seed?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const query = q.trim();

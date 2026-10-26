@@ -27,6 +27,8 @@ vi.mock('./FileViewer', () => ({
 }));
 
 import { FilesTab } from './FilesTab';
+import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 
 const flush = () => act(async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); });
 const page = (dir: string) => ({ dir, truncated: false, entries: dir === '' ? [{ name: 'a.ts', path: 'a.ts', kind: 'file', change: 'M' }, { name: 'b.ts', path: 'b.ts', kind: 'file' }] : [] });
@@ -316,6 +318,25 @@ describe('FilesTab', () => {
       expect(where()[0]).toBe('a.ts');
       fireEvent.keyDown(screen.getByTestId('search-panel'), { key: 'Escape' });
       expect(screen.getByTestId('file-tree')).toBeInTheDocument();
+    });
+
+    it('⌘⇧F from elsewhere in the hub (searchRequest): the search opens, seeded with the code\'s one-line selection', async () => {
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      expect(screen.queryByTestId('search-panel')).toBeNull();
+      // The code view (FileViewer is stubbed here): a real editor in the focused pane, "needle" selected.
+      const doc = 'const needle = 1;\nnext line';
+      const view = new EditorView({ state: EditorState.create({ doc, selection: { anchor: 6, head: 12 } }), parent: screen.getByTestId('files-pane-0') });
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} searchRequest={1} />);
+      expect(screen.getByTestId('search-panel')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search text')).toHaveValue('needle');
+      expect(screen.getByLabelText('Search text')).toHaveFocus();
+      // A selection across lines seeds nothing; the box keeps what it has and is focused again.
+      view.dispatch({ selection: { anchor: 6, head: doc.length } });
+      fireEvent.change(screen.getByLabelText('Search text'), { target: { value: 'kept' } });
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} searchRequest={2} />);
+      expect(screen.getByLabelText('Search text')).toHaveValue('kept');
+      view.destroy();
     });
 
     it('in a text box Alt←/→, ⌘[ and Ctrl- are the box\'s; elsewhere they go back', async () => {

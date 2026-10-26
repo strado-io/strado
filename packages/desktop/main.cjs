@@ -375,6 +375,8 @@ if (!gotLock) {
     if (input.key.toLowerCase() === 'w' && !input.alt && !input.shift) return 'close-tab';
     // Cmd+T inside an embed opens a new shell in the active worktree.
     if (input.key.toLowerCase() === 't' && !input.alt && !input.shift) return 'new-shell';
+    // Shift+Cmd+F inside an embed: search the active worktree's files (its Files tab).
+    if (input.key.toLowerCase() === 'f' && !input.alt && input.shift) return 'files-search';
     return null;
   };
   const wireEmbedHotkeys = (wc, win, isActive = () => true) => {
