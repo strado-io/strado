@@ -12,9 +12,9 @@ vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
-    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
+    onCursor?: (at: { path: string; line: number; col: number }) => void; highlight?: { q: string } | null; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
-      data-ask={String(!!p.onAskAgent)}>
+      data-ask={String(!!p.onAskAgent)} data-highlight={p.highlight?.q ?? ''}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
       <button type="button" onClick={() => p.onNavigate?.('definition', { path: p.path, line: 2, col: 4 })}>F12</button>
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
@@ -312,12 +312,15 @@ describe('FilesTab', () => {
       fireEvent.change(screen.getByLabelText('Search text'), { target: { value: 'needle' } });
       await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
       expect(files.search).toHaveBeenCalledWith('ws1', '/wt', { q: 'needle', word: false, case: false, regex: false }, undefined, expect.any(AbortSignal));
-      fireEvent.click(screen.getByRole('button', { name: /deep\/c\.ts:12/ }));
+      fireEvent.click(screen.getByRole('option', { name: /deep\/c\.ts:12/ }));
       expect(where()).toEqual(['deep/c.ts', '12', '3']);
+      // The code marks what was searched for, until the search closes.
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-highlight', 'needle');
       fireEvent.click(screen.getByRole('button', { name: 'Back' }));
       expect(where()[0]).toBe('a.ts');
       fireEvent.keyDown(screen.getByTestId('search-panel'), { key: 'Escape' });
       expect(screen.getByTestId('file-tree')).toBeInTheDocument();
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-highlight', '');
     });
 
     it('⌘⇧F from elsewhere in the hub (searchRequest): the search opens, seeded with the code\'s one-line selection', async () => {

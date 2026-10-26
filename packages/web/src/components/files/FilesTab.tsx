@@ -138,7 +138,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
     setSearching(true);
   };
   useEffect(() => { if (searchRequest > 0) openSearch(); }, [searchRequest]); // eslint-disable-line react-hooks/exhaustive-deps
-  const closeSearch = () => { setSearching(false); setSearchPeek(false); focusCode(); };
+  // The query a picked result came from: the code marks its matches until the search closes.
+  const [searchMarks, setSearchMarks] = useState<SearchQuery | null>(null);
+  const closeSearch = () => { setSearching(false); setSearchPeek(false); setSearchMarks(null); focusCode(); };
   // Refresh: agents change files all the time; re-list the open folders and re-read the open file.
   const [reloadKey, setReloadKey] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -394,7 +396,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
-          <SearchPanel search={search} seed={searchSeed} onClose={closeSearch} onPick={(h, side) => pickHit(h, fromHere(), side)} />
+          <SearchPanel search={search} seed={searchSeed} onClose={closeSearch} onPick={(h, side, query) => { setSearchMarks(query); pickHit(h, fromHere(), side); }} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
             onSelect={(p) => jump(fromHere(), { path: p }, 'preview')}
@@ -450,7 +452,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
                   <div role="tabpanel" id={tabIds(pane.id).panel} aria-labelledby={t ? tabIds(pane.id).tab(t.path) : undefined} className="flex min-h-0 flex-1 flex-col">
                   {t ? (
                     <FileViewer key={`${worktreePath}\0${t.path}`} onMissing={t.restored ? () => dispatch({ type: 'close', pane: pi, path: t.path }) : undefined} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
-                      read={read} marks={marks} onAskAgent={onAskAgent}
+                      read={read} marks={marks} highlight={searchMarks} onAskAgent={onAskAgent}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
                       headerStart={historyButtons}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (
