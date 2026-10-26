@@ -4,13 +4,14 @@
 // else makes it the active Focus and opens its Jarvis chat, folded or not.
 // The active row is its Jarvis: two lines (status, latest reply), selected
 // while the chat shows. The others are flat one-line headings with their
-// live badges — headings, not cards, so they never read as worktrees. The
-// six most recent show, the active one always, then "Show all (N)". No
+// live badges — headings, not cards, so they never read as worktrees. They
+// keep one stable order, creation (byCreated), so using a Focus never moves
+// it: the first six show, the active one always, then "Show all (N)". No
 // header: New focus is the + in the workspace row.
 import { useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
-import { FocusIcon, byLastActive } from './FocusSwitcher';
+import { FocusIcon, byCreated } from './FocusSwitcher';
 import { Menu, type MenuItem } from './rowBits';
 
 /** What a collapsed row says about its Focus, beyond its name. */
@@ -70,7 +71,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   const [showAll, setShowAll] = useState(false);
   const [expanded, toggle] = useExpanded();
   const [renaming, setRenaming] = useState<string | null>(null);
-  const sorted = [...focuses].sort(byLastActive);
+  const sorted = [...focuses].sort(byCreated);
   const capped = sorted.slice(0, FOCUS_LIST_CAP);
   // The active Focus always shows, however long ago it was used.
   const shown = showAll ? sorted : sorted.filter((f) => capped.includes(f) || f.id === activeId);

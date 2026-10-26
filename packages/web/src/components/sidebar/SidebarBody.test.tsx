@@ -27,8 +27,8 @@ vi.mock('../../hooks/useFocuses', () => ({
     setMembership: focusMock.setMembership, addMembers: focusMock.addMembers, remove: focusMock.remove,
   }),
 }));
-const focus = (id: string, name: string, members: string[] = [], lastActiveAt = '2026-01-01'): Focus =>
-  ({ id, name, members, createdAt: '2026-01-01', lastActiveAt });
+const focus = (id: string, name: string, members: string[] = [], lastActiveAt = '2026-01-01', createdAt = '2026-01-01'): Focus =>
+  ({ id, name, members, createdAt, lastActiveAt });
 const withFocus = (...members: string[]) => { focusMock.focuses = [focus('f1', 'Billing', members)]; focusMock.activeId = 'f1'; };
 
 const r1 = { id: 'r1', name: 'api', path: '/r1' } as RepoConfig;
@@ -306,15 +306,16 @@ describe('SidebarBody: the active Focus', () => {
 describe('SidebarBody: the Focus accordion', () => {
   beforeEach(() => {
     focusMock.focuses = [
-      focus('f1', 'Billing', ['local:/r1/wt'], '2026-02-01'),
-      focus('f2', 'Onboarding', [], '2026-03-01'),
-      focus('f3', 'Perf', ['local:/r2/wt', 'local:/r2/other'], '2026-01-01'),
+      // Created Billing, Onboarding, Perf; last used Onboarding, Billing, Perf.
+      focus('f1', 'Billing', ['local:/r1/wt'], '2026-02-01', '2025-12-01'),
+      focus('f2', 'Onboarding', [], '2026-03-01', '2025-12-02'),
+      focus('f3', 'Perf', ['local:/r2/wt', 'local:/r2/other'], '2026-01-01', '2025-12-03'),
     ];
     focusMock.activeId = 'f1';
   });
   const rowNames = () => within(list()).getAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.replace('Switch to ', ''));
 
-  it('only the active Focus is open; every other one is a row, by last use', () => {
+  it('only the active Focus is open; every other one is a row, in creation order', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.getAllByTestId('focus-open')).toHaveLength(1);
     expect(openHeader()).toHaveTextContent('Billing');
@@ -341,7 +342,7 @@ describe('SidebarBody: the Focus accordion', () => {
     focusMock.activeId = 'f3';
     rerender(<SidebarBody {...props()} />);
     expect(openHeader()).toHaveTextContent('Perf');
-    expect(rowNames()).toEqual(['Onboarding', 'Billing']);
+    expect(rowNames()).toEqual(['Billing', 'Onboarding']);
     expect(panelOf('Perf')).toBeNull();
     expect(panelOf('Billing')).not.toBeNull();
   });
@@ -428,9 +429,31 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(within(onboarding).queryByTestId('focus-agents-f2')).toBeNull();
   });
 
-  it('six most recent, then Show all (N); the active one always shows, however old', () => {
-    focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`));
-    focusMock.activeId = 'g8'; // the oldest
+  it('clicking a Focus does not move it: activating touches its last-active time, never its place', () => {
+    const order = () => within(list()).getAllByRole('heading').concat(within(list()).getAllByRole('button', { name: /^Switch to / }))
+      .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map((el) => el.getAttribute('aria-label')?.replace('Switch to ', '') ?? el.textContent);
+    const { rerender } = render(<SidebarBody {...props()} />);
+    expect(order()).toEqual(['Billing', 'Onboarding', 'Perf']);
+    fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Perf' }));
+    // As useFocuses does: Perf becomes active and the server stamps it as just used.
+    focusMock.focuses = focusMock.focuses.map((f) => (f.id === 'f3' ? { ...f, lastActiveAt: '2026-09-01' } : f));
+    focusMock.activeId = 'f3';
+    rerender(<SidebarBody {...props()} />);
+    expect(order()).toEqual(['Billing', 'Onboarding', 'Perf']);
+  });
+
+  it('a new Focus is appended at the bottom', () => {
+    const { rerender } = render(<SidebarBody {...props()} />);
+    focusMock.focuses = [...focusMock.focuses, focus('f0', 'Alpha', [], '2026-09-01', '2026-09-01')];
+    rerender(<SidebarBody {...props()} />);
+    expect(rowNames()).toEqual(['Onboarding', 'Perf', 'Alpha']);
+  });
+
+  it('the first six in creation order, then Show all (N); the active one always shows, however far down', () => {
+    // Created g0…g8 in order; last used the other way round.
+    focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`, `2025-0${i + 1}-01`));
+    focusMock.activeId = 'g8'; // the newest, beyond the six
     render(<SidebarBody {...props()} />);
     expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5']);
     expect(openHeader()).toHaveTextContent('F8');

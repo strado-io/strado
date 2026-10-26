@@ -154,16 +154,17 @@ describe('CommandPalette runner worktrees', () => {
   it('shows only the Focuses until the user types, then searches everything', () => {
     const many = Array.from({ length: 20 }, (_, i) => wt(`/wt/${i}`, `FD-${i}`, `task ${i}`));
     const focuses = [
-      { id: 'f1', name: 'Old', members: [], createdAt: 't', lastActiveAt: '2026-01-01T00:00:00Z' },
-      { id: 'f2', name: 'Fresh', members: [], createdAt: 't', lastActiveAt: '2026-02-01T00:00:00Z' },
+      { id: 'f2', name: 'Fresh', members: [], createdAt: '2026-01-02T00:00:00Z', lastActiveAt: '2026-02-01T00:00:00Z' },
+      { id: 'f1', name: 'Old', members: [], createdAt: '2026-01-01T00:00:00Z', lastActiveAt: '2026-01-01T00:00:00Z' },
     ];
     render(<CommandPalette repos={repos} worktrees={many} workspaces={workspaces} activeWorkspaceId="default"
       onOpenWorktree={vi.fn()} onGoRepo={vi.fn()} onSwitchWorkspace={vi.fn()} onClose={vi.fn()}
       focuses={focuses} activeFocusId={null} onSwitchFocus={vi.fn()} />);
     const rows = screen.getAllByText(/worktrees$/).map((el) => el.parentElement?.textContent ?? '');
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain('Fresh');
-    expect(rows[1]).toContain('Old');
+    // The sidebar's order: creation, oldest first, whatever was used last.
+    expect(rows[0]).toContain('Old');
+    expect(rows[1]).toContain('Fresh');
     expect(screen.queryByText('Worktrees')).toBeNull();
     fireEvent.change(screen.getByLabelText('Global search'), { target: { value: 'FD-1' } });
     expect(screen.getByText('Worktrees')).toBeInTheDocument();

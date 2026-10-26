@@ -13,4 +13,7 @@ export const FocusIcon = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
-export const byLastActive = (a: Focus, b: Focus) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0);
+// One stable order everywhere (the sidebar, ⌘1–9, ⌘K): creation, oldest
+// first, so a new Focus lands at the bottom and using one never moves it.
+export const byCreated = (a: Focus, b: Focus) =>
+  (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);

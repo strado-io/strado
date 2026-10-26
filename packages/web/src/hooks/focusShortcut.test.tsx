@@ -1,11 +1,12 @@
-import { renderHook } from '@testing-library/react';
+import { render, renderHook, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Focus } from '../api';
 import { NEW_FOCUS_EVENT, useFocusShortcut } from './focusShortcut';
+import { FocusList } from '../components/sidebar/FocusList';
 
-const f = (id: string, lastActiveAt: string): Focus => ({ id, name: id, members: [], createdAt: 't', lastActiveAt });
-// Popover order is by last use: b, a, c.
-const focuses = [f('a', '2026-02-01'), f('b', '2026-03-01'), f('c', '2026-01-01')];
+const f = (id: string, createdAt: string, lastActiveAt: string): Focus => ({ id, name: id, members: [], createdAt, lastActiveAt });
+// The sidebar's order is creation: b, a, c (last use, c, a, b, does not count).
+const focuses = [f('a', '2026-02-01', '2026-05-01'), f('b', '2026-01-01', '2026-04-01'), f('c', '2026-03-01', '2026-06-01')];
 
 const key = (init: KeyboardEventInit, target: EventTarget = window) => {
   const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
@@ -16,7 +17,7 @@ const key = (init: KeyboardEventInit, target: EventTarget = window) => {
 afterEach(() => { document.body.innerHTML = ''; delete (window as { strado?: unknown }).strado; });
 
 describe('useFocusShortcut', () => {
-  it('⌘1–⌘9 activate the nth Focus in last-used order', () => {
+  it('⌘1–⌘9 activate the nth Focus in the sidebar\'s order (creation, not last use)', () => {
     const activate = vi.fn();
     renderHook(() => useFocusShortcut({ focuses, activeId: 'a', activate }));
     expect(key({ key: '2', metaKey: true }).defaultPrevented).toBe(true);
@@ -25,6 +26,19 @@ describe('useFocusShortcut', () => {
     expect(activate).toHaveBeenLastCalledWith('b');
     key({ key: '9', metaKey: true });
     expect(activate).toHaveBeenCalledTimes(2);
+  });
+
+  it('⌘N is the Nth row of the sidebar\'s list', () => {
+    const activate = vi.fn();
+    const many = [...focuses, f('d', '2026-04-01', '2026-01-01'), f('e', '2025-12-01', '2026-07-01')];
+    render(<FocusList focuses={many} activeId={null} badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>{() => null}</FocusList>);
+    renderHook(() => useFocusShortcut({ focuses: many, activeId: null, activate }));
+    const rows = screen.getAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.replace('Switch to ', ''));
+    expect(rows).toEqual(['e', 'b', 'a', 'c', 'd']);
+    rows.forEach((id, i) => {
+      key({ key: String(i + 1), metaKey: true });
+      expect(activate).toHaveBeenLastCalledWith(id);
+    });
   });
 
   it('⌘⌥→ and ⌘⌥← step through Focuses and wrap; with none active, → starts at the first', () => {
