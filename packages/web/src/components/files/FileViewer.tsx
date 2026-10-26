@@ -5,7 +5,7 @@
 // Code navigation: ⌘-click/F12 and ⇧F12 are reported up (the tab runs them and
 // keeps the history); hover and the outline are this file's own.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { FileAskContext, FileContent, FileMarks, HoverAnswer, OutlineAnswer } from '../../types';
+import type { FileAskContext, FileContent, FileMarks, HoverAnswer, OutlineAnswer, SearchQuery } from '../../types';
 import { OutlinePanel } from './OutlinePanel';
 import { capSnippet, changeStarts } from './changes';
 import { filesError } from './errors';
@@ -18,7 +18,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, onAskAgent, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, highlight = null, onAskAgent, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -29,6 +29,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   reloadKey?: number;
   read: (path: string) => Promise<FileContent>;
   marks: (path: string) => Promise<FileMarks>;
+  /** The ⌘⇧F query a result was opened from: every match marked. */
+  highlight?: SearchQuery | null;
   onAskAgent?: (ctx: FileAskContext) => void;
   /** ⌘-click/F12 (definition) and ⇧F12 (references) at a place in this file. */
   onNavigate?: (kind: NavKind, at: FileAt) => void;
@@ -68,6 +70,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   const shownPath = useRef<string | null>(null);
   // The latest marks, for an editor that finishes loading after they arrived.
   const marksRef = useRef<FileMarks | null>(null);
+  const highlightRef = useRef(highlight);
+  highlightRef.current = highlight;
   marksRef.current = marks;
 
   // The file, then its marks (a failed marks call only loses the gutter).
@@ -128,6 +132,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         view = v;
         viewRef.current = v;
         v.setMarks(marksRef.current);
+        v.setHighlight(highlightRef.current);
         if (askKey && appliedAsk.current !== askKey) {
           appliedAsk.current = askKey;
           v.goToLine(line!, col);
@@ -150,6 +155,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   }, [text, file?.path, file?.language]);
 
   useEffect(() => { viewRef.current?.setMarks(marks); }, [marks, text]);
+  useEffect(() => { viewRef.current?.setHighlight(highlight); }, [highlight]);
   useEffect(() => {
     if (!askKey || !viewRef.current || appliedAsk.current === askKey) return;
     appliedAsk.current = askKey;

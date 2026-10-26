@@ -3,14 +3,15 @@
 // the app's theme vars (zinc/sky scales, --pane-card), so every preset —
 // GitHub Light included — holds without a hex in sight.
 import { EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
-import { EditorView, GutterMarker, gutter, highlightActiveLine, hoverTooltip, keymap, lineNumbers } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, GutterMarker, gutter, highlightActiveLine, hoverTooltip, keymap, lineNumbers } from '@codemirror/view';
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+import { SearchQuery as CmQuery, highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { tags as t } from '@lezer/highlight';
-import type { FileMarks } from '../../types';
+import type { FileMarks, SearchQuery } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
 import { createFindPanel } from './findPanel';
+import { registerSelection } from './codeSelection';
 import { renderHover } from './hoverMarkdown';
 
 // Ctrl-click on a Mac is a right-click (context menu), so there only ⌘ navigates.
@@ -98,6 +99,40 @@ class ChangeMarker extends GutterMarker {
     return el;
   }
 }
+// A ⌘⇧F result opened here: every occurrence of its query marked (as
+// CodeMirror's own search does, but without its find panel), the one at the
+// cursor as the current one. Ranges are found once per query; moving the
+// cursor only changes which one is current.
+const MAX_HITS = 2000;
+const setHighlight = StateEffect.define<SearchQuery | null>();
+const hitMark = Decoration.mark({ class: 'cm-searchMatch' });
+const currentMark = Decoration.mark({ class: 'cm-searchMatch cm-searchMatch-selected' });
+type Highlight = { query: SearchQuery | null; ranges: [number, number][]; deco: DecorationSet };
+const findAll = (state: EditorState, q: SearchQuery): [number, number][] => {
+  const query = new CmQuery({ search: q.q, caseSensitive: !!q.case, regexp: !!q.regex, wholeWord: !!q.word, literal: !q.regex });
+  if (!query.valid) return [];
+  const out: [number, number][] = [];
+  const cursor = query.getCursor(state);
+  for (let r = cursor.next(); !r.done && out.length < MAX_HITS; r = cursor.next()) if (r.value.to > r.value.from) out.push([r.value.from, r.value.to]);
+  return out;
+};
+const decorate = (ranges: [number, number][], head: number): DecorationSet => {
+  const b = new RangeSetBuilder<Decoration>();
+  for (const [from, to] of ranges) b.add(from, to, from <= head && head <= to ? currentMark : hitMark);
+  return b.finish();
+};
+const highlightField = StateField.define<Highlight>({
+  create: () => ({ query: null, ranges: [], deco: Decoration.none }),
+  update(h, tr) {
+    let next = h;
+    for (const e of tr.effects) if (e.is(setHighlight)) next = { ...next, query: e.value, ranges: e.value ? findAll(tr.state, e.value) : [] };
+    if (next === h && !tr.selection && !tr.docChanged) return h;
+    if (next === h && tr.docChanged && h.query) next = { ...h, ranges: findAll(tr.state, h.query) };
+    return { ...next, deco: decorate(next.ranges, tr.state.selection.main.head) };
+  },
+  provide: (f) => EditorView.decorations.from(f, (h) => h.deco),
+});
+
 const setMarks = StateEffect.define<FileMarks | null>();
 const marksField = StateField.define<FileMarks | null>({
   create: () => null,
@@ -130,6 +165,8 @@ export type CodeView = {
   /** Jump to the next/previous change; returns the line it landed on, or null. */
   step(dir: 1 | -1): number | null;
   setMarks(marks: FileMarks | null): void;
+  /** Mark every match of a ⌘⇧F query (null clears). */
+  setHighlight(q: SearchQuery | null): void;
   destroy(): void;
 };
 
@@ -205,6 +242,7 @@ export async function createCodeView(parent: HTMLElement, o: {
         EditorState.readOnly.of(true),
         lineNumbers(),
         marksField.init(() => o.marks),
+        highlightField,
         changeGutter,
         highlightActiveLine(),
         search({ top: true, createPanel: createFindPanel }),
@@ -239,12 +277,14 @@ export async function createCodeView(parent: HTMLElement, o: {
     }),
   });
 
+  registerSelection(view.dom, () => { const { from, to } = view.state.selection.main; return view.state.sliceDoc(from, to); });
   return {
     goToLine,
     focus: () => view.focus(),
     cursor: () => posOf(view.state.selection.main.head),
     step,
     setMarks: (marks) => view.dispatch({ effects: setMarks.of(marks) }),
+    setHighlight: (q) => view.dispatch({ effects: setHighlight.of(q) }),
     destroy: () => { hoverAbort?.abort(); view.destroy(); },
   };
 }

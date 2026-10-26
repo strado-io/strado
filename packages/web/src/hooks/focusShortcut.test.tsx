@@ -1,11 +1,13 @@
-import { renderHook } from '@testing-library/react';
+import { act, render, renderHook, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Focus } from '../api';
 import { NEW_FOCUS_EVENT, useFocusShortcut } from './focusShortcut';
+import { FocusList } from '../components/sidebar/FocusList';
 
-const f = (id: string, lastActiveAt: string): Focus => ({ id, name: id, members: [], createdAt: 't', lastActiveAt });
-// Popover order is by last use: b, a, c.
-const focuses = [f('a', '2026-02-01'), f('b', '2026-03-01'), f('c', '2026-01-01')];
+const f = (id: string, createdAt: string, lastActiveAt: string): Focus => ({ id, name: id, members: [], createdAt, lastActiveAt });
+// The sidebar's order is creation: b, a, c (last use, c, a, b, does not count).
+const focuses = [f('a', '2026-02-01', '2026-05-01'), f('b', '2026-01-01', '2026-04-01'), f('c', '2026-03-01', '2026-06-01')];
 
 const key = (init: KeyboardEventInit, target: EventTarget = window) => {
   const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
@@ -16,7 +18,7 @@ const key = (init: KeyboardEventInit, target: EventTarget = window) => {
 afterEach(() => { document.body.innerHTML = ''; delete (window as { strado?: unknown }).strado; });
 
 describe('useFocusShortcut', () => {
-  it('⌘1–⌘9 activate the nth Focus in last-used order', () => {
+  it('⌘1–⌘9 activate the nth Focus in the sidebar\'s order (creation, not last use)', () => {
     const activate = vi.fn();
     renderHook(() => useFocusShortcut({ focuses, activeId: 'a', activate }));
     expect(key({ key: '2', metaKey: true }).defaultPrevented).toBe(true);
@@ -25,6 +27,36 @@ describe('useFocusShortcut', () => {
     expect(activate).toHaveBeenLastCalledWith('b');
     key({ key: '9', metaKey: true });
     expect(activate).toHaveBeenCalledTimes(2);
+  });
+
+  it('⌘N is the Nth row of the sidebar\'s list', () => {
+    const activate = vi.fn();
+    const many = [...focuses, f('d', '2026-04-01', '2026-01-01'), f('e', '2025-12-01', '2026-07-01')];
+    render(<FocusList focuses={many} activeId={null} badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>{() => null}</FocusList>);
+    renderHook(() => useFocusShortcut({ focuses: many, activeId: null, activate }));
+    const rows = screen.getAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.replace('Switch to ', ''));
+    expect(rows).toEqual(['e', 'b', 'a', 'c', 'd']);
+    rows.forEach((id, i) => {
+      key({ key: String(i + 1), metaKey: true });
+      expect(activate).toHaveBeenLastCalledWith(id);
+    });
+  });
+
+  it('⌘N is a click on the Nth row: that Focus alone is expanded', () => {
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['a', 'c'])); // left with c peeked at
+    sessionStorage.setItem('strado:focus-expanded-for', 'a');
+    function Harness() {
+      const [activeId, setActiveId] = useState<string | null>('a');
+      useFocusShortcut({ focuses, activeId, activate: setActiveId });
+      return <FocusList focuses={focuses} activeId={activeId} badges={new Map()} activeMenu={[]} onOpen={setActiveId} onRename={vi.fn()}>{(x) => <span>cards of {x.id}</span>}</FocusList>;
+    }
+    render(<Harness />);
+    expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of a', 'cards of c']);
+    act(() => { key({ key: '3', metaKey: true }); }); // b, a, c: the third is c
+    expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of c']);
+    act(() => { key({ key: '1', metaKey: true }); });
+    expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of b']);
+    expect(JSON.parse(sessionStorage.getItem('strado:focus-expanded')!)).toEqual(['b']);
   });
 
   it('⌘⌥→ and ⌘⌥← step through Focuses and wrap; with none active, → starts at the first', () => {

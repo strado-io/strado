@@ -1,4 +1,5 @@
 import { render, screen, act, fireEvent, within } from '@testing-library/react';
+import { Profiler } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../hooks/useWorkspace', () => ({
@@ -92,6 +93,44 @@ describe('Dashboard: Focus Jarvis', () => {
     expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).toBeNull();
     expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
     expect(hubProps.last).toBeNull();
+  });
+
+  it('in the chat, ⌘⇧F / Ctrl+Shift+F does nothing: no worktree opens and the composer keeps its text', async () => {
+    focusList.members = ['local:/a/A-1'];
+    renderDashboard();
+    await act(async () => {});
+    const box = screen.getByRole('textbox', { name: /message jarvis/i });
+    fireEvent.change(box, { target: { value: 'find' } });
+    const e = new KeyboardEvent('keydown', { key: 'F', metaKey: true, shiftKey: true, bubbles: true, cancelable: true });
+    box.dispatchEvent(e);
+    fireEvent.keyDown(box, { key: 'F', ctrlKey: true, shiftKey: true });
+    expect(e.defaultPrevented).toBe(false);
+    expect(hubProps.last).toBeNull();
+    expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
+    expect(box).toHaveValue('find');
+  });
+
+  it('a fresh load with storage from older builds settles: no update loop', async () => {
+    focusList.members = [];
+    // Expanded sets naming Focuses that are gone, made for another Focus; chat and seen flags.
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['gone', 'f-a', 'other']));
+    sessionStorage.setItem('strado:focus-expanded-for', 'gone');
+    sessionStorage.setItem('strado:jarvis-by-focus', JSON.stringify(['f-a', 'gone']));
+    localStorage.setItem('strado:selected-by-focus', JSON.stringify({ 'f-a': '/gone', gone: '/a/A-1' }));
+    let commits = 0;
+    render(
+      <Profiler id="dash" onRender={() => { commits += 1; }}>
+        <Dashboard onNewWorktree={noop} onShowLogs={noop} onMenu={noop} onOpenNote={noop} onOpenDiff={noop} onCloseOverlays={noop} onDeleteWorktree={noop}
+          update={{ phase: 'idle', info: null, progress: 0, error: null, mode: 'swap' as const, onUpdate: noop, onInstall: noop, onDismiss: noop }} />
+      </Profiler>,
+    );
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
+    const settled = commits;
+    expect(settled).toBeLessThan(40);
+    await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+    expect(commits).toBe(settled);
+    expect(JSON.parse(sessionStorage.getItem('strado:focus-expanded')!)).toEqual(['f-a']);
   });
 
   it('app open restores the worktree the Focus had open', async () => {

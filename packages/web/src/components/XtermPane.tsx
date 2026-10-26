@@ -13,7 +13,7 @@ import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
 import { runIdOfTab } from '../lib/runTab';
 import { findFileLinks } from '../lib/fileLinks';
 import { SearchAddon } from '@xterm/addon-search';
-import { TerminalSearchBar, searchKey, type SearchPort } from './TerminalSearchBar';
+import { TerminalSearchBar, filesSearchKey, searchKey, type SearchPort } from './TerminalSearchBar';
 import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, ShellIcon } from './hub/icons';
 
 const TRUE_BLACK_TERMINAL_THEME: ITheme = {
@@ -386,6 +386,9 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
           openSearchRef.current();
           return false;
         }
+        // ⌘⇧F (Ctrl+Shift+F off a Mac) is the worktree's file search: the hub
+        // takes it at the window; it never reaches the pty (Ctrl+Shift+F would send ^F).
+        if (filesSearchKey(e, isMac())) return false;
         if (
           e.type === 'keydown' && e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey &&
           e.key.toLowerCase() === 'c' && term.hasSelection()

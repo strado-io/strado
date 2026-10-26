@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { Focus } from '../api';
-import { byLastActive } from '../components/sidebar/FocusSwitcher';
+import { byCreated } from '../components/sidebar/FocusSwitcher';
 
-// Keyboard for Focuses: ⌘1–⌘9 activate the nth (popover order, by last use),
+// Keyboard for Focuses: ⌘1–⌘9 activate the nth (the sidebar's order: creation),
 // ⌘⌥← / ⌘⌥→ step to the previous / next one, wrapping, and ⇧⌘N asks the
 // sidebar to open its switcher ready for a new name (NEW_FOCUS_EVENT). Text
 // fields keep their keys, except the terminal's hidden textarea; the Browser
@@ -22,7 +22,7 @@ export function useFocusShortcut({ focuses, activeId, activate, enabled = true }
 
   useEffect(() => {
     if (!enabled) return;
-    const sorted = () => [...latest.current.focuses].sort(byLastActive);
+    const sorted = () => [...latest.current.focuses].sort(byCreated);
     const nth = (n: number) => { const f = sorted()[n - 1]; if (f) latest.current.activate(f.id); };
     const step = (dir: -1 | 1) => {
       const list = sorted();

@@ -27,8 +27,8 @@ vi.mock('../../hooks/useFocuses', () => ({
     setMembership: focusMock.setMembership, addMembers: focusMock.addMembers, remove: focusMock.remove,
   }),
 }));
-const focus = (id: string, name: string, members: string[] = [], lastActiveAt = '2026-01-01'): Focus =>
-  ({ id, name, members, createdAt: '2026-01-01', lastActiveAt });
+const focus = (id: string, name: string, members: string[] = [], lastActiveAt = '2026-01-01', createdAt = '2026-01-01'): Focus =>
+  ({ id, name, members, createdAt, lastActiveAt });
 const withFocus = (...members: string[]) => { focusMock.focuses = [focus('f1', 'Billing', members)]; focusMock.activeId = 'f1'; };
 
 const r1 = { id: 'r1', name: 'api', path: '/r1' } as RepoConfig;
@@ -53,6 +53,7 @@ const openHeader = () => within(screen.getByTestId('focus-open')).getByRole('hea
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1'])); // these tests read the cards: expanded
+  sessionStorage.setItem('strado:focus-expanded-for', 'f1'); // ...as left with f1 active
   focusMock.focuses = [];
   focusMock.activeId = null;
   for (const fn of [focusMock.activate, focusMock.create, focusMock.rename, focusMock.setMembership, focusMock.addMembers, focusMock.remove]) fn.mockReset();
@@ -306,15 +307,16 @@ describe('SidebarBody: the active Focus', () => {
 describe('SidebarBody: the Focus accordion', () => {
   beforeEach(() => {
     focusMock.focuses = [
-      focus('f1', 'Billing', ['local:/r1/wt'], '2026-02-01'),
-      focus('f2', 'Onboarding', [], '2026-03-01'),
-      focus('f3', 'Perf', ['local:/r2/wt', 'local:/r2/other'], '2026-01-01'),
+      // Created Billing, Onboarding, Perf; last used Onboarding, Billing, Perf.
+      focus('f1', 'Billing', ['local:/r1/wt'], '2026-02-01', '2025-12-01'),
+      focus('f2', 'Onboarding', [], '2026-03-01', '2025-12-02'),
+      focus('f3', 'Perf', ['local:/r2/wt', 'local:/r2/other'], '2026-01-01', '2025-12-03'),
     ];
     focusMock.activeId = 'f1';
   });
   const rowNames = () => within(list()).getAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.replace('Switch to ', ''));
 
-  it('only the active Focus is open; every other one is a row, by last use', () => {
+  it('only the active Focus is open; every other one is a row, in creation order', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.getAllByTestId('focus-open')).toHaveLength(1);
     expect(openHeader()).toHaveTextContent('Billing');
@@ -336,25 +338,43 @@ describe('SidebarBody: the Focus accordion', () => {
     return within(header.closest('[data-testid^="focus-"][class*="flex-col gap-0.5"]') as HTMLElement).queryByTestId('focus-group');
   };
 
-  it('switching changes the header, not what is expanded: the old one stays open, the new one stays folded', () => {
+  it('switching is the accordion: the new active Focus alone is expanded', () => {
     const { rerender } = render(<SidebarBody {...props()} />);
     focusMock.activeId = 'f3';
     rerender(<SidebarBody {...props()} />);
     expect(openHeader()).toHaveTextContent('Perf');
-    expect(rowNames()).toEqual(['Onboarding', 'Billing']);
-    expect(panelOf('Perf')).toBeNull();
-    expect(panelOf('Billing')).not.toBeNull();
+    expect(rowNames()).toEqual(['Billing', 'Onboarding']);
+    expect(panelOf('Perf')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
   });
 
-  it('clicking a row activates it and opens its chat, and does not expand it', () => {
-    sessionStorage.setItem('strado:focus-expanded', '[]');
+  it('clicking B activates it, opens its chat, expands it and collapses A; the order stays', () => {
     const onOpenFocus = vi.fn();
-    render(<SidebarBody {...props({ onOpenFocus })} />);
+    const { rerender } = render(<SidebarBody {...props({ onOpenFocus })} />);
+    expect(panelOf('Billing')).not.toBeNull();
+    focusMock.activate.mockImplementation((id: string) => { focusMock.activeId = id; });
     fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Perf' }));
     expect(onOpenFocus).toHaveBeenCalledWith('f3');
-    expect(focusMock.activate).toHaveBeenCalledWith('f3');
+    rerender(<SidebarBody {...props({ onOpenFocus })} />);
+    expect(panelOf('Perf')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
+    fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Billing' }));
+    rerender(<SidebarBody {...props({ onOpenFocus })} />);
+    expect(panelOf('Billing')).not.toBeNull();
     expect(panelOf('Perf')).toBeNull();
-    expect(screen.queryAllByTestId('focus-group')).toHaveLength(0);
+    expect(rowNames()).toEqual(['Onboarding', 'Perf']);
+    expect(openHeader()).toHaveTextContent('Billing');
+  });
+
+  it('after peeking with chevrons, clicking the active header is the accordion again', () => {
+    render(<SidebarBody {...props({ jarvis: { status: null, latest: null, selected: false, onOpen: vi.fn() } })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show Onboarding' }));
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
+    fireEvent.click(screen.getByTestId('focus-header'));
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(panelOf('Billing')).not.toBeNull();
   });
 
   it('the chevron expands a Focus and does not activate it; several can be expanded at once', () => {
@@ -382,11 +402,20 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(panelOf('Perf')).toBeNull();
   });
 
-  it('a Focus never toggled starts folded', () => {
+  it('a new window opens with the active Focus expanded, alone', () => {
     sessionStorage.removeItem('strado:focus-expanded');
+    sessionStorage.removeItem('strado:focus-expanded-for');
     render(<SidebarBody {...props()} />);
-    expect(screen.queryAllByTestId('focus-group')).toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Show Billing' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(panelOf('Billing')).not.toBeNull();
+  });
+
+  it('a switch made while the sidebar was not mounted is applied when it comes back', () => {
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1']));
+    focusMock.activeId = 'f3'; // the state was left for f1
+    render(<SidebarBody {...props()} />);
+    expect(panelOf('Perf')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
   });
 
   it('the active Focus folded is still clearly the current one: its two-line header, with status and latest reply', () => {
@@ -428,9 +457,31 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(within(onboarding).queryByTestId('focus-agents-f2')).toBeNull();
   });
 
-  it('six most recent, then Show all (N); the active one always shows, however old', () => {
-    focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`));
-    focusMock.activeId = 'g8'; // the oldest
+  it('clicking a Focus does not move it: activating touches its last-active time, never its place', () => {
+    const order = () => within(list()).getAllByRole('heading').concat(within(list()).getAllByRole('button', { name: /^Switch to / }))
+      .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map((el) => el.getAttribute('aria-label')?.replace('Switch to ', '') ?? el.textContent);
+    const { rerender } = render(<SidebarBody {...props()} />);
+    expect(order()).toEqual(['Billing', 'Onboarding', 'Perf']);
+    fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Perf' }));
+    // As useFocuses does: Perf becomes active and the server stamps it as just used.
+    focusMock.focuses = focusMock.focuses.map((f) => (f.id === 'f3' ? { ...f, lastActiveAt: '2026-09-01' } : f));
+    focusMock.activeId = 'f3';
+    rerender(<SidebarBody {...props()} />);
+    expect(order()).toEqual(['Billing', 'Onboarding', 'Perf']);
+  });
+
+  it('a new Focus is appended at the bottom', () => {
+    const { rerender } = render(<SidebarBody {...props()} />);
+    focusMock.focuses = [...focusMock.focuses, focus('f0', 'Alpha', [], '2026-09-01', '2026-09-01')];
+    rerender(<SidebarBody {...props()} />);
+    expect(rowNames()).toEqual(['Onboarding', 'Perf', 'Alpha']);
+  });
+
+  it('the first six in creation order, then Show all (N); the active one always shows, however far down', () => {
+    // Created g0…g8 in order; last used the other way round.
+    focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`, `2025-0${i + 1}-01`));
+    focusMock.activeId = 'g8'; // the newest, beyond the six
     render(<SidebarBody {...props()} />);
     expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5']);
     expect(openHeader()).toHaveTextContent('F8');

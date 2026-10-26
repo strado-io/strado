@@ -12,9 +12,9 @@ vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
-    onCursor?: (at: { path: string; line: number; col: number }) => void; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
+    onCursor?: (at: { path: string; line: number; col: number }) => void; highlight?: { q: string } | null; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
-      data-ask={String(!!p.onAskAgent)}>
+      data-ask={String(!!p.onAskAgent)} data-highlight={p.highlight?.q ?? ''}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
       <button type="button" onClick={() => p.onNavigate?.('definition', { path: p.path, line: 2, col: 4 })}>F12</button>
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
@@ -27,6 +27,9 @@ vi.mock('./FileViewer', () => ({
 }));
 
 import { FilesTab } from './FilesTab';
+import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
+import { registerSelection } from './codeSelection';
 
 const flush = () => act(async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); });
 const page = (dir: string) => ({ dir, truncated: false, entries: dir === '' ? [{ name: 'a.ts', path: 'a.ts', kind: 'file', change: 'M' }, { name: 'b.ts', path: 'b.ts', kind: 'file' }] : [] });
@@ -310,12 +313,35 @@ describe('FilesTab', () => {
       fireEvent.change(screen.getByLabelText('Search text'), { target: { value: 'needle' } });
       await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
       expect(files.search).toHaveBeenCalledWith('ws1', '/wt', { q: 'needle', word: false, case: false, regex: false }, undefined, expect.any(AbortSignal));
-      fireEvent.click(screen.getByRole('button', { name: /deep\/c\.ts:12/ }));
+      fireEvent.click(screen.getByRole('option', { name: /deep\/c\.ts:12/ }));
       expect(where()).toEqual(['deep/c.ts', '12', '3']);
+      // The code marks what was searched for, until the search closes.
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-highlight', 'needle');
       fireEvent.click(screen.getByRole('button', { name: 'Back' }));
       expect(where()[0]).toBe('a.ts');
       fireEvent.keyDown(screen.getByTestId('search-panel'), { key: 'Escape' });
       expect(screen.getByTestId('file-tree')).toBeInTheDocument();
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-highlight', '');
+    });
+
+    it('⌘⇧F from elsewhere in the hub (searchRequest): the search opens, seeded with the code\'s one-line selection', async () => {
+      const { rerender } = render(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} />);
+      await flush();
+      expect(screen.queryByTestId('search-panel')).toBeNull();
+      // The code view (FileViewer is stubbed here): a real editor in the focused pane, "needle" selected.
+      const doc = 'const needle = 1;\nnext line';
+      const view = new EditorView({ state: EditorState.create({ doc, selection: { anchor: 6, head: 12 } }), parent: screen.getByTestId('files-pane-0') });
+      registerSelection(view.dom, () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)); // as codeView does
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} searchRequest={1} />);
+      expect(screen.getByTestId('search-panel')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search text')).toHaveValue('needle');
+      expect(screen.getByLabelText('Search text')).toHaveFocus();
+      // A selection across lines seeds nothing; the box keeps what it has and is focused again.
+      view.dispatch({ selection: { anchor: 6, head: doc.length } });
+      fireEvent.change(screen.getByLabelText('Search text'), { target: { value: 'kept' } });
+      rerender(<FilesTab wsId="ws1" worktreePath="/wt" openPath={{ path: 'a.ts', nonce: 1 }} searchRequest={2} />);
+      expect(screen.getByLabelText('Search text')).toHaveValue('kept');
+      view.destroy();
     });
 
     it('in a text box Alt←/→, ⌘[ and Ctrl- are the box\'s; elsewhere they go back', async () => {

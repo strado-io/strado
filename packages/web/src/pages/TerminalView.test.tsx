@@ -1803,6 +1803,12 @@ describe('TerminalView', () => {
       expect(searchCalls.clear).toBeGreaterThan(before);
       expect(termFocus).toHaveBeenCalled();
     });
+    it('Ctrl+Shift+F (⌘⇧F on a Mac) is the worktree\'s file search: never sent to the pty, and not this find bar', async () => {
+      hub();
+      await vi.waitFor(() => expect(keyHandlers.length).toBeGreaterThan(0));
+      expect(key({ shiftKey: true }).r).toBe(false);
+      expect(screen.queryByLabelText('Find in terminal')).toBeNull();
+    });
     it('other keys pass through to the terminal', async () => {
       hub();
       await vi.waitFor(() => expect(keyHandlers.length).toBeGreaterThan(0));

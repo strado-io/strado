@@ -19,7 +19,7 @@ import { hasSession } from '../hooks/sessions';
 import { readBrowserTabs } from '../hooks/browserTabs';
 import { readKbTabs } from '../hooks/kbTabs';
 import { readWorktreeLru, compareByActivityThenRecency, type RankableWorktree } from '../lib/worktreeLru';
-import { byLastActive } from './sidebar/FocusSwitcher';
+import { byCreated } from './sidebar/FocusSwitcher';
 import { JarvisModelRow, JarvisRow, type JarvisRowState, type ModelRowView } from './jarvis/JarvisRow';
 import { createThread, describeRun, modelText, sendable, type ModelStep, type Turn } from '../lib/jarvis/model';
 import type { ModelErrorReason, ModelResult } from '../lib/jarvis/modelClient';
@@ -385,10 +385,10 @@ export function CommandPalette({
     const lru = readWorktreeLru();
     const out: Result[] = [];
 
-    // An empty query is the Focus switcher: every Focus, most recently used
-    // first, the current one marked. Typing searches everything, Focuses
+    // An empty query is the Focus switcher: every Focus, in the sidebar's
+    // order (creation), the current one marked. Typing searches everything, Focuses
     // still leading so the 15-row cap never buries them under worktrees.
-    for (const f of [...focuses].sort(byLastActive)) {
+    for (const f of [...focuses].sort(byCreated)) {
       if (q && !matches(q, f.name)) continue;
       const n = `${f.members.length} worktree${f.members.length === 1 ? '' : 's'}`;
       const current = f.id === activeFocusId;

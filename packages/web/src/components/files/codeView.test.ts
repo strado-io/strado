@@ -53,6 +53,25 @@ describe('codeView (real CodeMirror)', () => {
     view.destroy();
   });
 
+  it('setHighlight marks every match of a ⌘⇧F query; the one at the cursor is the current one; null clears', async () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const view = await createCodeView(parent, { doc: 'open(a);\nreopen(b);\nOpen(c);\n', path: 'x.ts', language: null, marks: null, onSelection: vi.fn() });
+    view.setHighlight({ q: 'open', case: true });
+    view.goToLine(2, 3);
+    expect([...parent.querySelectorAll('.cm-searchMatch')].map((e) => e.textContent)).toEqual(['open', 'open']);
+    expect(parent.querySelector('.cm-searchMatch-selected')?.textContent).toBe('open');
+    const cm = EditorView.findFromDOM(parent.querySelector('.cm-editor') as HTMLElement)!;
+    expect(cm.state.doc.lineAt(cm.state.selection.main.head).number).toBe(2);
+    view.setHighlight({ q: 'open', word: true });
+    expect([...parent.querySelectorAll('.cm-searchMatch')].map((e) => e.textContent)).toEqual(['open', 'Open']);
+    view.setHighlight({ q: 'o[a-z]+n', regex: true, case: true });
+    expect(parent.querySelectorAll('.cm-searchMatch')).toHaveLength(2);
+    view.setHighlight(null);
+    expect(parent.querySelector('.cm-searchMatch')).toBeNull();
+    view.destroy();
+  });
+
   it('reports cursor moves the person makes, not goToLine', async () => {
     const parent = document.createElement('div');
     document.body.append(parent);

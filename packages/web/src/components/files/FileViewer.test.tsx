@@ -5,7 +5,7 @@ import type { FileContent, FileMarks } from '../../types';
 type Opts = { doc: string; path: string; language: string | null; onSelection: (s: { from: number; to: number; text: string } | null) => void };
 const cm = vi.hoisted(() => ({
   opts: null as Opts | null,
-  view: { goToLine: vi.fn(), focus: vi.fn(), step: vi.fn(), setMarks: vi.fn(), destroy: vi.fn() },
+  view: { goToLine: vi.fn(), focus: vi.fn(), step: vi.fn(), setMarks: vi.fn(), setHighlight: vi.fn(), destroy: vi.fn() },
 }));
 vi.mock('./codeView', () => ({
   createCodeView: vi.fn(async (_el: HTMLElement, o: Opts) => { cm.opts = o; return cm.view; }),

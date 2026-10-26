@@ -359,7 +359,8 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     await waitFor(() => expect(fakeFocuses.api.create).toHaveBeenCalledWith('default', expect.objectContaining({ name: 'release', members: ['local:/wt/master'] })));
     // Created and switched to, as the sidebar's own "New focus" does.
     await waitFor(() => expect(focusPill('release')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Show release' })); // a new Focus starts folded
+    // Made active, so expanded alone (the accordion), even though the sidebar was hidden at the switch.
+    expect(screen.getByRole('button', { name: 'Fold release' })).toBeInTheDocument();
     expect(await focusSection().findAllByText('master')).not.toHaveLength(0);
     expect(focusSection().queryAllByText('FD-9')).toHaveLength(0);
 
