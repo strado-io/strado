@@ -1,4 +1,5 @@
-import { render, renderHook, screen } from '@testing-library/react';
+import { act, render, renderHook, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Focus } from '../api';
 import { NEW_FOCUS_EVENT, useFocusShortcut } from './focusShortcut';
@@ -39,6 +40,23 @@ describe('useFocusShortcut', () => {
       key({ key: String(i + 1), metaKey: true });
       expect(activate).toHaveBeenLastCalledWith(id);
     });
+  });
+
+  it('⌘N is a click on the Nth row: that Focus alone is expanded', () => {
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['a', 'c'])); // left with c peeked at
+    sessionStorage.setItem('strado:focus-expanded-for', 'a');
+    function Harness() {
+      const [activeId, setActiveId] = useState<string | null>('a');
+      useFocusShortcut({ focuses, activeId, activate: setActiveId });
+      return <FocusList focuses={focuses} activeId={activeId} badges={new Map()} activeMenu={[]} onOpen={setActiveId} onRename={vi.fn()}>{(x) => <span>cards of {x.id}</span>}</FocusList>;
+    }
+    render(<Harness />);
+    expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of a', 'cards of c']);
+    act(() => { key({ key: '3', metaKey: true }); }); // b, a, c: the third is c
+    expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of c']);
+    act(() => { key({ key: '1', metaKey: true }); });
+    expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of b']);
+    expect(JSON.parse(sessionStorage.getItem('strado:focus-expanded')!)).toEqual(['b']);
   });
 
   it('⌘⌥→ and ⌘⌥← step through Focuses and wrap; with none active, → starts at the first', () => {

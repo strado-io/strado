@@ -1,14 +1,15 @@
-// Every Focus, as an accordion. Each row's chevron, and only it, shows or
-// folds that Focus's worktree cards; any number can be open, remembered per
-// window, and a Focus never toggled starts folded. Clicking a row anywhere
-// else makes it the active Focus and opens its Jarvis chat, folded or not.
+// Every Focus, as an accordion. Making a Focus active (a click on its row,
+// ⌘1–9, any switch) opens its Jarvis chat, expands it and folds every other
+// one; clicking the active row's header folds the others again. The chevron
+// toggles just that Focus without activating it, to peek at another one's
+// worktrees. What is expanded is remembered per window.
 // The active row is its Jarvis: two lines (status, latest reply), selected
 // while the chat shows. The others are flat one-line headings with their
 // live badges — headings, not cards, so they never read as worktrees. They
 // keep one stable order, creation (byCreated), so using a Focus never moves
 // it: the first six show, the active one always, then "Show all (N)". No
 // header: New focus is the + in the workspace row.
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
 import { FocusIcon, byCreated } from './FocusSwitcher';
@@ -38,6 +39,7 @@ export type FocusJarvisHeader = {
 
 export const FOCUS_LIST_CAP = 6;
 const EXPANDED_KEY = 'strado:focus-expanded';
+const EXPANDED_FOR_KEY = 'strado:focus-expanded-for';
 /** The header's second line, aligned under the name. */
 export const FOCUS_LATEST_CLASS = 'truncate pl-[2.4rem] pr-1 text-[11px] leading-4 text-zinc-500';
 
@@ -69,7 +71,16 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   children: (f: Focus) => React.ReactNode;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const [expanded, toggle] = useExpanded();
+  const [expanded, toggle, only] = useExpanded();
+  // A Focus becoming active is the accordion: it alone is expanded. Compared
+  // with the Focus the stored state was made for, so a switch while the
+  // sidebar was hidden still applies, and a reload keeps what was left.
+  const lastActive = useRef(readExpandedFor());
+  useEffect(() => {
+    if (activeId && activeId !== lastActive.current) only(activeId);
+    lastActive.current = activeId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const sorted = [...focuses].sort(byCreated);
   const capped = sorted.slice(0, FOCUS_LIST_CAP);
@@ -97,7 +108,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
               {isActive ? (
                 // The active Focus's header is its Jarvis: clicking it (outside the chevron and ⋯) opens the chat.
                 <div data-testid="focus-header" data-selected={jarvis?.selected || undefined}
-                  onClick={jarvis && renaming !== f.id ? jarvis.onOpen : undefined}
+                  onClick={jarvis && renaming !== f.id ? () => { only(f.id); jarvis.onOpen(); } : undefined}
                   className={`${HEADER} group ${jarvis ? 'cursor-pointer' : ''} ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
                   <div className="flex h-6 min-w-0 items-center gap-1.5">
                     {chevron}
@@ -156,15 +167,26 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
 function readExpanded(): Set<string> {
   try { return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_KEY) || '[]') as string[]); } catch { return new Set(); }
 }
-function useExpanded(): [Set<string>, (id: string) => void] {
+function readExpandedFor(): string | null {
+  try { return sessionStorage.getItem(EXPANDED_FOR_KEY); } catch { return null; }
+}
+function useExpanded(): [Set<string>, (id: string) => void, (id: string) => void] {
   const [expanded, setExpanded] = useState(readExpanded);
+  const save = (next: Set<string>) => {
+    try { sessionStorage.setItem(EXPANDED_KEY, JSON.stringify([...next])); } catch { /* storage off: this render only */ }
+    return next;
+  };
   const toggle = (id: string) => setExpanded((cur) => {
     const next = new Set(cur);
     if (!next.delete(id)) next.add(id);
-    try { sessionStorage.setItem(EXPANDED_KEY, JSON.stringify([...next])); } catch { /* storage off: this render only */ }
-    return next;
+    return save(next);
   });
-  return [expanded, toggle];
+  // The accordion: this one expanded, every other folded.
+  const only = (id: string) => {
+    try { sessionStorage.setItem(EXPANDED_FOR_KEY, id); } catch { /* storage off */ }
+    setExpanded(() => save(new Set([id])));
+  };
+  return [expanded, toggle, only];
 }
 
 function RenameField({ name, onDone }: { name: string; onDone: (name: string | null) => void }) {

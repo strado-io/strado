@@ -53,6 +53,7 @@ const openHeader = () => within(screen.getByTestId('focus-open')).getByRole('hea
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1'])); // these tests read the cards: expanded
+  sessionStorage.setItem('strado:focus-expanded-for', 'f1'); // ...as left with f1 active
   focusMock.focuses = [];
   focusMock.activeId = null;
   for (const fn of [focusMock.activate, focusMock.create, focusMock.rename, focusMock.setMembership, focusMock.addMembers, focusMock.remove]) fn.mockReset();
@@ -337,25 +338,43 @@ describe('SidebarBody: the Focus accordion', () => {
     return within(header.closest('[data-testid^="focus-"][class*="flex-col gap-0.5"]') as HTMLElement).queryByTestId('focus-group');
   };
 
-  it('switching changes the header, not what is expanded: the old one stays open, the new one stays folded', () => {
+  it('switching is the accordion: the new active Focus alone is expanded', () => {
     const { rerender } = render(<SidebarBody {...props()} />);
     focusMock.activeId = 'f3';
     rerender(<SidebarBody {...props()} />);
     expect(openHeader()).toHaveTextContent('Perf');
     expect(rowNames()).toEqual(['Billing', 'Onboarding']);
-    expect(panelOf('Perf')).toBeNull();
-    expect(panelOf('Billing')).not.toBeNull();
+    expect(panelOf('Perf')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
   });
 
-  it('clicking a row activates it and opens its chat, and does not expand it', () => {
-    sessionStorage.setItem('strado:focus-expanded', '[]');
+  it('clicking B activates it, opens its chat, expands it and collapses A; the order stays', () => {
     const onOpenFocus = vi.fn();
-    render(<SidebarBody {...props({ onOpenFocus })} />);
+    const { rerender } = render(<SidebarBody {...props({ onOpenFocus })} />);
+    expect(panelOf('Billing')).not.toBeNull();
+    focusMock.activate.mockImplementation((id: string) => { focusMock.activeId = id; });
     fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Perf' }));
     expect(onOpenFocus).toHaveBeenCalledWith('f3');
-    expect(focusMock.activate).toHaveBeenCalledWith('f3');
+    rerender(<SidebarBody {...props({ onOpenFocus })} />);
+    expect(panelOf('Perf')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
+    fireEvent.click(within(list()).getByRole('button', { name: 'Switch to Billing' }));
+    rerender(<SidebarBody {...props({ onOpenFocus })} />);
+    expect(panelOf('Billing')).not.toBeNull();
     expect(panelOf('Perf')).toBeNull();
-    expect(screen.queryAllByTestId('focus-group')).toHaveLength(0);
+    expect(rowNames()).toEqual(['Onboarding', 'Perf']);
+    expect(openHeader()).toHaveTextContent('Billing');
+  });
+
+  it('after peeking with chevrons, clicking the active header is the accordion again', () => {
+    render(<SidebarBody {...props({ jarvis: { status: null, latest: null, selected: false, onOpen: vi.fn() } })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show Onboarding' }));
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
+    fireEvent.click(screen.getByTestId('focus-header'));
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(panelOf('Billing')).not.toBeNull();
   });
 
   it('the chevron expands a Focus and does not activate it; several can be expanded at once', () => {
@@ -383,11 +402,20 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(panelOf('Perf')).toBeNull();
   });
 
-  it('a Focus never toggled starts folded', () => {
+  it('a new window opens with the active Focus expanded, alone', () => {
     sessionStorage.removeItem('strado:focus-expanded');
+    sessionStorage.removeItem('strado:focus-expanded-for');
     render(<SidebarBody {...props()} />);
-    expect(screen.queryAllByTestId('focus-group')).toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Show Billing' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(panelOf('Billing')).not.toBeNull();
+  });
+
+  it('a switch made while the sidebar was not mounted is applied when it comes back', () => {
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['f1']));
+    focusMock.activeId = 'f3'; // the state was left for f1
+    render(<SidebarBody {...props()} />);
+    expect(panelOf('Perf')).not.toBeNull();
+    expect(panelOf('Billing')).toBeNull();
   });
 
   it('the active Focus folded is still clearly the current one: its two-line header, with status and latest reply', () => {
