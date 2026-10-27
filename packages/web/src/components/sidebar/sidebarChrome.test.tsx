@@ -137,6 +137,8 @@ describe('sidebar chrome', () => {
     const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8');
     expect(css).toMatch(/\.surface-pop, \.menu-solid, \[role='menu'\], \[role='listbox'\], \[role='tooltip'\], \[role='dialog'\]:not\(\.fixed\),\s+\.fixed\.inset-0\[class\*='bg-black\/'\] > \* \{\s+transition: opacity 160ms ease-out, scale 220ms var\(--ease-drawer\)/);
     expect(css).toMatch(/@starting-style \{[^@]*opacity: 0; scale: 0\.97; translate: 0 -4px;/);
+    // A modal's backdrop blurs the app behind it.
+    expect(css).toMatch(/\.fixed\.inset-0\[class\*='bg-black\/'\] \{[^}]*backdrop-filter: blur\(8px\)/);
     expect(css).toMatch(/\.sidebar-slide\[data-collapsed\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\);/);
     expect(css).toMatch(/@starting-style \{ \.sidebar-slide\[data-slide-in\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\); \} \}/);
     expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s+\.surface-pop[^}]*\.sidebar-slide, \.open-sidebar-slot \{ transition: none; \}/);

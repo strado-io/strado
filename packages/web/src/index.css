@@ -592,7 +592,13 @@ body {
   .fixed.inset-0[class*='bg-black/'] > * {
     transition: opacity 160ms ease-out, scale 220ms var(--ease-drawer), translate 220ms var(--ease-drawer);
   }
-  .fixed.inset-0[class*='bg-black/'] { transition: opacity 180ms ease-out; }
+  /* A modal's backdrop dims and blurs the app behind it, so the dialog is
+     the only thing in focus; fading in, the blur fades in with it. */
+  .fixed.inset-0[class*='bg-black/'] {
+    -webkit-backdrop-filter: blur(8px) saturate(120%);
+    backdrop-filter: blur(8px) saturate(120%);
+    transition: opacity 180ms ease-out;
+  }
   @starting-style {
     .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog']:not(.fixed),
     .fixed.inset-0[class*='bg-black/'] > * { opacity: 0; scale: 0.97; translate: 0 -4px; }
