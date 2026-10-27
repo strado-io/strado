@@ -11,6 +11,7 @@ function runTabLabel(g: Pick<Group, 'runNames'>, id: string): string | null {
 /** Process states in which the run tab is restored: live, or crashed (its output one click away). */
 const RUN_TAB_STATES = new Set(['starting', 'running', 'stopping', 'crashed']);
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { FileAskContext, RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { QuotaCircle } from '../components/usage/QuotaCircle';
@@ -1752,38 +1753,39 @@ export function TerminalView({
       setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
-    let raf = 0;
-    const sync = () => {
-      window.cancelAnimationFrame(raf);
-      raf = window.requestAnimationFrame(() => {
-        const outer = surface.getBoundingClientRect();
-        const next: typeof paneRects = {};
-        for (const key of leafKeys(paneTree)) {
-          const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
-          if (!el) continue;
-          const rect = el.getBoundingClientRect();
-          next[key] = {
-            left: rect.left - outer.left,
-            top: rect.top - outer.top,
-            width: rect.width,
-            height: rect.height,
-          };
-        }
-        setPaneRects((prev) => {
-          const keys = Object.keys(next);
-          if (
-            keys.length === Object.keys(prev).length &&
-            keys.every((key) => {
-              const a = prev[key];
-              const b = next[key]!;
-              return !!a && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
-            })
-          ) return prev;
-          return next;
-        });
+    const apply = () => {
+      const outer = surface.getBoundingClientRect();
+      const next: typeof paneRects = {};
+      for (const key of leafKeys(paneTree)) {
+        const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        next[key] = {
+          left: rect.left - outer.left,
+          top: rect.top - outer.top,
+          width: rect.width,
+          height: rect.height,
+        };
+      }
+      setPaneRects((prev) => {
+        const keys = Object.keys(next);
+        if (
+          keys.length === Object.keys(prev).length &&
+          keys.every((key) => {
+            const a = prev[key];
+            const b = next[key]!;
+            return !!a && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
+          })
+        ) return prev;
+        return next;
       });
     };
-    sync();
+    // A resize lands in the same frame: the observer runs after layout and
+    // before paint, so measuring there and rendering synchronously paints the
+    // panes on their slots. Deferred a frame, they trailed every resize (the
+    // sidebar sliding shook the Changes pane, then it snapped into place).
+    const sync = () => flushSync(apply);
+    apply();
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
     for (const key of leafKeys(paneTree)) {
@@ -1792,7 +1794,6 @@ export function TerminalView({
     }
     window.addEventListener('resize', sync);
     return () => {
-      window.cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', sync);
     };
