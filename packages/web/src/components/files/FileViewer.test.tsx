@@ -284,6 +284,23 @@ describe('FileViewer', () => {
       expect(write).not.toHaveBeenCalled();
     });
 
+    it('mixed line endings (or a lone CR) are read-only, and the chip says why; a CRLF file is editable', async () => {
+      const a = show({ write: written() }, { ...V1, text: 'one\r\ntwo\nthree\r\n' });
+      await flush();
+      expect(cm.opts!.onChange).toBeUndefined();
+      expect(screen.getByTestId('read-only')).toHaveTextContent('Read-only: mixed line endings');
+      expect(getBuffer('/wt', 'src/app.ts')).toBeUndefined();
+      a.unmount();
+      const b = show({ write: written() }, { ...V1, text: 'old mac\rline' });
+      await flush();
+      expect(screen.getByTestId('read-only')).toHaveTextContent('Read-only: mixed line endings');
+      b.unmount();
+      show({ write: written() }, { ...V1, text: 'one\r\ntwo\r\n' });
+      await flush();
+      expect(cm.opts!.onChange).toBeTypeOf('function');
+      expect(screen.queryByTestId('read-only')).toBeNull();
+    });
+
     it('read-only: without a write (a runner), and for binary or too-large files even with one', async () => {
       const a = show({ readOnlyWhy: 'Files on runner-dev are read-only here' });
       await flush();

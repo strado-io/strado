@@ -105,6 +105,30 @@ describe('codeView (real CodeMirror)', () => {
     view.destroy();
   });
 
+  it('a CRLF file stays CRLF: an edit reports \\r\\n on every line, Enter inserts one, setText of the same text dispatches nothing', async () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const onChange = vi.fn();
+    const doc = 'one\r\ntwo\r\nthree\r\n';
+    const view = await createCodeView(parent, { doc, path: 'x.ts', language: null, marks: null, onSelection: vi.fn(), onChange });
+    const cm = EditorView.findFromDOM(parent.querySelector('.cm-editor') as HTMLElement)!;
+    expect(cm.state.lineBreak).toBe('\r\n');
+    cm.dispatch({ changes: { from: 0, insert: '// ' }, userEvent: 'input.type' });
+    expect(onChange).toHaveBeenLastCalledWith('// one\r\ntwo\r\nthree\r\n');
+    cm.dispatch({ selection: { anchor: cm.state.doc.line(2).to } });
+    parent.querySelector('.cm-content')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(onChange).toHaveBeenLastCalledWith('// one\r\ntwo\r\n\r\nthree\r\n');
+    expect(onChange.mock.lastCall![0]).not.toMatch(/[^\r]\n/);
+    const dispatch = vi.spyOn(cm, 'dispatch');
+    view.setText('// one\r\ntwo\r\n\r\nthree\r\n');
+    expect(dispatch).not.toHaveBeenCalled();
+    // A reload of new CRLF text goes in as CRLF, only where it differs.
+    view.setText('// one\r\nTWO\r\n\r\nthree\r\n');
+    expect(cm.state.sliceDoc()).toBe('// one\r\nTWO\r\n\r\nthree\r\n');
+    expect(cm.state.doc.lines).toBe(5);
+    view.destroy();
+  });
+
   it('reports cursor moves the person makes, not goToLine', async () => {
     const parent = document.createElement('div');
     document.body.append(parent);

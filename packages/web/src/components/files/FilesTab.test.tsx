@@ -546,6 +546,23 @@ describe('FilesTab', () => {
       expect(pane0().getByRole('tab', { name: 'a.ts' })).toHaveAttribute('data-dirty', 'true');
     });
 
+    it('a close during a save that then fails keeps the tab, with the conflict up', async () => {
+      await open('a.ts', 'b.ts');
+      edit('a.ts');
+      let fail: (e: unknown) => void = () => {};
+      files.write.mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+      await act(async () => { screen.getByRole('button', { name: 'read' }).dispatchEvent(new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true, cancelable: true })); });
+      fireEvent.click(pane0().getByRole('button', { name: 'Close a.ts (unsaved changes)' }));
+      fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Save' }));
+      await flush();
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).toBeInTheDocument(); // still waiting on the write
+      await act(async () => { fail(Object.assign(new Error('409'), { code: 'CONFLICT', details: { version: 'disk' } })); });
+      await flush();
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).toBeInTheDocument();
+      expect(getBuffer('/wt', 'a.ts')).toMatchObject({ text: 'mine', conflict: { version: 'disk' } });
+      expect(files.write).toHaveBeenCalledTimes(1);
+    });
+
     it('a save refused on close (changed on disk) keeps the tab; a clean tab closes without asking', async () => {
       await open('a.ts', 'b.ts');
       edit('a.ts');

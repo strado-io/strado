@@ -71,10 +71,27 @@ export function discardBuffer(worktree: string, path: string): void {
   if (buffers.has(keyOf(worktree, path))) put(worktree, path, null);
 }
 
+// The write in flight per file: a save asked meanwhile (⌘S again, a close)
+// waits for it, and for its outcome, instead of passing as 'clean'.
+const inflight = new Map<string, Promise<SaveOutcome>>();
+
 /** ⌘S. `force` writes over a file that changed on disk (Overwrite). */
 export async function saveBuffer(worktree: string, path: string, force = false): Promise<SaveOutcome> {
+  const key = keyOf(worktree, path);
+  const running = inflight.get(key);
+  if (running) {
+    const outcome = await running;
+    // Written, but typed into since: save again (or 'clean' if nothing's left to write).
+    return outcome === 'saved' ? saveBuffer(worktree, path, force) : outcome;
+  }
+  const p = writeBuffer(worktree, path, force);
+  inflight.set(key, p);
+  try { return await p; } finally { if (inflight.get(key) === p) inflight.delete(key); }
+}
+
+async function writeBuffer(worktree: string, path: string, force: boolean): Promise<SaveOutcome> {
   const b = getBuffer(worktree, path);
-  if (!b || b.saving || (!isDirty(b) && !force)) return 'clean';
+  if (!b || (!isDirty(b) && !force)) return 'clean';
   if (b.version === null) { put(worktree, path, { ...b, error: NO_VERSION }); return 'failed'; }
   const text = b.text;
   put(worktree, path, { ...b, saving: true, error: null });

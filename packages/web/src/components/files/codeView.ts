@@ -14,6 +14,7 @@ import type { FileMarks, SearchQuery } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
 import { createFindPanel } from './findPanel';
 import { registerSelection } from './codeSelection';
+import { lineEndings } from './lineEndings';
 import { renderHover } from './hoverMarkdown';
 
 // Ctrl-click on a Mac is a right-click (context menu), so there only ⌘ navigates.
@@ -193,6 +194,8 @@ export async function createCodeView(parent: HTMLElement, o: {
   onChange?: (text: string) => void;
 }): Promise<CodeView> {
   const editable = !!o.onChange;
+  // A CRLF file stays CRLF: the state's line break is \r\n, so the text read back (sliceDoc) and Enter use it.
+  const crlf = lineEndings(o.doc) === 'crlf';
   const desc = (o.language && LanguageDescription.matchLanguageName(languages, o.language, true))
     || LanguageDescription.matchFilename(languages, o.path.split('/').pop() ?? o.path);
   const lang = desc ? await desc.load().catch(() => null) : null;
@@ -250,6 +253,7 @@ export async function createCodeView(parent: HTMLElement, o: {
       doc: o.doc,
       extensions: [
         EditorState.readOnly.of(!editable),
+        ...(crlf ? [EditorState.lineSeparator.of('\r\n')] : []),
         ...(editable ? [history()] : []),
         lineNumbers(),
         marksField.init(() => o.marks),
@@ -278,7 +282,7 @@ export async function createCodeView(parent: HTMLElement, o: {
         EditorView.lineWrapping,
         ...(lang ? [lang] : []),
         EditorView.updateListener.of((u) => {
-          if (o.onChange && u.docChanged && u.transactions.some((tr) => tr.docChanged && !tr.annotation(external))) o.onChange(u.state.doc.toString());
+          if (o.onChange && u.docChanged && u.transactions.some((tr) => tr.docChanged && !tr.annotation(external))) o.onChange(u.state.sliceDoc());
           if (!u.selectionSet) return;
           const sel = u.state.selection.main;
           if (o.onCursor && u.transactions.some((tr) => tr.isUserEvent('select'))) {
@@ -303,15 +307,20 @@ export async function createCodeView(parent: HTMLElement, o: {
     setMarks: (marks) => view.dispatch({ effects: setMarks.of(marks) }),
     setHighlight: (q) => view.dispatch({ effects: setHighlight.of(q) }),
     setText: (text) => {
+      // Compared and diffed with "\n" breaks, where an offset is a document
+      // position (a break counts one); inserted with the state's own break.
+      const sep = view.state.lineBreak;
       const cur = view.state.doc.toString();
-      if (cur === text) return;
+      const next = sep === '\n' ? text : text.split(sep).join('\n');
+      if (cur === next) return;
       // Only the part that differs, so the cursor and scroll stay where they were.
       let from = 0;
-      while (from < cur.length && from < text.length && cur.charCodeAt(from) === text.charCodeAt(from)) from++;
+      while (from < cur.length && from < next.length && cur.charCodeAt(from) === next.charCodeAt(from)) from++;
       let end = 0;
-      while (end < cur.length - from && end < text.length - from && cur.charCodeAt(cur.length - 1 - end) === text.charCodeAt(text.length - 1 - end)) end++;
+      while (end < cur.length - from && end < next.length - from && cur.charCodeAt(cur.length - 1 - end) === next.charCodeAt(next.length - 1 - end)) end++;
+      const insert = next.slice(from, next.length - end);
       view.dispatch({
-        changes: { from, to: cur.length - end, insert: text.slice(from, text.length - end) },
+        changes: { from, to: cur.length - end, insert: sep === '\n' ? insert : insert.split('\n').join(sep) },
         annotations: [external.of(true), Transaction.addToHistory.of(false)],
       });
     },
