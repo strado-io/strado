@@ -452,6 +452,17 @@ body {
       0 16px 40px -8px rgb(0 0 0 / 0.75);
   }
 }
+/* A menu that opens over glass (the Jarvis composer's): solid, no backdrop
+   filter. A backdrop-filter element inside another one, and spilling out of
+   it, is composited wrongly on the GPU path (Chromium/Electron): what's behind
+   paints through and over it. Opaque, a blur has nothing to show anyway. */
+.menu-solid {
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.09);
+  background-color: rgb(20 21 25);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.6), 0 16px 40px -8px rgb(0 0 0 / 0.75);
+}
+:root[data-theme='light'] .menu-solid { background-color: #fff; border-color: rgb(0 0 0 / 0.12); box-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.18); }
 .surface-pop .hover\:bg-zinc-800:hover,
 .surface-pop .bg-zinc-800 { background-color: rgb(255 255 255 / 0.07); }
 .surface-pop .hover\:bg-zinc-900:hover,

@@ -85,19 +85,37 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
   };
 
   const current = AGENTS.find((a) => a.id === agent) ?? AGENTS[0]!;
+  // The menus are the card's siblings, never inside its glass, and solid
+  // (menu-solid): see index.css. The wrapper is its own layer above the chat.
+  const popup = 'menu-solid absolute bottom-full left-0 z-50 mb-2 rounded-xl p-1';
   return (
-    <div className="relative">
+    <div className="relative isolate z-10">
       {options.length > 0 && (
         <ul role="listbox" aria-label={mention?.sigil === '@' ? 'Agents' : 'Worktrees'}
-          className="surface-pop !bg-zinc-900 absolute bottom-full left-0 z-50 mb-2 max-h-60 w-64 overflow-auto rounded-xl p-1 text-[13px]">
+          className={`${popup} max-h-60 w-64 overflow-auto text-[13px]`}>
           {options.map((c, i) => (
             <li key={'agentId' in c ? c.agentId : c.worktreePath} role="option" aria-selected={i === pick}
               onMouseDown={(e) => e.preventDefault()} onClick={() => choose(c)}
-              className={`cursor-pointer truncate rounded-md px-2 py-1 ${i === pick ? 'bg-white/10 text-zinc-100' : 'text-zinc-300'}`}>
+              className={`cursor-pointer truncate rounded-md px-2 py-1 ${i === pick ? 'bg-[rgb(var(--pane-edge)/0.08)] text-zinc-100' : 'text-zinc-300'}`}>
               {mention?.sigil}{c.label}
             </li>
           ))}
         </ul>
+      )}
+      {menuOpen && (
+        <div role="menu" aria-label="Jarvis runs on" className={`${popup} w-56 text-[12.5px]`}>
+          <div className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-wide text-zinc-500">Jarvis runs on</div>
+          {AGENTS.map((a) => (
+            <div key={a.id} role="menuitem" aria-disabled={!a.ready} tabIndex={a.ready ? 0 : -1}
+              onClick={() => { if (a.ready) setMenuOpen(false); }}
+              className={`flex h-8 items-center gap-2 rounded-lg px-2 ${a.ready ? 'cursor-pointer text-zinc-100 hover:bg-[rgb(var(--pane-edge)/0.07)]' : 'cursor-default text-zinc-500'}`}>
+              <span className="flex-1">{a.label}</span>
+              {a.id === current.id
+                ? <span aria-hidden="true" className="text-[#e8906f]">✓</span>
+                : !a.ready && <span className="rounded-full border border-[rgb(var(--pane-edge)/0.1)] px-1.5 py-px text-[10px] text-zinc-500">Soon</span>}
+            </div>
+          ))}
+        </div>
       )}
       <div className="glass pane-card rounded-2xl border px-3 pb-2 pt-2.5">
         <textarea ref={box} aria-label="Message Jarvis" rows={2} value={text} maxLength={JARVIS_MESSAGE_MAX}
@@ -112,24 +130,6 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
               className="rounded-md px-2 py-0.5 text-[12px] text-zinc-400 hover:bg-white/10 hover:text-zinc-200">
               ✦ {current.label}
             </button>
-            {menuOpen && (
-              // Above the whole composer, never over its text. Opaque: inside the
-              // composer's own glass a backdrop blur has nothing to blur, so the
-              // chat would show through surface-pop's translucent fill.
-              <div role="menu" aria-label="Jarvis runs on" className="surface-pop !bg-zinc-900 absolute bottom-full left-0 z-50 mb-2 w-56 rounded-xl p-1 text-[12.5px]">
-                <div className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-wide text-zinc-500">Jarvis runs on</div>
-                {AGENTS.map((a) => (
-                  <div key={a.id} role="menuitem" aria-disabled={!a.ready} tabIndex={a.ready ? 0 : -1}
-                    onClick={() => { if (a.ready) setMenuOpen(false); }}
-                    className={`flex h-8 items-center gap-2 rounded-lg px-2 ${a.ready ? 'cursor-pointer text-zinc-100 hover:bg-white/[0.07]' : 'cursor-default text-zinc-500'}`}>
-                    <span className="flex-1">{a.label}</span>
-                    {a.id === current.id
-                      ? <span aria-hidden="true" className="text-[#e8906f]">✓</span>
-                      : !a.ready && <span className="rounded-full border border-white/10 px-1.5 py-px text-[10px] text-zinc-500">Soon</span>}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
           <span className="flex-1" />
           {running
