@@ -179,10 +179,12 @@ describe('FilesTab', () => {
     expect(screen.getByTestId('viewer')).toHaveAttribute('data-ask', 'true');
   });
 
-  it('glass panes, 13/11px type, no raw hex', async () => {
+  it('explorer and editor flush in the pane (one divider, no inset cards), 13/11px type, no raw hex', async () => {
     const { container } = render(<FilesTab wsId="ws1" worktreePath="/wt" />);
     await flush();
-    expect(container.querySelectorAll('.glass.pane-card')).toHaveLength(2);
+    expect(container.querySelectorAll('.glass.pane-card')).toHaveLength(0);
+    expect(screen.getByTestId('files-tab')).not.toHaveClass('p-2');
+    expect(container.querySelector('main')).toHaveClass('border-l');
     expect(container.innerHTML).not.toMatch(/text-\[(9|10|12)px\]/);
     expect(container.innerHTML).not.toMatch(/#[0-9a-f]{6}\b/i);
   });

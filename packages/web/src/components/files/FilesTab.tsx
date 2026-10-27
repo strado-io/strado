@@ -435,9 +435,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   const fromHere = () => (selected ? here.current : null);
   return (
     // data-file-tab-open: the hub's own ⌘W steps aside for ours while a file tab is open.
-    <div ref={root} className="flex h-full min-h-0 p-2" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
+    <div ref={root} className="flex h-full min-h-0 border-t border-zinc-800/80" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
       <aside id={explorerId} aria-label="Explorer" style={{ width: treeWidth }}
-        className={`glass pane-card min-w-[11rem] shrink flex-col overflow-hidden rounded-xl border ${explorerShown ? 'flex' : 'hidden'}`}>
+        className={`min-w-[11rem] shrink flex-col overflow-hidden ${explorerShown ? 'flex' : 'hidden'}`}>
         <div ref={header} className="flex h-8 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b border-zinc-800/80 pl-2 pr-1" data-testid="files-tree-header">
           <Chip on={changedOnly} onClick={() => setChangedOnly((v) => !v)} compact={compact} label="Changed"
             title="Changed only — list just the files that differ from HEAD" icon={<FilterIcon />} count={changedCount} />
@@ -462,7 +462,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
         <div role="separator" aria-orientation="vertical" aria-label="Resize explorer" aria-controls={explorerId} tabIndex={0}
           aria-valuenow={treeWidth} aria-valuemin={EXPLORER.min} aria-valuemax={maxTree()}
           data-testid="explorer-resize" title="Drag to resize · double-click to reset"
-          className="group -mx-1 flex w-2 shrink-0 cursor-col-resize items-stretch justify-center outline-none"
+          className="group relative z-10 -mx-1 flex w-2 shrink-0 cursor-col-resize items-stretch justify-center outline-none"
           onPointerDown={(e) => {
             e.preventDefault();
             drag.current = { x: e.clientX, w: treeWidth };
@@ -480,7 +480,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
           <span className="w-1 rounded-full bg-transparent transition-colors group-hover:bg-sky-400/40 group-focus-visible:bg-sky-400/60" />
         </div>
       )}
-      <main className={`glass pane-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border ${explorerShown ? 'ml-2' : ''}`}>
+      <main className={`flex min-w-0 flex-1 flex-col overflow-hidden ${explorerShown ? 'border-l border-zinc-800/80' : ''}`}>
         {selected === null && tabs.panes.every((p) => p.tabs.length === 0) ? (
           <div className="flex flex-1 flex-col">
             <div className="flex h-8 shrink-0 items-center border-b border-zinc-800/80 px-1">{explorerToggle}</div>
