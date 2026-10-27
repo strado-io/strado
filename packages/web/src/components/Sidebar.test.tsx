@@ -118,6 +118,13 @@ describe('Sidebar tree', () => {
   // Code reviews / Usage / Settings live in one icon row at the bottom,
   // leaving the rail above for groups and worktrees. No Tasks entry and no
   // counts: the Worktrees page is where you land anyway, and numbers there were noise.
+  it('collapsed, it stays built, parked off-screen and invisible (its layout kept), out of the flow', () => {
+    wrap(<Sidebar {...base} hidden />);
+    const aside = screen.getByTestId('sidebar');
+    expect(aside.className.split(/\s+/)).toEqual(expect.arrayContaining(['invisible', 'fixed', '-left-[200vw]']));
+    expect(aside).toHaveAttribute('aria-hidden', 'true');
+  });
+
   it('puts the page switcher in an icon row at the bottom, below the Focus, without Tasks or counts', () => {
     wrap(<Sidebar {...base} />);
     const nav = screen.getByRole('navigation', { name: 'Pages' });
@@ -139,15 +146,15 @@ describe('Sidebar tree', () => {
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
-  it('marks only the page you are on; Worktrees is the landing page', () => {
+  it('marks only the page you are on; the dock has no Worktrees page', () => {
     const { unmount } = wrap(<Sidebar {...base} selected={{ kind: 'usage' }} />);
     const nav = () => within(screen.getByRole('navigation', { name: 'Pages' }));
     expect(nav().getByRole('button', { name: 'Usage' })).toHaveAttribute('aria-current', 'page');
-    expect(nav().getByRole('button', { name: 'Worktrees' })).not.toHaveAttribute('aria-current');
+    expect(nav().getByRole('button', { name: 'Code reviews' })).not.toHaveAttribute('aria-current');
+    expect(nav().getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Code reviews', 'Usage', 'Open settings']);
     unmount();
     wrap(<Sidebar {...base} selected={{ kind: 'worktrees' }} />);
-    expect(nav().getByRole('button', { name: 'Worktrees' })).toHaveAttribute('aria-current', 'page');
-    expect(nav().getAllByRole('button', { current: 'page' })).toHaveLength(1);
+    expect(nav().queryAllByRole('button', { current: 'page' })).toHaveLength(0);
   });
 
   describe('focus members', () => {
@@ -372,13 +379,16 @@ describe('Sidebar tree', () => {
     expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
   });
 
-  it('has no New worktree button of its own; the workspace row\'s +, left of its chevron, is New focus', () => {
+  it('has no New worktree button of its own; the workspace row is just its name and chevron, New is in the toolbar under it', () => {
     wrap(<Sidebar {...base} />);
     expect(activePane().queryByRole('button', { name: 'New worktree' })).toBeNull();
-    const plus = screen.getByRole('button', { name: 'New focus' });
-    expect(plus).toHaveAttribute('title', 'New focus (⇧⌘N)');
-    expect(plus.compareDocumentPosition(screen.getByTestId('space-chevron')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Switch workspace/ }).compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // One dropdown button: the chevron is inside the switcher, and the row has no other button.
+    const button = screen.getByTestId('space-chevron').closest('button')!;
+    expect(button).toHaveAttribute('aria-label', expect.stringMatching(/^Switch workspace/));
+    const row = button.parentElement!;
+    expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([expect.stringMatching(/^Switch workspace/)]);
+    const plus = within(activePane().getByTestId('sidebar-toolbar')).getByRole('button', { name: 'New' });
+    expect(plus).toHaveAttribute('title', 'New (⇧⌘N)');
     fireEvent.click(plus);
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });

@@ -33,7 +33,6 @@ export type WorktreesPageProps = {
   remoteWorktrees: RemoteWorktree[];
   runnerStatuses: RunnerStatus[];
   activeWorktreePath: string | null;
-  sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
   runningServers?: ReactNode;
   onAddRepo: () => void;
@@ -56,7 +55,7 @@ const rowClass = (active: boolean) =>
 
 export function WorktreesPage({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses, activeWorktreePath,
-  sidebarCollapsed, onExpandSidebar, runningServers,
+  onExpandSidebar, runningServers,
   onAddRepo, onNewWorktree, onRemoveRepo, onRunCommands, onOpenWorktree, onOpenRemoteWorktree, onOpenMr,
   onWorktreeSettings, onDeleteWorktree, onDeleteRemoteWorktree, onError,
 }: WorktreesPageProps) {
@@ -182,7 +181,7 @@ export function WorktreesPage({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="app-drag sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-900 bg-zinc-950 px-3 py-2">
-        {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+        <OpenSidebarButton onClick={onExpandSidebar} />
         <h1 className="text-sm font-medium text-zinc-200">Worktrees</h1>
         <span className="font-mono text-[11px] tabular-nums text-zinc-600">{total}</span>
         <div className="ml-auto flex items-center gap-2">

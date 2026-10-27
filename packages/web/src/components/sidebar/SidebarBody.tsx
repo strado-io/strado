@@ -21,7 +21,8 @@ import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWaiting, agent
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
 import { FocusIcon } from './FocusSwitcher';
-import { FocusList, type FocusBadges, type FocusJarvisHeader } from './FocusList';
+import { FocusList, type FocusBadges, type FocusFilter, type FocusJarvisHeader } from './FocusList';
+import { SidebarToolbar } from './SidebarToolbar';
 import { PlusIcon } from '../hub/icons';
 import { FocusComposer } from '../focus/FocusComposer';
 import { AddWorktreesDialog } from '../focus/AddWorktreesDialog';
@@ -47,6 +48,8 @@ export type SidebarBodyProps = {
   /** New worktree with the repo still to pick (toolbar and blank-space menu); the empty Focus passes its ticket. */
   onNewWorktree: (ticket?: FocusTicket) => void;
   onWorktreeSettings: (w: Worktree) => void;
+  /** Settings › Projects › the worktree's project (a repo id). */
+  onProjectSettings?: (repoId: string) => void;
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
@@ -169,7 +172,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 export function SidebarBody({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
   onAddRepo, onOpenWorktree, activeWorktreePath,
-  onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+  onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onProjectSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   remoteLoading = false, onError, isActivePane = true, jarvis, jarvisBadges, onOpenFocus,
 }: SidebarBodyProps) {
@@ -243,6 +246,7 @@ export function SidebarBody({
     const menuItems: MenuItem[] = [
       ...(openWorktreeInEditor && editor ? [{ text: `Open in ${editor.label}`, onClick: () => openWorktreeInEditor(w) }] : []),
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
+      ...(onProjectSettings && w.repoId ? [{ text: 'Project settings', onClick: () => onProjectSettings(w.repoId!) }] : []),
       { text: `Remove from ${f.name}`, onClick: () => removeFromFocus(f, pinId) },
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];
@@ -305,7 +309,27 @@ export function SidebarBody({
   const remoteByPinId = new Map(remoteWorktrees.map((w) => [remotePinId(w), w]));
   // Members that resolve to nothing (deleted worktree, runner offline) render
   // nothing; they are not pruned here so a runner coming back brings its row back.
-  const rowsOf = (f: Focus) => f.members.flatMap((pinId) => {
+  // The toolbar's search: a Focus shows if its name matches, or any of its
+  // worktrees' (then it is expanded, with only the ones that match).
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const hit = (...names: Array<string | null | undefined>) => names.some((n) => !!n && n.toLowerCase().includes(q));
+  const memberHit = (pinId: string) => {
+    const local = localByPinId.get(pinId);
+    if (local) return hit(worktreeLabel(local), local.branch);
+    const remote = remoteByPinId.get(pinId);
+    return !!remote && hit(remote.branch, remote.name);
+  };
+  const filter: FocusFilter | null = q ? (() => {
+    const ids = new Set<string>();
+    const expand = new Set<string>();
+    for (const f of focuses) {
+      if (f.members.some(memberHit)) { ids.add(f.id); expand.add(f.id); } else if (hit(f.name)) ids.add(f.id);
+    }
+    return { ids, expand };
+  })() : null;
+  const membersShown = (f: Focus) => (q && !hit(f.name) ? f.members.filter(memberHit) : f.members);
+  const rowsOf = (f: Focus) => membersShown(f).flatMap((pinId) => {
     const local = localByPinId.get(pinId);
     if (local) return [localRow(f, local, repos.find((r) => r.id === local.repoId)?.name ?? '')];
     const remote = remoteByPinId.get(pinId);
@@ -349,11 +373,12 @@ export function SidebarBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <SidebarToolbar query={query} onQuery={setQuery} onAddProject={onAddRepo} onNew={() => openComposer()} shortcut={isActivePane} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
-          jarvis={jarvis}>
+          jarvis={jarvis} filter={filter}>
           {(f) => {
             const rows = rowsOf(f);
             return (
@@ -396,7 +421,9 @@ export function SidebarBody({
       </div>
 
       {composer && (
-        <FocusComposer repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
+        <FocusComposer workspaceId={wsId} repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
+          activeFocus={active ? { id: active.id, name: active.name } : null}
+          onAddToFocus={(id, pinId) => void setMembership(id, pinId, true).catch(report('Could not add to focus'))}
           onCreate={(name, members, ticket) => void create(name, members, ticket).catch(report('Could not create focus'))}
           onClose={() => setComposer(null)} />
       )}

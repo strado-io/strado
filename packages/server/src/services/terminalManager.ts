@@ -319,7 +319,8 @@ export function createTerminalManager(
     },
     resize(key, cols, rows) {
       const s = sessions.get(key);
-      if (s && s.info.status === 'running') {
+      // Already that size (clients re-send it on every layout frame): skip.
+      if (s && s.info.status === 'running' && (s.pty.cols !== cols || s.pty.rows !== rows)) {
         try { s.pty.resize(cols, rows); } catch { /* ignore invalid dims */ }
       }
     },

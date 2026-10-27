@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Worktree } from '../../types';
 import { HomeScreen } from './HomeScreen';
+import { setSidebarCollapsed } from '../../lib/sidebarStore';
 
 const recent = [
   { worktree: { path: '/wt/a' } as Worktree, name: 'master', repo: 'Fleetx Dashboard', openedAt: Date.now() - 2 * 3600_000 },
@@ -10,7 +11,7 @@ const recent = [
 function setup(over: Partial<Parameters<typeof HomeScreen>[0]> = {}) {
   const on = { open: vi.fn(), all: vi.fn(), addRepo: vi.fn(), newWorktree: vi.fn(), waiting: vi.fn() };
   render(<HomeScreen bar={<input aria-label="the bar" />} recent={recent} waiting={0} onOpenRecent={on.open}
-    onAllWorktrees={on.all} onAddRepo={on.addRepo} onNewWorktree={on.newWorktree} onWaiting={on.waiting} {...over} />);
+    onAddRepo={on.addRepo} onNewWorktree={on.newWorktree} onWaiting={on.waiting} {...over} />);
   return on;
 }
 
@@ -36,12 +37,11 @@ describe('HomeScreen (Spotlight-style start)', () => {
     expect(screen.queryByRole('list', { name: 'Recent' })).not.toBeInTheDocument();
   });
 
-  it('links: all worktrees, add repo, new worktree', () => {
+  it('links: add repo, new worktree; no All worktrees (that page is gone)', () => {
     const on = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+    expect(screen.queryByRole('button', { name: /All worktrees/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
     fireEvent.click(screen.getByRole('button', { name: 'New worktree' }));
-    expect(on.all).toHaveBeenCalled();
     expect(on.addRepo).toHaveBeenCalled();
     expect(on.newWorktree).toHaveBeenCalled();
   });
@@ -59,7 +59,8 @@ describe('HomeScreen (Spotlight-style start)', () => {
 
   it('with the sidebar hidden, a button brings it back (as the Worktrees page had)', () => {
     const expand = vi.fn();
-    setup({ sidebarCollapsed: true, onExpandSidebar: expand });
+    setSidebarCollapsed(true);
+    setup({ onExpandSidebar: expand });
     fireEvent.click(screen.getByLabelText('Open sidebar'));
     expect(expand).toHaveBeenCalled();
   });

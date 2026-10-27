@@ -51,7 +51,7 @@ describe('AddRepoDialog', () => {
   it('starts with a compact action menu instead of the full repository form', () => {
     render(<AddRepoDialog onAdded={() => {}} onClose={() => {}} />);
 
-    expect(screen.getByRole('menu', { name: 'Add repository' })).toBeInTheDocument();
+    expect(screen.getByRole('menu', { name: 'Add project' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Open project' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Clone from URL' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Create new project' })).toBeInTheDocument();

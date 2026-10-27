@@ -8,8 +8,8 @@ const LINK = 'rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-900 hove
 
 /** Home with nothing open: one question, the command box (the Dock's own bar,
  * moved up here), and the few worktrees you were just in. The full list is a
- * click away. */
-export function HomeScreen({ bar, strip = null, recent, waiting, onOpenRecent, onAllWorktrees, onAddRepo, onNewWorktree, onWaiting, sidebarCollapsed = false, onExpandSidebar }: {
+ * click away in ⌘K. */
+export function HomeScreen({ bar, strip = null, recent, waiting, onOpenRecent, onAddRepo, onNewWorktree, onWaiting, onExpandSidebar }: {
   /** The command bar, rendered in its home (hero) form. */
   bar: ReactNode;
   /** Mission Control's agent strip, above the box. */
@@ -18,18 +18,16 @@ export function HomeScreen({ bar, strip = null, recent, waiting, onOpenRecent, o
   /** Stations calling you. */
   waiting: number;
   onOpenRecent: (w: Worktree) => void;
-  onAllWorktrees: () => void;
   onAddRepo: () => void;
   onNewWorktree: () => void;
   /** Opens the Line, where the calls are. */
   onWaiting: () => void;
-  sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="app-drag flex h-11 shrink-0 items-center gap-2 px-3">
-        {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+        <OpenSidebarButton onClick={onExpandSidebar} />
         {waiting > 0 && (
           <button type="button" onClick={onWaiting}
             className="ml-auto rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-xs text-amber-300 hover:bg-amber-900/40">
@@ -59,7 +57,6 @@ export function HomeScreen({ bar, strip = null, recent, waiting, onOpenRecent, o
           </div>
         )}
         <div className="mt-4 flex items-center gap-2 px-1">
-          <button type="button" onClick={onAllWorktrees} className={LINK}>All worktrees →</button>
           <span className="ml-auto" />
           <button type="button" onClick={onAddRepo} className={LINK}>Add repo</button>
           <button type="button" onClick={onNewWorktree} className={LINK}>New worktree</button>

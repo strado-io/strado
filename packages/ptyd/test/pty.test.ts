@@ -89,6 +89,23 @@ describe('spawnPty', () => {
     await waitFor(() => exited, 8000); // 2s grace + margin
   }, 10000);
 
+  it('a resize to the size it has sends no SIGWINCH; a new size sends exactly one', async () => {
+    const pty = spawnPty({ shell: SH, argv: ['-c', 'trap "printf W" WINCH; printf R; while :; do sleep 0.05; done'], cwd: '/tmp', cols: 80, rows: 24 });
+    const out = collect(pty);
+    const winches = () => (out.data().toString().match(/W/g) ?? []).length;
+    await waitFor(() => out.data().toString().includes('R'));
+    for (let i = 0; i < 5; i++) pty.resize(80, 24);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(winches()).toBe(0);
+    pty.resize(100, 30);
+    await waitFor(() => winches() === 1);
+    for (let i = 0; i < 5; i++) pty.resize(100, 30);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(winches()).toBe(1);
+    expect([pty.cols, pty.rows]).toEqual([100, 30]);
+    pty.killNow();
+  }, 10000);
+
   it('resize after exit is a safe no-op', async () => {
     const pty = spawnPty({ shell: SH, argv: ['-c', ':'], cwd: '/tmp', cols: 80, rows: 24 });
     let exited = false;

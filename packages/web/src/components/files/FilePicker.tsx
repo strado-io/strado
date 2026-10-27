@@ -22,12 +22,25 @@ function Highlighted({ path, positions }: { path: string; positions: number[] })
   );
 }
 
-export function FilePicker({ load, onPick, onClose }: {
+// The last list each worktree gave, so ⌘P opens with results at once (a big
+// repo's list is ~0.5 MB) and refreshes behind them.
+const lastList = new Map<string, FileList>();
+
+/** Fetch a worktree's list ahead of ⌘P (when its hub opens), unless one is cached. */
+export function primeFileList(cacheKey: string, load: () => Promise<FileList>): void {
+  if (lastList.has(cacheKey)) return;
+  // A prefetch never surfaces an error, even one thrown before the promise.
+  Promise.resolve().then(load).then((r) => { if (!lastList.has(cacheKey)) lastList.set(cacheKey, r); }, () => undefined);
+}
+
+export function FilePicker({ load, onPick, onClose, cacheKey }: {
   load: () => Promise<FileList>;
+  /** The worktree (and machine) the list is of: its last list shows at once. */
+  cacheKey?: string;
   onPick: (path: string, line: number | undefined) => void;
   onClose: () => void;
 }) {
-  const [list, setList] = useState<FileList | null>(null);
+  const [list, setList] = useState<FileList | null>(() => (cacheKey ? lastList.get(cacheKey) ?? null : null));
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
@@ -35,7 +48,11 @@ export function FilePicker({ load, onPick, onClose }: {
 
   useEffect(() => {
     let alive = true;
-    load().then((r) => { if (alive) setList(r); }, () => { if (alive) setFailed(true); });
+    load().then(
+      (r) => { if (cacheKey) lastList.set(cacheKey, r); if (alive) setList(r); },
+      // A cached list stays usable when the refresh fails.
+      () => { if (alive && !(cacheKey && lastList.has(cacheKey))) setFailed(true); },
+    );
     inputRef.current?.focus();
     return () => { alive = false; };
   }, [load]);

@@ -53,6 +53,9 @@ class FakeEventSource {
 
 describe('subscribeIntercom', () => {
   let real: typeof globalThis.EventSource;
+  // The stream is shared per workspace: each test lets go of what it took.
+  const unsubs: (() => void)[] = [];
+  const sub = (ws: string, h: Parameters<typeof subscribeIntercom>[1]) => { const u = subscribeIntercom(ws, h); unsubs.push(u); return u; };
 
   beforeEach(() => {
     real = globalThis.EventSource;
@@ -60,11 +63,12 @@ describe('subscribeIntercom', () => {
     (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
   });
   afterEach(() => {
+    for (const u of unsubs.splice(0)) u();
     (globalThis as unknown as { EventSource: unknown }).EventSource = real;
   });
 
   it('opens /events/intercom with the encoded workspace id and registers exactly the fourteen event types (an agent answering you is message.queued)', () => {
-    subscribeIntercom('a b', vi.fn());
+    sub('a b', vi.fn());
     const es = FakeEventSource.instances[0]!;
     expect(es.url).toBe('/events/intercom?ws=a%20b');
     expect(INTERCOM_EVENT_TYPES).toEqual([
@@ -78,7 +82,7 @@ describe('subscribeIntercom', () => {
 
   it('forwards a parsed payload with the right type', () => {
     const handler = vi.fn();
-    subscribeIntercom('default', handler);
+    sub('default', handler);
     const es = FakeEventSource.instances[0]!;
     es.emit('task.created', { scopeId: 'default', id: 'T1' });
     expect(handler).toHaveBeenCalledWith({ type: 'task.created', data: { scopeId: 'default', id: 'T1' } });
@@ -86,18 +90,32 @@ describe('subscribeIntercom', () => {
 
   it('ignores a malformed payload instead of throwing', () => {
     const handler = vi.fn();
-    subscribeIntercom('default', handler);
+    sub('default', handler);
     const es = FakeEventSource.instances[0]!;
     expect(() => es.emitRaw('escalation.opened', '{not json')).not.toThrow();
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('closes the EventSource on unsubscribe', () => {
-    const unsub = subscribeIntercom('default', vi.fn());
+  it('one stream per workspace, shared by its subscribers; closed when the last lets go', () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    const offA = sub('default', a);
+    const offB = sub('default', b);
+    sub('other', vi.fn());
+    expect(FakeEventSource.instances.map((e) => e.url)).toEqual(['/events/intercom?ws=default', '/events/intercom?ws=other']);
     const es = FakeEventSource.instances[0]!;
-    unsub();
+    es.emit('task.done', { scopeId: 'default', id: 'T1' });
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+    offA();
+    offA();
+    expect(es.closed).toBe(false);
+    es.emit('task.done', { scopeId: 'default', id: 'T2' });
+    expect(a).toHaveBeenCalledTimes(1);
+    offB();
     expect(es.closed).toBe(true);
-    for (const type of INTERCOM_EVENT_TYPES) expect(es.listeners[type]).toHaveLength(0);
+    sub('default', vi.fn());
+    expect(FakeEventSource.instances).toHaveLength(3);
   });
 });
 

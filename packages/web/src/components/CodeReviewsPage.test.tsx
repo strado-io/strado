@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { CodeReview, RepoConfig, Worktree } from '../types';
 import { CodeReviewsPage, paginationItems, reviewTarget } from './CodeReviewsPage';
+import { setSidebarCollapsed } from '../lib/sidebarStore';
 
 // The preview pane mounts the real MrReview, which needs a workspace and the
 // provider diff endpoint.
@@ -217,15 +218,12 @@ describe('CodeReviewsPage', () => {
 
   it('carries the sidebar re-open control itself when the sidebar is hidden', () => {
     const onExpandSidebar = vi.fn();
-    const { rerender } = render(<CodeReviewsPage {...props} reviews={[review()]} />);
+    act(() => setSidebarCollapsed(false));
+    render(<CodeReviewsPage {...props} reviews={[review()]} onExpandSidebar={onExpandSidebar} />);
     expect(screen.queryByRole('button', { name: 'Open sidebar' })).not.toBeInTheDocument();
 
-    rerender(<CodeReviewsPage
-      {...props}
-      reviews={[review()]}
-      sidebarCollapsed
-      onExpandSidebar={onExpandSidebar}
-    />);
+    // It reads the sidebar's live state: collapsing shows it, no prop needed.
+    act(() => setSidebarCollapsed(true));
     fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }));
     expect(onExpandSidebar).toHaveBeenCalled();
   });

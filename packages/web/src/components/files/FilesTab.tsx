@@ -11,7 +11,8 @@ import { useCallback, useEffect, useId, useReducer, useRef, useState, type Keybo
 import { selectionIn } from './codeSelection';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, FileWriteBody, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
-import { discardBuffer, saveAll, saveBuffer, useDirtyFiles } from './buffers';
+import { discardBuffer, getBuffer, isDirty, reloadBuffer, saveAll, saveBuffer, useDirtyFiles } from './buffers';
+import { replaceInFiles } from './replaceInFiles';
 import { SavePromptHost, askSaveChanges, useOwnSavePromptHost } from './savePrompt';
 import { requestRunInShell } from '../../lib/runInShell';
 import { FileTree } from './FileTree';
@@ -265,6 +266,12 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const outline = useCallback((p: string, signal: AbortSignal) => api.lsp.outline(wsId, worktreePath, p, where, signal), [wsId, worktreePath, runnerId, remoteWsId]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // ⌘⇧F's Replace all: on this machine only (a runner's files are read-only here).
+  const replace = useCallback((q: SearchQuery, replacement: string, paths: string[]) => replaceInFiles(paths, q, replacement, {
+    read, write: (body) => api.files.write(wsId, worktreePath, body),
+    isDirty: (p) => isDirty(getBuffer(worktreePath, p)),
+    written: (p, text, version) => { if (getBuffer(worktreePath, p)) reloadBuffer(worktreePath, p, { text, version }); },
+  }), [read, wsId, worktreePath]);
   const search = useCallback((q: SearchQuery, signal: AbortSignal) => api.files.search(wsId, worktreePath, q, where, signal), [wsId, worktreePath, runnerId, remoteWsId]);
 
   // How many files differ from HEAD, for the Changed chip; re-read with Refresh.
@@ -296,8 +303,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
       .then((answer) => {
         clearTimeout(slow);
         if (ac.signal.aborted) return;
-        // One exact definition: go there. A guess, or several, is shown to pick from.
-        if (kind === 'definition' && answer.source === 'lsp' && answer.hits.length === 1) {
+        // One exact definition (the server's, or the import followed): go
+        // there. A word-search guess, or several, is shown to pick from.
+        if (kind === 'definition' && (answer.source === 'lsp' || answer.exact) && answer.hits.length === 1) {
           setNav(null);
           const h = answer.hits[0]!;
           jump(from, { path: h.path, line: h.line, col: h.col }, 'permanent', pane);
@@ -390,6 +398,19 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   };
 
   const iconBtn = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-white/[0.06] hover:text-zinc-100';
+  // Each pane's place at the end of its tab strip, where the open file's
+  // buttons go (no header row of their own). One ref callback per pane, so
+  // React doesn't detach and reattach it on every render.
+  const [slots, setSlots] = useState<Record<number, HTMLElement | null>>({});
+  const slotRefs = useRef(new Map<number, (el: HTMLElement | null) => void>());
+  const slotRef = (id: number) => {
+    let ref = slotRefs.current.get(id);
+    if (!ref) {
+      ref = (el) => setSlots((s) => (s[id] === el ? s : { ...s, [id]: el }));
+      slotRefs.current.set(id, ref);
+    }
+    return ref;
+  };
   const historyButtons = (
     <span className="flex shrink-0 items-center">
       <button type="button" onClick={goBack} disabled={back.length === 0} aria-label="Back" title="Back (⌘[)"
@@ -414,9 +435,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   const fromHere = () => (selected ? here.current : null);
   return (
     // data-file-tab-open: the hub's own ⌘W steps aside for ours while a file tab is open.
-    <div ref={root} className="flex h-full min-h-0 p-2" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
+    <div ref={root} className="flex h-full min-h-0 border-t border-zinc-800/80" data-testid="files-tab" data-files-tab="" {...(selected ? { 'data-file-tab-open': '' } : {})} onKeyDown={onKeyDown}>
       <aside id={explorerId} aria-label="Explorer" style={{ width: treeWidth }}
-        className={`glass pane-card min-w-[11rem] shrink flex-col overflow-hidden rounded-xl border ${explorerShown ? 'flex' : 'hidden'}`}>
+        className={`min-w-[11rem] shrink flex-col overflow-hidden ${explorerShown ? 'flex' : 'hidden'}`}>
         <div ref={header} className="flex h-8 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b border-zinc-800/80 pl-2 pr-1" data-testid="files-tree-header">
           <Chip on={changedOnly} onClick={() => setChangedOnly((v) => !v)} compact={compact} label="Changed"
             title="Changed only — list just the files that differ from HEAD" icon={<FilterIcon />} count={changedCount} />
@@ -429,7 +450,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
-          <SearchPanel search={search} seed={searchSeed} onClose={closeSearch} onPick={(h, side, query) => { setSearchMarks(query); pickHit(h, fromHere(), side); }} />
+          <SearchPanel search={search} replace={where ? undefined : replace} seed={searchSeed} onClose={closeSearch} onPick={(h, side, query) => { setSearchMarks(query); pickHit(h, fromHere(), side); }} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
             onSelect={(p) => jump(fromHere(), { path: p }, 'preview')}
@@ -441,7 +462,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
         <div role="separator" aria-orientation="vertical" aria-label="Resize explorer" aria-controls={explorerId} tabIndex={0}
           aria-valuenow={treeWidth} aria-valuemin={EXPLORER.min} aria-valuemax={maxTree()}
           data-testid="explorer-resize" title="Drag to resize · double-click to reset"
-          className="group -mx-1 flex w-2 shrink-0 cursor-col-resize items-stretch justify-center outline-none"
+          className="group relative z-10 -mx-1 flex w-2 shrink-0 cursor-col-resize items-stretch justify-center outline-none"
           onPointerDown={(e) => {
             e.preventDefault();
             drag.current = { x: e.clientX, w: treeWidth };
@@ -459,7 +480,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
           <span className="w-1 rounded-full bg-transparent transition-colors group-hover:bg-sky-400/40 group-focus-visible:bg-sky-400/60" />
         </div>
       )}
-      <main className={`glass pane-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border ${explorerShown ? 'ml-2' : ''}`}>
+      <main className={`flex min-w-0 flex-1 flex-col overflow-hidden ${explorerShown ? 'border-l border-zinc-800/80' : ''}`}>
         {selected === null && tabs.panes.every((p) => p.tabs.length === 0) ? (
           <div className="flex flex-1 flex-col">
             <div className="flex h-8 shrink-0 items-center border-b border-zinc-800/80 px-1">{explorerToggle}</div>
@@ -474,7 +495,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
                 <section key={pane.id} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
                   className={`flex min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-zinc-800/80' : ''}`}
                   onMouseDownCapture={() => dispatch({ type: 'focus', pane: pi })} onFocusCapture={() => dispatch({ type: 'focus', pane: pi })}>
-                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} focused={tabs.panes.length > 1 && tabs.focus === pi} dirty={dirty}
+                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} trailing={slotRef(pane.id)} focused={tabs.panes.length > 1 && tabs.focus === pi} dirty={dirty}
                     onActivate={(path) => {
                       const tab = pane.tabs.find((x) => x.path === path);
                       if (tab && path !== pane.active) jump(here.current, { path }, 'preview', pi);
@@ -488,7 +509,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
                       read={read} marks={marks} highlight={searchMarks} onAskAgent={onAskAgent}
                       write={where ? undefined : write} readOnlyWhy={where ? `Files on ${remote?.name ?? 'a runner'} are read-only here` : undefined}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
-                      headerStart={historyButtons}
+                      headerStart={historyButtons} headerSlot={slots[pane.id] ?? null}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (
                         <button type="button" onClick={() => open({ path: t.path, line: t.line, col: t.col }, 'permanent', 1)}
                           aria-label="Open to the side" title="Open to the side (⌥-click a definition or reference)"
@@ -527,12 +548,14 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
 // One pane's open files: the preview tab in italics, × or middle-click closes,
 // double-click keeps a preview tab. Scrolls sideways, never wraps. Keyboard:
 // ←/→ (Home/End) move between tabs, Enter or Space shows one, Delete closes it.
-function TabStrip({ pane, ids, leading, focused, dirty, onActivate, onPin, onClose, onClosePane }: {
+function TabStrip({ pane, ids, leading, trailing, focused, dirty, onActivate, onPin, onClose, onClosePane }: {
   pane: Pane;
   /** Files with unsaved edits: ● in place of ×, until hovered. */
   dirty: ReadonlySet<string>;
   /** Before the tabs (the first pane's explorer toggle). */
   leading?: ReactNode;
+  /** After the tabs: where the open file's buttons are put (FileViewer's headerSlot). */
+  trailing?: (el: HTMLElement | null) => void;
   ids: { panel: string; tab: (path: string) => string };
   focused: boolean;
   onActivate: (path: string) => void;
@@ -597,6 +620,7 @@ function TabStrip({ pane, ids, leading, focused, dirty, onActivate, onPin, onClo
           );
         })}
       </div>
+      {trailing && <div ref={trailing} className="flex shrink-0 items-center gap-1 px-1" />}
       {onClosePane && (
         <button type="button" onClick={onClosePane} aria-label="Close side pane" title="Close side pane (Esc)"
           className="flex w-8 shrink-0 items-center justify-center text-[13px] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100">×</button>

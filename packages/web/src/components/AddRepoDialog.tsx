@@ -150,12 +150,12 @@ export function AddRepoDialog({
       <div className="fixed inset-0 z-50" onMouseDown={onClose}>
         <div
           role="menu"
-          aria-label="Add repository"
+          aria-label="Add project"
           style={menuPosition}
           className={`w-72 rounded-xl border border-zinc-800 bg-zinc-950 p-1.5 shadow-2xl ${anchor ? 'fixed' : 'absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2'}`}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <h2 className="sr-only">Add repo</h2>
+          <h2 className="sr-only">Add project</h2>
           <button type="button" aria-label="Close" className="sr-only" onClick={onClose}>Close</button>
           <button
             type="button"

@@ -561,7 +561,15 @@ export function planFromModel(steps: ModelStep[], ctx: ParseContext, opts: { tex
       case 'settings.open': {
         const section = str(a, 'section', { required: true, max: 30 })!;
         if (!(SETTINGS_SECTIONS as readonly string[]).includes(section)) refuse(`No Settings section "${section}"`);
-        return { kind: 'ok', step: mk('settings.open', { section: section as SettingsSectionId }, { kind: 'none' }, { risk: 'read', where: 'hub', undoable: false }, [{ arg: 'section', label: `Settings → ${section}`, candidates: [] }], ctx) };
+        // A project named: Settings › Projects › that one.
+        const project = section === 'projects' ? str(a, 'project', { max: 200 }) : null;
+        let projectPath: string | null = null;
+        if (project) {
+          const n = project.toLowerCase();
+          const r = (ctx.repos ?? []).find((x) => x.name.toLowerCase() === n) ?? (ctx.repos ?? []).find((x) => (x.path.split('/').pop() ?? '').toLowerCase() === n);
+          projectPath = r?.path ?? refuse(`No project "${project}"`);
+        }
+        return { kind: 'ok', step: mk('settings.open', { section: section as SettingsSectionId, ...(projectPath ? { projectPath } : {}) }, { kind: 'none' }, { risk: 'read', where: 'hub', undoable: false }, [{ arg: 'section', label: `Settings → ${section}`, candidates: [] }], ctx) };
       }
       case 'ui.sidebar': {
         const v = a.show ?? null;

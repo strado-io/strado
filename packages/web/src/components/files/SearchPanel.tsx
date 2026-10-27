@@ -1,14 +1,17 @@
 // ⌘⇧F in the Files tab: search the worktree (rg, else git grep) with word,
 // case and regex switches; results grouped by file, VS Code style: each line
 // trimmed so its match shows, the match marked, ↑/↓ and ⏎ to open one.
-// Each keystroke cancels the search it supersedes.
+// Each keystroke cancels the search it supersedes. With `replace` (a worktree
+// on this machine), › shows a replace box and Replace all (replaceInFiles.ts).
 import { useEffect, useRef, useState } from 'react';
 import type { NavHit, SearchAnswer, SearchQuery } from '../../types';
+import type { ReplaceReport } from './replaceInFiles';
 import { filesError } from './errors';
 import { byFile } from './NavPanel';
 import { FileIcon } from './FileIcon';
 
-const DEBOUNCE_MS = 250;
+// The server answers in tens of ms (ripgrep): wait just past a typing burst.
+const DEBOUNCE_MS = 80;
 /** Characters of the line kept before a match. */
 const CONTEXT = 12;
 
@@ -38,15 +41,17 @@ export function snippet(preview: string, [start, end]: [number, number]) {
   };
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : word.endsWith('ch') ? 'es' : 's'}`;
 
-export function SearchPanel({ search, onPick, onClose, seed }: {
+export function SearchPanel({ search, replace, onPick, onClose, seed }: {
   search: (q: SearchQuery, signal: AbortSignal) => Promise<SearchAnswer>;
   /** Each ⌘⇧F (a new nonce): focus the box and select it, starting from `text` when there is one. */
   seed?: { text: string; nonce: number };
   /** `side`: ⌥, open it beside the current file. `query`: what found it, for the editor to mark. */
   onPick: (hit: NavHit, side: boolean, query: SearchQuery) => void;
   onClose: () => void;
+  /** Replace every match of the query in these files. Absent: no replace (read-only worktree). */
+  replace?: (query: SearchQuery, replacement: string, paths: string[]) => Promise<ReplaceReport>;
 }) {
   const [q, setQ] = useState('');
   const [word, setWord] = useState(false);
@@ -58,6 +63,12 @@ export function SearchPanel({ search, onPick, onClose, seed }: {
   const [error, setError] = useState<string | null>(null);
   const [folded, setFolded] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState(0);
+  const [replacing, setReplacing] = useState(false);
+  const [replacement, setReplacement] = useState('');
+  const [replaceBusy, setReplaceBusy] = useState(false);
+  const [report, setReport] = useState<string | null>(null);
+  // Bumped after a replace: the same query, searched again.
+  const [rerun, setRerun] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -80,7 +91,7 @@ export function SearchPanel({ search, onPick, onClose, seed }: {
         .finally(() => { if (!ac.signal.aborted) setBusy(false); });
     }, DEBOUNCE_MS);
     return () => { clearTimeout(t); ac.abort(); };
-  }, [q, word, matchCase, regex, search]);
+  }, [q, word, matchCase, regex, search, rerun]);
 
   const hits = found?.answer.hits ?? [];
   const groups = byFile(hits);
@@ -99,6 +110,23 @@ export function SearchPanel({ search, onPick, onClose, seed }: {
     else if (e.key === 'ArrowUp') { e.preventDefault(); setSel(Math.max(current - 1, 0)); }
     else if (e.key === 'Enter') { e.preventDefault(); pick(rows[current]!, e.altKey); }
   };
+  const replaceAll = async () => {
+    if (!replace || !found || hits.length === 0 || replaceBusy) return;
+    const n = `${plural(hits.length, 'match')}${found.answer.truncated ? '+' : ''} in ${plural(groups.length, 'file')}`;
+    const more = found.answer.truncated ? '\n\nOnly the files listed are changed; there are more matches than shown.' : '';
+    if (!confirm(`Replace ${n} with “${replacement}”?${more}`)) return;
+    setReplaceBusy(true);
+    try {
+      const r = await replace(found.query, replacement, groups.map(([file]) => file));
+      const parts = [`Replaced ${plural(r.replaced, 'match')} in ${plural(r.files, 'file')}`];
+      if (r.skipped.length) parts.push(`${plural(r.skipped.length, 'file')} with unsaved edits left alone`);
+      if (r.failed.length) parts.push(`${plural(r.failed.length, 'file')} couldn’t be changed`);
+      setReport(parts.join(' · '));
+    } finally {
+      setReplaceBusy(false);
+      setRerun((k) => k + 1);
+    }
+  };
   const toggleFold = (file: string) => setFolded((s) => { const n = new Set(s); if (!n.delete(file)) n.add(file); return n; });
 
   const toggle = (on: boolean) => `flex h-5 w-6 items-center justify-center rounded font-mono text-[11px] leading-none transition-colors ${
@@ -109,7 +137,14 @@ export function SearchPanel({ search, onPick, onClose, seed }: {
   return (
     <div className="flex min-h-0 flex-1 flex-col" role="search" aria-label="Search files" data-testid="search-panel" onKeyDown={onKeyDown}>
       <div className="flex shrink-0 flex-col gap-1 border-b border-[rgb(var(--pane-edge)/0.08)] p-2">
-        <div className="flex h-7 items-center gap-1.5 rounded-md border border-[rgb(var(--pane-edge)/0.12)] bg-[rgb(var(--pane-edge)/0.03)] pl-2 pr-1 focus-within:border-sky-400/60">
+        <div className="flex items-center gap-1">
+        {replace && (
+          <button type="button" onClick={() => setReplacing((v) => !v)} aria-expanded={replacing} aria-label="Toggle replace" title="Toggle replace"
+            className="flex h-7 w-4 shrink-0 items-center justify-center rounded text-[13px] text-zinc-500 hover:text-zinc-200">
+            <span aria-hidden className={`transition-transform ${replacing ? 'rotate-90' : ''}`}>›</span>
+          </button>
+        )}
+        <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--pane-edge)/0.12)] bg-[rgb(var(--pane-edge)/0.03)] pl-2 pr-1 focus-within:border-sky-400/60">
           <span aria-hidden className="shrink-0 text-[13px] leading-none text-zinc-500">⌕</span>
           <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search text"
             aria-controls="files-search-results" spellCheck={false}
@@ -118,7 +153,20 @@ export function SearchPanel({ search, onPick, onClose, seed }: {
           <button type="button" className={`${toggle(word)} underline decoration-1 underline-offset-2`} aria-pressed={word} onClick={() => setWord((v) => !v)} title="Match whole word" aria-label="Match whole word">ab</button>
           <button type="button" className={toggle(regex)} aria-pressed={regex} onClick={() => setRegex((v) => !v)} title="Use regular expression" aria-label="Use regular expression">.*</button>
         </div>
+        </div>
+        {replace && replacing && (
+          <div className="flex items-center gap-1 pl-5">
+            <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="Replace" aria-label="Replace with" spellCheck={false}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.stopPropagation(); void replaceAll(); } }}
+              className="h-7 min-w-0 flex-1 rounded-md border border-[rgb(var(--pane-edge)/0.12)] bg-[rgb(var(--pane-edge)/0.03)] px-2 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-400/60" />
+            <button type="button" onClick={() => void replaceAll()} disabled={!found || hits.length === 0 || busy || replaceBusy}
+              title="Replace all (⌘Enter)" className="h-7 shrink-0 rounded-md px-2 text-[11px] font-medium text-zinc-200 hover:bg-[rgb(var(--pane-edge)/0.08)] disabled:opacity-40">
+              {replaceBusy ? 'Replacing…' : 'Replace all'}
+            </button>
+          </div>
+        )}
         <span className="px-0.5 text-[11px] text-zinc-500" aria-live="polite">{summary}</span>
+        {report && <span className="px-0.5 text-[11px] text-zinc-400" role="status">{report}</span>}
       </div>
       <div ref={list} id="files-search-results" role="listbox" aria-label="Results" className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
         {error ? <p role="alert" className="px-2 text-[11px] text-red-300">{error}</p>

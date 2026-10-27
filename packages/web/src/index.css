@@ -398,6 +398,38 @@ body {
 .voice-bar { animation: voice-bar 900ms ease-in-out infinite; transform-origin: center; }
 @media (prefers-reduced-motion: reduce) { .voice-bar { animation: none; } }
 
+/* A Focus's panel in the sidebar (FocusList FocusPanel): grows open and
+   shrinks shut by its grid row, 0fr↔1fr, so nothing is measured. Opening
+   starts from 0fr (@starting-style), as it mounts already open. */
+:root { --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); }
+
+/* The drawer ease (t3code's): a quick start that settles slowly, so the
+   panel glides rather than snaps. Its contents fade and drop in a touch
+   behind the height, and leave a touch ahead of it. */
+.focus-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms var(--ease-drawer);
+}
+.focus-panel[data-open] { grid-template-rows: 1fr; transition-duration: 280ms; }
+.focus-panel > * > * {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease-out, transform 220ms var(--ease-drawer);
+}
+.focus-panel[data-open] > * > * {
+  opacity: 1;
+  transform: none;
+  transition: opacity 220ms ease-out 40ms, transform 280ms var(--ease-drawer);
+}
+/* Only a panel just toggled open grows in (data-enter): one that reappears
+   with the app (back from Settings) is simply there. */
+@starting-style {
+  .focus-panel[data-open][data-enter] { grid-template-rows: 0fr; }
+  .focus-panel[data-open][data-enter] > * > * { opacity: 0; transform: translateY(-4px); }
+}
+@media (prefers-reduced-motion: reduce) { .focus-panel, .focus-panel > * > * { transition: none; } }
+
 /* Electron: a top bar that moves the window (like a native title bar). Its
    controls must stay clickable, so everything you can press inside is carved
    out; the empty space between them is what you grab. */
@@ -452,6 +484,17 @@ body {
       0 16px 40px -8px rgb(0 0 0 / 0.75);
   }
 }
+/* A menu that opens over glass (the Jarvis composer's): solid, no backdrop
+   filter. A backdrop-filter element inside another one, and spilling out of
+   it, is composited wrongly on the GPU path (Chromium/Electron): what's behind
+   paints through and over it. Opaque, a blur has nothing to show anyway. */
+.menu-solid {
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.09);
+  background-color: rgb(20 21 25);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.6), 0 16px 40px -8px rgb(0 0 0 / 0.75);
+}
+:root[data-theme='light'] .menu-solid { background-color: #fff; border-color: rgb(0 0 0 / 0.12); box-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.18); }
 .surface-pop .hover\:bg-zinc-800:hover,
 .surface-pop .bg-zinc-800 { background-color: rgb(255 255 255 / 0.07); }
 .surface-pop .hover\:bg-zinc-900:hover,
@@ -537,3 +580,33 @@ body {
 :root[data-theme='light'] [data-testid='tab-tile'] .text-fuchsia-300 { color: rgb(192 38 211); }
 :root[data-theme='light'] [data-testid='tab-tile'] .text-zinc-100 { color: rgb(63 63 70); }
 :root[data-theme='light'] [data-testid='tab-tile'] .text-\[\#e8906f\] { color: rgb(194 87 52); }
+
+/* Everything that pops in eases in on the drawer curve, as the Focus panels
+   do: menus, popovers, hover cards, tooltips and dialogs fade up from a hair
+   smaller and higher; a modal's backdrop only fades. Entry only (they unmount
+   to close). The independent scale and translate properties compose with a
+   popup's own transform (a centring translate) instead of replacing it. In
+   the components layer, so an element's own transition utility still wins. */
+@layer components {
+  .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog']:not(.fixed),
+  .fixed.inset-0[class*='bg-black/'] > * {
+    transition: opacity 160ms ease-out, scale 220ms var(--ease-drawer), translate 220ms var(--ease-drawer);
+  }
+  /* A modal's backdrop dims and blurs the app behind it, so the dialog is
+     the only thing in focus; fading in, the blur fades in with it. */
+  .fixed.inset-0[class*='bg-black/'] {
+    -webkit-backdrop-filter: blur(8px) saturate(120%);
+    backdrop-filter: blur(8px) saturate(120%);
+    transition: opacity 180ms ease-out;
+  }
+  @starting-style {
+    .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog']:not(.fixed),
+    .fixed.inset-0[class*='bg-black/'] > * { opacity: 0; scale: 0.97; translate: 0 -4px; }
+    .fixed.inset-0[class*='bg-black/'] { opacity: 0; }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog'],
+  .fixed.inset-0[class*='bg-black/'], .fixed.inset-0[class*='bg-black/'] > * { transition: none; }
+}

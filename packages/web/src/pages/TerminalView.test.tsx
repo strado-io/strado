@@ -389,7 +389,7 @@ describe('TerminalView', () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     const ws = FakeWS.instances[0]!;
     act(() => { ws.onmessage?.({ data: 'output-line' }); });
-    expect(termWrite).toHaveBeenCalledWith('output-line');
+    expect(termWrite).toHaveBeenCalledWith('output-line', undefined);
   });
 
   it('forwards terminal input as a data frame', () => {
@@ -410,7 +410,7 @@ describe('TerminalView', () => {
     render(<TerminalView worktree={worktree} onClose={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Diff & commit' })).not.toBeInTheDocument();
     const changes = screen.getByRole('button', { name: 'Changes' });
-    expect(changes).toHaveTextContent('+0 -0');
+    expect(changes).toHaveTextContent('+0−0');
     expect(changes).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(changes);
     expect(changes).toHaveAttribute('aria-pressed', 'true');
@@ -2119,5 +2119,12 @@ describe('TerminalView', () => {
       expect(screen.queryByLabelText('Changes')).toBeNull();
       expect(screen.queryByLabelText('Logs')).toBeNull();
     });
+  });
+});
+
+describe('shortCount', () => {
+  it('keeps the changes pill narrow', async () => {
+    const { shortCount } = await import('./TerminalView');
+    expect([0, 999, 1000, 1234, 9999, 12_345].map(shortCount)).toEqual(['0', '999', '1k', '1.2k', '10k', '12k']);
   });
 });

@@ -191,23 +191,22 @@ describe('SidebarBody: the active Focus', () => {
   it('with no Focus, nothing is open and New focus below the list opens the composer', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.queryByTestId('focus-open')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'New focus' }));
+    const toolbar = screen.getByTestId('sidebar-toolbar');
+    fireEvent.click(screen.getAllByRole('button', { name: 'New focus' }).find((b) => !toolbar.contains(b))!);
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
 
   const header = (over: Partial<FocusJarvisHeader> = {}): FocusJarvisHeader => ({
-    status: <span role="img" aria-label="working">✦</span>, latest: <div data-testid="latest">Here is what we did</div>, selected: false, onOpen: vi.fn(), ...over,
+    status: <span role="img" aria-label="working">✦</span>, selected: false, onOpen: vi.fn(), ...over,
   });
 
-  it('the open Focus\'s header is its Jarvis: status and latest reply; no Jarvis card in the panel, only worktree cards', () => {
+  it('the open Focus\'s header is its Jarvis: its status; no Jarvis card in the panel, only worktree cards', () => {
     withFocus('local:/r1/wt');
     render(<SidebarBody {...props({ jarvis: header() })} />);
     const h = screen.getByTestId('focus-header');
     expect(within(h).getByRole('img', { name: 'working' })).toBeInTheDocument();
-    expect(within(h).getByTestId('latest')).toHaveTextContent('Here is what we did');
     const group = screen.getByTestId('focus-group');
     expect(within(group).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
-    expect(within(group).queryByTestId('latest')).toBeNull();
   });
 
   it('clicking the header opens the chat; the chevron only folds the cards; ⋯ only opens its menu', () => {
@@ -222,10 +221,50 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     expect(onOpen).not.toHaveBeenCalled();
     fireEvent.keyDown(window, { key: 'Escape' });
-    fireEvent.click(screen.getByRole('button', { name: 'Open Jarvis for Billing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Billing' }));
     expect(onOpen).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByTestId('latest'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('the whole active row toggles once the chat shows; before that, its first click shows the chat and folds nothing; ⋯ never toggles', () => {
+    withFocus('local:/r1/wt');
+    const onOpen = vi.fn();
+    const { rerender } = render(<SidebarBody {...props({ jarvis: header({ onOpen, selected: false }) })} />);
+    const name = () => screen.getByRole('button', { name: 'Billing' });
+    expect(name()).toHaveAttribute('aria-expanded', 'true');
+    // A worktree is open: the click shows the chat, the panel stays.
+    fireEvent.click(screen.getByTestId('focus-header'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    // The chat shows: a click anywhere on the row folds, and again expands.
+    rerender(<SidebarBody {...props({ jarvis: header({ onOpen, selected: true }) })} />);
+    fireEvent.click(screen.getByTestId('focus-header'));
+    expect(screen.queryByTestId('focus-group')).toBeNull();
+    expect(name()).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByTestId('focus-header'));
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    expect(name()).toHaveAttribute('aria-expanded', 'true');
+    // Enter or Space on the name button is its click, so the row's.
+    fireEvent.click(name());
+    expect(name()).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(name());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // ⋯ opens its menu only.
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('an inactive row still activates and expands that Focus, alone', () => {
+    focusMock.focuses = [focus('f1', 'Billing', ['local:/r1/wt']), focus('f2', 'Perf', [])];
+    focusMock.activeId = 'f1';
+    const { rerender } = render(<SidebarBody {...props({ jarvis: header() })} />);
+    focusMock.activate.mockImplementation((id: string) => { focusMock.activeId = id; });
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Perf' }));
+    rerender(<SidebarBody {...props({ jarvis: header() })} />);
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Perf' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('while the chat shows, the header reads as selected', () => {
@@ -252,9 +291,9 @@ describe('SidebarBody: the active Focus', () => {
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'New worktree here' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'New worktree here' }));
     expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
-    fireEvent.click(screen.getByRole('button', { name: 'Add worktrees' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'Add worktrees' }));
     const dialog = screen.getByRole('dialog', { name: 'Add worktrees to Billing' });
     fireEvent.click(within(within(dialog).getByRole('group', { name: 'api' })).getByRole('checkbox', { name: 'fx-412' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
@@ -262,12 +301,11 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.queryByRole('dialog', { name: 'Add worktrees to Billing' })).toBeNull();
   });
 
-  it('the open Focus\'s ⋯ menu: New worktree here (with its ticket) and Add worktrees; no Search or Add repo button', () => {
+  it('the open Focus\'s ⋯ menu: New worktree here (with its ticket) and Add worktrees; no Add repo button', () => {
     focusMock.focuses = [{ ...focus('f1', 'Billing', ['local:/r1/wt']), ticket: { provider: 'jira', key: 'FD-9' } }];
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add repo' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'New worktree here…' }));
@@ -275,6 +313,52 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add worktrees…' }));
     expect(screen.getByRole('dialog', { name: 'Add worktrees to Billing' })).toBeInTheDocument();
+  });
+
+  it('the toolbar is Search, Add project and New: Add project opens Add repo under it, New the composer', () => {
+    withFocus('local:/r1/wt');
+    const onAddRepo = vi.fn();
+    render(<SidebarBody {...props({ onAddRepo })} />);
+    const toolbar = within(screen.getByTestId('sidebar-toolbar'));
+    expect(screen.getByTestId('sidebar-toolbar').className.split(/\s+/)).toContain('h-8');
+    expect(toolbar.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Search', 'Add project', 'New']);
+    expect(toolbar.getByRole('button', { name: 'Add project' })).toHaveAttribute('title', 'Add project');
+    fireEvent.click(toolbar.getByRole('button', { name: 'Add project' }));
+    expect(onAddRepo).toHaveBeenCalledWith({ left: expect.any(Number), right: expect.any(Number), bottom: expect.any(Number) });
+    expect(toolbar.getByRole('button', { name: 'New' })).toHaveAttribute('title', 'New (⇧⌘N)');
+    fireEvent.click(toolbar.getByRole('button', { name: 'New' }));
+    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+  });
+
+  it('search filters Focus names and the worktrees in them, expanding a Focus whose worktree matches; Esc clears', () => {
+    focusMock.focuses = [focus('f1', 'Billing', ['local:/r1/wt'], '2026-01-01', '2026-01-01'), focus('f2', 'Onboarding', [], '2026-01-02', '2026-01-02'), focus('f3', 'Perf', [], '2026-01-03', '2026-01-03')];
+    focusMock.activeId = 'f2';
+    render(<SidebarBody {...props()} />);
+    const names = () => within(list()).queryAllByRole('heading').map((h) => h.textContent).concat(within(list()).queryAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.slice(10)));
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const input = screen.getByRole('textbox', { name: 'Search focuses and worktrees' });
+    expect(input).toHaveFocus();
+    expect(screen.getByTestId('sidebar-toolbar').className.split(/\s+/)).toContain('h-8');
+    fireEvent.change(input, { target: { value: 'per' } });
+    expect(names()).toEqual(['Perf']);
+    // A worktree's name: its Focus shows, expanded though it isn't active, with that card.
+    fireEvent.change(input, { target: { value: 'FX-41' } });
+    expect(names()).toEqual(['Billing']);
+    expect(within(screen.getByTestId('focus-group')).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'nothing like it' } });
+    expect(within(list()).getByText('No match')).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Search focuses and worktrees' })).toBeNull();
+    expect(names().sort()).toEqual(['Billing', 'Onboarding', 'Perf']);
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+  });
+
+  it('⌥⌘F opens the search, focused (⌘⇧F stays the Files tab\'s)', () => {
+    render(<SidebarBody {...props()} />);
+    fireEvent.keyDown(window, { key: 'f', code: 'KeyF', metaKey: true, shiftKey: true });
+    expect(screen.queryByRole('textbox', { name: 'Search focuses and worktrees' })).toBeNull();
+    fireEvent.keyDown(window, { key: 'ƒ', code: 'KeyF', metaKey: true, altKey: true });
+    expect(screen.getByRole('textbox', { name: 'Search focuses and worktrees' })).toHaveFocus();
   });
 
   it('right-clicking a card opens its menu at the cursor; blank space offers New worktree, Add repo and New focus', () => {
@@ -335,7 +419,7 @@ describe('SidebarBody: the Focus accordion', () => {
   // Each Focus's own panel (its worktree cards), or null while it is folded.
   const panelOf = (name: string) => {
     const header = screen.queryByRole('button', { name: `Switch to ${name}` }) ?? screen.getByRole('heading', { name });
-    return within(header.closest('[data-testid^="focus-"][class*="flex-col gap-0.5"]') as HTMLElement).queryByTestId('focus-group');
+    return within(header.closest('[data-focus-item]') as HTMLElement).queryByTestId('focus-group');
   };
 
   it('switching is the accordion: the new active Focus alone is expanded', () => {
@@ -367,13 +451,15 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(openHeader()).toHaveTextContent('Billing');
   });
 
-  it('after peeking with chevrons, clicking the active header is the accordion again', () => {
-    render(<SidebarBody {...props({ jarvis: { status: null, latest: null, selected: false, onOpen: vi.fn() } })} />);
+  it('after peeking with chevrons, clicking the active header shows its chat and leaves the panels as they are', () => {
+    const onOpen = vi.fn();
+    render(<SidebarBody {...props({ jarvis: { status: null, selected: false, onOpen } })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
     fireEvent.click(screen.getByRole('button', { name: 'Show Onboarding' }));
     expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
     fireEvent.click(screen.getByTestId('focus-header'));
-    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
     expect(panelOf('Billing')).not.toBeNull();
   });
 
@@ -418,13 +504,12 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(panelOf('Billing')).toBeNull();
   });
 
-  it('the active Focus folded is still clearly the current one: its two-line header, with status and latest reply', () => {
+  it('the active Focus folded is still clearly the current one: its header, with status', () => {
     sessionStorage.setItem('strado:focus-expanded', '[]');
-    render(<SidebarBody {...props({ jarvis: { status: <span role="img" aria-label="needs approval">⚠</span>, latest: <div data-testid="latest">Approve the deploy?</div>, selected: true, onOpen: vi.fn() } })} />);
+    render(<SidebarBody {...props({ jarvis: { status: <span role="img" aria-label="needs approval">⚠</span>, selected: true, onOpen: vi.fn() } })} />);
     const h = screen.getByTestId('focus-header');
     expect(h).toHaveAttribute('data-selected', 'true');
     expect(within(h).getByRole('img', { name: 'needs approval' })).toBeInTheDocument();
-    expect(within(h).getByTestId('latest')).toHaveTextContent('Approve the deploy?');
     expect(panelOf('Billing')).toBeNull();
   });
 
@@ -478,17 +563,14 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(rowNames()).toEqual(['Onboarding', 'Perf', 'Alpha']);
   });
 
-  it('the first six in creation order, then Show all (N); the active one always shows, however far down', () => {
+  it('every Focus shows, in creation order: no cap, no Show all', () => {
     // Created g0…g8 in order; last used the other way round.
     focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`, `2025-0${i + 1}-01`));
-    focusMock.activeId = 'g8'; // the newest, beyond the six
+    focusMock.activeId = 'g8';
     render(<SidebarBody {...props()} />);
-    expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5']);
-    expect(openHeader()).toHaveTextContent('F8');
-    fireEvent.click(screen.getByRole('button', { name: 'Show all (9)' }));
     expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7']);
-    fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }));
-    expect(rowNames()).toHaveLength(6);
+    expect(openHeader()).toHaveTextContent('F8');
+    expect(screen.queryByRole('button', { name: /Show all|Show fewer/ })).toBeNull();
   });
 
   it('the list has no header of its own (New focus is the workspace row\'s +)', () => {

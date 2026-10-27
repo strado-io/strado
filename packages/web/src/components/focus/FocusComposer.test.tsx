@@ -6,7 +6,15 @@ import { publishTickets } from '../../hooks/tickets';
 import { FocusComposer } from './FocusComposer';
 import { __resetMyTickets } from './myTickets';
 
-vi.mock('../../api', () => ({ api: { tickets: { myIssues: vi.fn() } } }));
+vi.mock('../../api', () => ({ api: {
+  tickets: { myIssues: vi.fn() },
+  worktrees: { create: vi.fn(), git: { branches: vi.fn() } },
+} }));
+type JobHandler = (evt: { type: 'progress' | 'done' | 'error'; data: unknown }) => void;
+let jobHandler: JobHandler | null = null;
+vi.mock('../../eventStream', () => ({
+  subscribeJob: (_id: string, handler: JobHandler) => { jobHandler = handler; return () => { jobHandler = null; }; },
+}));
 
 const r1 = { id: 'r1', name: 'api', path: '/r1' } as RepoConfig;
 const r2 = { id: 'r2', name: 'web', path: '/r2' } as RepoConfig;
@@ -27,6 +35,59 @@ beforeEach(() => {
   __resetMyTickets();
   vi.mocked(api.tickets.myIssues).mockReset().mockResolvedValue([issue('FD-412', 'Fix login redirect'), issue('FD-418', 'Rate limit the API')]);
   publishTickets({ configured: ['jira'] });
+  vi.mocked(api.worktrees.create).mockReset().mockResolvedValue({ jobId: 'job-1' } as never);
+  vi.mocked(api.worktrees.git.branches).mockReset().mockResolvedValue({ branches: ['main', 'develop'], current: 'main' } as never);
+  jobHandler = null;
+});
+
+describe('FocusComposer: New worktree', () => {
+  it('makes the worktree (named from the Focus name), then the Focus with it, activated', async () => {
+    const { onCreate, onClose } = mount({ workspaceId: 'ws' });
+    fireEvent.click(screen.getByRole('tab', { name: 'New worktree' }));
+    expect(screen.getByRole('combobox', { name: 'Project' })).toHaveValue('r1');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Focus name' }), { target: { value: 'Login Redirect' } });
+    expect(screen.getByRole('textbox', { name: 'Worktree name' })).toHaveValue('login-redirect');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: 'r2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create & switch' }));
+    await waitFor(() => expect(api.worktrees.create).toHaveBeenCalledWith('ws', expect.objectContaining({ repoId: 'r2', title: 'login-redirect', sourceWorktree: '/r2', ticketId: '' })));
+    expect(onCreate).not.toHaveBeenCalled();
+    await waitFor(() => expect(jobHandler).not.toBeNull());
+    jobHandler!({ type: 'done', data: { result: { path: '/r2/login-redirect' } } });
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith('Login Redirect', ['local:/r2/login-redirect'], undefined));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('with a Focus active, adds the new worktree to it (the default) instead of making a Focus', async () => {
+    const onAddToFocus = vi.fn();
+    const { onCreate } = mount({ workspaceId: 'ws', activeFocus: { id: 'f1', name: 'Billing' }, onAddToFocus });
+    fireEvent.click(screen.getByRole('tab', { name: 'New worktree' }));
+    expect(screen.getByRole('dialog', { name: 'New worktree' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Add to Billing' })).toBeChecked();
+    expect(screen.queryByRole('textbox', { name: 'Focus name' })).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Worktree name' }), { target: { value: 'invoice-pdf' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(jobHandler).not.toBeNull());
+    jobHandler!({ type: 'done', data: { result: { path: '/r1/invoice-pdf' } } });
+    await waitFor(() => expect(onAddToFocus).toHaveBeenCalledWith('f1', 'local:/r1/invoice-pdf'));
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it('a picked ticket names the worktree and links the Focus', async () => {
+    const { onCreate } = mount({ workspaceId: 'ws' });
+    fireEvent.click(await screen.findByRole('option', { name: /FD-418/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'New worktree' }));
+    expect(screen.getByRole('textbox', { name: 'Worktree name' })).toHaveValue('Rate limit the API');
+    fireEvent.click(screen.getByRole('button', { name: 'Create & switch' }));
+    await waitFor(() => expect(api.worktrees.create).toHaveBeenCalledWith('ws', expect.objectContaining({ ticketId: 'FD-418', ticketProvider: 'jira', title: 'Rate limit the API' })));
+    await waitFor(() => expect(jobHandler).not.toBeNull());
+    jobHandler!({ type: 'done', data: { result: { path: '/r1/FD-418_rate' } } });
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith('FD-418 · Rate limit the API', ['local:/r1/FD-418_rate'], { provider: 'jira', key: 'FD-418' }));
+  });
+
+  it('is not offered without a workspace to make it in', () => {
+    mount();
+    expect(screen.queryByRole('tab', { name: 'New worktree' })).toBeNull();
+  });
 });
 
 describe('FocusComposer', () => {

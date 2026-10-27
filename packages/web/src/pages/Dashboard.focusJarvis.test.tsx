@@ -95,6 +95,13 @@ describe('Dashboard: Focus Jarvis', () => {
     expect(hubProps.last).toBeNull();
   });
 
+  it('the chat has a grab strip, so the window can be dragged from it as from a worktree', async () => {
+    focusList.members = ['local:/a/A-1'];
+    renderDashboard();
+    await act(async () => {});
+    expect(screen.getByTestId('jarvis-drag')).toHaveClass('app-drag');
+  });
+
   it('in the chat, ⌘⇧F / Ctrl+Shift+F does nothing: no worktree opens and the composer keeps its text', async () => {
     focusList.members = ['local:/a/A-1'];
     renderDashboard();
@@ -196,9 +203,8 @@ describe('Dashboard: Focus Jarvis', () => {
     renderDashboard();
     await act(async () => {});
     expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
-    // The Focus's header is its Jarvis; it reads as selected while the chat shows. A blank Focus says "Ask Jarvis…".
+    // The Focus's header is its Jarvis; it reads as selected while the chat shows.
     expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
-    expect(screen.getByTestId('focus-latest')).toHaveTextContent('Ask Jarvis…');
     expect(screen.queryByTestId('jarvis-card')).toBeNull();
   });
 

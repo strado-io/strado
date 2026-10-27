@@ -1,5 +1,5 @@
 import { OpenSidebarButton } from './SidebarToggle';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CodeReview, CodeReviewCounts, CodeReviewRepository, MergeRequest, RepoConfig, Worktree } from '../types';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './sidebar/prVisuals';
 import { MrReview } from './MrReview';
@@ -227,9 +227,7 @@ export function CodeReviewsPage({
   hasMore,
   pageLimit,
   error,
-  sidebarCollapsed,
   onExpandSidebar,
-  runningServers,
   onRefresh,
   onStateChange,
   onRepoChange,
@@ -251,11 +249,10 @@ export function CodeReviewsPage({
   /** Non-null when merging repositories: the deepest page that stays exact. */
   pageLimit?: number | null;
   error: string | null;
-  /** With the sidebar hidden the page owns the re-open control, so the shared
-      toolbar row above it can disappear entirely instead of sitting empty. */
-  sidebarCollapsed?: boolean;
+  /** With the sidebar hidden the page owns the re-open control (it reads the
+      sidebar's state itself), so the shared toolbar row above it can disappear
+      entirely instead of sitting empty. */
   onExpandSidebar?: () => void;
-  runningServers?: ReactNode;
   onRefresh: () => void;
   onStateChange: (state: ReviewState) => void;
   onRepoChange: (repoId: string) => void;
@@ -322,7 +319,7 @@ export function CodeReviewsPage({
         <div className="shrink-0 border-b border-zinc-900 bg-zinc-950">
           <div className="flex flex-col gap-1.5 px-2.5 py-2">
             <div className="app-drag flex items-center gap-2">
-              {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+              <OpenSidebarButton onClick={onExpandSidebar} />
               <div className="flex min-w-0 flex-1 rounded-md bg-zinc-900 p-0.5">
                 {(['open', 'merged', 'closed'] as const).map((value) => (
                   <button
@@ -333,7 +330,6 @@ export function CodeReviewsPage({
                   >{value} <span className="ml-1 font-mono text-[10px]">{activeCounts[value].toLocaleString()}</span></button>
                 ))}
               </div>
-              {runningServers}
             </div>
             <div className="flex items-center gap-2">
               <input

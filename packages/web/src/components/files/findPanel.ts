@@ -1,12 +1,13 @@
 // ⌘F inside a file: our own compact find bar in place of CodeMirror's default
 // panel (white input, grey buttons, raw checkboxes). It drives the search
 // extension's own query and commands, so highlights, F3/⌘G and the rest keep
-// working. Read-only, so no replace and no "all".
+// working. An editable file gets a replace row too (› or ⌘⌥F), driving
+// CodeMirror's replaceNext/replaceAll, so one undo takes a replace back.
 // The person's regex never runs over the whole file on the page's thread: the
 // count happens in a worker with a timeout, and a regex is handed to
 // CodeMirror (which highlights only what's on screen) only once it counted in
 // time. A too-slow or broken one marks the box and highlights nothing.
-import { SearchQuery, closeSearchPanel, findNext, findPrevious, getSearchQuery, setSearchQuery } from '@codemirror/search';
+import { SearchQuery, closeSearchPanel, findNext, findPrevious, getSearchQuery, openSearchPanel, replaceAll, replaceNext, searchPanelOpen, setSearchQuery } from '@codemirror/search';
 import { countLabel, countMatches, FIND_TIMEOUT_MS, type FindCount, type FindSpec } from './findCount';
 import { runScopeHandlers, type EditorView, type Panel, type ViewUpdate } from '@codemirror/view';
 
@@ -48,6 +49,16 @@ const ICON = {
   up: '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>',
   down: '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
 };
+
+// ⌘⌥F: the bar with its replace row showing. Open bars register how to show it.
+const showReplace = new WeakMap<EditorView, () => void>();
+const replaceWanted = new WeakSet<EditorView>();
+export function openReplace(view: EditorView): boolean {
+  if (view.state.readOnly) return false;
+  if (searchPanelOpen(view.state)) showReplace.get(view)?.();
+  else { replaceWanted.add(view); openSearchPanel(view); }
+  return true;
+}
 
 const pick = (q: SearchQuery): FindSpec => ({ search: q.search, caseSensitive: q.caseSensitive, regexp: q.regexp, wholeWord: q.wholeWord });
 
@@ -95,6 +106,37 @@ export function createFindPanel(view: EditorView): Panel {
   sep.className = 'cm-find-sep';
   dom.append(input, count, toggles.caseSensitive, toggles.regexp, toggles.wholeWord, sep, prev, next, close);
 
+  // The replace row, for a file that can be edited.
+  const editable = !view.state.readOnly;
+  const replaceInput = document.createElement('input');
+  replaceInput.className = 'cm-find-input';
+  replaceInput.placeholder = 'Replace';
+  replaceInput.setAttribute('aria-label', 'Replace');
+  replaceInput.spellcheck = false;
+  const replaceRow = document.createElement('div');
+  replaceRow.className = 'cm-find-replace';
+  const replaceOne = button('Replace', 'Replace (Enter)', 'Replace', () => { replaceNext(view); });
+  const replaceEvery = button('Replace all', 'Replace all (⌘Enter)', 'All', () => { replaceAll(view); });
+  for (const b of [replaceOne, replaceEvery]) b.classList.add('cm-find-word');
+  replaceRow.append(replaceInput, replaceOne, replaceEvery);
+  const expand = button('Toggle replace', 'Toggle replace (⌘⌥F)', '›', () => setReplacing(!replacing));
+  expand.classList.add('cm-find-expand');
+  let replacing = false;
+  const setReplacing = (on: boolean) => {
+    replacing = on;
+    replaceRow.hidden = !on;
+    expand.setAttribute('aria-expanded', String(on));
+    expand.classList.toggle('cm-find-open', on);
+    if (on) { replaceInput.focus(); replaceInput.select(); } else input.focus();
+  };
+  if (editable) {
+    dom.prepend(expand);
+    dom.append(replaceRow);
+    replaceRow.hidden = true;
+    expand.setAttribute('aria-expanded', 'false');
+    showReplace.set(view, () => setReplacing(true));
+  }
+
   // What the box and toggles say; CodeMirror's query follows once it's safe.
   let draft: FindSpec = { ...pick(getSearchQuery(view.state)) };
   let result: FindCount | 'invalid' | 'timeout' | null = null;
@@ -102,7 +144,7 @@ export function createFindPanel(view: EditorView): Panel {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let asked = 0;
   const apply = (q: FindSpec | null) => {
-    const next = new SearchQuery({ ...(q ?? { ...draft, search: '' }), literal: false });
+    const next = new SearchQuery({ ...(q ?? { ...draft, search: '' }), replace: replaceInput.value, literal: false });
     if (next.eq(getSearchQuery(view.state))) return;
     ours++;
     view.dispatch({ effects: setSearchQuery.of(next) });
@@ -142,6 +184,16 @@ export function createFindPanel(view: EditorView): Panel {
   };
 
   input.addEventListener('input', () => { draft = { ...draft, search: input.value }; recount(); });
+  // The replace text joins the query at once, unless the regex isn't safe yet.
+  replaceInput.addEventListener('input', () => {
+    if (!draft.regexp || (result && result !== 'invalid' && result !== 'timeout')) apply({ ...draft });
+  });
+  replaceInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey) replaceAll(view); else replaceNext(view);
+  });
   dom.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closeSearchPanel(view); return; }
     if (e.key === 'Enter' && e.target === input) {
@@ -157,7 +209,10 @@ export function createFindPanel(view: EditorView): Panel {
   return {
     dom,
     top: true,
-    mount: () => { input.focus(); input.select(); },
+    mount: () => {
+      if (replaceWanted.delete(view)) setReplacing(true);
+      else { input.focus(); input.select(); }
+    },
     update: (u: ViewUpdate) => {
       // ⌘F with a selection sets the query from outside: take it as the box's text.
       for (const tr of u.transactions) for (const ef of tr.effects) {
@@ -166,9 +221,11 @@ export function createFindPanel(view: EditorView): Panel {
         draft = pick(ef.value);
         recount();
       }
+      // An edit (a replace, typing) moves the matches: count again.
+      if (u.docChanged && draft.search) recount();
       // A cursor move only re-reads "n of N" from the matches already counted.
-      if (u.selectionSet) show();
+      else if (u.selectionSet) show();
     },
-    destroy: () => { if (timer) clearTimeout(timer); asked++; },
+    destroy: () => { if (timer) clearTimeout(timer); asked++; showReplace.delete(view); },
   };
 }

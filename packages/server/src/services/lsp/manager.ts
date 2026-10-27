@@ -18,6 +18,8 @@ import { LspClient, LspError } from './client.js';
 import { npmGlobalRoot, TS7_ONLY, tsserverPathFor } from './tsserver.js';
 import { installOptions, type Detect } from './detect.js';
 import type { LspEnabledStore } from './store.js';
+import { importDefinition } from './importDefinition.js';
+import { quickOutline } from './quickOutline.js';
 import {
   LSP_LIMITS,
   LSP_SERVERS,
@@ -48,6 +50,8 @@ export type LspManagerDeps = {
   /** Everything one request may wait, start + load + answer (default 70 s,
    *  inside the web client's 75 s deadline). */
   totalMs?: number;
+  /** How long a definition waits for the server before following the import instead (tests). */
+  quickDefinitionMs?: number;
   /** One system-wide `ps` sample; memory is the server's whole process tree
    *  (tsserver, a JVM), the same figure the Usage page shows. */
   sample?: () => Promise<ProcSample[]>;
@@ -217,6 +221,9 @@ class Fallback extends Error {
   }
 }
 
+/** A warm server answers a definition well inside this; past it, the import is followed. */
+const QUICK_DEFINITION_MS = 60;
+
 export function createLspManager(deps: LspManagerDeps): LspManager {
   const specs = deps.specs ?? LSP_SERVERS;
   const limits = { ...LSP_LIMITS, ...deps.limits };
@@ -279,6 +286,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       recordError(spec.id, TS7_ONLY);
       throw new Fallback('failed', spec);
     }
+    // No maxTsServerMemory: a 5k-file JS app needs ~2 GB, and tsserver aborts at
+    // the cap (tried 1 and 1.5 GB) instead of collecting harder.
     return tsserver.path ? { tsserver: { path: tsserver.path } } : undefined;
   }
 
@@ -463,6 +472,25 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
   }
 
   async function navigate(method: string, worktree: string, rel: string, line: number, col: number, defs: boolean): Promise<NavAnswer> {
+    if (!defs) return askServer(method, worktree, rel, line, col, defs);
+    // Definitions race the server against following the import. A warm
+    // server answers in a few ms and wins; one still starting or loading the
+    // project (seconds) loses to the import, which reads a few files. It
+    // keeps warming meanwhile, for the next ask.
+    const viaImport = resolveInside(worktree, safeRel(rel))
+      .then(({ realRoot, real }) => importDefinition(realRoot, real, line, col))
+      .catch(() => null);
+    const viaServer = askServer(method, worktree, rel, line, col, defs);
+    viaServer.catch(() => undefined);
+    const SLOW = Symbol('slow');
+    const first = await Promise.race([viaServer, new Promise<typeof SLOW>((r) => setTimeout(() => r(SLOW), deps.quickDefinitionMs ?? QUICK_DEFINITION_MS))]);
+    if (first !== SLOW && first.source === 'lsp') return first;
+    const hits = await viaImport;
+    if (hits?.length) return { source: 'search', exact: true, fallback: first === SLOW ? 'starting' : first.fallback, ...(first !== SLOW && first.server ? { server: first.server } : {}), hits };
+    return first === SLOW ? viaServer : first;
+  }
+
+  async function askServer(method: string, worktree: string, rel: string, line: number, col: number, defs: boolean): Promise<NavAnswer> {
     try {
       const { entry, uri, deadline } = await serverFor(worktree, rel);
       const params: Record<string, unknown> = { textDocument: { uri }, position: { line: line - 1, character: col - 1 } };
@@ -471,6 +499,17 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       return { source: 'lsp', server: entry.spec.id, hits: await toHits(entry.root, toLocations(result), !defs) };
     } catch (err) {
       if (err instanceof Fallback) return searchAnswer(worktree, rel, line, col, err, defs);
+      throw err;
+    }
+  }
+
+  async function askOutline(worktree: string, rel: string): Promise<OutlineAnswer> {
+    try {
+      const { entry, uri, deadline } = await serverFor(worktree, rel);
+      const r = await ask<RawSymbol[] | null>(entry, 'textDocument/documentSymbol', { textDocument: { uri } }, deadline);
+      return { server: entry.spec.id, symbols: Array.isArray(r) ? toOutline(r) : [] };
+    } catch (err) {
+      if (err instanceof Fallback) return { server: null, symbols: [] };
       throw err;
     }
   }
@@ -500,14 +539,18 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     },
 
     async outline(worktree, rel) {
-      try {
-        const { entry, uri, deadline } = await serverFor(worktree, rel);
-        const r = await ask<RawSymbol[] | null>(entry, 'textDocument/documentSymbol', { textDocument: { uri } }, deadline);
-        return { server: entry.spec.id, symbols: Array.isArray(r) ? toOutline(r) : [] };
-      } catch (err) {
-        if (err instanceof Fallback) return { server: null, symbols: [] };
-        throw err;
-      }
+      // As definitions: a warm server answers in a few ms; one still loading
+      // the project loses to the declarations found by pattern, which show at
+      // once (the panel asks again as the file is reopened or edited).
+      const viaServer = askOutline(worktree, rel);
+      viaServer.catch(() => undefined);
+      const SLOW = Symbol('slow');
+      const first = await Promise.race([viaServer, new Promise<typeof SLOW>((r) => setTimeout(() => r(SLOW), deps.quickDefinitionMs ?? QUICK_DEFINITION_MS))]);
+      if (first !== SLOW && first.server !== null) return first;
+      const { spec } = specFor(rel);
+      const quick = spec ? await resolveInside(worktree, safeRel(rel)).then(({ real }) => quickOutline(real)).catch(() => null) : null;
+      if (spec && quick?.length) return { server: spec.id, symbols: quick };
+      return first === SLOW ? viaServer : first;
     },
 
     async fileWritten(worktree, rel) {

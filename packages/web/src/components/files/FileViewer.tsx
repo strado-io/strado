@@ -8,6 +8,7 @@
 // Code navigation: ⌘-click/F12 and ⇧F12 are reported up (the tab runs them and
 // keeps the history); hover and the outline are this file's own.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { FileAskContext, FileContent, FileMarks, FileWriteBody, FileWriteResult, HoverAnswer, OutlineAnswer, SearchQuery } from '../../types';
 import { editBuffer, getBuffer, openBuffer, reloadBuffer, saveBuffer, useBuffer } from './buffers';
 import { lineEndings } from './lineEndings';
@@ -23,7 +24,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, write, readOnlyWhy, highlight = null, onAskAgent, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, write, readOnlyWhy, highlight = null, onAskAgent, onNavigate, onCursor, hover, outline, headerStart, headerEnd, headerSlot, onMissing }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -51,6 +52,9 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   headerStart?: ReactNode;
   /** After the header's own buttons (the tab's Open to the side). */
   headerEnd?: ReactNode;
+  /** Where the header's buttons go instead of a row of their own (the end of
+   *  the tab strip). null = that place isn't mounted yet: shown nowhere. */
+  headerSlot?: HTMLElement | null;
   /** The file isn't there (deleted since): the tab may go. */
   onMissing?: () => void;
 }) {
@@ -222,38 +226,41 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     : file.notUtf8 ? 'Read-only: not UTF-8' : mixedEndings ? 'Read-only: mixed line endings' : 'Read-only';
   const iconBtn = 'rounded-md px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40';
   const barBtn = 'rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-[rgb(var(--pane-edge)/0.08)] disabled:opacity-40';
+  const bar = (
+    <>
+      {buf?.saving && <span className="shrink-0 text-[11px] text-zinc-500" aria-live="polite">Saving…</span>}
+      {readOnly && (
+        <span className="shrink-0 rounded border border-[rgb(var(--pane-edge)/0.12)] px-1.5 text-[11px] leading-4 text-zinc-500" data-testid="read-only"
+          title={file.binary ? 'Binary files can’t be edited here' : file.tooLarge ? 'Files over 1 MB can’t be edited here'
+            : file.notUtf8 ? 'This file isn’t UTF-8: saving it here would change its bytes'
+            : mixedEndings && write ? 'This file mixes line endings (CRLF and LF): saving it here would change them' : readOnlyWhy ?? 'This file can’t be edited here'}>{readOnlyLabel}</span>
+      )}
+      {selection && onAskAgent && (
+        <button type="button" onClick={ask} className="rounded-md bg-sky-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500">
+          Ask agent about {selection.from === selection.to ? `line ${selection.from}` : `lines ${selection.from}–${selection.to}`}
+        </button>
+      )}
+      {text !== null && starts.length > 0 && (
+        <span className="flex items-center gap-0.5" data-testid="change-nav">
+          <span className="mr-1 text-[11px] text-zinc-500">{starts.length} change{starts.length === 1 ? '' : 's'}</span>
+          <button type="button" className={iconBtn} onClick={() => step(-1)} aria-label="Previous change" title={`Previous change (${editable ? '⇧⌥F5' : 'p'})`}>↑</button>
+          <button type="button" className={iconBtn} onClick={() => step(1)} aria-label="Next change" title={`Next change (${editable ? '⌥F5' : 'n'})`}>↓</button>
+        </span>
+      )}
+      {outline && text !== null && (
+        <button type="button" className={`${iconBtn} ${outlineOpen ? 'bg-white/[0.06] text-zinc-100' : ''}`} onClick={() => setOutlineOpen((o) => !o)}
+          aria-pressed={outlineOpen} aria-label="Outline" title="Outline">
+          Outline
+        </button>
+      )}
+      {headerEnd}
+    </>
+  );
   return (
     <section className="flex h-full min-h-0 flex-col" data-testid="file-viewer" aria-label={path}>
-      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3">
-        {headerStart}
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400" title={path}>{path}</span>
-        {buf?.saving && <span className="shrink-0 text-[11px] text-zinc-500" aria-live="polite">Saving…</span>}
-        {readOnly && (
-          <span className="shrink-0 rounded border border-[rgb(var(--pane-edge)/0.12)] px-1.5 text-[11px] leading-4 text-zinc-500" data-testid="read-only"
-            title={file.binary ? 'Binary files can’t be edited here' : file.tooLarge ? 'Files over 1 MB can’t be edited here'
-              : file.notUtf8 ? 'This file isn’t UTF-8: saving it here would change its bytes'
-              : mixedEndings && write ? 'This file mixes line endings (CRLF and LF): saving it here would change them' : readOnlyWhy ?? 'This file can’t be edited here'}>{readOnlyLabel}</span>
-        )}
-        {selection && onAskAgent && (
-          <button type="button" onClick={ask} className="rounded-md bg-sky-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500">
-            Ask agent about {selection.from === selection.to ? `line ${selection.from}` : `lines ${selection.from}–${selection.to}`}
-          </button>
-        )}
-        {text !== null && starts.length > 0 && (
-          <span className="flex items-center gap-0.5" data-testid="change-nav">
-            <span className="mr-1 text-[11px] text-zinc-500">{starts.length} change{starts.length === 1 ? '' : 's'}</span>
-            <button type="button" className={iconBtn} onClick={() => step(-1)} aria-label="Previous change" title={`Previous change (${editable ? '⇧⌥F5' : 'p'})`}>↑</button>
-            <button type="button" className={iconBtn} onClick={() => step(1)} aria-label="Next change" title={`Next change (${editable ? '⌥F5' : 'n'})`}>↓</button>
-          </span>
-        )}
-        {outline && text !== null && (
-          <button type="button" className={`${iconBtn} ${outlineOpen ? 'bg-white/[0.06] text-zinc-100' : ''}`} onClick={() => setOutlineOpen((o) => !o)}
-            aria-pressed={outlineOpen} aria-label="Outline" title="Outline">
-            Outline
-          </button>
-        )}
-        {headerEnd}
-      </header>
+      {headerSlot === undefined ? (
+        <header className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3">{headerStart}<span className="flex-1" />{bar}</header>
+      ) : headerSlot && createPortal(<>{headerStart}{bar}</>, headerSlot)}
       {error ? (
         <p role="alert" className="p-4 text-[13px] text-red-300">{error}</p>
       ) : !file ? (

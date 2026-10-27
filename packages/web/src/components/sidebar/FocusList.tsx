@@ -1,18 +1,18 @@
 // Every Focus, as an accordion. Making a Focus active (a click on its row,
 // ⌘1–9, any switch) opens its Jarvis chat, expands it and folds every other
-// one; clicking the active row's header folds the others again. The chevron
-// toggles just that Focus without activating it, to peek at another one's
-// worktrees. What is expanded is remembered per window.
-// The active row is its Jarvis: two lines (status, latest reply), selected
-// while the chat shows. The others are flat one-line headings with their
+// one. A click on the active row shows its chat, or, once the chat shows,
+// folds or expands it. The chevron toggles just that Focus without activating
+// it, to peek at another one's worktrees. What is expanded is remembered per window.
+// The active row is its Jarvis, with its status, selected while the chat
+// shows. The others are flat one-line headings with their
 // live badges — headings, not cards, so they never read as worktrees. They
 // keep one stable order, creation (byCreated), so using a Focus never moves
-// it: the first six show, the active one always, then "Show all (N)". No
+// it. All of them show, no cap. No
 // header: New focus is the + in the workspace row.
 import { useEffect, useRef, useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
-import { FocusIcon, byCreated } from './FocusSwitcher';
+import { byCreated } from './FocusSwitcher';
 import { Menu, type MenuItem } from './rowBits';
 
 /** What a collapsed row says about its Focus, beyond its name. */
@@ -27,27 +27,22 @@ export type FocusBadges = {
 
 /** The open Focus's Jarvis, shown in its header: Jarvis is the Focus itself. */
 export type FocusJarvisHeader = {
-  /** ✦ (dim idle, pulsing while it works) or ⚠ amber while an approval waits. */
+  /** A pulsing dot while it works, ⚠ amber while an approval waits, nothing at rest. */
   status: React.ReactNode;
-  /** Line two, Jarvis's latest reply: an element that renders FOCUS_LATEST_CLASS's line, or nothing. */
-  latest: React.ReactNode;
   /** The chat is what the main area shows: the header reads as selected. */
   selected: boolean;
   /** The header row was clicked: open the chat. */
   onOpen: () => void;
 };
 
-export const FOCUS_LIST_CAP = 6;
 const EXPANDED_KEY = 'strado:focus-expanded';
 const EXPANDED_FOR_KEY = 'strado:focus-expanded-for';
-/** The header's second line, aligned under the name. */
-export const FOCUS_LATEST_CLASS = 'truncate pl-[2.4rem] pr-1 text-[11px] leading-4 text-zinc-500';
 
 // A Focus row is a heading: flat, a hover tint only (the theme's edge colour,
 // so white on dark and black on light). The open Focus's contents sit in one
 // very quiet panel under it.
 const ROW = 'flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 hover:bg-[rgb(var(--pane-edge)/0.05)]';
-// The open Focus's header: the same row, two lines (the second, Jarvis's latest reply).
+// The open Focus's header: the same row, one line.
 const HEADER = 'flex min-w-0 flex-col rounded-md px-2 py-1';
 const GROUP = 'flex flex-col gap-1.5 rounded-xl bg-[rgb(var(--pane-edge)/0.02)] p-1.5 ring-1 ring-[rgb(var(--pane-edge)/0.05)]';
 
@@ -56,7 +51,10 @@ const Chevron = ({ open }: { open: boolean }) => (
   <svg {...icon} width={12} height={12} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}><path d="m9 18 6-6-6-6" /></svg>
 );
 
-export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, jarvis, children }: {
+/** The sidebar's search: the Focuses that match, and those to show expanded (a worktree in them matched). */
+export type FocusFilter = { ids: ReadonlySet<string>; expand: ReadonlySet<string> };
+
+export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, jarvis, filter, children }: {
   focuses: Focus[];
   activeId: string | null;
   badges: Map<string, FocusBadges>;
@@ -67,10 +65,11 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   onRename: (id: string, name: string) => void;
   /** The active Focus's Jarvis, for its header. */
   jarvis?: FocusJarvisHeader;
+  /** While searching: only these, uncapped. */
+  filter?: FocusFilter | null;
   /** An expanded Focus's contents: its worktree cards (or a blank Focus's Add/New rows). */
   children: (f: Focus) => React.ReactNode;
 }) {
-  const [showAll, setShowAll] = useState(false);
   const [expanded, toggle, only] = useExpanded();
   // A Focus becoming active is the accordion: it alone is expanded. Compared
   // with the Focus the stored state was made for, so a switch while the
@@ -83,10 +82,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   }, [activeId]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const sorted = [...focuses].sort(byCreated);
-  const capped = sorted.slice(0, FOCUS_LIST_CAP);
-  // The active Focus always shows, however long ago it was used.
-  const shown = showAll ? sorted : sorted.filter((f) => capped.includes(f) || f.id === activeId);
-  const hidden = sorted.length - shown.length;
+  const shown = filter ? sorted.filter((f) => filter.ids.has(f.id)) : sorted;
 
   return (
     <section aria-label="Focuses" className="mt-1 flex flex-col">
@@ -95,7 +91,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
           const n = sorted.indexOf(f) + 1;
           const hint = n <= 9 ? ` (⌘${n})` : '';
           const isActive = f.id === activeId;
-          const open = expanded.has(f.id);
+          const open = expanded.has(f.id) || !!filter?.expand.has(f.id);
           const chevron = (
             <button type="button" aria-label={open ? `Fold ${f.name}` : `Show ${f.name}`} aria-expanded={open}
               onClick={(e) => { e.stopPropagation(); toggle(f.id); }}
@@ -103,21 +99,24 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
           );
           const b = badges.get(f.id) ?? {};
           return (
-            <div key={f.id} data-testid={isActive ? 'focus-open' : 'focus-row'} data-expanded={open || undefined}
-              className={`flex flex-col gap-0.5 ${open && i > 0 ? 'mt-2' : ''} ${open && i < shown.length - 1 ? 'mb-2' : ''}`}>
+            // Its spacing is the same folded or not: the panel carries its own gaps, so
+            // expanding never moves this row or any above it.
+            <div key={f.id} data-testid={isActive ? 'focus-open' : 'focus-row'} data-focus-item data-expanded={open || undefined}
+              className="flex flex-col">
               {isActive ? (
-                // The active Focus's header is its Jarvis: clicking it (outside the chevron and ⋯) opens the chat.
+                // The active Focus's header is its Jarvis. A click anywhere on it (but ⋯)
+                // shows the chat; once the chat shows, it folds or expands the Focus.
                 <div data-testid="focus-header" data-selected={jarvis?.selected || undefined}
-                  onClick={jarvis && renaming !== f.id ? () => { only(f.id); jarvis.onOpen(); } : undefined}
-                  className={`${HEADER} group ${jarvis ? 'cursor-pointer' : ''} ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
+                  onClick={renaming !== f.id ? () => { if (jarvis && !jarvis.selected) jarvis.onOpen(); else toggle(f.id); } : undefined}
+                  className={`${HEADER} group cursor-pointer ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
                   <div className="flex h-6 min-w-0 items-center gap-1.5">
                     {chevron}
-                    <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
                     {renaming === f.id ? (
                       <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
                     ) : (
                       <h3 aria-current="true" title={`${f.name}${hint}`} className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100">
-                        {jarvis ? <button type="button" aria-label={`Open Jarvis for ${f.name}`} className="max-w-full truncate text-left">{f.name}</button> : f.name}
+                        {/* The row's keyboard handle: Enter/Space click it, and the click is the row's. */}
+                        <button type="button" aria-expanded={open} className="max-w-full truncate text-left">{f.name}</button>
                       </h3>
                     )}
                     {b.agents}
@@ -126,42 +125,79 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                     <Menu label={`${f.name} actions`} alwaysVisible
                       items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...activeMenu]} />
                   </div>
-                  {/* Line two: Jarvis's latest reply, aligned under the name (renders nothing when there is none). */}
-                  {jarvis?.latest}
                 </div>
               ) : (
                 <div className={ROW}>
                   {chevron}
                   <button type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
                     className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left">
-                    <span className="shrink-0 text-zinc-500"><FocusIcon size={15} /></span>
                     <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-400">{f.name}</span>
                     {b.agents}
                     {(b.pendingApprovals ?? 0) > 0 && (
                       <span role="img" aria-label={`${b.pendingApprovals} waiting for approval`} title="Jarvis is waiting for your approval" className="shrink-0 text-[11px] text-amber-400">⚠</span>
                     )}
                     {b.unread && (
-                      <span role="img" aria-label="new reply from Jarvis" title="Jarvis replied" className="shrink-0 text-[11px] text-[#e8906f]">✦</span>
+                      <span role="img" aria-label="new reply from Jarvis" title="Jarvis replied" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#e8906f]" />
                     )}
                     <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                   </button>
                 </div>
               )}
               {/* What belongs to this Focus, grouped under its heading (no accent line). */}
-              {open && <div data-testid="focus-group" className={GROUP}>{children(f)}</div>}
+              <FocusPanel open={open} last={i === shown.length - 1}>{() => children(f)}</FocusPanel>
             </div>
           );
         })}
-        {(hidden > 0 || (showAll && sorted.length > FOCUS_LIST_CAP)) && (
-          <button type="button" onClick={() => setShowAll((s) => !s)}
-            className="self-start rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">
-            {showAll ? 'Show fewer' : `Show all (${sorted.length})`}
-          </button>
-        )}
+        {filter && shown.length === 0 && <p className="flex h-8 items-center px-2 text-[12px] text-zinc-500">No match</p>}
       </div>
     </section>
   );
 }
+
+// A Focus's panel, under its heading. It grows open and shrinks shut (grid rows
+// 0fr↔1fr, .focus-panel in index.css: no measuring); shutting, it stays drawn,
+// hidden from clicks, until the shrink ends. Its gaps sit inside the part that grows, so only
+// the panel's own height changes. It grows in only right after it was toggled
+// open (data-enter): a panel already open that reappears (back from Settings,
+// which hides the app) must not replay the grow.
+const SHUT_MS = 220;
+const OPEN_MS = 280;
+function FocusPanel({ open, last, children }: { open: boolean; last: boolean; children: () => React.ReactNode }) {
+  const [wasOpen, setWasOpen] = useState(open);
+  const [shutting, setShutting] = useState(false);
+  const [entering, setEntering] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    setShutting(!open && animates());
+    setEntering(open && animates());
+  }
+  useEffect(() => {
+    if (!shutting) return;
+    const t = setTimeout(() => setShutting(false), SHUT_MS + 50);
+    return () => clearTimeout(t);
+  }, [shutting]);
+  useEffect(() => {
+    if (!entering) return;
+    const t = setTimeout(() => setEntering(false), OPEN_MS + 50);
+    return () => clearTimeout(t);
+  }, [entering]);
+  if (!open && !shutting) return null;
+  return (
+    <div className="focus-panel" data-open={open || undefined} data-enter={entering || undefined} onTransitionEnd={(e) => { if (e.target === e.currentTarget && !open) setShutting(false); }}>
+      {/* px-px leaves room for the group's ring, which the clip would cut. The
+          vertical gaps sit inside the clip, so it can shut all the way to 0. */}
+      <div className="min-h-0 overflow-hidden px-px">
+        <div className={`pt-0.5 ${last ? 'pb-px' : 'pb-2'}`}>
+          <div data-testid={open ? 'focus-group' : undefined} aria-hidden={!open || undefined}
+            className={`${GROUP} ${open ? '' : 'pointer-events-none'}`}>{children()}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+const animates = () => {
+  try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+};
 
 // Which Focuses are expanded, per window (sessionStorage): another window keeps its own.
 function readExpanded(): Set<string> {

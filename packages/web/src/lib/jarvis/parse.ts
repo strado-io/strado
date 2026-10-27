@@ -10,7 +10,7 @@ import type {
 } from './types';
 import { SETTINGS, type AppPage } from './types';
 
-const PAGE_LABEL: Record<AppPage, string> = { home: 'home', worktrees: 'Worktrees', reviews: 'Code reviews', usage: 'Usage' };
+const PAGE_LABEL: Record<AppPage, string> = { home: 'home', reviews: 'Code reviews', usage: 'Usage' };
 
 const AGENT_MODES: AgentMode[] = ['claude', 'codex', 'opencode', 'pi'];
 const OPEN_MODES: (AgentMode | 'shell')[] = ['shell', 'claude', 'codex', 'opencode', 'pi'];

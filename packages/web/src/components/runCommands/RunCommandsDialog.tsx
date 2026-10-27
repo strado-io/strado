@@ -18,6 +18,28 @@ export function RunCommandsDialog({ repoName, commands, onSave, onClose, startAd
   /** Opened from "+ Add run command…": a fresh row, focused. */
   startAdding?: boolean;
 }) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label={`Run commands — ${repoName}`} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        className="w-[min(36rem,calc(100vw-2rem))] rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-200 shadow-2xl">
+        <h2 className="mb-3 text-sm font-medium">Run commands <span className="text-zinc-500">— {repoName}</span></h2>
+        <RunCommandsEditor commands={commands} onSave={onSave} onSaved={onClose} onCancel={onClose} startAdding={startAdding} />
+      </div>
+    </div>
+  );
+}
+
+/** The editor itself: the dialog's body, and Settings › Projects' run commands. */
+export function RunCommandsEditor({ commands, onSave, onSaved, onCancel, startAdding = false }: {
+  /** In order; the first is the default. */
+  commands: RunCommand[];
+  onSave: (commands: RunCommandDraft[]) => Promise<void>;
+  /** The list was written. */
+  onSaved?: () => void;
+  /** Shows Cancel. */
+  onCancel?: () => void;
+  startAdding?: boolean;
+}) {
   const blank = (): Row => ({ key: newKey(), name: '', command: '', envFile: null });
   const [rows, setRows] = useState<Row[]>(() => [...commands.map((c) => ({ ...c, envFile: c.envFile ?? null, key: c.id })), ...(startAdding ? [blank()] : [])]);
   // The default, by row key (a new row has no id yet).
@@ -44,7 +66,7 @@ export function RunCommandsDialog({ repoName, commands, onSave, onClose, startAd
     try {
       const ordered = [...rows.filter((r) => r.key === effectiveDefault), ...rows.filter((r) => r.key !== effectiveDefault)];
       await onSave(ordered.map((r) => ({ ...(r.id ? { id: r.id } : {}), name: r.name.trim(), command: r.command.trim(), envFile: r.envFile?.trim() || null })));
-      onClose();
+      onSaved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -54,10 +76,7 @@ export function RunCommandsDialog({ repoName, commands, onSave, onClose, startAd
 
   const field = 'w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none';
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div role="dialog" aria-modal="true" aria-label={`Run commands — ${repoName}`} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
-        className="w-[min(36rem,calc(100vw-2rem))] rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-200 shadow-2xl">
-        <h2 className="mb-3 text-sm font-medium">Run commands <span className="text-zinc-500">— {repoName}</span></h2>
+    <>
         <div className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
           {rows.map((r) => (
             <div key={r.key} role="group" aria-label={`Run command ${r.name || '(new)'}`} className="grid grid-cols-[8rem_1fr_auto] items-start gap-2 rounded-md border border-zinc-800 p-2">
@@ -88,12 +107,11 @@ export function RunCommandsDialog({ repoName, commands, onSave, onClose, startAd
         {duplicate && <div className="mt-2 text-xs text-amber-300">Names must be unique</div>}
         {error && <div role="alert" className="mt-2 text-xs text-red-300">{error}</div>}
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-800">Cancel</button>
+          {onCancel && <button type="button" onClick={onCancel} className="rounded border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-800">Cancel</button>}
           <button type="button" disabled={saving || duplicate || incomplete} onClick={() => void save()}
             className="rounded bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-white disabled:opacity-40">Save</button>
         </div>
-      </div>
-    </div>
+    </>
   );
 }
 

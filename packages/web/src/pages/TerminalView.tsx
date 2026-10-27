@@ -11,9 +11,9 @@ function runTabLabel(g: Pick<Group, 'runNames'>, id: string): string | null {
 /** Process states in which the run tab is restored: live, or crashed (its output one click away). */
 const RUN_TAB_STATES = new Set(['starting', 'running', 'stopping', 'crashed']);
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { FileAskContext, RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
-import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
 import { api, type StationDto, type UiCommandAck, type UiTabRef } from '../api';
 import { subscribeWorktrees } from '../eventStream';
@@ -33,7 +33,7 @@ import {
 } from '../hooks/browserTabs';
 import { DiffView } from './DiffView';
 import { FilesTab } from '../components/files/FilesTab';
-import { FilePicker } from '../components/files/FilePicker';
+import { FilePicker, primeFileList } from '../components/files/FilePicker';
 import { FileAskDialog } from '../components/files/FileAskDialog';
 import { jarvisServerPort } from '../lib/jarvis/serverPort';
 import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
@@ -550,15 +550,17 @@ function BrowserPreviewPane({
   );
 }
 
+
+/** 1234 → 1.2k, 12345 → 12k: the changes pill stays narrow. */
+export const shortCount = (n: number): string =>
+  n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(n / 1000)}k`;
+
 export function TerminalView({
   worktree,
   onClose,
   mode: modeProp,
   sessionId: sessionIdProp = '1',
-  sidebarCollapsed = false,
   onExpandSidebar,
-  runningServers,
-  onOpenUsage,
   openSeq = 0,
   modalOpen = false,
   mission,
@@ -574,14 +576,7 @@ export function TerminalView({
    *  tells an ALREADY-open hub to switch to the requested tab — including when
    *  the same session is re-selected after manual navigation. */
   openSeq?: number;
-  sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
-  /** The board's running-dev-servers chip, handed down so the same control is
-   *  reachable from inside a worktree. Owned by the Dashboard, which is where
-   *  the live worktree list and the start/stop calls are. */
-  runningServers?: React.ReactNode;
-  /** Switches the board to the Usage view — the quota dial's footer link. */
-  onOpenUsage?: () => void;
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
@@ -1086,7 +1081,6 @@ export function TerminalView({
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   // The agent-usage popover lives in the toolbar; like the menus it must
   // detach the native Browser view, which otherwise paints over it.
-  const [usageOpen, setUsageOpen] = useState(false);
   const addMenuRef = useRef(false);
   addMenuRef.current = addMenu !== null;
   // "More" menu popover holding the per-worktree header controls.
@@ -1752,38 +1746,39 @@ export function TerminalView({
       setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
-    let raf = 0;
-    const sync = () => {
-      window.cancelAnimationFrame(raf);
-      raf = window.requestAnimationFrame(() => {
-        const outer = surface.getBoundingClientRect();
-        const next: typeof paneRects = {};
-        for (const key of leafKeys(paneTree)) {
-          const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
-          if (!el) continue;
-          const rect = el.getBoundingClientRect();
-          next[key] = {
-            left: rect.left - outer.left,
-            top: rect.top - outer.top,
-            width: rect.width,
-            height: rect.height,
-          };
-        }
-        setPaneRects((prev) => {
-          const keys = Object.keys(next);
-          if (
-            keys.length === Object.keys(prev).length &&
-            keys.every((key) => {
-              const a = prev[key];
-              const b = next[key]!;
-              return !!a && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
-            })
-          ) return prev;
-          return next;
-        });
+    const apply = () => {
+      const outer = surface.getBoundingClientRect();
+      const next: typeof paneRects = {};
+      for (const key of leafKeys(paneTree)) {
+        const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        next[key] = {
+          left: rect.left - outer.left,
+          top: rect.top - outer.top,
+          width: rect.width,
+          height: rect.height,
+        };
+      }
+      setPaneRects((prev) => {
+        const keys = Object.keys(next);
+        if (
+          keys.length === Object.keys(prev).length &&
+          keys.every((key) => {
+            const a = prev[key];
+            const b = next[key]!;
+            return !!a && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
+          })
+        ) return prev;
+        return next;
       });
     };
-    sync();
+    // A resize lands in the same frame: the observer runs after layout and
+    // before paint, so measuring there and rendering synchronously paints the
+    // panes on their slots. Deferred a frame, they trailed every resize (the
+    // sidebar sliding shook the Changes pane, then it snapped into place).
+    const sync = () => flushSync(apply);
+    apply();
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
     for (const key of leafKeys(paneTree)) {
@@ -1792,7 +1787,6 @@ export function TerminalView({
     }
     window.addEventListener('resize', sync);
     return () => {
-      window.cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', sync);
     };
@@ -2607,6 +2601,15 @@ export function TerminalView({
   // `name` lets the Files tab say which machine an install belongs on.
   const filesTarget = remote ? { runnerId: remote.runnerId, remoteWsId: remote.wsId, name: remote.runnerName } : undefined;
   const listFiles = (worktreePath: string) => api.files.list(wsId, worktreePath, filesTarget);
+  // ⌘P opens with results at once: this worktree's list is fetched when the
+  // hub opens, after it has settled (idle), not when the picker asks.
+  useEffect(() => {
+    const prime = () => primeFileList(`${remote?.runnerId ?? 'local'}:${worktree.path}`, () => listFiles(worktree.path));
+    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const handle = idle ? idle(prime, { timeout: 3000 }) : window.setTimeout(prime, 1500);
+    return () => { (window as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback?.(handle); window.clearTimeout(handle); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worktree.path, remote?.runnerId]);
   // Each worktree's file list, so only paths that exist become links in its
   // terminals. Fetched on the first hover over terminal output, then again
   // when older than a minute (agents add files as they work).
@@ -3146,7 +3149,7 @@ export function TerminalView({
       })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="app-drag flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
-          {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+          <OpenSidebarButton onClick={onExpandSidebar} />
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
           <TabStrip
@@ -3299,24 +3302,23 @@ export function TerminalView({
               capability flag applies to the Browser. */}
           {!remote && (
             <>
+              {/* A pill like Run's, the counts shortened past 999 (1.2k); exact in the tooltip. */}
               <button
-                className={`flex h-7 shrink-0 items-center gap-1.5 self-center rounded-md px-2.5 hover:bg-zinc-900 ${
-                  active.mode === 'diff' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
+                className={`flex h-7 shrink-0 items-center self-center rounded-md border px-1.5 transition ${
+                  active.mode === 'diff' ? 'border-zinc-600 bg-zinc-800 text-zinc-100' : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-white/5 hover:text-zinc-100'
                 }`}
                 onClick={openChanges}
-                title="Changes (⌘L)"
+                title={`Changes (⌘L): +${activeDiff?.additions ?? 0} −${activeDiff?.deletions ?? 0} lines`}
                 aria-label="Changes"
                 aria-pressed={active.mode === 'diff'}
               >
-                <span className="font-mono text-[11px] tabular-nums">
-                  <span className="text-emerald-400">+{activeDiff?.additions ?? 0}</span>{' '}
-                  <span className="text-red-300">-{activeDiff?.deletions ?? 0}</span>
+                <span className="flex gap-1 font-mono text-[11px] tabular-nums leading-none">
+                  <span className="text-emerald-400">+{shortCount(activeDiff?.additions ?? 0)}</span>
+                  <span className="text-red-300">−{shortCount(activeDiff?.deletions ?? 0)}</span>
                 </span>
               </button>
             </>
           )}
-          {/* Usage last: Run, Changes, then the quota dial at the far right. */}
-          <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
           {/* Which machine, always visible. Without it a remote hub is
               indistinguishable from a local one. */}
           {remote && (
@@ -3327,7 +3329,6 @@ export function TerminalView({
               {remote.runnerName}
             </span>
           )}
-          {runningServers}
         </div>
         {dtMenu && (
           <>
@@ -3601,7 +3602,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || filePicker || fileAsk);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || tabDragging || paneDrop || filePicker || fileAsk);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;
@@ -3884,6 +3885,7 @@ export function TerminalView({
       {filePicker && (
         <FilePicker
           load={() => listFiles(filePicker)}
+          cacheKey={`${remote?.runnerId ?? 'local'}:${filePicker}`}
           onPick={(path, line) => { setFilePicker(null); openFile(filePicker, path, line); }}
           onClose={() => setFilePicker(null)}
         />

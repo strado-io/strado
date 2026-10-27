@@ -493,6 +493,9 @@ export async function createDaemonTerminalManager(
     },
     resize(key, cols, rows) {
       const m = mirror(key);
+      // A client re-sending the size the session has (each layout frame does,
+      // and every attachment on reconnect): no round trip to ptyd, no reflow.
+      if (m.emuSize.cols === cols && m.emuSize.rows === rows) return;
       if (m.info.status === 'running') {
         client.resize(key, cols, rows);
         m.emuSize = { cols, rows };

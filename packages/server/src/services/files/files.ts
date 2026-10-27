@@ -105,10 +105,19 @@ type GitStatus = {
  *  to one folder or file ('' = the whole worktree): a folder expand in a big
  *  repo must not cost a whole-repo status. `allUntracked` lists files inside
  *  untracked folders instead of collapsing them. */
+// A worktree's path inside its repo never changes: asked once (a git process
+// saved on every file opened and folder listed).
+const prefixes = new Map<string, string>();
+
 async function gitStatus(root: string, scope: string, allUntracked = false): Promise<GitStatus | null> {
-  const prefix = await runGit(root, ['rev-parse', '--show-prefix']);
-  if (prefix.code !== 0) return null;
-  const pre = prefix.stdout.trim();
+  let pre = prefixes.get(root);
+  if (pre === undefined) {
+    const prefix = await runGit(root, ['rev-parse', '--show-prefix']);
+    if (prefix.code !== 0) return null;
+    pre = prefix.stdout.trim();
+    if (prefixes.size > 200) prefixes.clear();
+    prefixes.set(root, pre);
+  }
   const args = ['status', '--porcelain=v1', '-z'];
   if (allUntracked) args.push('--untracked-files=all');
   if (scope) args.push('--', scope);
@@ -268,11 +277,13 @@ export async function readFile(root: string, relIn: string): Promise<FileContent
   const { real } = await resolveInside(root, rel);
   const stat = await fs.stat(real);
   if (!stat.isFile()) throw new AppError('VALIDATION', 'not a file');
-  const st = await gitStatus(root, rel, true);
+  // git status (a process, ~20 ms) runs while the file is read, not before it.
+  const small = stat.size <= FILES_LIMITS.readBytes;
+  const [st, read] = await Promise.all([gitStatus(root, rel, true), small ? fs.readFile(real) : Promise.resolve(null)]);
   const change = changeFor(st, rel, 'file');
   const base = { path: rel, size: stat.size, language: languageFor(rel), ...(change ? { change } : {}) };
-  if (stat.size > FILES_LIMITS.readBytes) return { ...base, binary: false, tooLarge: true };
-  const buf = await fs.readFile(real);
+  if (!small || !read) return { ...base, binary: false, tooLarge: true };
+  const buf = read;
   if (buf.length > FILES_LIMITS.readBytes) return { ...base, size: buf.length, binary: false, tooLarge: true };
   if (isBinary(buf)) return { ...base, size: buf.length, binary: true, tooLarge: false };
   return {
