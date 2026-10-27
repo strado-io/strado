@@ -1,11 +1,15 @@
-// One file, read-only: CodeMirror (loaded on first use, never in the main
-// bundle) with line numbers, a change gutter against HEAD, and n/p between
-// changes. Selecting lines offers "Ask agent"; the header opens the file in VS
+// One file: CodeMirror (loaded on first use, never in the main bundle) with
+// line numbers, a change gutter against HEAD, and n/p between changes. Given a
+// `write`, it edits: the text lives in the file's buffer (buffers.ts, shared
+// by both panes and kept across tab switches), ⌘S is the Files tab's, and a
+// file that changed on disk under unsaved edits shows a bar to Reload or
+// Overwrite. Without one (a runner's worktree) it is read-only, and says so. Selecting lines offers "Ask agent"; the header opens the file in VS
 // Code at the current line. Binary and over-limit files get a plain note.
 // Code navigation: ⌘-click/F12 and ⇧F12 are reported up (the tab runs them and
 // keeps the history); hover and the outline are this file's own.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { FileAskContext, FileContent, FileMarks, HoverAnswer, OutlineAnswer, SearchQuery } from '../../types';
+import type { FileAskContext, FileContent, FileMarks, FileWriteBody, FileWriteResult, HoverAnswer, OutlineAnswer, SearchQuery } from '../../types';
+import { editBuffer, getBuffer, openBuffer, reloadBuffer, saveBuffer, useBuffer } from './buffers';
 import { OutlinePanel } from './OutlinePanel';
 import { capSnippet, changeStarts } from './changes';
 import { filesError } from './errors';
@@ -18,7 +22,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** A place in a file, 1-based. */
 export type FileAt = { path: string; line: number; col: number };
 
-export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, highlight = null, onAskAgent, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
+export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, read, marks: readMarks, write, readOnlyWhy, highlight = null, onAskAgent, onNavigate, onCursor, hover, outline, headerStart, headerEnd, onMissing }: {
   worktreePath: string;
   path: string;
   /** Scroll here (1-based) once loaded; a new `nonce` asks again. */
@@ -29,6 +33,10 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   reloadKey?: number;
   read: (path: string) => Promise<FileContent>;
   marks: (path: string) => Promise<FileMarks>;
+  /** Editing: writes the file (this machine only). Without it the file is read-only. */
+  write?: (body: FileWriteBody) => Promise<FileWriteResult>;
+  /** Why it is read-only, for the hint's tooltip (a runner's worktree). */
+  readOnlyWhy?: string;
   /** The ⌘⇧F query a result was opened from: every match marked. */
   highlight?: SearchQuery | null;
   onAskAgent?: (ctx: FileAskContext) => void;
@@ -73,6 +81,10 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   const highlightRef = useRef(highlight);
   highlightRef.current = highlight;
   marksRef.current = marks;
+  const editable = !!write;
+  const writeRef = useRef(write);
+  writeRef.current = write;
+  const buf = useBuffer(worktreePath, path, editable);
 
   // The file, then its marks (a failed marks call only loses the gutter).
   useEffect(() => {
@@ -86,6 +98,10 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
       .then((f) => {
         if (!live) return;
         setError(null);
+        // Editing: the read feeds the buffer (a clean one follows the disk; a dirty one gets the bar).
+        if (writeRef.current && f.text != null && !f.binary && !f.tooLarge) {
+          openBuffer(worktreePath, f.path, { text: f.text, version: f.version }, (body) => writeRef.current!(body));
+        }
         // Same text back: keep the object, so the editor (and its cursor) stays put.
         setFile((cur) => (cur && cur.path === f.path && cur.text === f.text && cur.binary === f.binary && cur.tooLarge === f.tooLarge ? cur : f));
       })
@@ -102,7 +118,10 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     // change files all the time and an old copy is worse than a reload.
   }, [path, read, readMarks, nonce, reloadKey]);
 
-  const text = file && !file.binary && !file.tooLarge ? file.text ?? '' : null;
+  const text = file && !file.binary && !file.tooLarge ? (editable ? buf?.text ?? file.text ?? '' : file.text ?? '') : null;
+  // Read-only, the editor is built per text; editing, once per file, and the
+  // buffer's changes (a reload, the other pane) go in with setText.
+  const docKey = editable ? (text === null ? null : 'live') : text;
 
   // The editor, once per file's text.
   useEffect(() => {
@@ -122,6 +141,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
           setSelection(s);
         },
         onCursor: (at: { line: number; col: number }) => cursorRef.current?.({ path: file.path, ...at }),
+        ...(editable ? { onChange: (t: string) => editBuffer(worktreePath, file.path, t) } : {}),
         ...(navRef.current ? { onNavigate: (kind: NavKind, at: { line: number; col: number }) => navRef.current?.(kind, { path: file.path, ...at }) } : {}),
         ...(hoverRef.current ? {
           hover: async (at: { line: number; col: number }, signal: AbortSignal) => (await hoverRef.current?.({ path: file.path, ...at }, signal))?.markdown ?? null,
@@ -133,6 +153,9 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         viewRef.current = v;
         v.setMarks(marksRef.current);
         v.setHighlight(highlightRef.current);
+        // Edited (or reloaded) while CodeMirror was loading.
+        const now = editable ? getBuffer(worktreePath, file.path) : undefined;
+        if (now) v.setText(now.text);
         if (askKey && appliedAsk.current !== askKey) {
           appliedAsk.current = askKey;
           v.goToLine(line!, col);
@@ -152,8 +175,16 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     // `line` is applied by its own effect below; a new line must not rebuild the
     // editor, and neither must a re-read that brought back the same text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, file?.path, file?.language]);
+  }, [docKey, file?.path, file?.language]);
 
+  useEffect(() => { if (buf) viewRef.current?.setText(buf.text); }, [buf?.text]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A save changes what differs from HEAD: the gutter re-reads.
+  useEffect(() => {
+    if (!buf?.saved) return;
+    let live = true;
+    readMarks(path).then((m) => { if (live) setMarks(m); }).catch(() => { /* keeps the old gutter */ });
+    return () => { live = false; };
+  }, [buf?.saved]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { viewRef.current?.setMarks(marks); }, [marks, text]);
   useEffect(() => { viewRef.current?.setHighlight(highlight); }, [highlight]);
   useEffect(() => {
@@ -174,12 +205,27 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     onAskAgent({ worktreePath, path, from: selection.from, to: selection.to, snippet: capSnippet(selection.text) });
   };
 
+  const name = path.split('/').pop() || path;
+  // The disk changed under your edits: take the disk (after a yes), or write yours over it.
+  const reloadFromDisk = () => {
+    if (!confirm(`Discard your changes to ${name} and load it from disk?`)) return;
+    Promise.resolve().then(() => read(path))
+      .then((f) => { if (f.text != null) reloadBuffer(worktreePath, path, { text: f.text, version: f.version }); })
+      .catch((err: unknown) => setError(filesError(err, 'file')));
+  };
+  const readOnly = file && (!editable || file.binary || file.tooLarge);
   const iconBtn = 'rounded-md px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40';
+  const barBtn = 'rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-[rgb(var(--pane-edge)/0.08)] disabled:opacity-40';
   return (
     <section className="flex h-full min-h-0 flex-col" data-testid="file-viewer" aria-label={path}>
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3">
         {headerStart}
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400" title={path}>{path}</span>
+        {buf?.saving && <span className="shrink-0 text-[11px] text-zinc-500" aria-live="polite">Saving…</span>}
+        {readOnly && (
+          <span className="shrink-0 rounded border border-[rgb(var(--pane-edge)/0.12)] px-1.5 text-[11px] leading-4 text-zinc-500" data-testid="read-only"
+            title={!editable ? readOnlyWhy ?? 'This file can’t be edited here' : file.binary ? 'Binary files can’t be edited here' : 'Files over 1 MB can’t be edited here'}>Read-only</span>
+        )}
         {selection && onAskAgent && (
           <button type="button" onClick={ask} className="rounded-md bg-sky-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500">
             Ask agent about {selection.from === selection.to ? `line ${selection.from}` : `lines ${selection.from}–${selection.to}`}
@@ -188,8 +234,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         {text !== null && starts.length > 0 && (
           <span className="flex items-center gap-0.5" data-testid="change-nav">
             <span className="mr-1 text-[11px] text-zinc-500">{starts.length} change{starts.length === 1 ? '' : 's'}</span>
-            <button type="button" className={iconBtn} onClick={() => step(-1)} aria-label="Previous change" title="Previous change (p)">↑</button>
-            <button type="button" className={iconBtn} onClick={() => step(1)} aria-label="Next change" title="Next change (n)">↓</button>
+            <button type="button" className={iconBtn} onClick={() => step(-1)} aria-label="Previous change" title={`Previous change (${editable ? '⇧⌥F5' : 'p'})`}>↑</button>
+            <button type="button" className={iconBtn} onClick={() => step(1)} aria-label="Next change" title={`Next change (${editable ? '⌥F5' : 'n'})`}>↓</button>
           </span>
         )}
         {outline && text !== null && (
@@ -211,6 +257,20 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
       ) : editorFailed ? (
         <pre className="min-h-0 flex-1 overflow-auto whitespace-pre p-3 font-mono text-[13px] text-zinc-200" data-testid="plain-text">{text}</pre>
       ) : (
+        <>
+        {buf?.conflict && (
+          <div role="alert" data-testid="conflict-bar"
+            className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[11px] text-zinc-200">
+            <span aria-hidden className="text-amber-400">⚠</span>
+            <span className="min-w-0 flex-1 truncate">This file changed on disk.</span>
+            <button type="button" className={barBtn} onClick={reloadFromDisk} disabled={buf.saving} title="Discard your changes and load the file from disk">Reload</button>
+            <span aria-hidden className="text-zinc-600">·</span>
+            <button type="button" className={barBtn} onClick={() => { void saveBuffer(worktreePath, path, true); }} disabled={buf.saving} title="Write your version over the one on disk">Overwrite</button>
+          </div>
+        )}
+        {buf?.error && !buf.conflict && (
+          <p role="alert" data-testid="save-error" className="shrink-0 border-b border-red-500/30 bg-red-500/10 px-3 py-1 text-[11px] text-zinc-200">{buf.error}</p>
+        )}
         <div className="flex min-h-0 flex-1">
           <div ref={host} className="min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="code-host" />
           {outlineOpen && outline && (
@@ -218,6 +278,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
               onPick={(s) => { viewRef.current?.goToLine(s.line, s.col); cursorLine.current = s.line; onCursor?.({ path, line: s.line, col: s.col }); }} />
           )}
         </div>
+        </>
       )}
     </section>
   );

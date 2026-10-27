@@ -1,8 +1,10 @@
-// The Files tab's read-only CodeMirror view. Imported only with import() from
-// FileViewer, so CodeMirror stays out of the main bundle. Colours come from
+// The Files tab's CodeMirror view: editable (with undo) for a file on this
+// machine, read-only otherwise. Imported only with import() from FileViewer,
+// so CodeMirror stays out of the main bundle. Colours come from
 // the app's theme vars (zinc/sky scales, --pane-card), so every preset —
 // GitHub Light included — holds without a hex in sight.
-import { EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
+import { Annotation, EditorState, RangeSetBuilder, StateEffect, StateField, Transaction } from '@codemirror/state';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { Decoration, type DecorationSet, EditorView, GutterMarker, gutter, highlightActiveLine, hoverTooltip, keymap, lineNumbers } from '@codemirror/view';
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
@@ -167,8 +169,13 @@ export type CodeView = {
   setMarks(marks: FileMarks | null): void;
   /** Mark every match of a ⌘⇧F query (null clears). */
   setHighlight(q: SearchQuery | null): void;
+  /** Replace the text (a reload, or the same file edited in the other pane); not an edit of this view's. */
+  setText(text: string): void;
   destroy(): void;
 };
+
+// Text set from outside (setText): not reported back as an edit.
+const external = Annotation.define<boolean>();
 
 export async function createCodeView(parent: HTMLElement, o: {
   doc: string;
@@ -182,7 +189,10 @@ export async function createCodeView(parent: HTMLElement, o: {
   hover?: (at: Pos, signal: AbortSignal) => Promise<string | null>;
   /** The person moved the cursor (click, keys, find) — not goToLine. */
   onCursor?: (at: Pos) => void;
+  /** Editable (with undo): every edit reports the whole text. Read-only without. */
+  onChange?: (text: string) => void;
 }): Promise<CodeView> {
+  const editable = !!o.onChange;
   const desc = (o.language && LanguageDescription.matchLanguageName(languages, o.language, true))
     || LanguageDescription.matchFilename(languages, o.path.split('/').pop() ?? o.path);
   const lang = desc ? await desc.load().catch(() => null) : null;
@@ -239,7 +249,8 @@ export async function createCodeView(parent: HTMLElement, o: {
     state: EditorState.create({
       doc: o.doc,
       extensions: [
-        EditorState.readOnly.of(true),
+        EditorState.readOnly.of(!editable),
+        ...(editable ? [history()] : []),
         lineNumbers(),
         marksField.init(() => o.marks),
         highlightField,
@@ -248,12 +259,17 @@ export async function createCodeView(parent: HTMLElement, o: {
         search({ top: true, createPanel: createFindPanel }),
         highlightSelectionMatches(),
         keymap.of([
-          // Read-only, so plain letters are free: n/p walk the changes.
-          { key: 'n', run: () => step(1) != null },
-          { key: 'p', run: () => step(-1) != null },
+          // Read-only, plain letters are free: n/p walk the changes. Editable,
+          // VS Code's Alt-F5 / Shift-Alt-F5 do.
+          ...(editable
+            ? [{ key: 'Alt-F5', run: () => step(1) != null }, { key: 'Shift-Alt-F5', run: () => step(-1) != null }]
+            : [{ key: 'n', run: () => step(1) != null }, { key: 'p', run: () => step(-1) != null }]),
           { key: 'F12', run: () => navigate('definition') },
           { key: 'Shift-F12', run: () => navigate('references') },
           ...searchKeymap,
+          // Typing, ⌘Z / ⇧⌘Z (and Ctrl-Y). Tab is left to move focus, as in the
+          // rest of the app; ⌘[ ⌘] stay the Files tab's back/forward, not indent.
+          ...(editable ? [...historyKeymap, ...defaultKeymap.filter((b) => b.key !== 'Mod-[' && b.key !== 'Mod-]')] : []),
         ]),
         hoverExt,
         modClick,
@@ -262,6 +278,7 @@ export async function createCodeView(parent: HTMLElement, o: {
         EditorView.lineWrapping,
         ...(lang ? [lang] : []),
         EditorView.updateListener.of((u) => {
+          if (o.onChange && u.docChanged && u.transactions.some((tr) => tr.docChanged && !tr.annotation(external))) o.onChange(u.state.doc.toString());
           if (!u.selectionSet) return;
           const sel = u.state.selection.main;
           if (o.onCursor && u.transactions.some((tr) => tr.isUserEvent('select'))) {
@@ -285,6 +302,19 @@ export async function createCodeView(parent: HTMLElement, o: {
     step,
     setMarks: (marks) => view.dispatch({ effects: setMarks.of(marks) }),
     setHighlight: (q) => view.dispatch({ effects: setHighlight.of(q) }),
+    setText: (text) => {
+      const cur = view.state.doc.toString();
+      if (cur === text) return;
+      // Only the part that differs, so the cursor and scroll stay where they were.
+      let from = 0;
+      while (from < cur.length && from < text.length && cur.charCodeAt(from) === text.charCodeAt(from)) from++;
+      let end = 0;
+      while (end < cur.length - from && end < text.length - from && cur.charCodeAt(cur.length - 1 - end) === text.charCodeAt(text.length - 1 - end)) end++;
+      view.dispatch({
+        changes: { from, to: cur.length - end, insert: text.slice(from, text.length - end) },
+        annotations: [external.of(true), Transaction.addToHistory.of(false)],
+      });
+    },
     destroy: () => { hoverAbort?.abort(); view.destroy(); },
   };
 }

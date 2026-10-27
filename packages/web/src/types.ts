@@ -439,7 +439,12 @@ export type FileContent = {
   /** A CodeMirror language hint, e.g. "typescript"; null = plain. */
   language: string | null;
   change?: FileChange;
+  /** Set with `text`: an opaque token for the bytes read; a write sends it back. */
+  version?: string;
 };
+/** The Files tab's one write: replace an existing text file (mirrors server/src/services/files/types.ts). */
+export type FileWriteBody = { path: string; text: string; baseVersion: string; force?: boolean };
+export type FileWriteResult = { path: string; version: string; size: number };
 /** 1-based lines in the current file where it differs from HEAD. */
 export type FileMarks = {
   path: string;

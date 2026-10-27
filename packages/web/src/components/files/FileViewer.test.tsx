@@ -2,16 +2,17 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileContent, FileMarks } from '../../types';
 
-type Opts = { doc: string; path: string; language: string | null; onSelection: (s: { from: number; to: number; text: string } | null) => void };
+type Opts = { doc: string; path: string; language: string | null; onSelection: (s: { from: number; to: number; text: string } | null) => void; onChange?: (text: string) => void };
 const cm = vi.hoisted(() => ({
   opts: null as Opts | null,
-  view: { goToLine: vi.fn(), focus: vi.fn(), step: vi.fn(), setMarks: vi.fn(), setHighlight: vi.fn(), destroy: vi.fn() },
+  view: { goToLine: vi.fn(), focus: vi.fn(), step: vi.fn(), setMarks: vi.fn(), setHighlight: vi.fn(), setText: vi.fn(), destroy: vi.fn() },
 }));
 vi.mock('./codeView', () => ({
   createCodeView: vi.fn(async (_el: HTMLElement, o: Opts) => { cm.opts = o; return cm.view; }),
 }));
 
 import { FileViewer } from './FileViewer';
+import { __resetBuffers, getBuffer, isDirty } from './buffers';
 
 const TEXT: FileContent = { path: 'src/app.ts', size: 40, binary: false, tooLarge: false, text: 'const a = 1;\nconst b = 2;\n', language: 'typescript', change: 'M' };
 const MARKS: FileMarks = { path: 'src/app.ts', added: [[2, 2]], modified: [[5, 6]], deletedAfter: [] };
@@ -27,6 +28,7 @@ function show(over: Partial<Parameters<typeof FileViewer>[0]> = {}, file: FileCo
 }
 
 beforeEach(async () => {
+  __resetBuffers();
   vi.mocked((await import('./codeView')).createCodeView).mockClear();
   cm.opts = null;
   for (const f of Object.values(cm.view)) f.mockReset();
@@ -188,5 +190,102 @@ describe('FileViewer', () => {
     await flush();
     expect(container.innerHTML).not.toMatch(/text-\[(9|10|12)px\]/);
     expect(container.innerHTML).not.toMatch(/#[0-9a-f]{6}\b/i);
+  });
+
+  describe('editing (given a write)', () => {
+    const V1 = { ...TEXT, version: 'v1' };
+    const written = (version = 'v2') => vi.fn(async (b: { path: string; text: string }) => ({ path: b.path, version, size: b.text.length }));
+
+    it('is editable, from the file\'s buffer; typing makes it dirty; no Read-only hint', async () => {
+      show({ write: written() }, V1);
+      await flush();
+      expect(cm.opts!.onChange).toBeTypeOf('function');
+      expect(screen.queryByTestId('read-only')).toBeNull();
+      act(() => cm.opts!.onChange!('const a = 10;\n'));
+      expect(isDirty(getBuffer('/wt', 'src/app.ts'))).toBe(true);
+      expect(getBuffer('/wt', 'src/app.ts')).toMatchObject({ text: 'const a = 10;\n', version: 'v1' });
+    });
+
+    it('a clean file that changed on disk reloads quietly, in the same editor', async () => {
+      let disk = V1;
+      const read = vi.fn(async () => disk);
+      const { props, rerender } = show({ write: written(), read }, V1);
+      await flush();
+      const { createCodeView } = await import('./codeView');
+      disk = { ...V1, text: 'by an agent\n', version: 'v2' };
+      rerender(<FileViewer {...props} reloadKey={1} />);
+      await flush();
+      expect(createCodeView).toHaveBeenCalledTimes(1);
+      expect(cm.view.setText).toHaveBeenLastCalledWith('by an agent\n');
+      expect(screen.queryByTestId('conflict-bar')).toBeNull();
+    });
+
+    it('a dirty file that changed on disk keeps your text and shows the bar; Reload (after a yes) takes the disk', async () => {
+      let disk = V1;
+      const read = vi.fn(async () => disk);
+      const { props, rerender } = show({ write: written(), read }, V1);
+      await flush();
+      act(() => cm.opts!.onChange!('mine\n'));
+      disk = { ...V1, text: 'theirs\n', version: 'v2' };
+      rerender(<FileViewer {...props} reloadKey={1} />);
+      await flush();
+      expect(screen.getByTestId('conflict-bar')).toHaveTextContent('This file changed on disk.');
+      expect(getBuffer('/wt', 'src/app.ts')!.text).toBe('mine\n');
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+      await flush();
+      expect(getBuffer('/wt', 'src/app.ts')!.text).toBe('mine\n');
+      fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+      await flush();
+      expect(confirm).toHaveBeenLastCalledWith('Discard your changes to app.ts and load it from disk?');
+      expect(getBuffer('/wt', 'src/app.ts')).toMatchObject({ text: 'theirs\n', base: 'theirs\n', version: 'v2', conflict: null });
+      expect(cm.view.setText).toHaveBeenLastCalledWith('theirs\n');
+      expect(screen.queryByTestId('conflict-bar')).toBeNull();
+      confirm.mockRestore();
+    });
+
+    it('a save refused with 409 shows the bar; Overwrite writes with force; the gutter re-reads after', async () => {
+      const write = vi.fn(async (b: { path: string; text: string; force?: boolean }) => {
+        if (!b.force) throw Object.assign(new Error('409'), { code: 'CONFLICT', details: { version: 'disk' } });
+        return { path: b.path, version: 'v3', size: 1 };
+      });
+      const { props } = show({ write }, V1);
+      await flush();
+      act(() => cm.opts!.onChange!('mine\n'));
+      const { saveBuffer } = await import('./buffers');
+      await act(async () => { await saveBuffer('/wt', 'src/app.ts'); });
+      expect(screen.getByTestId('conflict-bar')).toBeInTheDocument();
+      expect(props.marks).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole('button', { name: 'Overwrite' }));
+      await flush();
+      expect(write).toHaveBeenLastCalledWith({ path: 'src/app.ts', text: 'mine\n', baseVersion: 'v1', force: true });
+      expect(screen.queryByTestId('conflict-bar')).toBeNull();
+      expect(isDirty(getBuffer('/wt', 'src/app.ts'))).toBe(false);
+      expect(props.marks).toHaveBeenCalledTimes(2);
+    });
+
+    it('a failed save says so in fixed words above the code', async () => {
+      show({ write: vi.fn(async () => { throw new Error('EACCES'); }) }, V1);
+      await flush();
+      act(() => cm.opts!.onChange!('mine\n'));
+      const { saveBuffer } = await import('./buffers');
+      await act(async () => { await saveBuffer('/wt', 'src/app.ts'); });
+      expect(screen.getByTestId('save-error')).toHaveTextContent('Couldn’t save. Your changes are still here.');
+    });
+
+    it('read-only: without a write (a runner), and for binary or too-large files even with one', async () => {
+      const a = show({ readOnlyWhy: 'Files on runner-dev are read-only here' });
+      await flush();
+      expect(cm.opts!.onChange).toBeUndefined();
+      expect(screen.getByTestId('read-only')).toHaveAttribute('title', 'Files on runner-dev are read-only here');
+      a.unmount();
+      const b = show({ write: written() }, { ...TEXT, binary: true, text: undefined });
+      await flush();
+      expect(screen.getByTestId('read-only')).toHaveAttribute('title', 'Binary files can’t be edited here');
+      b.unmount();
+      show({ write: written() }, { ...TEXT, tooLarge: true, size: 3 * 1024 * 1024, text: undefined });
+      await flush();
+      expect(screen.getByTestId('read-only')).toHaveAttribute('title', 'Files over 1 MB can’t be edited here');
+    });
   });
 });

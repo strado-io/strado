@@ -72,6 +72,39 @@ describe('codeView (real CodeMirror)', () => {
     view.destroy();
   });
 
+  it('read-only without onChange; with it, typing reports the text, ⌘Z/Ctrl-Z undoes, and setText is not an edit', async () => {
+    const ro = document.createElement('div');
+    document.body.append(ro);
+    const view0 = await createCodeView(ro, { doc: 'abc', path: 'x.ts', language: null, marks: null, onSelection: vi.fn() });
+    expect(EditorView.findFromDOM(ro.querySelector('.cm-editor') as HTMLElement)!.state.readOnly).toBe(true);
+    view0.destroy();
+
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const onChange = vi.fn();
+    const view = await createCodeView(parent, { doc: 'const a = 1;\nnext\n', path: 'x.ts', language: null, marks: null, onSelection: vi.fn(), onChange });
+    const cm = EditorView.findFromDOM(parent.querySelector('.cm-editor') as HTMLElement)!;
+    expect(cm.state.readOnly).toBe(false);
+    cm.dispatch({ changes: { from: 0, insert: '// hi\n' }, userEvent: 'input.type' });
+    expect(onChange).toHaveBeenLastCalledWith('// hi\nconst a = 1;\nnext\n');
+    const content = parent.querySelector('.cm-content')!;
+    content.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(cm.state.doc.toString()).toBe('const a = 1;\nnext\n');
+    expect(onChange).toHaveBeenLastCalledWith('const a = 1;\nnext\n');
+    // ⌘[ / Ctrl-[ is the Files tab's Back, not indent-less: left alone here.
+    const back = new KeyboardEvent('keydown', { key: '[', ctrlKey: true, bubbles: true, cancelable: true });
+    content.dispatchEvent(back);
+    expect(back.defaultPrevented).toBe(false);
+    // A reload (or the other pane) replaces only what differs; the cursor stays; not reported.
+    onChange.mockClear();
+    view.goToLine(2, 3);
+    view.setText('const a = 2;\nnext\n');
+    expect(cm.state.doc.toString()).toBe('const a = 2;\nnext\n');
+    expect(view.cursor()).toEqual({ line: 2, col: 3 });
+    expect(onChange).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
   it('reports cursor moves the person makes, not goToLine', async () => {
     const parent = document.createElement('div');
     document.body.append(parent);

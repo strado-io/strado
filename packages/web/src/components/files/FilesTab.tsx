@@ -1,7 +1,8 @@
-// The Files tab: a light, read-only look at a worktree — its folders on the
-// left (loaded as they open), files in tabs on the right — one pane, or two
-// side by side (fileTabs.ts has the rules). The same for a runner's
-// worktree, read through the runner's own API. For "what's in this file / what
+// The Files tab: a light look at a worktree — its folders on the left (loaded
+// as they open), files in tabs on the right — one pane, or two side by side
+// (fileTabs.ts has the rules). Files on this machine can be edited: ● marks a
+// tab with unsaved edits, ⌘S saves, and closing one asks first. A runner's
+// worktree is read through the runner's own API, read-only. For "what's in this file / what
 // changed here"; the person's own editor stays one click away (the pane's
 // title bar, which reads the active file through onActiveFile).
 // Code navigation lives here: go to definition (one exact answer jumps, else a
@@ -9,7 +10,9 @@
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { selectionIn } from './codeSelection';
 import { api, type RemoteFilesTarget } from '../../api';
-import type { FileAskContext, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
+import type { FileAskContext, FileWriteBody, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
+import { discardBuffer, saveAll, saveBuffer, useDirtyFiles } from './buffers';
+import { SavePromptHost, askSaveChanges, useOwnSavePromptHost } from './savePrompt';
 import { requestRunInShell } from '../../lib/runInShell';
 import { FileTree } from './FileTree';
 import { FileViewer, type FileAt } from './FileViewer';
@@ -247,6 +250,16 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   const read = useCallback((p: string) => api.files.read(wsId, worktreePath, p, where), [wsId, worktreePath, runnerId, remoteWsId]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const marks = useCallback((p: string) => api.files.marks(wsId, worktreePath, p, where), [wsId, worktreePath, runnerId, remoteWsId]);
+  // Editing is this machine's only: a runner's files are read-only here.
+  const write = useCallback((body: FileWriteBody) => api.files.write(wsId, worktreePath, body), [wsId, worktreePath]);
+  const dirty = useDirtyFiles(where ? '' : worktreePath);
+  const ownPromptHost = useOwnSavePromptHost();
+  // An edited preview tab is kept (VS Code's rule): the next tree click must not replace it.
+  useEffect(() => {
+    tabs.panes.forEach((p, i) => {
+      for (const t of p.tabs) if (t.preview && dirty.has(t.path)) dispatch({ type: 'pin', pane: i as PaneIndex, path: t.path });
+    });
+  }, [dirty, tabs]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const hover = useCallback((at: FileAt, signal: AbortSignal) => api.lsp.hover(wsId, worktreePath, at, where, signal), [wsId, worktreePath, runnerId, remoteWsId]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -313,10 +326,28 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
     if (cmd) requestRunInShell({ worktreePath, command: cmd });
   };
 
-  const closeTab = (pane: PaneIndex, path: string) => {
+  /** Close views of these files, then `done()`: unsaved edits shown nowhere
+   * else ask first (Save / Don't save / Cancel); nothing to ask, at once. */
+  const closeAsking = (paths: string[], pane: PaneIndex, done: () => void) => {
+    const other = tabsRef.current.panes[pane === 0 ? 1 : 0];
+    const ask = paths.filter((p) => dirty.has(p) && !other?.tabs.some((t) => t.path === p));
+    if (ask.length === 0) { done(); return; }
+    void askSaveChanges(ask).then(async (choice) => {
+      if (choice === 'cancel') return;
+      if (choice === 'discard') for (const p of ask) discardBuffer(worktreePath, p);
+      // A save that's refused (changed on disk) or fails keeps the tab, with its bar up.
+      else if (!(await saveAll(worktreePath, ask))) return;
+      done();
+    });
+  };
+  const closeTab = (pane: PaneIndex, path: string) => closeAsking([path], pane, () => {
     dispatch({ type: 'close', pane, path });
     focusCode();
-  };
+  });
+  const closePane = (pane: PaneIndex) => closeAsking(tabsRef.current.panes[pane]?.tabs.map((t) => t.path) ?? [], pane, () => {
+    dispatch({ type: 'closePane', pane });
+    focusCode();
+  });
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const mod = e.metaKey || e.ctrlKey;
@@ -327,6 +358,13 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
       // ⌘W closes the file tab, not the app's tab, while focus is in Files (the find bar too).
       const active = activeTab(tabsRef.current);
       if (active) { e.preventDefault(); e.stopPropagation(); closeTab(tabsRef.current.focus, active.path); }
+      return;
+    }
+    if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+      // ⌘S saves the focused pane's file; never the page's Save, never the terminal's.
+      e.preventDefault(); e.stopPropagation();
+      const active = activeTab(tabsRef.current);
+      if (active && !where) void saveBuffer(worktreePath, active.path);
       return;
     }
     if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
@@ -347,8 +385,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); }
     else if (e.key === 'Escape' && !e.defaultPrevented && tabs.panes.length > 1 && tabs.focus === 1 && !nav) {
       e.preventDefault();
-      dispatch({ type: 'closePane', pane: 1 });
-      focusCode();
+      closePane(1);
     }
   };
 
@@ -437,18 +474,19 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
                 <section key={pane.id} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
                   className={`flex min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-zinc-800/80' : ''}`}
                   onMouseDownCapture={() => dispatch({ type: 'focus', pane: pi })} onFocusCapture={() => dispatch({ type: 'focus', pane: pi })}>
-                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} focused={tabs.panes.length > 1 && tabs.focus === pi}
+                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} focused={tabs.panes.length > 1 && tabs.focus === pi} dirty={dirty}
                     onActivate={(path) => {
                       const tab = pane.tabs.find((x) => x.path === path);
                       if (tab && path !== pane.active) jump(here.current, { path }, 'preview', pi);
                     }}
                     onPin={(path) => dispatch({ type: 'pin', pane: pi, path })}
                     onClose={(path) => closeTab(pi, path)}
-                    onClosePane={i > 0 ? () => { dispatch({ type: 'closePane', pane: pi }); focusCode(); } : undefined} />
+                    onClosePane={i > 0 ? () => closePane(pi) : undefined} />
                   <div role="tabpanel" id={tabIds(pane.id).panel} aria-labelledby={t ? tabIds(pane.id).tab(t.path) : undefined} className="flex min-h-0 flex-1 flex-col">
                   {t ? (
                     <FileViewer key={`${worktreePath}\0${t.path}`} onMissing={t.restored ? () => dispatch({ type: 'close', pane: pi, path: t.path }) : undefined} worktreePath={worktreePath} path={t.path} line={t.go.line} col={t.go.col} nonce={t.nonce} reloadKey={reloadKey}
                       read={read} marks={marks} highlight={searchMarks} onAskAgent={onAskAgent}
+                      write={where ? undefined : write} readOnlyWhy={where ? `Files on ${remote?.name ?? 'a runner'} are read-only here` : undefined}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
                       headerStart={historyButtons}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (
@@ -481,6 +519,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
           />
         )}
       </main>
+      {ownPromptHost && <SavePromptHost />}
     </div>
   );
 }
@@ -488,8 +527,10 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
 // One pane's open files: the preview tab in italics, × or middle-click closes,
 // double-click keeps a preview tab. Scrolls sideways, never wraps. Keyboard:
 // ←/→ (Home/End) move between tabs, Enter or Space shows one, Delete closes it.
-function TabStrip({ pane, ids, leading, focused, onActivate, onPin, onClose, onClosePane }: {
+function TabStrip({ pane, ids, leading, focused, dirty, onActivate, onPin, onClose, onClosePane }: {
   pane: Pane;
+  /** Files with unsaved edits: ● in place of ×, until hovered. */
+  dirty: ReadonlySet<string>;
   /** Before the tabs (the first pane's explorer toggle). */
   leading?: ReactNode;
   ids: { panel: string; tab: (path: string) => string };
@@ -526,14 +567,15 @@ function TabStrip({ pane, ids, leading, focused, onActivate, onPin, onClose, onC
         {pane.tabs.map((t) => {
           const on = t.path === pane.active;
           const name = t.path.split('/').pop() || t.path;
+          const edited = dirty.has(t.path);
           return (
             <div key={t.path} role="presentation"
               className={`group flex shrink-0 items-center border-r border-zinc-800/60 ${on ? 'glass-pill rounded-none' : 'hover:bg-white/[0.04]'}`}
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(t.path); } }}
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}>
               <div id={ids.tab(t.path)} role="tab" aria-selected={on} aria-controls={on ? ids.panel : undefined} tabIndex={on ? 0 : -1}
-                title={t.preview ? `${t.path} — preview (double-click to keep)` : t.path}
-                data-preview={t.preview || undefined}
+                title={`${t.preview ? `${t.path} — preview (double-click to keep)` : t.path}${edited ? ' — unsaved changes (⌘S)' : ''}`}
+                data-preview={t.preview || undefined} data-dirty={edited || undefined}
                 onClick={() => onActivate(t.path)}
                 onDoubleClick={() => onPin(t.path)}
                 onKeyDown={(e) => onKey(e, t.path)}
@@ -541,9 +583,16 @@ function TabStrip({ pane, ids, leading, focused, onActivate, onPin, onClose, onC
                   on ? 'text-zinc-100' : 'text-zinc-400 group-hover:text-zinc-200'} ${t.preview ? 'italic' : ''}`}>
                 {name}
               </div>
-              <button type="button" tabIndex={-1} aria-label={`Close ${name}`} title="Close (⌘W, or Delete on the tab)"
+              <button type="button" tabIndex={-1} aria-label={edited ? `Close ${name} (unsaved changes)` : `Close ${name}`} title="Close (⌘W, or Delete on the tab)"
                 onClick={() => onClose(t.path)}
-                className={`mr-1 flex h-4 w-4 items-center justify-center rounded text-[13px] leading-none text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-100 ${on ? '' : 'opacity-0 group-hover:opacity-100'}`}>×</button>
+                className={`mr-1 flex h-4 w-4 items-center justify-center rounded text-[13px] leading-none text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-100 ${on || edited ? '' : 'opacity-0 group-hover:opacity-100'}`}>
+                {edited ? (
+                  <>
+                    <span aria-hidden data-testid="dirty-dot" className="text-[11px] text-zinc-300 group-hover:hidden">●</span>
+                    <span aria-hidden className="hidden group-hover:inline">×</span>
+                  </>
+                ) : '×'}
+              </button>
             </div>
           );
         })}

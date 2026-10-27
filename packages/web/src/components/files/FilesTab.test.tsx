@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const files = vi.hoisted(() => ({ tree: vi.fn(), read: vi.fn(), marks: vi.fn(), list: vi.fn(), search: vi.fn() }));
+const files = vi.hoisted(() => ({ tree: vi.fn(), read: vi.fn(), marks: vi.fn(), list: vi.fn(), search: vi.fn(), write: vi.fn() }));
 const lsp = vi.hoisted(() => ({ definition: vi.fn(), references: vi.fn(), hover: vi.fn(), outline: vi.fn() }));
 const lspServers = vi.hoisted(() => ({ list: vi.fn() }));
 const runners = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -12,9 +12,9 @@ vi.mock('../../lib/runInShell', () => shell);
 vi.mock('./FileViewer', () => ({
   FileViewer: (p: { path: string; line?: number; col?: number; nonce?: number; reloadKey?: number; read: (x: string) => unknown; onAskAgent?: unknown;
     onNavigate?: (k: 'definition' | 'references', at: { path: string; line: number; col: number }) => void;
-    onCursor?: (at: { path: string; line: number; col: number }) => void; highlight?: { q: string } | null; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
+    onCursor?: (at: { path: string; line: number; col: number }) => void; highlight?: { q: string } | null; write?: unknown; readOnlyWhy?: string; headerStart?: React.ReactNode; headerEnd?: React.ReactNode; onMissing?: () => void }) => (
     <div data-testid="viewer" data-path={p.path} data-line={p.line ?? ''} data-col={p.col ?? ''} data-nonce={p.nonce ?? ''} data-reload={p.reloadKey ?? ''}
-      data-ask={String(!!p.onAskAgent)} data-highlight={p.highlight?.q ?? ''}>
+      data-ask={String(!!p.onAskAgent)} data-highlight={p.highlight?.q ?? ''} data-editable={String(!!p.write)} data-why={p.readOnlyWhy ?? ''}>
       <button type="button" onClick={() => void p.read(p.path)}>read</button>
       <button type="button" onClick={() => p.onNavigate?.('definition', { path: p.path, line: 2, col: 4 })}>F12</button>
       <button type="button" onClick={() => p.onNavigate?.('references', { path: p.path, line: 2, col: 4 })}>Shift-F12</button>
@@ -27,6 +27,8 @@ vi.mock('./FileViewer', () => ({
 }));
 
 import { FilesTab } from './FilesTab';
+import { __resetBuffers, editBuffer, getBuffer, isDirty, openBuffer } from './buffers';
+import { __resetSavePrompt } from './savePrompt';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { registerSelection } from './codeSelection';
@@ -40,6 +42,8 @@ beforeEach(() => {
   localStorage.clear();
   files.tree.mockImplementation(async (_ws: string, _wt: string, dir: string) => page(dir));
   files.read.mockResolvedValue({});
+  __resetBuffers();
+  __resetSavePrompt();
 });
 
 describe('FilesTab', () => {
@@ -442,6 +446,119 @@ describe('FilesTab', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('editing', () => {
+    const pane0 = () => within(screen.getByTestId('files-pane-0'));
+    // What the viewer would do on reading a.ts, then the person typing.
+    const edit = (path = 'a.ts', text = 'mine') => act(() => {
+      openBuffer('/wt', path, { text: 'disk', version: 'v1' }, (b) => files.write('ws1', '/wt', b));
+      editBuffer('/wt', path, text);
+    });
+    const open = async (...paths: string[]) => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      for (const p of paths) {
+        fireEvent.click(document.querySelector(`[role="treeitem"][data-path="${p}"]`)!);
+        fireEvent.doubleClick(document.querySelector(`[role="treeitem"][data-path="${p}"]`)!);
+      }
+    };
+
+    it('this machine\'s files are editable; a runner\'s are read-only, and the viewer says why', async () => {
+      await open('a.ts');
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-editable', 'true');
+    });
+    it('…on a runner', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/home/u/wt" remote={{ runnerId: 'r1', remoteWsId: 'default', name: 'runner-dev' }} />);
+      await flush();
+      fireEvent.click(document.querySelector('[role="treeitem"][data-path="a.ts"]')!);
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-editable', 'false');
+      expect(screen.getByTestId('viewer')).toHaveAttribute('data-why', 'Files on runner-dev are read-only here');
+    });
+
+    it('editing a preview tab keeps it (no longer italic, not replaced by the next tree click)', async () => {
+      render(<FilesTab wsId="ws1" worktreePath="/wt" />);
+      await flush();
+      fireEvent.click(document.querySelector('[role="treeitem"][data-path="a.ts"]')!);
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).toHaveAttribute('data-preview', 'true');
+      edit('a.ts');
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).not.toHaveAttribute('data-preview');
+      fireEvent.click(document.querySelector('[role="treeitem"][data-path="b.ts"]')!);
+      expect(pane0().getAllByRole('tab').map((t) => t.textContent?.replace(/[×●]/g, ''))).toEqual(['a.ts', 'b.ts']);
+    });
+
+    it('a dirty file\'s tab shows ● in place of ×; ⌘S posts with the base version and clears it', async () => {
+      await open('a.ts');
+      edit();
+      const tab = pane0().getByRole('tab', { name: 'a.ts' });
+      expect(tab).toHaveAttribute('data-dirty', 'true');
+      expect(pane0().getByTestId('dirty-dot')).toHaveTextContent('●');
+      files.write.mockResolvedValue({ path: 'a.ts', version: 'v2', size: 4 });
+      const e = new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true, cancelable: true });
+      const outside = vi.fn();
+      window.addEventListener('keydown', outside);
+      await act(async () => { screen.getByRole('button', { name: 'read' }).dispatchEvent(e); });
+      window.removeEventListener('keydown', outside);
+      expect(e.defaultPrevented).toBe(true);
+      expect(outside).not.toHaveBeenCalled(); // never reaches the app or the terminal
+      expect(files.write).toHaveBeenCalledWith('ws1', '/wt', { path: 'a.ts', text: 'mine', baseVersion: 'v1' });
+      expect(isDirty(getBuffer('/wt', 'a.ts'))).toBe(false);
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).not.toHaveAttribute('data-dirty');
+      expect(pane0().queryByTestId('dirty-dot')).toBeNull();
+    });
+
+    it('closing a dirty tab asks: Cancel keeps it, Don\'t save drops the edits, Save writes then closes', async () => {
+      await open('a.ts', 'b.ts');
+      edit('a.ts');
+      const close = () => fireEvent.click(pane0().getByRole('button', { name: 'Close a.ts (unsaved changes)' }));
+      close();
+      const dialog = await screen.findByRole('alertdialog', { name: 'Save changes' });
+      expect(dialog).toHaveTextContent('Save changes to a.ts?');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await flush();
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).toBeInTheDocument();
+      expect(isDirty(getBuffer('/wt', 'a.ts'))).toBe(true);
+      // Save: written, then closed.
+      files.write.mockResolvedValue({ path: 'a.ts', version: 'v2', size: 4 });
+      close();
+      fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Save' }));
+      await flush();
+      expect(files.write).toHaveBeenCalledWith('ws1', '/wt', { path: 'a.ts', text: 'mine', baseVersion: 'v1' });
+      expect(pane0().queryByRole('tab', { name: 'a.ts' })).toBeNull();
+      // Don't save: closed, the edits gone.
+      edit('b.ts');
+      fireEvent.click(pane0().getByRole('button', { name: 'Close b.ts (unsaved changes)' }));
+      fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Don’t save' }));
+      await flush();
+      expect(screen.queryByRole('tab', { name: 'b.ts' })).toBeNull(); // the last tab: the pane is empty now
+      expect(getBuffer('/wt', 'b.ts')).toBeUndefined();
+    });
+
+    it('the same file in both panes is one buffer: closing one view of it doesn\'t ask', async () => {
+      await open('a.ts');
+      fireEvent.click(screen.getByRole('button', { name: 'Open to the side' }));
+      edit('a.ts');
+      const side = within(screen.getByTestId('files-pane-1'));
+      expect(side.getByRole('tab', { name: 'a.ts' })).toHaveAttribute('data-dirty', 'true');
+      fireEvent.click(side.getByRole('button', { name: 'Close a.ts (unsaved changes)' }));
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByTestId('files-pane-1')).toBeNull();
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).toHaveAttribute('data-dirty', 'true');
+    });
+
+    it('a save refused on close (changed on disk) keeps the tab; a clean tab closes without asking', async () => {
+      await open('a.ts', 'b.ts');
+      edit('a.ts');
+      files.write.mockRejectedValue(Object.assign(new Error('409'), { code: 'CONFLICT', details: { version: 'disk' } }));
+      fireEvent.click(pane0().getByRole('button', { name: 'Close a.ts (unsaved changes)' }));
+      fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Save' }));
+      await flush();
+      expect(pane0().getByRole('tab', { name: 'a.ts' })).toBeInTheDocument();
+      expect(getBuffer('/wt', 'a.ts')!.conflict).toEqual({ version: 'disk' });
+      fireEvent.click(pane0().getByRole('button', { name: 'Close b.ts' }));
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(pane0().queryByRole('tab', { name: 'b.ts' })).toBeNull();
+    });
   });
 
   describe('file tabs', () => {
