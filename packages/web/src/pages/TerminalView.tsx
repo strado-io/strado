@@ -33,7 +33,7 @@ import {
 } from '../hooks/browserTabs';
 import { DiffView } from './DiffView';
 import { FilesTab } from '../components/files/FilesTab';
-import { FilePicker } from '../components/files/FilePicker';
+import { FilePicker, primeFileList } from '../components/files/FilePicker';
 import { FileAskDialog } from '../components/files/FileAskDialog';
 import { jarvisServerPort } from '../lib/jarvis/serverPort';
 import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
@@ -2596,6 +2596,15 @@ export function TerminalView({
   // `name` lets the Files tab say which machine an install belongs on.
   const filesTarget = remote ? { runnerId: remote.runnerId, remoteWsId: remote.wsId, name: remote.runnerName } : undefined;
   const listFiles = (worktreePath: string) => api.files.list(wsId, worktreePath, filesTarget);
+  // ⌘P opens with results at once: this worktree's list is fetched when the
+  // hub opens, after it has settled (idle), not when the picker asks.
+  useEffect(() => {
+    const prime = () => primeFileList(`${remote?.runnerId ?? 'local'}:${worktree.path}`, () => listFiles(worktree.path));
+    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const handle = idle ? idle(prime, { timeout: 3000 }) : window.setTimeout(prime, 1500);
+    return () => { (window as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback?.(handle); window.clearTimeout(handle); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worktree.path, remote?.runnerId]);
   // Each worktree's file list, so only paths that exist become links in its
   // terminals. Fetched on the first hover over terminal output, then again
   // when older than a minute (agents add files as they work).
@@ -3870,6 +3879,7 @@ export function TerminalView({
       {filePicker && (
         <FilePicker
           load={() => listFiles(filePicker)}
+          cacheKey={`${remote?.runnerId ?? 'local'}:${filePicker}`}
           onPick={(path, line) => { setFilePicker(null); openFile(filePicker, path, line); }}
           onClose={() => setFilePicker(null)}
         />

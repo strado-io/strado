@@ -268,11 +268,13 @@ export async function readFile(root: string, relIn: string): Promise<FileContent
   const { real } = await resolveInside(root, rel);
   const stat = await fs.stat(real);
   if (!stat.isFile()) throw new AppError('VALIDATION', 'not a file');
-  const st = await gitStatus(root, rel, true);
+  // git status (a process, ~20 ms) runs while the file is read, not before it.
+  const small = stat.size <= FILES_LIMITS.readBytes;
+  const [st, read] = await Promise.all([gitStatus(root, rel, true), small ? fs.readFile(real) : Promise.resolve(null)]);
   const change = changeFor(st, rel, 'file');
   const base = { path: rel, size: stat.size, language: languageFor(rel), ...(change ? { change } : {}) };
-  if (stat.size > FILES_LIMITS.readBytes) return { ...base, binary: false, tooLarge: true };
-  const buf = await fs.readFile(real);
+  if (!small || !read) return { ...base, binary: false, tooLarge: true };
+  const buf = read;
   if (buf.length > FILES_LIMITS.readBytes) return { ...base, size: buf.length, binary: false, tooLarge: true };
   if (isBinary(buf)) return { ...base, size: buf.length, binary: true, tooLarge: false };
   return {

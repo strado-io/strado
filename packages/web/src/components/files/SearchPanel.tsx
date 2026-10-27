@@ -8,7 +8,8 @@ import { filesError } from './errors';
 import { byFile } from './NavPanel';
 import { FileIcon } from './FileIcon';
 
-const DEBOUNCE_MS = 250;
+// The server answers in tens of ms (ripgrep): wait just past a typing burst.
+const DEBOUNCE_MS = 80;
 /** Characters of the line kept before a match. */
 const CONTEXT = 12;
 
