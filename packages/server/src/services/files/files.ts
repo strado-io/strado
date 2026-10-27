@@ -1,7 +1,9 @@
-// The Files tab's server side: a read-only view of one worktree. Every path in
-// and out is relative to the worktree root; nothing here writes, and nothing
-// is served from outside the root (symlinks included) or from inside .git.
+// The Files tab's server side: a view of one worktree, and in-place edits of
+// its existing text files. Every path in and out is relative to the worktree
+// root; nothing is read or written outside the root (symlinks included) or
+// inside .git. The only write replaces an existing file's text.
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors.js';
@@ -12,6 +14,8 @@ import {
   type FileList,
   type FileMarks,
   type FileTreeEntry,
+  type FileWriteConflict,
+  type FileWriteResult,
   type FileTreePage,
 } from './types.js';
 
@@ -271,7 +275,52 @@ export async function readFile(root: string, relIn: string): Promise<FileContent
   const buf = await fs.readFile(real);
   if (buf.length > FILES_LIMITS.readBytes) return { ...base, size: buf.length, binary: false, tooLarge: true };
   if (isBinary(buf)) return { ...base, size: buf.length, binary: true, tooLarge: false };
-  return { path: rel, size: buf.length, binary: false, tooLarge: false, text: buf.toString('utf8'), language: base.language, ...(change ? { change } : {}) };
+  return {
+    path: rel, size: buf.length, binary: false, tooLarge: false, text: buf.toString('utf8'), language: base.language,
+    ...(change ? { change } : {}), version: versionOf(buf),
+  };
+}
+
+/** FileContent.version: the sha-256 of the exact bytes. */
+const versionOf = (buf: Buffer) => crypto.createHash('sha256').update(buf).digest('hex');
+
+export type WriteOutcome =
+  | { ok: true; result: FileWriteResult; /** The file written (symlinks resolved). */ real: string }
+  | { ok: false; conflict: FileWriteConflict };
+
+/** Replaces an existing text file's contents. Refused unless the file on disk
+ *  is still `baseVersion` (or `force`). Written to a temp file beside it and
+ *  renamed over it, keeping its mode: a reader never sees half a file, and a
+ *  failure leaves the old one whole. A symlink is written through to its
+ *  target, which must stay inside the worktree. */
+export async function writeFile(root: string, relIn: string, text: string, baseVersion: string, force = false): Promise<WriteOutcome> {
+  const rel = safeRel(relIn);
+  if (!rel) throw new AppError('VALIDATION', 'path is required');
+  const { real } = await resolveInside(root, rel);
+  const stat = await fs.stat(real);
+  if (!stat.isFile()) throw new AppError('VALIDATION', 'not a file');
+  if (stat.size > FILES_LIMITS.readBytes) throw new AppError('VALIDATION', 'file too large');
+  const data = Buffer.from(text, 'utf8');
+  if (data.length > FILES_LIMITS.readBytes) throw new AppError('VALIDATION', 'text too large');
+  if (data.includes(0)) throw new AppError('VALIDATION', 'binary text');
+  const current = await fs.readFile(real);
+  if (current.length > FILES_LIMITS.readBytes) throw new AppError('VALIDATION', 'file too large');
+  if (isBinary(current)) throw new AppError('VALIDATION', 'binary file');
+  // A file the person made read-only stays so (a rename would replace it anyway).
+  if (!(stat.mode & 0o200)) throw new AppError('VALIDATION', 'file is read-only');
+  const now = versionOf(current);
+  if (now !== baseVersion && !force) return { ok: false, conflict: { error: 'conflict', path: rel, version: now } };
+  const mode = stat.mode & 0o7777;
+  const tmp = path.join(path.dirname(real), `.${path.basename(real)}.strado-${crypto.randomBytes(6).toString('hex')}.tmp`);
+  try {
+    await fs.writeFile(tmp, data, { flag: 'wx', mode });
+    await fs.chmod(tmp, mode); // the umask may have narrowed it
+    await fs.rename(tmp, real);
+  } catch {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw new AppError('VALIDATION', 'could not write the file');
+  }
+  return { ok: true, result: { path: rel, version: versionOf(data), size: data.length }, real };
 }
 
 /** `git diff -U0` output → line marks in the new file. */
