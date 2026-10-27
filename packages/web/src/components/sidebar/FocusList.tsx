@@ -158,7 +158,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
 // 0fr↔1fr, .focus-panel in index.css: no measuring); shutting, it stays drawn,
 // hidden from clicks, until the shrink ends. Its gaps sit inside the part that grows, so only
 // the panel's own height changes.
-const SHUT_MS = 150;
+const SHUT_MS = 220;
 function FocusPanel({ open, last, children }: { open: boolean; last: boolean; children: () => React.ReactNode }) {
   const [wasOpen, setWasOpen] = useState(open);
   const [shutting, setShutting] = useState(false);

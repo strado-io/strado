@@ -94,12 +94,14 @@ describe('sidebar chrome', () => {
     expect(shape()).toEqual(before);
   });
 
-  it('the panel animates its height, 150ms ease-out, and not at all with reduced motion', () => {
+  it('the panel glides on the drawer ease, its contents fade in behind it, and nothing moves with reduced motion', () => {
     const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8');
-    expect(css).toMatch(/\.focus-panel \{[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows 150ms ease-out;/);
-    expect(css).toMatch(/\.focus-panel\[data-open\] \{ grid-template-rows: 1fr; \}/);
-    expect(css).toMatch(/@starting-style \{ \.focus-panel\[data-open\] \{ grid-template-rows: 0fr; \} \}/);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.focus-panel \{ transition: none; \} \}/);
+    expect(css).toMatch(/--focus-ease: cubic-bezier\(0\.32, 0\.72, 0, 1\);/);
+    expect(css).toMatch(/\.focus-panel \{[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows 220ms var\(--focus-ease\);/);
+    expect(css).toMatch(/\.focus-panel\[data-open\] \{ grid-template-rows: 1fr; transition-duration: 280ms; \}/);
+    expect(css).toMatch(/\.focus-panel\[data-open\] > \* > \* \{[^}]*opacity: 1;/);
+    expect(css).toMatch(/@starting-style \{[^@]*\.focus-panel\[data-open\] \{ grid-template-rows: 0fr; \}/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.focus-panel, \.focus-panel > \* > \* \{ transition: none; \} \}/);
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

@@ -401,14 +401,31 @@ body {
 /* A Focus's panel in the sidebar (FocusList FocusPanel): grows open and
    shrinks shut by its grid row, 0fr↔1fr, so nothing is measured. Opening
    starts from 0fr (@starting-style), as it mounts already open. */
+/* The drawer ease (t3code's): a quick start that settles slowly, so the
+   panel glides rather than snaps. Its contents fade and drop in a touch
+   behind the height, and leave a touch ahead of it. */
 .focus-panel {
+  --focus-ease: cubic-bezier(0.32, 0.72, 0, 1);
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 150ms ease-out;
+  transition: grid-template-rows 220ms var(--focus-ease);
 }
-.focus-panel[data-open] { grid-template-rows: 1fr; }
-@starting-style { .focus-panel[data-open] { grid-template-rows: 0fr; } }
-@media (prefers-reduced-motion: reduce) { .focus-panel { transition: none; } }
+.focus-panel[data-open] { grid-template-rows: 1fr; transition-duration: 280ms; }
+.focus-panel > * > * {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease-out, transform 220ms var(--focus-ease);
+}
+.focus-panel[data-open] > * > * {
+  opacity: 1;
+  transform: none;
+  transition: opacity 220ms ease-out 40ms, transform 280ms var(--focus-ease);
+}
+@starting-style {
+  .focus-panel[data-open] { grid-template-rows: 0fr; }
+  .focus-panel[data-open] > * > * { opacity: 0; transform: translateY(-4px); }
+}
+@media (prefers-reduced-motion: reduce) { .focus-panel, .focus-panel > * > * { transition: none; } }
 
 /* Electron: a top bar that moves the window (like a native title bar). Its
    controls must stay clickable, so everything you can press inside is carved
