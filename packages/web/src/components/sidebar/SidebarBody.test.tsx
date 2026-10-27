@@ -317,20 +317,19 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('dialog', { name: 'Add worktrees to Billing' })).toBeInTheDocument();
   });
 
-  it('the toolbar: New focus opens the composer; New worktree here makes one in the active Focus, and is off with none', () => {
-    focusMock.focuses = [{ ...focus('f1', 'Billing', ['local:/r1/wt']), ticket: { provider: 'jira', key: 'FD-9' } }];
-    focusMock.activeId = 'f1';
-    const onNewWorktree = vi.fn();
-    const { rerender } = render(<SidebarBody {...props({ onNewWorktree })} />);
-    const toolbar = () => within(screen.getByTestId('sidebar-toolbar'));
+  it('the toolbar is Search, Add project and New: Add project opens Add repo under it, New the composer', () => {
+    withFocus('local:/r1/wt');
+    const onAddRepo = vi.fn();
+    render(<SidebarBody {...props({ onAddRepo })} />);
+    const toolbar = within(screen.getByTestId('sidebar-toolbar'));
     expect(screen.getByTestId('sidebar-toolbar').className.split(/\s+/)).toContain('h-8');
-    fireEvent.click(toolbar().getByRole('button', { name: 'New worktree here' }));
-    expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
-    fireEvent.click(toolbar().getByRole('button', { name: 'New focus' }));
+    expect(toolbar.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Search', 'Add project', 'New']);
+    expect(toolbar.getByRole('button', { name: 'Add project' })).toHaveAttribute('title', 'Add project');
+    fireEvent.click(toolbar.getByRole('button', { name: 'Add project' }));
+    expect(onAddRepo).toHaveBeenCalledWith({ left: expect.any(Number), right: expect.any(Number), bottom: expect.any(Number) });
+    expect(toolbar.getByRole('button', { name: 'New' })).toHaveAttribute('title', 'New (⇧⌘N)');
+    fireEvent.click(toolbar.getByRole('button', { name: 'New' }));
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
-    focusMock.activeId = null;
-    rerender(<SidebarBody {...props({ onNewWorktree })} />);
-    expect(toolbar().getByRole('button', { name: 'New worktree here' })).toBeDisabled();
   });
 
   it('search filters Focus names and the worktrees in them, expanding a Focus whose worktree matches; Esc clears', () => {

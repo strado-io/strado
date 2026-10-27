@@ -370,8 +370,7 @@ export function SidebarBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarToolbar query={query} onQuery={setQuery} onNewFocus={() => openComposer()} shortcut={isActivePane}
-        onNewWorktree={active ? () => onNewWorktree(active.ticket) : undefined} />
+      <SidebarToolbar query={query} onQuery={setQuery} onAddProject={onAddRepo} onNew={() => openComposer()} shortcut={isActivePane} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
@@ -419,7 +418,9 @@ export function SidebarBody({
       </div>
 
       {composer && (
-        <FocusComposer repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
+        <FocusComposer workspaceId={wsId} repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
+          activeFocus={active ? { id: active.id, name: active.name } : null}
+          onAddToFocus={(id, pinId) => void setMembership(id, pinId, true).catch(report('Could not add to focus'))}
           onCreate={(name, members, ticket) => void create(name, members, ticket).catch(report('Could not create focus'))}
           onClose={() => setComposer(null)} />
       )}

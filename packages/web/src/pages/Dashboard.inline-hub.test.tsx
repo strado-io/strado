@@ -346,7 +346,7 @@ describe('Dashboard inline hub', () => {
     // Add repo lives in the sidebar's blank-space menu now.
     fireEvent.contextMenu(screen.getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
     fireEvent.click(screen.getByRole('button', { name: 'Add repo…' }));
-    await screen.findByRole('heading', { name: 'Add repo' });
+    await screen.findByRole('heading', { name: 'Add project' });
     expect(hub).toHaveAttribute('data-modal-open', 'true');
 
     fireEvent.click(screen.getByLabelText('Close'));

@@ -12,6 +12,7 @@ import { IntercomProvider } from './contexts/IntercomContext';
 import { useWorkspace } from './hooks/useWorkspace';
 import { activeFocusOf, ensureFocusesLoaded, useFocuses } from './hooks/useFocuses';
 import { createdPinId } from './components/sidebar/pinIds';
+import { startWorktreeJob } from './lib/worktreeJob';
 import { api, type RemoteWorktree, type FocusTicket } from './api';
 import type { MergeRequest, RepoConfig, Worktree } from './types';
 import { MrReviewModal } from './components/MrReviewModal';
@@ -109,25 +110,11 @@ function AppShell() {
           preselectTicket={dialog.ticket}
           onCancel={close}
           runners={runners}
-          onSubmit={async (payload: CreatePayload) => {
-            // Enqueue only. The dialog follows the job's named steps and closes
-            // when it finishes — including the remote case, where provisioning
-            // (a clone that can run for minutes) is itself part of the job
-            // rather than a silent wait inside one long request.
-            if (payload.runnerId) {
-              track('worktree_created_remote');
-              return api.runners.createRemote(wsId, {
-                runnerId: payload.runnerId,
-                repoId: payload.repoId,
-                ticketId: payload.ticketId,
-                ticketProvider: payload.ticketProvider,
-                title: payload.title,
-                sourceBranch: payload.sourceBranch,
-              });
-            }
-            track('worktree_created');
-            return api.worktrees.create(wsId, payload);
-          }}
+          // Enqueue only. The dialog follows the job's named steps and closes
+          // when it finishes — including the remote case, where provisioning
+          // (a clone that can run for minutes) is itself part of the job
+          // rather than a silent wait inside one long request.
+          onSubmit={(payload: CreatePayload) => startWorktreeJob(wsId, payload)}
           onDone={(result) => {
             // Cheap for a local create, essential for a remote one. The dialog
             // owns which runner was selected internally, so one unconditional

@@ -22,6 +22,33 @@ export function dominantProjectKey(worktrees: Pick<Worktree, 'meta'>[]): string 
   return best;
 }
 
+/** A repo's real default branch: the one its main worktree is on (main, master, anything). */
+export function mainBranchOf(worktrees: Worktree[], r?: RepoConfig): string | null | undefined {
+  return worktrees.find((w) => !!r && w.path === r.path)?.branch;
+}
+
+/** The branches a new worktree can start from: the chosen one, the repo's
+ * worktrees' at once, then every local and remote branch once git answers. */
+export function useSourceBranches(workspaceId: string | undefined, repo: RepoConfig | undefined, worktrees: Worktree[], sourceBranch: string): string[] {
+  const [options, setOptions] = useState<string[]>([sourceBranch]);
+  useEffect(() => {
+    const localBranches = worktrees
+      .filter((worktree) => worktree.repoId === repo?.id && worktree.branch)
+      .map((worktree) => worktree.branch!);
+    setOptions(Array.from(new Set([sourceBranch, ...localBranches])));
+    if (!workspaceId || !repo?.path) return;
+
+    let current = true;
+    api.worktrees.git.branches(workspaceId, repo.path)
+      .then(({ branches }) => {
+        if (current) setOptions(Array.from(new Set([sourceBranch, ...branches])));
+      })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [workspaceId, repo?.id, repo?.path, worktrees]);
+  return options;
+}
+
 export type CreatePayload = {
   repoId: string;
   ticketId: string;
@@ -75,15 +102,11 @@ export function NewWorktreeDialog({
   const initialRepo = repos.find((r) => r.id === preselectRepoId) ?? repos[0];
   // Opened from a repo row's + button: the repo is already decided — no picker.
   const lockedRepo = repos.find((r) => r.id === preselectRepoId);
-  // The repo's real default branch = the branch its main worktree is on
-  // (main/master/anything). Guessing 'master' broke repos on 'main'.
-  const mainBranchOf = (r?: RepoConfig): string | null | undefined =>
-    worktrees.find((w) => !!r && w.path === r.path)?.branch;
+  // The repo's real default branch; guessing 'master' broke repos on 'main'.
   const [repoId, setRepoId] = useState(initialRepo?.id ?? '');
   const [ticketId, setTicketId] = useState(preselectTicket?.key ?? '');
   const [title, setTitle] = useState('');
-  const [sourceBranch, setSourceBranch] = useState(mainBranchOf(initialRepo) ?? 'main');
-  const [branchOptions, setBranchOptions] = useState<string[]>([mainBranchOf(initialRepo) ?? 'main']);
+  const [sourceBranch, setSourceBranch] = useState(mainBranchOf(worktrees, initialRepo) ?? 'main');
 
   // Switching repos re-points the source branch at the newly-selected repo's
   // main worktree. The main worktree remains the internal linking default; it
@@ -91,14 +114,13 @@ export function NewWorktreeDialog({
   function changeRepo(id: string) {
     setRepoId(id);
     const r = repos.find((x) => x.id === id);
-    const nextBranch = mainBranchOf(r) ?? 'main';
-    setSourceBranch(nextBranch);
-    setBranchOptions([nextBranch]);
+    setSourceBranch(mainBranchOf(worktrees, r) ?? 'main');
   }
   // '' = this machine. Only online runners are selectable: creating on an
   // offline box would queue nothing and fail at the first request.
   const [runnerId, setRunnerId] = useState('');
   const selectedRepo = repos.find((r) => r.id === repoId);
+  const branchOptions = useSourceBranches(workspaceId, selectedRepo, worktrees, sourceBranch);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -122,23 +144,6 @@ export function NewWorktreeDialog({
   const mountedRef = useRef(true);
 
   useEffect(() => () => { mountedRef.current = false; }, []);
-
-  useEffect(() => {
-    const localBranches = worktrees
-      .filter((worktree) => worktree.repoId === repoId && worktree.branch)
-      .map((worktree) => worktree.branch!);
-    const fallback = Array.from(new Set([sourceBranch, ...localBranches]));
-    setBranchOptions(fallback);
-    if (!workspaceId || !selectedRepo?.path) return;
-
-    let current = true;
-    api.worktrees.git.branches(workspaceId, selectedRepo.path)
-      .then(({ branches }) => {
-        if (current) setBranchOptions(Array.from(new Set([sourceBranch, ...branches])));
-      })
-      .catch(() => undefined);
-    return () => { current = false; };
-  }, [workspaceId, repoId, selectedRepo?.path, worktrees]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

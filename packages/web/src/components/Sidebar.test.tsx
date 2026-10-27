@@ -372,7 +372,7 @@ describe('Sidebar tree', () => {
     expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
   });
 
-  it('has no New worktree button of its own; the workspace row is just its name and chevron, New focus is in the toolbar under it', () => {
+  it('has no New worktree button of its own; the workspace row is just its name and chevron, New is in the toolbar under it', () => {
     wrap(<Sidebar {...base} />);
     expect(activePane().queryByRole('button', { name: 'New worktree' })).toBeNull();
     // One dropdown button: the chevron is inside the switcher, and the row has no other button.
@@ -380,8 +380,8 @@ describe('Sidebar tree', () => {
     expect(button).toHaveAttribute('aria-label', expect.stringMatching(/^Switch workspace/));
     const row = button.parentElement!;
     expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([expect.stringMatching(/^Switch workspace/)]);
-    const plus = within(activePane().getByTestId('sidebar-toolbar')).getByRole('button', { name: 'New focus' });
-    expect(plus).toHaveAttribute('title', 'New focus (⇧⌘N)');
+    const plus = within(activePane().getByTestId('sidebar-toolbar')).getByRole('button', { name: 'New' });
+    expect(plus).toHaveAttribute('title', 'New (⇧⌘N)');
     fireEvent.click(plus);
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });
