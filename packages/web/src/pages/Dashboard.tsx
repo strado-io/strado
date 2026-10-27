@@ -1068,7 +1068,8 @@ export function Dashboard(props: {
           .catch(() => { /* the 15 s re-sync catches up */ });
       }}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
-      <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
+      {/* Settings is a modal over the app, which stays in view behind it. */}
+      <div className="flex min-w-0 flex-1" aria-hidden={settingsSection ? true : undefined}>
       {(!sidebarHidden || sidebarSlide === 'out') && (
         <div className="contents">
         <Sidebar

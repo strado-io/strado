@@ -14,7 +14,6 @@ import { ProjectsSection, type ProjectsProps } from './ProjectsSection';
 import { RunnersPanel } from '../RunnersPanel';
 import type { HostTab } from '../hosts/HostDetails';
 import { useEntitlements } from '../../hooks/entitlements';
-import { TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from '../SidebarToggle';
 import type { Feature } from '../../api';
 
 export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'projects' | 'agents' | 'editor' | 'languageServers' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
@@ -181,8 +180,7 @@ export function SettingsPage({
   project?: string | null;
 }) {
   const [search, setSearch] = useState('');
-  const backButton = useRef<HTMLButtonElement>(null);
-  const insetTitleBar = useInsetTitleBar();
+  const closeButton = useRef<HTMLButtonElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const initialIntegration = isIntegration(section) ? section : 'github';
   const [active, setActive] = useState<SettingsSection>(isIntegration(section) ? 'integrations' : section);
@@ -194,7 +192,7 @@ export function SettingsPage({
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    backButton.current?.focus();
+    closeButton.current?.focus();
     return () => previousFocus?.focus();
   }, []);
 
@@ -224,18 +222,15 @@ export function SettingsPage({
   }, [onClose]);
 
   return (
-    <div className={`fixed inset-x-0 top-0 ${bottomInset ? 'bottom-11' : 'bottom-0'} z-50 flex bg-zinc-950 text-zinc-200`} data-testid="settings-page">
-        <nav aria-label="Settings" className="flex w-44 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/50 sm:w-56 lg:w-64">
-          {/* macOS: one title-bar row like the sidebar's: the traffic lights, then Back. Its blank part drags the window. */}
-          <div className={`app-drag flex shrink-0 items-center gap-1 px-2 ${insetTitleBar ? '' : 'pt-2'}`} style={insetTitleBar ? { height: TITLE_BAR_HEIGHT } : undefined}>
-            <TrafficLightsSpacer />
-            <button ref={backButton} type="button" onClick={onClose}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[13px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14" /></svg>
-              Back to app
-            </button>
-          </div>
-          <div className="shrink-0 p-3 pb-4 pt-2 sm:px-5">
+    // A modal over the app, which stays in view behind a dim backdrop; a click
+    // on the backdrop closes it, as Escape and × do. It pops in like every
+    // other dialog (index.css: the backdrop fades, the panel eases up).
+    <div className={`fixed inset-0 ${bottomInset ? 'bottom-11' : ''} z-50 flex items-center justify-center bg-black/60 p-4 sm:p-8`}
+      data-testid="settings-page" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label="Settings"
+        className="flex h-full max-h-[900px] w-full max-w-[1240px] overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-950 text-zinc-200 shadow-[0_24px_80px_-12px_rgb(0_0_0/0.7)]">
+        <nav aria-label="Settings" className="flex w-44 shrink-0 flex-col border-r border-white/[0.06] bg-zinc-900/40 sm:w-56 lg:w-64">
+          <div className="shrink-0 p-3 pb-3 sm:px-4">
             <label className="flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/50 px-2.5 py-2 focus-within:border-zinc-500">
               <svg className="shrink-0 text-zinc-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
               <input aria-label="Search settings" placeholder="Search settings…" value={search} onChange={(event) => setSearch(event.target.value)}
@@ -286,7 +281,18 @@ export function SettingsPage({
           )}
           </div>
         </nav>
-        <main ref={content} aria-label="Settings content" className="min-w-0 flex-1 overflow-y-auto px-5 py-8 sm:px-10 sm:py-12 lg:px-16">
+        <div className="flex min-w-0 flex-1 flex-col">
+        {/* The window's grab strip while Settings covers the app's own; × is carved out. */}
+        <header className="app-drag flex h-12 shrink-0 items-center gap-2 border-b border-white/[0.06] pl-5 pr-2 text-[13px]">
+          <span className="text-zinc-500">Settings</span>
+          <span aria-hidden className="text-zinc-700">/</span>
+          <span className="truncate font-medium text-zinc-200">{GROUPS.flatMap((g) => g.items).find((i) => i.id === active)?.label}</span>
+          <button ref={closeButton} type="button" onClick={onClose} aria-label="Close settings" title="Close (Esc)"
+            className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </header>
+        <main ref={content} aria-label="Settings content" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-8 sm:px-10 sm:py-10 lg:px-14">
           <div className="mx-auto w-full max-w-3xl" data-testid="settings-pane" data-section={active}>
             {active === 'profile' && (
               <div className="max-w-2xl">
@@ -318,6 +324,8 @@ export function SettingsPage({
             {active === 'commandbox' && <CommandBoxSection />}
           </div>
         </main>
+        </div>
+      </div>
     </div>
   );
 }

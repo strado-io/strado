@@ -116,8 +116,13 @@ describe('SettingsPage', () => {
     render(<SettingsPage onClose={onClose} />);
     await waitFor(() => expect(profileGet).toHaveBeenCalled());
     fireEvent.keyDown(window, { key: 'Escape' });
-    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     expect(onClose).toHaveBeenCalledTimes(2);
+    // A click on the dim backdrop closes it too; one inside the panel doesn't.
+    fireEvent.mouseDown(screen.getByRole('dialog', { name: 'Settings' }));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.mouseDown(screen.getByTestId('settings-page'));
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 
 });
