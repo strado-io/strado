@@ -1,5 +1,8 @@
-// The contract for the Files tab: a light, read-only view of a worktree's
-// folders and files (instead of opening VS Code). Shared by the server routes,
+// The contract for the Files tab: a light view of a worktree's folders and
+// files, with in-place editing of existing text files (instead of opening VS
+// Code). The only write is `write`: it replaces an existing file's text, never
+// creates, renames or deletes, and refuses when the file changed since it was
+// read (the caller's `version`). Shared by the server routes,
 // the web client and the viewer. Every path in and out is RELATIVE to the
 // worktree root, uses '/', and never leaves the root (no '..', no absolute
 // paths, no symlink escape, never inside .git).
@@ -46,6 +49,10 @@ export type FileContent = {
   /** A CodeMirror language hint from the extension, e.g. "typescript"; null = plain. */
   language: string | null;
   change?: FileChange;
+  /** Set when `text` is: an opaque token for the bytes read (sha-256 of the
+   * content). A write must send it back; a different file on disk means
+   * someone else changed it. */
+  version?: string;
 };
 
 /**
@@ -75,7 +82,23 @@ export const FILES_ROUTES = {
   list: '/worktrees/:encodedPath/files/list',
   read: '/worktrees/:encodedPath/files/read',
   marks: '/worktrees/:encodedPath/files/marks',
+  /** POST FileWriteBody → FileWriteResult (200) | 409 FileWriteConflict.
+   * Behind assertLocalHub. Same path rules as read, plus: the file must exist,
+   * be a regular text file within FILES_LIMITS.readBytes, and stay within it. */
+  write: '/worktrees/:encodedPath/files/write',
 } as const;
+
+export type FileWriteBody = {
+  path: string;
+  text: string;
+  /** The FileContent.version this edit started from. */
+  baseVersion: string;
+  /** Write even if the file changed on disk (the person chose Overwrite). */
+  force?: boolean;
+};
+export type FileWriteResult = { path: string; version: string; size: number };
+/** 409: the file on disk is not baseVersion any more. */
+export type FileWriteConflict = { error: 'conflict'; path: string; version: string };
 
 /** What "Ask an agent about these lines" sends over the intercom (as the message context). */
 export type FileAskContext = {
