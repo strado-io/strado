@@ -286,6 +286,8 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       recordError(spec.id, TS7_ONLY);
       throw new Fallback('failed', spec);
     }
+    // No maxTsServerMemory: a 5k-file JS app needs ~2 GB, and tsserver aborts at
+    // the cap (tried 1 and 1.5 GB) instead of collecting harder.
     return tsserver.path ? { tsserver: { path: tsserver.path } } : undefined;
   }
 

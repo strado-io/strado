@@ -63,8 +63,10 @@ export const LSP_SERVERS: LspServerSpec[] = [
 ];
 
 export const LSP_LIMITS = {
-  /** A cold TypeScript server takes ~10 s on a big project: keep it for half an hour. */
-  idleMs: 30 * 60_000,
+  /** Unused this long, a server stops. A cold TypeScript server takes ~10 s on a
+   *  big project, but definition and outline answer without it meanwhile
+   *  (importDefinition, quickOutline), so it needn't sit in memory long. */
+  idleMs: 5 * 60_000,
   maxServers: 3,
   /** Per navigation request, after the server is up. */
   requestMs: 10_000,
