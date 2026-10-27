@@ -56,7 +56,10 @@ const Chevron = ({ open }: { open: boolean }) => (
   <svg {...icon} width={12} height={12} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}><path d="m9 18 6-6-6-6" /></svg>
 );
 
-export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, jarvis, children }: {
+/** The sidebar's search: the Focuses that match, and those to show expanded (a worktree in them matched). */
+export type FocusFilter = { ids: ReadonlySet<string>; expand: ReadonlySet<string> };
+
+export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, jarvis, filter, children }: {
   focuses: Focus[];
   activeId: string | null;
   badges: Map<string, FocusBadges>;
@@ -67,6 +70,8 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   onRename: (id: string, name: string) => void;
   /** The active Focus's Jarvis, for its header. */
   jarvis?: FocusJarvisHeader;
+  /** While searching: only these, uncapped. */
+  filter?: FocusFilter | null;
   /** An expanded Focus's contents: its worktree cards (or a blank Focus's Add/New rows). */
   children: (f: Focus) => React.ReactNode;
 }) {
@@ -85,8 +90,9 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   const sorted = [...focuses].sort(byCreated);
   const capped = sorted.slice(0, FOCUS_LIST_CAP);
   // The active Focus always shows, however long ago it was used.
-  const shown = showAll ? sorted : sorted.filter((f) => capped.includes(f) || f.id === activeId);
-  const hidden = sorted.length - shown.length;
+  const shown = filter ? sorted.filter((f) => filter.ids.has(f.id))
+    : showAll ? sorted : sorted.filter((f) => capped.includes(f) || f.id === activeId);
+  const hidden = filter ? 0 : sorted.length - shown.length;
 
   return (
     <section aria-label="Focuses" className="mt-1 flex flex-col">
@@ -95,7 +101,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
           const n = sorted.indexOf(f) + 1;
           const hint = n <= 9 ? ` (⌘${n})` : '';
           const isActive = f.id === activeId;
-          const open = expanded.has(f.id);
+          const open = expanded.has(f.id) || !!filter?.expand.has(f.id);
           const chevron = (
             <button type="button" aria-label={open ? `Fold ${f.name}` : `Show ${f.name}`} aria-expanded={open}
               onClick={(e) => { e.stopPropagation(); toggle(f.id); }}
@@ -156,7 +162,8 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
             </div>
           );
         })}
-        {(hidden > 0 || (showAll && sorted.length > FOCUS_LIST_CAP)) && (
+        {filter && shown.length === 0 && <p className="flex h-8 items-center px-2 text-[12px] text-zinc-500">No match</p>}
+        {!filter && (hidden > 0 || (showAll && sorted.length > FOCUS_LIST_CAP)) && (
           <button type="button" onClick={() => setShowAll((s) => !s)}
             className="self-start rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">
             {showAll ? 'Show fewer' : `Show all (${sorted.length})`}

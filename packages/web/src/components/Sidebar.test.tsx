@@ -372,13 +372,13 @@ describe('Sidebar tree', () => {
     expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
   });
 
-  it('has no New worktree button of its own; the workspace row\'s +, left of its chevron, is New focus', () => {
+  it('has no New worktree button of its own; the workspace row is just its name and chevron, New focus is in the toolbar under it', () => {
     wrap(<Sidebar {...base} />);
     expect(activePane().queryByRole('button', { name: 'New worktree' })).toBeNull();
-    const plus = screen.getByRole('button', { name: 'New focus' });
+    const row = screen.getByTestId('space-chevron').parentElement!;
+    expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([expect.stringMatching(/^Switch workspace/)]);
+    const plus = within(activePane().getByTestId('sidebar-toolbar')).getByRole('button', { name: 'New focus' });
     expect(plus).toHaveAttribute('title', 'New focus (⇧⌘N)');
-    expect(plus.compareDocumentPosition(screen.getByTestId('space-chevron')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Switch workspace/ }).compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(plus);
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });

@@ -21,7 +21,8 @@ import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWaiting, agent
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
 import { FocusIcon } from './FocusSwitcher';
-import { FocusList, type FocusBadges, type FocusJarvisHeader } from './FocusList';
+import { FocusList, type FocusBadges, type FocusFilter, type FocusJarvisHeader } from './FocusList';
+import { SidebarToolbar } from './SidebarToolbar';
 import { PlusIcon } from '../hub/icons';
 import { FocusComposer } from '../focus/FocusComposer';
 import { AddWorktreesDialog } from '../focus/AddWorktreesDialog';
@@ -305,7 +306,27 @@ export function SidebarBody({
   const remoteByPinId = new Map(remoteWorktrees.map((w) => [remotePinId(w), w]));
   // Members that resolve to nothing (deleted worktree, runner offline) render
   // nothing; they are not pruned here so a runner coming back brings its row back.
-  const rowsOf = (f: Focus) => f.members.flatMap((pinId) => {
+  // The toolbar's search: a Focus shows if its name matches, or any of its
+  // worktrees' (then it is expanded, with only the ones that match).
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const hit = (...names: Array<string | null | undefined>) => names.some((n) => !!n && n.toLowerCase().includes(q));
+  const memberHit = (pinId: string) => {
+    const local = localByPinId.get(pinId);
+    if (local) return hit(worktreeLabel(local), local.branch);
+    const remote = remoteByPinId.get(pinId);
+    return !!remote && hit(remote.branch, remote.name);
+  };
+  const filter: FocusFilter | null = q ? (() => {
+    const ids = new Set<string>();
+    const expand = new Set<string>();
+    for (const f of focuses) {
+      if (f.members.some(memberHit)) { ids.add(f.id); expand.add(f.id); } else if (hit(f.name)) ids.add(f.id);
+    }
+    return { ids, expand };
+  })() : null;
+  const membersShown = (f: Focus) => (q && !hit(f.name) ? f.members.filter(memberHit) : f.members);
+  const rowsOf = (f: Focus) => membersShown(f).flatMap((pinId) => {
     const local = localByPinId.get(pinId);
     if (local) return [localRow(f, local, repos.find((r) => r.id === local.repoId)?.name ?? '')];
     const remote = remoteByPinId.get(pinId);
@@ -349,11 +370,13 @@ export function SidebarBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <SidebarToolbar query={query} onQuery={setQuery} onNewFocus={() => openComposer()} shortcut={isActivePane}
+        onNewWorktree={active ? () => onNewWorktree(active.ticket) : undefined} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
         <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
-          jarvis={jarvis}>
+          jarvis={jarvis} filter={filter}>
           {(f) => {
             const rows = rowsOf(f);
             return (

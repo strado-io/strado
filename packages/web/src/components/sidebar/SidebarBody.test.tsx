@@ -191,7 +191,8 @@ describe('SidebarBody: the active Focus', () => {
   it('with no Focus, nothing is open and New focus below the list opens the composer', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.queryByTestId('focus-open')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'New focus' }));
+    const toolbar = screen.getByTestId('sidebar-toolbar');
+    fireEvent.click(screen.getAllByRole('button', { name: 'New focus' }).find((b) => !toolbar.contains(b))!);
     expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
   });
 
@@ -292,9 +293,9 @@ describe('SidebarBody: the active Focus', () => {
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'New worktree here' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'New worktree here' }));
     expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
-    fireEvent.click(screen.getByRole('button', { name: 'Add worktrees' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'Add worktrees' }));
     const dialog = screen.getByRole('dialog', { name: 'Add worktrees to Billing' });
     fireEvent.click(within(within(dialog).getByRole('group', { name: 'api' })).getByRole('checkbox', { name: 'fx-412' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
@@ -302,12 +303,11 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.queryByRole('dialog', { name: 'Add worktrees to Billing' })).toBeNull();
   });
 
-  it('the open Focus\'s ⋯ menu: New worktree here (with its ticket) and Add worktrees; no Search or Add repo button', () => {
+  it('the open Focus\'s ⋯ menu: New worktree here (with its ticket) and Add worktrees; no Add repo button', () => {
     focusMock.focuses = [{ ...focus('f1', 'Billing', ['local:/r1/wt']), ticket: { provider: 'jira', key: 'FD-9' } }];
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add repo' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'New worktree here…' }));
@@ -315,6 +315,53 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add worktrees…' }));
     expect(screen.getByRole('dialog', { name: 'Add worktrees to Billing' })).toBeInTheDocument();
+  });
+
+  it('the toolbar: New focus opens the composer; New worktree here makes one in the active Focus, and is off with none', () => {
+    focusMock.focuses = [{ ...focus('f1', 'Billing', ['local:/r1/wt']), ticket: { provider: 'jira', key: 'FD-9' } }];
+    focusMock.activeId = 'f1';
+    const onNewWorktree = vi.fn();
+    const { rerender } = render(<SidebarBody {...props({ onNewWorktree })} />);
+    const toolbar = () => within(screen.getByTestId('sidebar-toolbar'));
+    expect(screen.getByTestId('sidebar-toolbar').className.split(/\s+/)).toContain('h-8');
+    fireEvent.click(toolbar().getByRole('button', { name: 'New worktree here' }));
+    expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
+    fireEvent.click(toolbar().getByRole('button', { name: 'New focus' }));
+    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+    focusMock.activeId = null;
+    rerender(<SidebarBody {...props({ onNewWorktree })} />);
+    expect(toolbar().getByRole('button', { name: 'New worktree here' })).toBeDisabled();
+  });
+
+  it('search filters Focus names and the worktrees in them, expanding a Focus whose worktree matches; Esc clears', () => {
+    focusMock.focuses = [focus('f1', 'Billing', ['local:/r1/wt'], '2026-01-01', '2026-01-01'), focus('f2', 'Onboarding', [], '2026-01-02', '2026-01-02'), focus('f3', 'Perf', [], '2026-01-03', '2026-01-03')];
+    focusMock.activeId = 'f2';
+    render(<SidebarBody {...props()} />);
+    const names = () => within(list()).queryAllByRole('heading').map((h) => h.textContent).concat(within(list()).queryAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.slice(10)));
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const input = screen.getByRole('textbox', { name: 'Search focuses and worktrees' });
+    expect(input).toHaveFocus();
+    expect(screen.getByTestId('sidebar-toolbar').className.split(/\s+/)).toContain('h-8');
+    fireEvent.change(input, { target: { value: 'per' } });
+    expect(names()).toEqual(['Perf']);
+    // A worktree's name: its Focus shows, expanded though it isn't active, with that card.
+    fireEvent.change(input, { target: { value: 'FX-41' } });
+    expect(names()).toEqual(['Billing']);
+    expect(within(screen.getByTestId('focus-group')).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'nothing like it' } });
+    expect(within(list()).getByText('No match')).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Search focuses and worktrees' })).toBeNull();
+    expect(names().sort()).toEqual(['Billing', 'Onboarding', 'Perf']);
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+  });
+
+  it('⌥⌘F opens the search, focused (⌘⇧F stays the Files tab\'s)', () => {
+    render(<SidebarBody {...props()} />);
+    fireEvent.keyDown(window, { key: 'f', code: 'KeyF', metaKey: true, shiftKey: true });
+    expect(screen.queryByRole('textbox', { name: 'Search focuses and worktrees' })).toBeNull();
+    fireEvent.keyDown(window, { key: 'ƒ', code: 'KeyF', metaKey: true, altKey: true });
+    expect(screen.getByRole('textbox', { name: 'Search focuses and worktrees' })).toHaveFocus();
   });
 
   it('right-clicking a card opens its menu at the cursor; blank space offers New worktree, Add repo and New focus', () => {
