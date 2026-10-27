@@ -76,6 +76,9 @@ async function make(bin: string, over: Partial<Parameters<typeof createLspManage
       ]);
     },
     npmRoot: async () => null,
+    // A spawned fake takes longer than the real race's 60 ms just to start:
+    // these tests are about the server, so it always gets to answer.
+    quickDefinitionMs: 60_000,
     ...over,
   });
   return mgr;
@@ -246,6 +249,16 @@ describe('fallback to search', () => {
   it('still starting after requestMs', async () => {
     const m = await make(await fakeBinary('slow-init'));
     expect(await m.definition(root, 'src/use.ts', 2, 14)).toMatchObject({ source: 'search', fallback: 'starting' });
+  });
+
+  it('a server still starting loses to the import, followed: one exact hit, at once, and it warms meanwhile', async () => {
+    const m = await make(await fakeBinary('slow-init'), { quickDefinitionMs: 150 });
+    const t0 = Date.now();
+    const ans = await m.definition(root, 'src/use.ts', 2, 14);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(ans).toEqual({ source: 'search', exact: true, fallback: 'starting', hits: [{ path: 'src/def.ts', line: 2, col: 14, preview: 'export const foo = 1;' }] });
+    // Following the import is not a word search.
+    expect(searchCalls).toEqual([]);
   });
 
   it('a request that takes too long', async () => {

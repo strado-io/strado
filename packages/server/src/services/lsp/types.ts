@@ -63,7 +63,8 @@ export const LSP_SERVERS: LspServerSpec[] = [
 ];
 
 export const LSP_LIMITS = {
-  idleMs: 10 * 60_000,
+  /** A cold TypeScript server takes ~10 s on a big project: keep it for half an hour. */
+  idleMs: 30 * 60_000,
   maxServers: 3,
   /** Per navigation request, after the server is up. */
   requestMs: 10_000,
@@ -95,6 +96,10 @@ export type NavAnswer = {
   server?: LspServerId;
   fallback?: NavFallback;
   hits: NavHit[];
+  /** Found by following the symbol's import (lsp/importDefinition), not a
+   *  word search: as exact as the server for what it resolves, so a single
+   *  hit is jumped to. */
+  exact?: true;
 };
 
 export type HoverAnswer = { server: LspServerId; markdown: string } | null;

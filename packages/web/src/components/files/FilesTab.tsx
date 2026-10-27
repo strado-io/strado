@@ -296,8 +296,9 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
       .then((answer) => {
         clearTimeout(slow);
         if (ac.signal.aborted) return;
-        // One exact definition: go there. A guess, or several, is shown to pick from.
-        if (kind === 'definition' && answer.source === 'lsp' && answer.hits.length === 1) {
+        // One exact definition (the server's, or the import followed): go
+        // there. A word-search guess, or several, is shown to pick from.
+        if (kind === 'definition' && (answer.source === 'lsp' || answer.exact) && answer.hits.length === 1) {
           setNav(null);
           const h = answer.hits[0]!;
           jump(from, { path: h.path, line: h.line, col: h.col }, 'permanent', pane);

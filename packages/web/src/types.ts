@@ -466,7 +466,8 @@ export type LspServerId =
 export type NavHit = { path: string; line: number; col: number; endLine?: number; endCol?: number; preview: string };
 /** Why an answer came from search instead of a language server. */
 export type NavFallback = 'no-server' | 'not-installed' | 'disabled' | 'starting' | 'failed' | 'timeout';
-export type NavAnswer = { source: 'lsp' | 'search'; server?: LspServerId; fallback?: NavFallback; hits: NavHit[] };
+/** exact: found by following the import (server-side), so a single hit is jumped to. */
+export type NavAnswer = { source: 'lsp' | 'search'; server?: LspServerId; fallback?: NavFallback; hits: NavHit[]; exact?: true };
 export type HoverAnswer = { server: LspServerId; markdown: string } | null;
 export type OutlineSymbol = { name: string; kind: string; line: number; col: number; children?: OutlineSymbol[] };
 export type OutlineAnswer = { server: LspServerId; symbols: OutlineSymbol[] } | { server: null; symbols: [] };

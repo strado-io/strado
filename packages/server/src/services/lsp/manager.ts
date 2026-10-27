@@ -18,6 +18,7 @@ import { LspClient, LspError } from './client.js';
 import { npmGlobalRoot, TS7_ONLY, tsserverPathFor } from './tsserver.js';
 import { installOptions, type Detect } from './detect.js';
 import type { LspEnabledStore } from './store.js';
+import { importDefinition } from './importDefinition.js';
 import {
   LSP_LIMITS,
   LSP_SERVERS,
@@ -48,6 +49,8 @@ export type LspManagerDeps = {
   /** Everything one request may wait, start + load + answer (default 70 s,
    *  inside the web client's 75 s deadline). */
   totalMs?: number;
+  /** How long a definition waits for the server before following the import instead (tests). */
+  quickDefinitionMs?: number;
   /** One system-wide `ps` sample; memory is the server's whole process tree
    *  (tsserver, a JVM), the same figure the Usage page shows. */
   sample?: () => Promise<ProcSample[]>;
@@ -216,6 +219,9 @@ class Fallback extends Error {
     super(reason);
   }
 }
+
+/** A warm server answers a definition well inside this; past it, the import is followed. */
+const QUICK_DEFINITION_MS = 60;
 
 export function createLspManager(deps: LspManagerDeps): LspManager {
   const specs = deps.specs ?? LSP_SERVERS;
@@ -463,6 +469,25 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
   }
 
   async function navigate(method: string, worktree: string, rel: string, line: number, col: number, defs: boolean): Promise<NavAnswer> {
+    if (!defs) return askServer(method, worktree, rel, line, col, defs);
+    // Definitions race the server against following the import. A warm
+    // server answers in a few ms and wins; one still starting or loading the
+    // project (seconds) loses to the import, which reads a few files. It
+    // keeps warming meanwhile, for the next ask.
+    const viaImport = resolveInside(worktree, safeRel(rel))
+      .then(({ realRoot, real }) => importDefinition(realRoot, real, line, col))
+      .catch(() => null);
+    const viaServer = askServer(method, worktree, rel, line, col, defs);
+    viaServer.catch(() => undefined);
+    const SLOW = Symbol('slow');
+    const first = await Promise.race([viaServer, new Promise<typeof SLOW>((r) => setTimeout(() => r(SLOW), deps.quickDefinitionMs ?? QUICK_DEFINITION_MS))]);
+    if (first !== SLOW && first.source === 'lsp') return first;
+    const hits = await viaImport;
+    if (hits?.length) return { source: 'search', exact: true, fallback: first === SLOW ? 'starting' : first.fallback, ...(first !== SLOW && first.server ? { server: first.server } : {}), hits };
+    return first === SLOW ? viaServer : first;
+  }
+
+  async function askServer(method: string, worktree: string, rel: string, line: number, col: number, defs: boolean): Promise<NavAnswer> {
     try {
       const { entry, uri, deadline } = await serverFor(worktree, rel);
       const params: Record<string, unknown> = { textDocument: { uri }, position: { line: line - 1, character: col - 1 } };

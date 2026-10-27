@@ -245,7 +245,7 @@ const FAMILY: Record<string, string> = {
 };
 
 const declCache = new Map<string, RegExp>();
-function declFor(ext: string, sym: string): RegExp | null {
+export function declFor(ext: string, sym: string): RegExp | null {
   const fam = FAMILY[ext.toLowerCase()];
   // Only a bare identifier ever goes into a pattern.
   if (!fam || !IDENT.test(sym)) return null;
