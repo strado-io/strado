@@ -53,6 +53,9 @@ export type FileContent = {
    * content). A write must send it back; a different file on disk means
    * someone else changed it. */
   version?: string;
+  /** The bytes are not valid UTF-8: `text` was decoded lossily, so the file
+   * is shown read-only and a write is refused (saving would change bytes). */
+  notUtf8?: true;
 };
 
 /**
