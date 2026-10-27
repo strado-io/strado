@@ -55,7 +55,7 @@ describe('sidebar chrome', () => {
     const row = screen.getByRole('button', { name: 'Switch to Other' }).parentElement!;
     for (const cls of ['glass', 'pane-card', 'border', 'rounded-xl']) expect(row.className.split(/\s+/)).not.toContain(cls);
     for (const cls of ['h-8', 'px-2', 'rounded-md', 'hover:bg-[rgb(var(--pane-edge)/0.05)]']) expect(row.className.split(/\s+/)).toContain(cls);
-    expect(row.querySelectorAll('svg')).toHaveLength(2); // chevron, Focus icon
+    expect(row.querySelectorAll('svg')).toHaveLength(1); // the chevron; no Focus icon
     expect(within(row).getByText('Other').className).toMatch(/text-\[13px\].*font-medium/);
     // The open Focus's header uses the same row; its contents are grouped, no accent line.
     const header = screen.getByTestId('focus-header');

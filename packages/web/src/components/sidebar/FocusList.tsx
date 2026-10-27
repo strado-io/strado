@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Focus } from '../../api';
 import { shortRelativeTime } from '../../lib/relativeTime';
-import { FocusIcon, byCreated } from './FocusSwitcher';
+import { byCreated } from './FocusSwitcher';
 import { Menu, type MenuItem } from './rowBits';
 
 /** What a collapsed row says about its Focus, beyond its name. */
@@ -41,7 +41,7 @@ export const FOCUS_LIST_CAP = 6;
 const EXPANDED_KEY = 'strado:focus-expanded';
 const EXPANDED_FOR_KEY = 'strado:focus-expanded-for';
 /** The header's second line, aligned under the name. */
-export const FOCUS_LATEST_CLASS = 'truncate pl-[2.4rem] pr-1 text-[11px] leading-4 text-zinc-500';
+export const FOCUS_LATEST_CLASS = 'truncate pl-[1.1rem] pr-1 text-[11px] leading-4 text-zinc-500';
 
 // A Focus row is a heading: flat, a hover tint only (the theme's edge colour,
 // so white on dark and black on light). The open Focus's contents sit in one
@@ -121,7 +121,6 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                   className={`${HEADER} group cursor-pointer ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
                   <div className="flex h-6 min-w-0 items-center gap-1.5">
                     {chevron}
-                    <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
                     {renaming === f.id ? (
                       <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
                     ) : (
@@ -144,7 +143,6 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                   {chevron}
                   <button type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
                     className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left">
-                    <span className="shrink-0 text-zinc-500"><FocusIcon size={15} /></span>
                     <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-400">{f.name}</span>
                     {b.agents}
                     {(b.pendingApprovals ?? 0) > 0 && (
