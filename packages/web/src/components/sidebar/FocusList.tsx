@@ -27,7 +27,7 @@ export type FocusBadges = {
 
 /** The open Focus's Jarvis, shown in its header: Jarvis is the Focus itself. */
 export type FocusJarvisHeader = {
-  /** ✦ (dim idle, pulsing while it works) or ⚠ amber while an approval waits. */
+  /** A pulsing dot while it works, ⚠ amber while an approval waits, nothing at rest. */
   status: React.ReactNode;
   /** Line two, Jarvis's latest reply: an element that renders FOCUS_LATEST_CLASS's line, or nothing. */
   latest: React.ReactNode;
@@ -149,7 +149,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                       <span role="img" aria-label={`${b.pendingApprovals} waiting for approval`} title="Jarvis is waiting for your approval" className="shrink-0 text-[11px] text-amber-400">⚠</span>
                     )}
                     {b.unread && (
-                      <span role="img" aria-label="new reply from Jarvis" title="Jarvis replied" className="shrink-0 text-[11px] text-[#e8906f]">✦</span>
+                      <span role="img" aria-label="new reply from Jarvis" title="Jarvis replied" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#e8906f]" />
                     )}
                     <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                   </button>

@@ -184,8 +184,8 @@ export const ERRORS = {
 const refuseNav = () => { throw new Error('Jarvis does not move the window'); };
 const NO_NAV: JarvisNavPort = { worktree: refuseNav, focus: refuseNav, workspace: refuseNav, repo: refuseNav, addRepo: refuseNav, newWorktree: refuseNav };
 
-/** The open Focus's header status: ⚠ amber while an approval waits, ✦ in
- * Jarvis orange pulsing while it works, a dim ✦ at rest. */
+/** The open Focus's header status: ⚠ amber while an approval waits, a
+ * pulsing Jarvis-orange dot while it works, nothing at rest. */
 export function FocusJarvisStatus() {
   const host = useContext(HostContext);
   if (!host) return null;
@@ -194,9 +194,9 @@ export function FocusJarvisStatus() {
     return <span role="img" aria-label="needs approval" title="Jarvis is waiting for your approval" className="shrink-0 text-[11px] text-amber-400">⚠</span>;
   }
   if (meta?.running) {
-    return <span role="img" aria-label="working" title="Jarvis is working" className="shrink-0 animate-pulse text-[11px] text-[#e8906f]">✦</span>;
+    return <span role="img" aria-label="working" title="Jarvis is working" className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#e8906f]" />;
   }
-  return <span aria-hidden className="shrink-0 text-[11px] text-zinc-600">✦</span>;
+  return null;
 }
 
 /** The open Focus's header, line two: Jarvis's latest reply; a blank Focus
