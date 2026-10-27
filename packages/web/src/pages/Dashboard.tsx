@@ -30,7 +30,7 @@ import type { UpdateFooterProps } from '../components/UpdateFooter';
 import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
 import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
-import { beginLayoutMotion } from '../lib/layoutMotion';
+import { markLayoutJump } from '../lib/layoutMotion';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import type { HostTab } from '../components/hosts/HostDetails';
@@ -109,11 +109,6 @@ const STORE_SIDEBAR = 'strado:sidebar-collapsed:v2';
 // values from `strado:view`.
 // No hub open: the Worktrees page, every repo and worktree in the space.
 const INITIAL_VIEW: SidebarView = { kind: 'worktrees' };
-// The sidebar's slide shut (.sidebar-slide[data-collapsed] in index.css).
-const SIDEBAR_SLIDE_MS = 220;
-const motionAllowed = () => {
-  try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-};
 // Hidden until asked for (⌘B): the Dock at the bottom is all a day needs.
 function readSidebarCollapsed(): boolean {
   const stored = localStorage.getItem(STORE_SIDEBAR);
@@ -537,31 +532,16 @@ export function Dashboard(props: {
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
   // sidebar"). A hub closing itself (its last session gone) must not hide it.
   const sidebarHidden = sidebarCollapsed;
-  // Toggled, the sidebar slides (.sidebar-slide): hiding, it stays mounted
-  // until it is off the edge; showing, it slides in (only on a toggle, not
-  // when the app first draws).
-  const [sidebarWasHidden, setSidebarWasHidden] = useState(sidebarHidden);
-  const [sidebarSlide, setSidebarSlide] = useState<'in' | 'out' | null>(null);
-  if (sidebarWasHidden !== sidebarHidden) {
-    setSidebarWasHidden(sidebarHidden);
-    setSidebarSlide(!motionAllowed() ? null : sidebarHidden ? 'out' : 'in');
-  }
-  // Terminals hold their size while it slides and fit once at the end
-  // (lib/layoutMotion). A layout effect, so it is declared before this
-  // frame's resize observers run.
+  // The sidebar toggles in one frame, as Warp's does: no slide. A slide made
+  // every terminal beside it hold, clip and refit mid-motion, which read as
+  // shaking. Declared as a layout jump (a layout effect, so before this
+  // frame's resize observers run), terminals fit in this same frame and tell
+  // the pty at once: the agent redraws once, right away.
+  const firstSidebarRender = useRef(true);
   useLayoutEffect(() => {
-    if (!sidebarSlide) return;
-    // Mounted (sliding in) or still drawn (sliding out): its width is what the main area gives or gains.
-    const w = document.querySelector<HTMLElement>('[data-testid="sidebar"]')?.offsetWidth ?? 0;
-    beginLayoutMotion(SIDEBAR_SLIDE_MS + 100, sidebarSlide === 'in' ? -w : w);
-  }, [sidebarSlide]);
-  // Either way the flag clears once the slide is done: left on, the slide in
-  // would replay whenever the app reappears (back from Settings, which hides it).
-  useEffect(() => {
-    if (!sidebarSlide) return;
-    const t = setTimeout(() => setSidebarSlide(null), SIDEBAR_SLIDE_MS + 80);
-    return () => clearTimeout(t);
-  }, [sidebarSlide]);
+    if (firstSidebarRender.current) { firstSidebarRender.current = false; return; }
+    markLayoutJump();
+  }, [sidebarHidden]);
 
   // Collapsing the sidebar unmounts it, and with it the space chord's own
   // listener — while the shell keeps intercepting the chord inside embeds and
@@ -1081,11 +1061,9 @@ export function Dashboard(props: {
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       {/* Settings is a modal over the app, which stays in view behind it. */}
       <div className="flex min-w-0 flex-1" aria-hidden={settingsSection ? true : undefined}>
-      {(!sidebarHidden || sidebarSlide === 'out') && (
-        <div className="contents">
+      <div className="contents">
         <Sidebar
-          collapsing={sidebarHidden}
-          slideIn={sidebarSlide === 'in'}
+          hidden={sidebarHidden}
           repos={state.repos}
           worktrees={state.worktrees}
           remoteWorktrees={remote.worktrees}
@@ -1122,7 +1100,6 @@ export function Dashboard(props: {
           onOpenFocus={(id) => writeJarvisOpen(id, true)}
         />
         </div>
-      )}
 
       <main className="flex min-w-0 flex-1 flex-col">
         {state.error && (

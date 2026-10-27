@@ -133,18 +133,15 @@ describe('sidebar chrome', () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.focus-panel, \.focus-panel > \* > \* \{ transition: none; \} \}/);
   });
 
-  it('popups (menus, popovers, tooltips, dialogs) and the sidebar ease in on the same curve; reduced motion stills them', () => {
+  it('popups (menus, popovers, tooltips, dialogs) ease in on the drawer curve; the sidebar does not slide; reduced motion stills them', () => {
     const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8');
     expect(css).toMatch(/\.surface-pop, \.menu-solid, \[role='menu'\], \[role='listbox'\], \[role='tooltip'\], \[role='dialog'\]:not\(\.fixed\),\s+\.fixed\.inset-0\[class\*='bg-black\/'\] > \* \{\s+transition: opacity 160ms ease-out, scale 220ms var\(--ease-drawer\)/);
     expect(css).toMatch(/@starting-style \{[^@]*opacity: 0; scale: 0\.97; translate: 0 -4px;/);
     // A modal's backdrop blurs the app behind it.
     expect(css).toMatch(/\.fixed\.inset-0\[class\*='bg-black\/'\] \{[^}]*backdrop-filter: blur\(8px\)/);
-    expect(css).toMatch(/\.sidebar-slide\[data-collapsed\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\);/);
-    expect(css).toMatch(/@starting-style \{ \.sidebar-slide\[data-slide-in\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\); \} \}/);
-    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s+\.surface-pop[^}]*\.sidebar-slide, \.open-sidebar-slot \{ transition: none; \}/);
-    // A toolbar's room for the open button opens and shuts with the sidebar, on the same timing.
-    expect(css).toMatch(/\.open-sidebar-slot \{[^}]*grid-template-columns: 0fr;[^}]*transition: grid-template-columns 260ms var\(--ease-drawer\);/);
-    expect(css).toMatch(/\.open-sidebar-slot\[data-shown\] \{ grid-template-columns: 1fr; transition-duration: 220ms; \}/);
+    // The sidebar itself toggles in one frame (as Warp's does): no slide.
+    expect(css).not.toMatch(/\.sidebar-slide/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s+\.surface-pop[^}]*\{ transition: none; \}/);
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

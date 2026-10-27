@@ -11,7 +11,7 @@ import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
 import { runIdOfTab } from '../lib/runTab';
-import { isLayoutMoving, onLayoutMotionStart, onLayoutSettled } from '../lib/layoutMotion';
+import { isLayoutJump, isLayoutMoving, onLayoutSettled } from '../lib/layoutMotion';
 import { findFileLinks } from '../lib/fileLinks';
 import { SearchAddon } from '@xterm/addon-search';
 import { TerminalSearchBar, filesSearchKey, searchKey, type SearchPort } from './TerminalSearchBar';
@@ -646,60 +646,18 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       resizeTimer = setTimeout(flushResize, PTY_RESIZE_SETTLE_MS);
     };
     window.addEventListener('pointerup', flushResize);
-    // During a declared layout animation (the sidebar sliding) the terminal
-    // holds its size, clipped or with room to spare, and fits once when it
-    // settles: one SIGWINCH instead of one per frame, so a TUI redraws once.
-    const ro = new ResizeObserver(() => { if (!isLayoutMoving()) onResizeFrame(); });
+    // The observer runs after layout and before paint, so a fit here lands in
+    // the same frame as the layout change. A layout jump (the sidebar
+    // toggling) tells the pty at once: one SIGWINCH, the agent redraws now.
+    // During a declared layout animation the terminal holds its size and
+    // fits once when it settles, instead of once per frame.
+    const ro = new ResizeObserver(() => {
+      if (isLayoutMoving()) return;
+      if (isLayoutJump()) { if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = undefined; } refit(); }
+      else onResizeFrame();
+    });
     ro.observe(container);
-    // While a layout animation runs the terminal is pinned to the pane's right
-    // edge, where the text stays still: the sidebar's side is where the room
-    // changes. Narrowing, it takes its final size up front, so nothing is
-    // clipped and a strip on the left closes as the sidebar covers it;
-    // widening, it keeps its size and a strip opens as the sidebar leaves.
-    // The strip is the terminal's own background, so it reads as padding.
-    let pinned = false;
-    const pin = (on: boolean) => {
-      // Keep the gap it has at rest on the right (the scrollbar's room), so
-      // unpinning at the end doesn't shift the text.
-      const screen = term.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
-      const gap = on && screen ? Math.max(0, Math.round(container.getBoundingClientRect().right - screen.right)) : 0;
-      pinned = on;
-      container.style.display = on ? 'flex' : '';
-      container.style.justifyContent = on ? 'flex-end' : '';
-      container.style.paddingRight = on ? `${gap}px` : '';
-      container.style.background = on ? String(term.options.theme?.background ?? '') : '';
-      if (term.element) term.element.style.flexShrink = on ? '0' : '';
-    };
-    const offStart = onLayoutMotionStart((dx) => {
-      if (container.clientWidth === 0 || container.clientHeight === 0) return;
-      pin(true);
-      if (dx >= 0) return;
-      const mainWidth = container.closest('main')?.clientWidth ?? 0;
-      if (mainWidth <= 0) return;
-      // A pane that spans the main area loses all of it; side-by-side splits
-      // divide it by their share.
-      const spans = container.clientWidth > mainWidth * 0.6;
-      const target = Math.max(0, Math.round(spans ? container.clientWidth + dx : container.clientWidth * (mainWidth + dx) / mainWidth));
-      const width = container.style.width;
-      const padding = container.style.paddingRight;
-      container.style.width = `${target}px`;
-      container.style.paddingRight = '';
-      const dims = fit.proposeDimensions();
-      container.style.width = width;
-      container.style.paddingRight = padding;
-      if (dims && dims.cols > 0 && dims.rows > 0 && (dims.cols !== term.cols || dims.rows !== term.rows)) {
-        term.resize(dims.cols, dims.rows);
-        paintNow();
-        sendResize();
-        // Its rest gap at the final width, so it lands exactly where it will stay.
-        const screen = term.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
-        if (screen) container.style.paddingRight = `${Math.max(0, Math.round(target - screen.width))}px`;
-      }
-    });
-    const offSettled = onLayoutSettled(() => {
-      if (pinned) pin(false);
-      refit();
-    });
+    const offSettled = onLayoutSettled(refit);
     // rAF and fonts.ready are the "layout settled" signals: re-fit and push the
     // size once the font has loaded and the box has its final dimensions, so a
     // pty that spawned against an early measurement gets corrected.
@@ -718,7 +676,6 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       cancelAnimationFrame(raf);
       ro.disconnect();
       offSettled();
-      offStart();
       if (resizeTimer) clearTimeout(resizeTimer);
       window.removeEventListener('pointerup', flushResize);
       dataSub?.dispose();

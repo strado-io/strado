@@ -28,12 +28,9 @@ describe('OpenSidebarButton', () => {
     expect(container.querySelector('[style*="width: 72px"]')).not.toBeNull();
   });
 
-  it('while the sidebar shows, its room is shut and holds no button', () => {
-    const { rerender } = render(<OpenSidebarButton shown onClick={vi.fn()} />);
-    expect(screen.getByTestId('open-sidebar-slot')).toHaveAttribute('data-shown');
-    rerender(<OpenSidebarButton shown={false} onClick={vi.fn()} />);
-    expect(screen.getByTestId('open-sidebar-slot')).not.toHaveAttribute('data-shown');
-    expect(screen.queryByRole('button', { name: 'Open sidebar' })).toBeNull();
+  it('renders nothing while the sidebar shows', () => {
+    const { container } = render(<OpenSidebarButton shown={false} onClick={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('is just the button in a browser', () => {

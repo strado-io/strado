@@ -32,10 +32,9 @@ export type Props = {
   /** The running-dev-servers chip, beside Usage in the bottom bar (hidden at zero). */
   running?: React.ReactNode;
   onCollapse: () => void;
-  /** Sliding shut: it stays drawn, unclickable, until the slide ends. */
-  collapsing?: boolean;
-  /** Shown by a toggle: it slides in from the edge (not on the app's first draw). */
-  slideIn?: boolean;
+  /** Collapsed: it stays built, only hidden, so showing it again is one frame
+   *  (no remount), and its shortcuts stand down. */
+  hidden?: boolean;
   onAddRepo: (anchor?: AddRepoAnchor) => void;
   onOpenWorktree: OpenWorktree;
   onOpenMr?: (w: Worktree, mr: MergeRequest) => void;
@@ -177,7 +176,7 @@ function WorkspaceSwitcher({
 
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings, running,
-  onCollapse, collapsing = false, slideIn = false, onAddRepo, onOpenWorktree,
+  onCollapse, hidden = false, onAddRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktree, onWorktreeSettings, onProjectSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   onOpenMr,
@@ -227,6 +226,7 @@ export function Sidebar({
     id: workspace.id,
     content: (
       <SidebarBody
+        isActivePane={!hidden}
         {...bodyProps}
         wsId={workspace.id}
         repos={repos}
@@ -266,15 +266,13 @@ export function Sidebar({
     void commitSpace(id);
   };
 
-  useSpaceShortcut((dir) => carousel.current?.goTo(dir));
+  useSpaceShortcut((dir) => carousel.current?.goTo(dir), !hidden);
   const insetTitleBar = useInsetTitleBar();
 
   return (
     // On the app canvas, like the panes: no edge of its own, so its cards float
     // on the same ground as the pane cards across the gutter.
-    <aside data-testid="sidebar" data-collapsed={collapsing || undefined} data-slide-in={slideIn || undefined} aria-hidden={collapsing || undefined}
-      className={`sidebar-slide relative flex h-screen shrink-0 flex-col bg-zinc-950 ${collapsing ? 'pointer-events-none' : ''}`}
-      style={{ width, '--sidebar-w': `${width}px` } as React.CSSProperties}>
+    <aside data-testid="sidebar" hidden={hidden} className="relative flex h-screen shrink-0 flex-col bg-zinc-950" style={{ width }}>
       <div
         role="separator"
         aria-orientation="vertical"

@@ -1,7 +1,9 @@
-// A layout animation the whole app knows about (the sidebar's slide). While
-// one runs, terminals hold their size and fit once when it settles: a resize
-// per frame would SIGWINCH the program ~20 times in a quarter second, and a
-// full-screen TUI (Claude, Codex, pi) redraws its whole screen on each.
+// Layout changes the whole app knows about. A jump (the sidebar toggling, in
+// one frame like Warp's) lets terminals fit in that same frame and tell the
+// pty at once. A motion (an animated layout change) makes them hold their
+// size and fit once when it settles: a resize per frame would SIGWINCH the
+// program ~20 times, and a full-screen TUI (Claude, Codex, pi) redraws its
+// whole screen on each.
 
 let until = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -9,15 +11,8 @@ const settledListeners = new Set<() => void>();
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-const startListeners = new Set<(dx: number) => void>();
-
-/**
- * A layout animation starts now and lasts `ms`; overlapping ones extend it.
- * `dx` is how much wider the main area ends up (negative: narrower), so a
- * terminal can take its final size up front instead of being clipped.
- */
-export function beginLayoutMotion(ms: number, dx = 0): void {
-  for (const cb of [...startListeners]) cb(dx);
+/** A layout animation starts now and lasts `ms`; overlapping ones extend it. */
+export function beginLayoutMotion(ms: number): void {
   until = Math.max(until, now() + ms);
   if (timer) clearTimeout(timer);
   timer = setTimeout(settle, Math.max(0, until - now()));
@@ -38,8 +33,10 @@ export function onLayoutSettled(cb: () => void): () => void {
   return () => { settledListeners.delete(cb); };
 }
 
-/** Called as each layout animation starts, with its dx; returns the unsubscribe. */
-export function onLayoutMotionStart(cb: (dx: number) => void): () => void {
-  startListeners.add(cb);
-  return () => { startListeners.delete(cb); };
-}
+let jumpAt = -Infinity;
+
+/** The layout changes in one step now (the sidebar toggling). */
+export function markLayoutJump(): void { jumpAt = now(); }
+
+/** True right after a layout jump: resizes now are the jump's, not a drag's. */
+export const isLayoutJump = (): boolean => now() - jumpAt < 150;
