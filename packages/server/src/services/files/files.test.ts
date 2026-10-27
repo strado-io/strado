@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { exec } from '../../shell.js';
-import { languageFor, listFiles, parseMarks, readFile, readMarks, readTree, safeRel } from './files.js';
+import crypto from 'node:crypto';
+import { fileLocksHeld, languageFor, listFiles, parseMarks, readFile, readMarks, readTree, safeRel, writeFile } from './files.js';
 import { FILES_LIMITS } from './types.js';
 
 let tmp: string;
@@ -194,6 +195,7 @@ describe('readFile', () => {
       text: 'export const a = 2;\n',
       language: 'typescript',
       change: 'M',
+      version: crypto.createHash('sha256').update('export const a = 2;\n').digest('hex'),
     });
   });
 
@@ -232,6 +234,117 @@ describe('readFile', () => {
     await expect(readFile(repo, 'src')).rejects.toMatchObject({ httpStatus: 400 });
     await expect(readFile(repo, '../x')).rejects.toMatchObject({ httpStatus: 400 });
     await expect(readFile(repo, '')).rejects.toMatchObject({ httpStatus: 400 });
+  });
+});
+
+describe('writeFile', () => {
+  const sha = (s: string | Buffer) => crypto.createHash('sha256').update(s).digest('hex');
+  const v = async (rel: string) => (await readFile(repo, rel)).version!;
+
+  it('binary and too-large reads carry no version', async () => {
+    await write('img.bin', Buffer.from([1, 0, 2]));
+    expect((await readFile(repo, 'img.bin')).version).toBeUndefined();
+  });
+
+  it('replaces the text; the version is the new bytes\' sha-256', async () => {
+    const r = await writeFile(repo, 'src/app.ts', 'export const a = 3;\n', await v('src/app.ts'));
+    expect(r).toEqual({ ok: true, result: { path: 'src/app.ts', version: sha('export const a = 3;\n'), size: 20 }, real: path.join(repo, 'src', 'app.ts') });
+    expect(await fs.readFile(path.join(repo, 'src/app.ts'), 'utf8')).toBe('export const a = 3;\n');
+    expect(await v('src/app.ts')).toBe(sha('export const a = 3;\n'));
+    expect((await fs.readdir(path.join(repo, 'src'))).sort()).toEqual(['app.ts', 'deep']); // no temp file left
+  });
+
+  it('a stale baseVersion is a conflict carrying the current version; force overwrites', async () => {
+    const before = await v('a.txt');
+    await write('a.txt', 'changed elsewhere\n');
+    expect(await writeFile(repo, 'a.txt', 'mine\n', before)).toEqual({ ok: false, conflict: { error: 'conflict', path: 'a.txt', version: sha('changed elsewhere\n') } });
+    expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('changed elsewhere\n');
+    const forced = await writeFile(repo, 'a.txt', 'mine\n', before, true);
+    expect(forced.ok).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('mine\n');
+  });
+
+  it("keeps the file's mode", async () => {
+    await write('run.sh', '#!/bin/sh\necho hi\n');
+    await fs.chmod(path.join(repo, 'run.sh'), 0o750);
+    await writeFile(repo, 'run.sh', '#!/bin/sh\necho bye\n', await v('run.sh'));
+    expect((await fs.stat(path.join(repo, 'run.sh'))).mode & 0o7777).toBe(0o750);
+  });
+
+  it('writes through a symlink that stays inside, and keeps the link', async () => {
+    await fs.symlink('a.txt', path.join(repo, 'alias'));
+    await writeFile(repo, 'alias', 'via link\n', await v('alias'));
+    expect((await fs.lstat(path.join(repo, 'alias'))).isSymbolicLink()).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('via link\n');
+  });
+
+  it('refuses: missing, a folder, .git, .., absolute, a symlink out, binary, too large, read-only', async () => {
+    const any = sha('');
+    await expect(writeFile(repo, 'nope.txt', 'x', any)).rejects.toMatchObject({ httpStatus: 404 });
+    await expect(writeFile(repo, 'src', 'x', any)).rejects.toMatchObject({ httpStatus: 400, message: 'not a file' });
+    await expect(writeFile(repo, '.git/config', 'x', any)).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(writeFile(repo, '../secret.txt', 'x', any)).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(writeFile(repo, path.join(repo, 'a.txt'), 'x', any)).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(writeFile(repo, '', 'x', any)).rejects.toMatchObject({ httpStatus: 400 });
+    await fs.writeFile(path.join(tmp, 'outside.txt'), 'outside\n');
+    await fs.symlink(path.join(tmp, 'outside.txt'), path.join(repo, 'out'));
+    await expect(writeFile(repo, 'out', 'x', sha('outside\n'))).rejects.toMatchObject({ httpStatus: 403 });
+    expect(await fs.readFile(path.join(tmp, 'outside.txt'), 'utf8')).toBe('outside\n');
+    await write('img.bin', Buffer.from([1, 0, 2]));
+    await expect(writeFile(repo, 'img.bin', 'x', sha(Buffer.from([1, 0, 2])))).rejects.toMatchObject({ httpStatus: 400, message: 'binary file' });
+    await expect(writeFile(repo, 'a.txt', 'nul\0inside', await v('a.txt'))).rejects.toMatchObject({ httpStatus: 400, message: 'binary text' });
+    await expect(writeFile(repo, 'a.txt', 'x'.repeat(FILES_LIMITS.readBytes + 1), await v('a.txt'))).rejects.toMatchObject({ httpStatus: 400, message: 'text too large' });
+    await write('huge.txt', 'x'.repeat(FILES_LIMITS.readBytes + 1));
+    await expect(writeFile(repo, 'huge.txt', 'small', any)).rejects.toMatchObject({ httpStatus: 400, message: 'file too large' });
+    await fs.chmod(path.join(repo, 'a.txt'), 0o444);
+    await expect(writeFile(repo, 'a.txt', 'x', await v('a.txt'))).rejects.toMatchObject({ httpStatus: 400, message: 'file is read-only' });
+  });
+
+  it('a file that is not valid UTF-8: read says so (text still sent, lossy); write refuses it even with force', async () => {
+    const latin1 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]); // "café\n" in Latin-1
+    await write('latin1.txt', latin1);
+    const r = await readFile(repo, 'latin1.txt');
+    expect(r.notUtf8).toBe(true);
+    expect(r.version).toBe(sha(latin1));
+    await expect(writeFile(repo, 'latin1.txt', 'café\n', r.version!)).rejects.toMatchObject({ httpStatus: 400, message: 'file is not utf-8' });
+    await expect(writeFile(repo, 'latin1.txt', 'café\n', r.version!, true)).rejects.toMatchObject({ httpStatus: 400, message: 'file is not utf-8' });
+    expect(await fs.readFile(path.join(repo, 'latin1.txt'))).toEqual(latin1);
+    // Valid UTF-8 (with a BOM and multibyte text) is not flagged.
+    await write('ok.txt', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('naïve ✓\n')]));
+    expect((await readFile(repo, 'ok.txt')).notUtf8).toBeUndefined();
+  });
+
+  it('two writes from the same version at once: one lands, the other is a conflict', async () => {
+    const base = await v('a.txt');
+    const results = await Promise.all([writeFile(repo, 'a.txt', 'first\n', base), writeFile(repo, 'a.txt', 'second\n', base)]);
+    const won = results.filter((r) => r.ok);
+    const lost = results.filter((r) => !r.ok);
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    const winner = results[0]!.ok ? 'first\n' : 'second\n';
+    expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe(winner);
+    expect(lost[0]).toEqual({ ok: false, conflict: { error: 'conflict', path: 'a.txt', version: sha(winner) } });
+    // Through a symlink too: the lock is on the real file.
+    await fs.symlink('a.txt', path.join(repo, 'alias'));
+    const now = await v('a.txt');
+    const both = await Promise.all([writeFile(repo, 'alias', 'x\n', now), writeFile(repo, 'a.txt', 'y\n', now)]);
+    expect(both.filter((r) => r.ok)).toHaveLength(1);
+    // Idle: no lock is left behind, also after a refused write.
+    await expect(writeFile(repo, 'img-missing.txt', 'x', now)).rejects.toMatchObject({ httpStatus: 404 });
+    await Promise.all([writeFile(repo, 'src', 'x', now).catch(() => undefined), writeFile(repo, 'src', 'x', now).catch(() => undefined)]);
+    expect(fileLocksHeld()).toBe(0);
+  });
+
+  it('atomic: a failed write leaves the old file whole and no temp file', async () => {
+    const before = await v('src/app.ts');
+    await fs.chmod(path.join(repo, 'src'), 0o555); // no new file can be made here
+    try {
+      await expect(writeFile(repo, 'src/app.ts', 'new text\n', before)).rejects.toMatchObject({ httpStatus: 400, message: 'could not write the file' });
+    } finally {
+      await fs.chmod(path.join(repo, 'src'), 0o755);
+    }
+    expect(await fs.readFile(path.join(repo, 'src/app.ts'), 'utf8')).toBe('export const a = 1;\n');
+    expect((await fs.readdir(path.join(repo, 'src'))).sort()).toEqual(['app.ts', 'deep']);
   });
 });
 

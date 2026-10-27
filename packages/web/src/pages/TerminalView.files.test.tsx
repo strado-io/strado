@@ -104,6 +104,7 @@ class FakeWS {
 }
 
 import { TerminalView } from './TerminalView';
+import { __resetBuffers, editBuffer, getBuffer, openBuffer } from '../components/files/buffers';
 import { requestRunInShell } from '../lib/runInShell';
 import { resetEditorsCache } from '../hooks/editors';
 import type { Worktree } from '../types';
@@ -158,6 +159,26 @@ describe('Files tab in the hub', () => {
     unmount();
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     expect(strip().getByText('Files')).toBeInTheDocument();
+  });
+
+  it('closing the Files tab with unsaved edits asks: Cancel keeps it; Don\'t save closes it and drops them', async () => {
+    __resetBuffers();
+    render(<TerminalView worktree={worktree} mode="files" onClose={() => {}} />);
+    act(() => {
+      openBuffer(ROOT, 'src/app.ts', { text: 'disk', version: 'v1' }, vi.fn());
+      editBuffer(ROOT, 'src/app.ts', 'mine');
+    });
+    fireEvent.click(strip().getByLabelText(/Close Files/));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Save changes' });
+    expect(dialog).toHaveTextContent('Save changes to app.ts?');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await flush();
+    expect(strip().getByText('Files')).toBeInTheDocument();
+    fireEvent.click(strip().getByLabelText(/Close Files/));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Don’t save' }));
+    await flush();
+    expect(strip().queryByText('Files')).toBeNull();
+    expect(getBuffer(ROOT, 'src/app.ts')).toBeUndefined();
   });
 
   it('mode="files" (the hover card) opens it; closing it forgets it', async () => {

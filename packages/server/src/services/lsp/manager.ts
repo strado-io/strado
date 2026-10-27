@@ -75,6 +75,9 @@ export type LspManager = {
   references(worktree: string, rel: string, line: number, col: number): Promise<NavAnswer>;
   hover(worktree: string, rel: string, line: number, col: number): Promise<HoverAnswer>;
   outline(worktree: string, rel: string): Promise<OutlineAnswer>;
+  /** The Files tab wrote this file: a running server that has it open hears
+   *  the new text and the save. Never starts a server; never throws. */
+  fileWritten(worktree: string, rel: string): Promise<void>;
   servers(): Promise<LspServerStatus[]>;
   /** Every server process that is up (starting or ready). */
   running(): LspRunning[];
@@ -504,6 +507,17 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
       } catch (err) {
         if (err instanceof Fallback) return { server: null, symbols: [] };
         throw err;
+      }
+    },
+
+    async fileWritten(worktree, rel) {
+      try {
+        const { realRoot, real: abs } = await resolveInside(worktree, safeRel(rel));
+        const ready = [...entries.values()].filter((e) => e.root === realRoot && e.state === 'ready' && !e.stopping);
+        await Promise.all(ready.map((e) => e.client.saved(abs).catch(() => false)));
+      } catch {
+        // The save itself succeeded; a server that missed it catches up on the
+        // next request (sync compares mtime and size).
       }
     },
 

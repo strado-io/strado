@@ -157,6 +157,27 @@ describe('definition and references through a language server', () => {
     expect(changes[0]!.params.contentChanges[0].text).toContain('foo, 2');
   });
 
+  it('a saved file: an open doc gets didChange (full text) then didSave; nothing starts or opens otherwise', async () => {
+    const m = await make(await fakeBinary());
+    // No server yet for this worktree: a save starts none.
+    await m.fileWritten(root, 'src/use.ts');
+    expect((await received()).filter((x) => x.method === 'initialize')).toHaveLength(0);
+    await m.definition(root, 'src/use.ts', 2, 14);
+    await fs.writeFile(path.join(root, 'src', 'use.ts'), "import { foo } from './def';\nconsole.log(foo, 3);\n");
+    await m.fileWritten(root, 'src/use.ts');
+    // A file the server never opened is not opened by a save.
+    await m.fileWritten(root, 'src/def.ts');
+    await until(async () => (await received()).some((x) => x.method === 'textDocument/didSave'));
+    const msgs = await received();
+    const tail = msgs.filter((x) => x.method?.startsWith('textDocument/did'));
+    expect(tail.map((x) => x.method)).toEqual(['textDocument/didOpen', 'textDocument/didChange', 'textDocument/didSave']);
+    expect(tail[1]!.params).toMatchObject({ textDocument: { version: 2 }, contentChanges: [{ text: expect.stringContaining('foo, 3') }] });
+    expect(tail[2]!.params.textDocument.uri).toBe(tail[0]!.params.textDocument.uri);
+    // The next request does not send the same change again.
+    await m.definition(root, 'src/use.ts', 2, 14);
+    expect((await received()).filter((x) => x.method === 'textDocument/didChange')).toHaveLength(1);
+  });
+
   it('answers configuration with nulls, accepts registrations, refuses edits and commands', async () => {
     const m = await make(await fakeBinary());
     await m.definition(root, 'src/use.ts', 2, 14);

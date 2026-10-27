@@ -105,7 +105,7 @@ export class LspClient {
         capabilities: {
           general: { positionEncodings: ['utf-16'] },
           textDocument: {
-            synchronization: { dynamicRegistration: false, didSave: false },
+            synchronization: { dynamicRegistration: false, didSave: true },
             definition: { dynamicRegistration: false, linkSupport: true },
             references: { dynamicRegistration: false },
             hover: { dynamicRegistration: false, contentFormat: ['markdown', 'plaintext'] },
@@ -150,6 +150,23 @@ export class LspClient {
       this.notify('textDocument/didClose', { textDocument: { uri: oldest } });
     }
     return uri;
+  }
+
+  /** The Files tab saved this file: if the server has it open, it gets the
+   *  new text (didChange) and the save (didSave). A file it never opened is
+   *  left alone. True when told. */
+  async saved(abs: string): Promise<boolean> {
+    const uri = pathToFileURL(abs).href;
+    const known = this.docs.get(uri);
+    if (!known || this.exited) return false;
+    const st = await fs.stat(abs);
+    if (st.size > FILES_LIMITS.readBytes) return false;
+    const text = await fs.readFile(abs, 'utf8');
+    const version = known.version + 1;
+    this.notify('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text }] });
+    this.notify('textDocument/didSave', { textDocument: { uri }, text });
+    this.docs.set(uri, { version, mtimeMs: st.mtimeMs, size: st.size });
+    return true;
   }
 
   /** Resolves once no progress is running (a server answers from a half-loaded

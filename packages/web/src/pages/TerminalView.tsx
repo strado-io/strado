@@ -40,6 +40,8 @@ import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
 import { filesSearchKey } from '../components/TerminalSearchBar';
+import { SavePromptHost, SavePromptProvided, askSaveChanges } from '../components/files/savePrompt';
+import { discardBuffer, dirtyFiles, saveAll } from '../components/files/buffers';
 import { formatActiveTime } from '../components/WorktreeRow';
 import { KnowledgeBasePanel } from '../components/KnowledgeBasePanel';
 import {
@@ -2864,6 +2866,16 @@ export function TerminalView({
   // command, or an agent that's actively working. Confirmed close falls
   // through to closeTab.
   const requestCloseTab = async (tab: Tab) => {
+    // The Files tab with unsaved edits: Save / Don't save / Cancel.
+    if (tab.mode === 'files' && !tab.remote) {
+      const edited = dirtyFiles(tab.path);
+      if (edited.length > 0) {
+        const choice = await askSaveChanges(edited);
+        if (choice === 'cancel') return;
+        if (choice === 'discard') for (const p of edited) discardBuffer(tab.path, p);
+        else if (!(await saveAll(tab.path, edited))) return; // refused or failed: the Files tab stays, its bar up
+      }
+    }
     // The run tab only detaches (the dev server keeps running): nothing to ask.
     if (tab.mode === 'shell' && !isRunTab(tab.id)) {
       let busy = false;
@@ -3106,6 +3118,7 @@ export function TerminalView({
     tab.remote ? undefined : mission?.stations.find((st) => st.worktreePath === tab.path && st.mode === tab.mode && st.sessionId === tab.id);
 
   return (
+    <SavePromptProvided.Provider value>
     <div
       ref={rootRef}
       tabIndex={-1}
@@ -3907,6 +3920,8 @@ export function TerminalView({
           }}
         />
       )}
+      <SavePromptHost />
     </div>
+    </SavePromptProvided.Provider>
   );
 }

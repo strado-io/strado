@@ -127,6 +127,20 @@ describe('/api/runners/:id/rpc denylist', () => {
     expect(seen).toEqual([`/api/w/default${tail}&ticket=tkt-1`]);
   });
 
+  it.each([
+    `/api/w/default/worktrees/${encodeURIComponent('/home/strado/wt')}/files/write`,
+    `/api/w/default/worktrees/${encodeURIComponent('/home/strado/wt')}/files/write?x=1`,
+    `/api/w/default/worktrees/${encodeURIComponent('/home/strado/wt')}/FILES/Write/`,
+    `/api/w/default/worktrees/x/files%2Fwrite`,
+    `/api/w/default/worktrees/x/files/%77rite`,
+  ])("a runner's files are read-only through rpc: %s → 403 (GET and POST)", async (p) => {
+    const calls = stubRunner();
+    const url = `/api/runners/runner-1/rpc?path=${encodeURIComponent(p)}`;
+    expect((await app.inject({ method: 'POST', url, payload: { path: 'a', text: 'x', baseVersion: 'y' } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url })).statusCode).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
   it('other paths still pass through', async () => {
     const calls = stubRunner({ extra: (u) => (new URL(u).pathname === '/api/workspaces' ? new Response('{"workspaces":[]}', { headers: { 'content-type': 'application/json' } }) : undefined) });
     const res = await app.inject({ method: 'GET', url: `/api/runners/runner-1/rpc?path=${encodeURIComponent('/api/workspaces')}` });

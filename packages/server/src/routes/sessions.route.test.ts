@@ -83,6 +83,7 @@ describe('GET /api/sessions/metrics: language servers', () => {
       references: async () => ({ source: 'lsp' as const, hits: [] }),
       hover: async () => null,
       outline: async () => ({ server: null, symbols: [] as [] }),
+      fileWritten: async () => {},
       servers: async () => [],
       setEnabled: async () => {},
       stop: async () => {},

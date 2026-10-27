@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody, ChatEntry, JarvisMeta, JarvisAgent } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, FileWriteBody, FileWriteResult, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody, ChatEntry, JarvisMeta, JarvisAgent } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -64,6 +64,8 @@ async function request<T>(url: string, init?: RequestInit, opts?: RequestOpts): 
   const text = await res.text();
   const body = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
+    // The Files write's 409 is a bare { error: 'conflict', path, version }.
+    if (res.status === 409 && body?.error === 'conflict') throw new ApiClientError('CONFLICT', 'The file changed on disk', body);
     throw new ApiClientError(body?.error?.code ?? 'UNKNOWN', body?.error?.message ?? res.statusText, body?.error?.details);
   }
   return body as T;
@@ -753,8 +755,8 @@ export const api = {
         request<{ head: string; summary: string }>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(p)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
     },
   },
-  /** The Files tab: a read-only view of a worktree's folders and files. Pass
-   * `remote` for a runner's worktree (wsId is then unused). */
+  /** The Files tab: a worktree's folders and files. Pass `remote` for a
+   * runner's worktree (wsId is then unused; it is read-only). */
   files: {
     tree: (wsId: string, worktreePath: string, dir: string, opts: { ignored?: boolean } = {}, remote?: RemoteFilesTarget) =>
       filesGet<FileTreePage>(wsId, worktreePath, 'files/tree', { dir, ignored: opts.ignored ? '1' : undefined }, remote),
@@ -764,6 +766,10 @@ export const api = {
       filesGet<FileContent>(wsId, worktreePath, 'files/read', { path }, remote),
     marks: (wsId: string, worktreePath: string, path: string, remote?: RemoteFilesTarget) =>
       filesGet<FileMarks>(wsId, worktreePath, 'files/marks', { path }, remote),
+    /** Replace an existing text file (this machine only). A file that changed
+     * since `baseVersion` throws ApiClientError 'CONFLICT' with details { version }. */
+    write: (wsId: string, worktreePath: string, body: FileWriteBody) =>
+      request<FileWriteResult>(`${wsBase(wsId)}/worktrees/${encodeURIComponent(worktreePath)}/files/write`, { method: 'POST', body: JSON.stringify(body) }),
     /** ⌘⇧F, and the guess behind a navigation with no language server. */
     search: (wsId: string, worktreePath: string, q: SearchQuery, remote?: RemoteFilesTarget, signal?: AbortSignal) =>
       filesGet<SearchAnswer>(wsId, worktreePath, 'files/search', {

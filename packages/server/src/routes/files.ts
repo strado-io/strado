@@ -1,14 +1,17 @@
-// The Files tab: read-only GETs over one worktree. Nothing here writes. The
-// same routes run on a runner's own server and are reached from the laptop
-// through GET /api/runners/:id/rpc.
+// The Files tab: GETs over one worktree, and one write that replaces an
+// existing text file (behind assertLocalHub: only a window on this machine).
+// The same routes run on a runner's own server; the laptop reaches the reads
+// through /api/runners/:id/rpc, and the rpc proxy refuses the write.
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { assertPathUnder } from '../paths.js';
-import { listFiles, readFile, readMarks, readTree } from '../services/files/files.js';
-import { FILES_ROUTES } from '../services/files/types.js';
+import { listFiles, readFile, readMarks, readTree, writeFile } from '../services/files/files.js';
+import { FILES_LIMITS, FILES_ROUTES } from '../services/files/types.js';
 import { searchFiles } from '../services/files/search.js';
+import type { LspManager } from '../services/lsp/manager.js';
 import { LSP_ROUTES } from '../services/lsp/types.js';
+import { assertLocalHub } from './profile.js';
 import { findOwningRepo, worktreeRootsFor } from '../services/worktreeRoot.js';
 
 type Params = { encodedPath: string };
@@ -27,7 +30,17 @@ const SearchQueryParams = z.object({
   glob: z.string().min(1).max(300).optional(),
 }).strict();
 
-export async function registerFilesRoutes(app: FastifyInstance) {
+const WriteBody = z.object({
+  path: z.string().min(1).max(4096),
+  // Bytes are checked by the service (the limit is on the file, not the string).
+  text: z.string(),
+  baseVersion: z.string().regex(/^[0-9a-f]{64}$/),
+  force: z.boolean().optional(),
+}).strict();
+/** The largest file as JSON: every byte escaped (up to 6), plus room for the rest. */
+const WRITE_BODY_LIMIT = FILES_LIMITS.readBytes * 6 + 64 * 1024;
+
+export async function registerFilesRoutes(app: FastifyInstance, lsp?: Pick<LspManager, 'fileWritten'>) {
   async function resolveTarget(req: any): Promise<string> {
     const { repos } = req.workspace!.stores;
     const target = decodeURIComponent(req.params.encodedPath);
@@ -49,6 +62,17 @@ export async function registerFilesRoutes(app: FastifyInstance) {
   app.get<{ Params: Params }>(FILES_ROUTES.read, async (req) => {
     const { path } = PathQuery.parse(req.query);
     return readFile(await resolveTarget(req), path);
+  });
+
+  app.post<{ Params: Params }>(FILES_ROUTES.write, { bodyLimit: WRITE_BODY_LIMIT }, async (req, reply) => {
+    assertLocalHub(req.headers);
+    const body = WriteBody.parse(req.body);
+    const root = await resolveTarget(req);
+    const out = await writeFile(root, body.path, body.text, body.baseVersion, body.force ?? false);
+    if (!out.ok) return reply.code(409).send(out.conflict);
+    // Diagnostics and definitions follow the edit; the save never waits on it.
+    void lsp?.fileWritten(root, out.result.path);
+    return out.result;
   });
 
   app.get<{ Params: Params }>(FILES_ROUTES.marks, async (req) => {

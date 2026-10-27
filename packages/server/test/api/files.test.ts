@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, buildDeps } from '../../src/app';
 import { exec } from '../../src/shell';
@@ -11,6 +12,10 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 
 const base = () => `/api/w/default/worktrees/${encodeURIComponent(repo)}/files`;
 const get = (url: string) => app.inject({ method: 'GET', url });
+const local = { host: '127.0.0.1:4000', origin: 'http://127.0.0.1:4000' };
+const write = (payload: object, headers: Record<string, string> = local) =>
+  app.inject({ method: 'POST', url: `${base()}/write`, headers, payload });
+const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
 beforeEach(async () => {
   tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'api-files-')));
@@ -84,5 +89,50 @@ describe('Files routes', () => {
     for (const r of ['tree', 'list', 'read', 'marks']) {
       expect((await app.inject({ method: 'POST', url: `${base()}/${r}`, payload: {} })).statusCode).toBe(404);
     }
+  });
+});
+
+describe('POST files/write', () => {
+  it('read gives a version; write replaces the text and returns the new one', async () => {
+    const read = (await get(`${base()}/read?path=src/a.ts`)).json();
+    expect(read.version).toBe(sha('one\ntwo\n'));
+    const res = await write({ path: 'src/a.ts', text: 'one\ntwo\nthree\n', baseVersion: read.version });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ path: 'src/a.ts', version: sha('one\ntwo\nthree\n'), size: 14 });
+    expect(await fs.readFile(path.join(repo, 'src', 'a.ts'), 'utf8')).toBe('one\ntwo\nthree\n');
+  });
+
+  it('409 with the current version on a stale baseVersion; force overwrites', async () => {
+    const stale = sha('old');
+    const res = await write({ path: 'src/a.ts', text: 'mine\n', baseVersion: stale });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: 'conflict', path: 'src/a.ts', version: sha('one\ntwo\n') });
+    expect((await write({ path: 'src/a.ts', text: 'mine\n', baseVersion: stale, force: true })).statusCode).toBe(200);
+    expect(await fs.readFile(path.join(repo, 'src', 'a.ts'), 'utf8')).toBe('mine\n');
+  });
+
+  it('refused: a relayed window, a foreign origin, bad bodies, paths that leave, a symlink out, a worktree no repo owns', async () => {
+    const ok = { path: 'src/a.ts', text: 'x', baseVersion: sha('one\ntwo\n') };
+    expect((await write(ok, { host: '127.0.0.1:4000', 'x-strado-via': 'relay' })).statusCode).toBe(403);
+    expect((await write(ok, { host: '127.0.0.1:4000', origin: 'https://evil.example' })).statusCode).toBe(403);
+    expect((await write({ ...ok, extra: 1 })).statusCode).toBe(400);
+    expect((await write({ ...ok, baseVersion: 'not-a-sha' })).statusCode).toBe(400);
+    expect((await write({ ...ok, path: '../secret.txt' })).statusCode).toBe(400);
+    expect((await write({ ...ok, path: path.join(tmp, 'secret.txt') })).statusCode).toBe(400);
+    expect((await write({ ...ok, path: '.git/config' })).statusCode).toBe(400);
+    expect((await write({ ...ok, path: 'src/new.ts' })).statusCode).toBe(404);
+    await fs.symlink(path.join(tmp, 'secret.txt'), path.join(repo, 'src', 'out.txt'));
+    expect((await write({ ...ok, path: 'src/out.txt', baseVersion: sha('secret') })).statusCode).toBe(403);
+    expect(await fs.readFile(path.join(tmp, 'secret.txt'), 'utf8')).toBe('secret');
+    const other = await app.inject({ method: 'POST', url: `/api/w/default/worktrees/${encodeURIComponent(tmp)}/files/write`, headers: local, payload: ok });
+    expect(other.statusCode).toBe(404);
+    expect(await fs.readFile(path.join(repo, 'src', 'a.ts'), 'utf8')).toBe('one\ntwo\n');
+  });
+
+  it('takes a body as large as the biggest file, escaped', async () => {
+    const big = '"'.repeat(1024 * 1024 - 10);
+    const res = await write({ path: 'src/a.ts', text: big, baseVersion: sha('one\ntwo\n') });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().size).toBe(big.length);
   });
 });
