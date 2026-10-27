@@ -277,8 +277,20 @@ export async function readFile(root: string, relIn: string): Promise<FileContent
   if (isBinary(buf)) return { ...base, size: buf.length, binary: true, tooLarge: false };
   return {
     path: rel, size: buf.length, binary: false, tooLarge: false, text: buf.toString('utf8'), language: base.language,
-    ...(change ? { change } : {}), version: versionOf(buf),
+    ...(change ? { change } : {}), version: versionOf(buf), ...(isUtf8(buf) ? {} : { notUtf8: true as const }),
   };
+}
+
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+/** Valid UTF-8: its text round-trips. A file that is not shows lossy text and
+ *  is never written back (a save would change bytes the person never touched). */
+function isUtf8(buf: Buffer): boolean {
+  try {
+    strictUtf8.decode(buf);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** FileContent.version: the sha-256 of the exact bytes. */
@@ -306,6 +318,7 @@ export async function writeFile(root: string, relIn: string, text: string, baseV
   const current = await fs.readFile(real);
   if (current.length > FILES_LIMITS.readBytes) throw new AppError('VALIDATION', 'file too large');
   if (isBinary(current)) throw new AppError('VALIDATION', 'binary file');
+  if (!isUtf8(current)) throw new AppError('VALIDATION', 'file is not utf-8');
   // A file the person made read-only stays so (a rename would replace it anyway).
   if (!(stat.mode & 0o200)) throw new AppError('VALIDATION', 'file is read-only');
   const now = versionOf(current);

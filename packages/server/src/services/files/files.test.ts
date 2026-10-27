@@ -300,6 +300,20 @@ describe('writeFile', () => {
     await expect(writeFile(repo, 'a.txt', 'x', await v('a.txt'))).rejects.toMatchObject({ httpStatus: 400, message: 'file is read-only' });
   });
 
+  it('a file that is not valid UTF-8: read says so (text still sent, lossy); write refuses it even with force', async () => {
+    const latin1 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]); // "café\n" in Latin-1
+    await write('latin1.txt', latin1);
+    const r = await readFile(repo, 'latin1.txt');
+    expect(r.notUtf8).toBe(true);
+    expect(r.version).toBe(sha(latin1));
+    await expect(writeFile(repo, 'latin1.txt', 'café\n', r.version!)).rejects.toMatchObject({ httpStatus: 400, message: 'file is not utf-8' });
+    await expect(writeFile(repo, 'latin1.txt', 'café\n', r.version!, true)).rejects.toMatchObject({ httpStatus: 400, message: 'file is not utf-8' });
+    expect(await fs.readFile(path.join(repo, 'latin1.txt'))).toEqual(latin1);
+    // Valid UTF-8 (with a BOM and multibyte text) is not flagged.
+    await write('ok.txt', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('naïve ✓\n')]));
+    expect((await readFile(repo, 'ok.txt')).notUtf8).toBeUndefined();
+  });
+
   it('atomic: a failed write leaves the old file whole and no temp file', async () => {
     const before = await v('src/app.ts');
     await fs.chmod(path.join(repo, 'src'), 0o555); // no new file can be made here
