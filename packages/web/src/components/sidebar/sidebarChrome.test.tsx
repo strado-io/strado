@@ -1,3 +1,4 @@
+import { RunningServers } from '../RunningServers';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -42,6 +43,22 @@ describe('sidebar chrome', () => {
     render(<SidebarNav selected={null} onSelect={vi.fn()} onOpenSettings={vi.fn()} running={<button type="button">2 running</button>} />);
     const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
     expect(names).toEqual(['Code reviews', 'Usage', '2 running', 'Open settings']);
+  });
+
+  it('bottom bar: running is an icon and a count; its list floats above it like a tooltip, arrow on the icon', () => {
+    const w = { path: '/r/a', branch: 'a', meta: {}, process: { status: 'running', port: 3002 } } as unknown as import('../../types').Worktree;
+    render(<RunningServers worktrees={[w]} onOpen={vi.fn()} onStop={vi.fn()} onKillExternal={vi.fn()} placement="up" />);
+    const chip = screen.getByRole('button', { name: 'Running dev servers' });
+    expect(chip).toHaveTextContent(/^1$/);
+    expect(chip.querySelector('svg')).not.toBeNull();
+    fireEvent.click(chip);
+    const arrow = screen.getByTestId('running-arrow');
+    const pop = arrow.parentElement!;
+    // Portalled to the body (fixed at the chip), so the panes can't cover it.
+    expect(pop.parentElement).toBe(document.body);
+    expect(pop.className.split(/\s+/)).toEqual(expect.arrayContaining(['menu-solid', 'fixed', 'w-max']));
+    expect(pop).toHaveTextContent('a');
+    expect(pop).toHaveTextContent(':3002');
   });
 
   it('the Focus list has no header: no caption, no + of its own (New focus is in the workspace row)', () => {
