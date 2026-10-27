@@ -550,6 +550,11 @@ function BrowserPreviewPane({
   );
 }
 
+
+/** 1234 → 1.2k, 12345 → 12k: the changes pill stays narrow. */
+export const shortCount = (n: number): string =>
+  n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(n / 1000)}k`;
+
 export function TerminalView({
   worktree,
   onClose,
@@ -3297,18 +3302,19 @@ export function TerminalView({
               capability flag applies to the Browser. */}
           {!remote && (
             <>
+              {/* A pill like Run's, the counts shortened past 999 (1.2k); exact in the tooltip. */}
               <button
-                className={`flex h-7 shrink-0 items-center gap-1.5 self-center rounded-md px-2.5 hover:bg-zinc-900 ${
-                  active.mode === 'diff' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-100'
+                className={`flex h-7 shrink-0 items-center self-center rounded-md border px-1.5 transition ${
+                  active.mode === 'diff' ? 'border-zinc-600 bg-zinc-800 text-zinc-100' : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-white/5 hover:text-zinc-100'
                 }`}
                 onClick={openChanges}
-                title="Changes (⌘L)"
+                title={`Changes (⌘L): +${activeDiff?.additions ?? 0} −${activeDiff?.deletions ?? 0} lines`}
                 aria-label="Changes"
                 aria-pressed={active.mode === 'diff'}
               >
-                <span className="font-mono text-[11px] tabular-nums">
-                  <span className="text-emerald-400">+{activeDiff?.additions ?? 0}</span>{' '}
-                  <span className="text-red-300">-{activeDiff?.deletions ?? 0}</span>
+                <span className="flex gap-1 font-mono text-[11px] tabular-nums leading-none">
+                  <span className="text-emerald-400">+{shortCount(activeDiff?.additions ?? 0)}</span>
+                  <span className="text-red-300">−{shortCount(activeDiff?.deletions ?? 0)}</span>
                 </span>
               </button>
             </>
