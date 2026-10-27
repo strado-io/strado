@@ -812,7 +812,8 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
     <div className={embedded ? 'h-full w-full' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4'} onClick={embedded ? undefined : onClose}>
       <div
         className={embedded
-          ? 'diff-view relative flex h-full w-full flex-col overflow-hidden bg-zinc-950'
+          // In a pane: the pane card's own background, no darker box inside it.
+          ? 'diff-view relative flex h-full w-full flex-col overflow-hidden'
           : 'diff-view relative flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl'}
         onClick={(e) => e.stopPropagation()}
       >
@@ -889,7 +890,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 text-sm text-zinc-200">
+        <div className="flex items-center gap-2 border-b border-zinc-800/80 px-3 py-1 text-sm text-zinc-200">
           {/* Identity, not navigation: worktree name + a branch chip, then a
               divider, so nothing here reads as one more tab. */}
           <div className="flex min-w-0 max-w-[55%] items-center gap-2">
