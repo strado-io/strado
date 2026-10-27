@@ -3147,7 +3147,7 @@ export function TerminalView({
       })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="app-drag flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
-          {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+          <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
           <TabStrip

@@ -28,7 +28,7 @@ export function HomeScreen({ bar, strip = null, recent, waiting, onOpenRecent, o
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="app-drag flex h-11 shrink-0 items-center gap-2 px-3">
-        {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+        <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
         {waiting > 0 && (
           <button type="button" onClick={onWaiting}
             className="ml-auto rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-xs text-amber-300 hover:bg-amber-900/40">

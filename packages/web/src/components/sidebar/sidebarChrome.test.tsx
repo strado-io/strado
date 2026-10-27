@@ -116,7 +116,10 @@ describe('sidebar chrome', () => {
     expect(css).toMatch(/@starting-style \{[^@]*opacity: 0; scale: 0\.97; translate: 0 -4px;/);
     expect(css).toMatch(/\.sidebar-slide\[data-collapsed\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\);/);
     expect(css).toMatch(/@starting-style \{ \.sidebar-slide\[data-slide-in\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\); \} \}/);
-    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s+\.surface-pop[^}]*\.sidebar-slide \{ transition: none; \}/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s+\.surface-pop[^}]*\.sidebar-slide, \.open-sidebar-slot \{ transition: none; \}/);
+    // A toolbar's room for the open button opens and shuts with the sidebar, on the same timing.
+    expect(css).toMatch(/\.open-sidebar-slot \{[^}]*grid-template-columns: 0fr;[^}]*transition: grid-template-columns 260ms var\(--ease-drawer\);/);
+    expect(css).toMatch(/\.open-sidebar-slot\[data-shown\] \{ grid-template-columns: 1fr; transition-duration: 220ms; \}/);
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

@@ -8,7 +8,7 @@ describe('OpenSidebarButton', () => {
   it('leaves a draggable slot for the traffic lights in the macOS shell', () => {
     (window as { strado?: unknown }).strado = { insetTitleBar: true };
     const onClick = vi.fn();
-    const { container } = render(<OpenSidebarButton onClick={onClick} />);
+    const { container } = render(<OpenSidebarButton shown onClick={onClick} />);
     expect(container.querySelector('[style*="width: 72px"]')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }));
     expect(onClick).toHaveBeenCalled();
@@ -22,14 +22,22 @@ describe('OpenSidebarButton', () => {
       isFullScreen: () => true,
       onFullScreen: (cb: (on: boolean) => void) => { notify = cb; return () => {}; },
     };
-    const { container } = render(<OpenSidebarButton onClick={vi.fn()} />);
+    const { container } = render(<OpenSidebarButton shown onClick={vi.fn()} />);
     expect(container.querySelector('[style*="width: 72px"]')).toBeNull();
     act(() => notify(false));
     expect(container.querySelector('[style*="width: 72px"]')).not.toBeNull();
   });
 
+  it('while the sidebar shows, its room is shut and holds no button', () => {
+    const { rerender } = render(<OpenSidebarButton shown onClick={vi.fn()} />);
+    expect(screen.getByTestId('open-sidebar-slot')).toHaveAttribute('data-shown');
+    rerender(<OpenSidebarButton shown={false} onClick={vi.fn()} />);
+    expect(screen.getByTestId('open-sidebar-slot')).not.toHaveAttribute('data-shown');
+    expect(screen.queryByRole('button', { name: 'Open sidebar' })).toBeNull();
+  });
+
   it('is just the button in a browser', () => {
-    const { container } = render(<OpenSidebarButton onClick={vi.fn()} />);
+    const { container } = render(<OpenSidebarButton shown onClick={vi.fn()} />);
     expect(container.querySelector('[style*="width: 72px"]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Open sidebar' })).toBeInTheDocument();
   });

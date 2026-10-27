@@ -609,7 +609,19 @@ body {
 .sidebar-slide[data-collapsed] { margin-left: calc(-1 * var(--sidebar-w)); transition-duration: 220ms; }
 @starting-style { .sidebar-slide[data-slide-in] { margin-left: calc(-1 * var(--sidebar-w)); } }
 
+/* A toolbar's room for the open-sidebar button (and the traffic lights) opens
+   as the sidebar slides out and shuts as it slides in, on the same curve and
+   timing, so the toolbar follows the sidebar's edge. -mr-2 cancels the row's
+   gap-2 while the room is shut; pr-2 inside gives it back while it's open. */
+.open-sidebar-slot {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-right: -0.5rem;
+  transition: grid-template-columns 260ms var(--ease-drawer);
+}
+.open-sidebar-slot[data-shown] { grid-template-columns: 1fr; transition-duration: 220ms; }
+
 @media (prefers-reduced-motion: reduce) {
   .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog'],
-  .fixed.inset-0[class*='bg-black/'], .fixed.inset-0[class*='bg-black/'] > *, .sidebar-slide { transition: none; }
+  .fixed.inset-0[class*='bg-black/'], .fixed.inset-0[class*='bg-black/'] > *, .sidebar-slide, .open-sidebar-slot { transition: none; }
 }

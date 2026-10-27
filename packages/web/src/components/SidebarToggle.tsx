@@ -68,12 +68,44 @@ export function TrafficLightsSpacer() {
   return <span aria-hidden className={`${DRAG} shrink-0 self-stretch`} style={{ width: LIGHTS_WIDTH }} />;
 }
 
-/** For a page toolbar while the sidebar is closed: clear the lights, then the open button. */
-export function OpenSidebarButton({ onClick }: { onClick: () => void }) {
+/**
+ * For a page toolbar: while the sidebar is closed, clear the lights, then the
+ * open button. Always the toolbar's first item, in a row with gap-2. The room
+ * it takes opens and shuts on the sidebar's own slide (.open-sidebar-slot in
+ * index.css), so what follows it moves with the sidebar's edge instead of
+ * jumping the whole width at once; shutting, its contents stay drawn until
+ * the room is gone.
+ */
+export function OpenSidebarButton({ shown, onClick }: { shown: boolean; onClick: () => void }) {
+  const [wasShown, setWasShown] = useState(shown);
+  const [leaving, setLeaving] = useState(false);
+  if (wasShown !== shown) {
+    setWasShown(shown);
+    setLeaving(!shown && motionAllowed());
+  }
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setLeaving(false), SLOT_SHUT_MS + 40);
+    return () => clearTimeout(t);
+  }, [leaving]);
   return (
-    <>
-      <TrafficLightsSpacer />
-      <SidebarToggleButton open={false} onClick={onClick} />
-    </>
+    <span data-testid="open-sidebar-slot" data-shown={shown || undefined} className="open-sidebar-slot">
+      {/* The padding sits inside the clip, so the room shuts all the way to 0. */}
+      <span className="min-w-0 overflow-hidden">
+        <span className="flex items-center gap-2 pr-2">
+          {(shown || leaving) && (
+            <>
+              <TrafficLightsSpacer />
+              <SidebarToggleButton open={false} onClick={onClick} />
+            </>
+          )}
+        </span>
+      </span>
+    </span>
   );
 }
+// The sidebar's slide in (.sidebar-slide), which is when this slot shuts.
+const SLOT_SHUT_MS = 260;
+const motionAllowed = () => {
+  try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+};

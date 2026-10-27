@@ -78,7 +78,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="app-drag sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-900 bg-zinc-950 px-3 py-2">
-        {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+        <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
         <Segmented
           label="Usage view"
           value={tab}

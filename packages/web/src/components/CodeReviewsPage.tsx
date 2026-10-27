@@ -322,7 +322,7 @@ export function CodeReviewsPage({
         <div className="shrink-0 border-b border-zinc-900 bg-zinc-950">
           <div className="flex flex-col gap-1.5 px-2.5 py-2">
             <div className="app-drag flex items-center gap-2">
-              {sidebarCollapsed && <OpenSidebarButton onClick={() => onExpandSidebar?.()} />}
+              <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
               <div className="flex min-w-0 flex-1 rounded-md bg-zinc-900 p-0.5">
                 {(['open', 'merged', 'closed'] as const).map((value) => (
                   <button

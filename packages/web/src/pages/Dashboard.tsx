@@ -1158,7 +1158,7 @@ export function Dashboard(props: {
           <div className="flex min-h-0 flex-1 flex-col">
             {/* The window's grab strip, as on home and the worktree view. */}
             <div data-testid="jarvis-drag" className="app-drag flex h-11 shrink-0 items-center gap-2 px-3">
-              {sidebarCollapsed && <OpenSidebarButton onClick={() => setSidebarCollapsed(false)} />}
+              <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => setSidebarCollapsed(false)} />
             </div>
             <div className="flex min-h-0 flex-1">
               <FocusJarvisMain onOpenCard={openJarvisCard} start={jarvisStart} />
