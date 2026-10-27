@@ -222,10 +222,50 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
     expect(onOpen).not.toHaveBeenCalled();
     fireEvent.keyDown(window, { key: 'Escape' });
-    fireEvent.click(screen.getByRole('button', { name: 'Open Jarvis for Billing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Billing' }));
     expect(onOpen).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId('latest'));
     expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('the whole active row toggles once the chat shows; before that, its first click shows the chat and folds nothing; ⋯ never toggles', () => {
+    withFocus('local:/r1/wt');
+    const onOpen = vi.fn();
+    const { rerender } = render(<SidebarBody {...props({ jarvis: header({ onOpen, selected: false }) })} />);
+    const name = () => screen.getByRole('button', { name: 'Billing' });
+    expect(name()).toHaveAttribute('aria-expanded', 'true');
+    // A worktree is open: the click shows the chat, the panel stays.
+    fireEvent.click(screen.getByTestId('latest'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    // The chat shows: a click anywhere on the row folds, and again expands.
+    rerender(<SidebarBody {...props({ jarvis: header({ onOpen, selected: true }) })} />);
+    fireEvent.click(screen.getByTestId('latest'));
+    expect(screen.queryByTestId('focus-group')).toBeNull();
+    expect(name()).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByTestId('focus-header'));
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    expect(name()).toHaveAttribute('aria-expanded', 'true');
+    // Enter or Space on the name button is its click, so the row's.
+    fireEvent.click(name());
+    expect(name()).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(name());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // ⋯ opens its menu only.
+    fireEvent.click(screen.getByRole('button', { name: 'Billing actions' }));
+    expect(screen.getByTestId('focus-group')).toBeInTheDocument();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('an inactive row still activates and expands that Focus, alone', () => {
+    focusMock.focuses = [focus('f1', 'Billing', ['local:/r1/wt']), focus('f2', 'Perf', [])];
+    focusMock.activeId = 'f1';
+    const { rerender } = render(<SidebarBody {...props({ jarvis: header() })} />);
+    focusMock.activate.mockImplementation((id: string) => { focusMock.activeId = id; });
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Perf' }));
+    rerender(<SidebarBody {...props({ jarvis: header() })} />);
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Perf' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('while the chat shows, the header reads as selected', () => {
@@ -367,13 +407,15 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(openHeader()).toHaveTextContent('Billing');
   });
 
-  it('after peeking with chevrons, clicking the active header is the accordion again', () => {
-    render(<SidebarBody {...props({ jarvis: { status: null, latest: null, selected: false, onOpen: vi.fn() } })} />);
+  it('after peeking with chevrons, clicking the active header shows its chat and leaves the panels as they are', () => {
+    const onOpen = vi.fn();
+    render(<SidebarBody {...props({ jarvis: { status: null, latest: null, selected: false, onOpen } })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
     fireEvent.click(screen.getByRole('button', { name: 'Show Onboarding' }));
     expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
     fireEvent.click(screen.getByTestId('focus-header'));
-    expect(screen.getAllByTestId('focus-group')).toHaveLength(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
     expect(panelOf('Billing')).not.toBeNull();
   });
 

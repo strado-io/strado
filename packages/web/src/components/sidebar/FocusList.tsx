@@ -1,8 +1,8 @@
 // Every Focus, as an accordion. Making a Focus active (a click on its row,
 // ⌘1–9, any switch) opens its Jarvis chat, expands it and folds every other
-// one; clicking the active row's header folds the others again. The chevron
-// toggles just that Focus without activating it, to peek at another one's
-// worktrees. What is expanded is remembered per window.
+// one. A click on the active row shows its chat, or, once the chat shows,
+// folds or expands it. The chevron toggles just that Focus without activating
+// it, to peek at another one's worktrees. What is expanded is remembered per window.
 // The active row is its Jarvis: two lines (status, latest reply), selected
 // while the chat shows. The others are flat one-line headings with their
 // live badges — headings, not cards, so they never read as worktrees. They
@@ -108,10 +108,11 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
             <div key={f.id} data-testid={isActive ? 'focus-open' : 'focus-row'} data-focus-item data-expanded={open || undefined}
               className="flex flex-col">
               {isActive ? (
-                // The active Focus's header is its Jarvis: clicking it (outside the chevron and ⋯) opens the chat.
+                // The active Focus's header is its Jarvis. A click anywhere on it (but ⋯)
+                // shows the chat; once the chat shows, it folds or expands the Focus.
                 <div data-testid="focus-header" data-selected={jarvis?.selected || undefined}
-                  onClick={jarvis && renaming !== f.id ? () => { only(f.id); jarvis.onOpen(); } : undefined}
-                  className={`${HEADER} group ${jarvis ? 'cursor-pointer' : ''} ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
+                  onClick={renaming !== f.id ? () => { if (jarvis && !jarvis.selected) jarvis.onOpen(); else toggle(f.id); } : undefined}
+                  className={`${HEADER} group cursor-pointer ${jarvis?.selected ? 'bg-[rgb(var(--pane-edge)/0.08)]' : 'hover:bg-[rgb(var(--pane-edge)/0.05)]'}`}>
                   <div className="flex h-6 min-w-0 items-center gap-1.5">
                     {chevron}
                     <span className="shrink-0 text-zinc-300"><FocusIcon size={15} /></span>
@@ -119,7 +120,8 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                       <RenameField name={f.name} onDone={(name) => { setRenaming(null); if (name && name !== f.name) onRename(f.id, name); }} />
                     ) : (
                       <h3 aria-current="true" title={`${f.name}${hint}`} className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-100">
-                        {jarvis ? <button type="button" aria-label={`Open Jarvis for ${f.name}`} className="max-w-full truncate text-left">{f.name}</button> : f.name}
+                        {/* The row's keyboard handle: Enter/Space click it, and the click is the row's. */}
+                        <button type="button" aria-expanded={open} className="max-w-full truncate text-left">{f.name}</button>
                       </h3>
                     )}
                     {b.agents}
