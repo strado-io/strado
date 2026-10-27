@@ -19,6 +19,7 @@ import { npmGlobalRoot, TS7_ONLY, tsserverPathFor } from './tsserver.js';
 import { installOptions, type Detect } from './detect.js';
 import type { LspEnabledStore } from './store.js';
 import { importDefinition } from './importDefinition.js';
+import { quickOutline } from './quickOutline.js';
 import {
   LSP_LIMITS,
   LSP_SERVERS,
@@ -500,6 +501,17 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     }
   }
 
+  async function askOutline(worktree: string, rel: string): Promise<OutlineAnswer> {
+    try {
+      const { entry, uri, deadline } = await serverFor(worktree, rel);
+      const r = await ask<RawSymbol[] | null>(entry, 'textDocument/documentSymbol', { textDocument: { uri } }, deadline);
+      return { server: entry.spec.id, symbols: Array.isArray(r) ? toOutline(r) : [] };
+    } catch (err) {
+      if (err instanceof Fallback) return { server: null, symbols: [] };
+      throw err;
+    }
+  }
+
   async function sweep(): Promise<void> {
     const cutoff = now() - limits.idleMs;
     await Promise.all([...entries.values()].filter((e) => e.lastUsedAt < cutoff).map(stopEntry));
@@ -525,14 +537,18 @@ export function createLspManager(deps: LspManagerDeps): LspManager {
     },
 
     async outline(worktree, rel) {
-      try {
-        const { entry, uri, deadline } = await serverFor(worktree, rel);
-        const r = await ask<RawSymbol[] | null>(entry, 'textDocument/documentSymbol', { textDocument: { uri } }, deadline);
-        return { server: entry.spec.id, symbols: Array.isArray(r) ? toOutline(r) : [] };
-      } catch (err) {
-        if (err instanceof Fallback) return { server: null, symbols: [] };
-        throw err;
-      }
+      // As definitions: a warm server answers in a few ms; one still loading
+      // the project loses to the declarations found by pattern, which show at
+      // once (the panel asks again as the file is reopened or edited).
+      const viaServer = askOutline(worktree, rel);
+      viaServer.catch(() => undefined);
+      const SLOW = Symbol('slow');
+      const first = await Promise.race([viaServer, new Promise<typeof SLOW>((r) => setTimeout(() => r(SLOW), deps.quickDefinitionMs ?? QUICK_DEFINITION_MS))]);
+      if (first !== SLOW && first.server !== null) return first;
+      const { spec } = specFor(rel);
+      const quick = spec ? await resolveInside(worktree, safeRel(rel)).then(({ real }) => quickOutline(real)).catch(() => null) : null;
+      if (spec && quick?.length) return { server: spec.id, symbols: quick };
+      return first === SLOW ? viaServer : first;
     },
 
     async fileWritten(worktree, rel) {

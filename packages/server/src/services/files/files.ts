@@ -105,10 +105,19 @@ type GitStatus = {
  *  to one folder or file ('' = the whole worktree): a folder expand in a big
  *  repo must not cost a whole-repo status. `allUntracked` lists files inside
  *  untracked folders instead of collapsing them. */
+// A worktree's path inside its repo never changes: asked once (a git process
+// saved on every file opened and folder listed).
+const prefixes = new Map<string, string>();
+
 async function gitStatus(root: string, scope: string, allUntracked = false): Promise<GitStatus | null> {
-  const prefix = await runGit(root, ['rev-parse', '--show-prefix']);
-  if (prefix.code !== 0) return null;
-  const pre = prefix.stdout.trim();
+  let pre = prefixes.get(root);
+  if (pre === undefined) {
+    const prefix = await runGit(root, ['rev-parse', '--show-prefix']);
+    if (prefix.code !== 0) return null;
+    pre = prefix.stdout.trim();
+    if (prefixes.size > 200) prefixes.clear();
+    prefixes.set(root, pre);
+  }
   const args = ['status', '--porcelain=v1', '-z'];
   if (allUntracked) args.push('--untracked-files=all');
   if (scope) args.push('--', scope);
