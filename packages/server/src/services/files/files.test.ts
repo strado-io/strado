@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { exec } from '../../shell.js';
 import crypto from 'node:crypto';
-import { languageFor, listFiles, parseMarks, readFile, readMarks, readTree, safeRel, writeFile } from './files.js';
+import { fileLocksHeld, languageFor, listFiles, parseMarks, readFile, readMarks, readTree, safeRel, writeFile } from './files.js';
 import { FILES_LIMITS } from './types.js';
 
 let tmp: string;
@@ -312,6 +312,27 @@ describe('writeFile', () => {
     // Valid UTF-8 (with a BOM and multibyte text) is not flagged.
     await write('ok.txt', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('naïve ✓\n')]));
     expect((await readFile(repo, 'ok.txt')).notUtf8).toBeUndefined();
+  });
+
+  it('two writes from the same version at once: one lands, the other is a conflict', async () => {
+    const base = await v('a.txt');
+    const results = await Promise.all([writeFile(repo, 'a.txt', 'first\n', base), writeFile(repo, 'a.txt', 'second\n', base)]);
+    const won = results.filter((r) => r.ok);
+    const lost = results.filter((r) => !r.ok);
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    const winner = results[0]!.ok ? 'first\n' : 'second\n';
+    expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe(winner);
+    expect(lost[0]).toEqual({ ok: false, conflict: { error: 'conflict', path: 'a.txt', version: sha(winner) } });
+    // Through a symlink too: the lock is on the real file.
+    await fs.symlink('a.txt', path.join(repo, 'alias'));
+    const now = await v('a.txt');
+    const both = await Promise.all([writeFile(repo, 'alias', 'x\n', now), writeFile(repo, 'a.txt', 'y\n', now)]);
+    expect(both.filter((r) => r.ok)).toHaveLength(1);
+    // Idle: no lock is left behind, also after a refused write.
+    await expect(writeFile(repo, 'img-missing.txt', 'x', now)).rejects.toMatchObject({ httpStatus: 404 });
+    await Promise.all([writeFile(repo, 'src', 'x', now).catch(() => undefined), writeFile(repo, 'src', 'x', now).catch(() => undefined)]);
+    expect(fileLocksHeld()).toBe(0);
   });
 
   it('atomic: a failed write leaves the old file whole and no temp file', async () => {

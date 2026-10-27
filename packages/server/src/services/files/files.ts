@@ -309,6 +309,29 @@ export async function writeFile(root: string, relIn: string, text: string, baseV
   const rel = safeRel(relIn);
   if (!rel) throw new AppError('VALIDATION', 'path is required');
   const { real } = await resolveInside(root, rel);
+  return withFileLock(real, () => replaceText(real, rel, text, baseVersion, force));
+}
+
+/** One write at a time per real file, from the version check to the rename:
+ *  two saves from the same version give one write and one conflict, never a
+ *  silently lost edit. In memory: this server is the only writer it guards. */
+const fileLocks = new Map<string, Promise<unknown>>();
+async function withFileLock<T>(real: string, fn: () => Promise<T>): Promise<T> {
+  const prev = fileLocks.get(real) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const tail = run.catch(() => undefined);
+  fileLocks.set(real, tail);
+  try {
+    return await run;
+  } finally {
+    if (fileLocks.get(real) === tail) fileLocks.delete(real);
+  }
+}
+
+/** Exported for the lock's test: how many files have a write queued. */
+export const fileLocksHeld = () => fileLocks.size;
+
+async function replaceText(real: string, rel: string, text: string, baseVersion: string, force: boolean): Promise<WriteOutcome> {
   const stat = await fs.stat(real);
   if (!stat.isFile()) throw new AppError('VALIDATION', 'not a file');
   if (stat.size > FILES_LIMITS.readBytes) throw new AppError('VALIDATION', 'file too large');
