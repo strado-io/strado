@@ -79,6 +79,9 @@ function barHoldsKeyboard(): boolean {
 
 /** The theme with the pane card's colour (`--pane-card`, "r g b") as its
  * background, so a terminal and its card read as one surface. */
+// A drag's pause long enough to tell the pty the new size.
+const PTY_RESIZE_SETTLE_MS = 120;
+
 export function cardTerminalTheme(theme: ITheme): ITheme {
   const rgb = getComputedStyle(document.documentElement).getPropertyValue('--pane-card').trim().split(/\s+/).map(Number);
   if (rgb.length !== 3 || rgb.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return theme;
@@ -492,7 +495,17 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     // resize the user's live pty down to minimum dimensions.
     const fitIfVisible = () => {
       if (container.clientWidth === 0 || container.clientHeight === 0) return false;
+      const before = `${term.cols}x${term.rows}`;
       fit.fit();
+      // A real resize clears the renderer's drawing buffer at once, but xterm
+      // repaints only on its next frame: one blank frame that reads as a
+      // flicker. Paint now (Tabby does the same; private API, so guarded).
+      if (`${term.cols}x${term.rows}` !== before) {
+        try {
+          (term as unknown as { _core?: { _renderService?: { _renderRows?: (a: number, b: number) => void } } })
+            ._core?._renderService?._renderRows?.(0, term.rows - 1);
+        } catch { /* the next frame paints it */ }
+      }
       return true;
     };
 
@@ -615,10 +628,27 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     connect();
 
     const refit = () => { if (fitIfVisible()) sendResize(); };
-    // During a layout animation (the sidebar sliding) the terminal holds its
-    // size, clipped or with room to spare, and fits once when it settles: one
-    // SIGWINCH instead of one per frame, so a TUI redraws once, not ~20 times.
-    const ro = new ResizeObserver(() => { if (!isLayoutMoving()) refit(); });
+    // Any other resize (dragging the window's edge or a split divider) fits on
+    // screen every frame but tells the pty once the drag pauses or the pointer
+    // lets go: the program redraws once at the size you stopped on (t3code's
+    // and VS Code's model).
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushResize = () => {
+      if (!resizeTimer) return;
+      clearTimeout(resizeTimer);
+      resizeTimer = undefined;
+      sendResize();
+    };
+    const onResizeFrame = () => {
+      if (!fitIfVisible()) return;
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(flushResize, PTY_RESIZE_SETTLE_MS);
+    };
+    window.addEventListener('pointerup', flushResize);
+    // During a declared layout animation (the sidebar sliding) the terminal
+    // holds its size, clipped or with room to spare, and fits once when it
+    // settles: one SIGWINCH instead of one per frame, so a TUI redraws once.
+    const ro = new ResizeObserver(() => { if (!isLayoutMoving()) onResizeFrame(); });
     ro.observe(container);
     const offSettled = onLayoutSettled(refit);
     // rAF and fonts.ready are the "layout settled" signals: re-fit and push the
@@ -639,6 +669,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       cancelAnimationFrame(raf);
       ro.disconnect();
       offSettled();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      window.removeEventListener('pointerup', flushResize);
       dataSub?.dispose();
       if (ws) {
         ws.onclose = null;
