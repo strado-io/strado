@@ -398,6 +398,18 @@ body {
 .voice-bar { animation: voice-bar 900ms ease-in-out infinite; transform-origin: center; }
 @media (prefers-reduced-motion: reduce) { .voice-bar { animation: none; } }
 
+/* A Focus's panel in the sidebar (FocusList FocusPanel): grows open and
+   shrinks shut by its grid row, 0fr↔1fr, so nothing is measured. Opening
+   starts from 0fr (@starting-style), as it mounts already open. */
+.focus-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 150ms ease-out;
+}
+.focus-panel[data-open] { grid-template-rows: 1fr; }
+@starting-style { .focus-panel[data-open] { grid-template-rows: 0fr; } }
+@media (prefers-reduced-motion: reduce) { .focus-panel { transition: none; } }
+
 /* Electron: a top bar that moves the window (like a native title bar). Its
    controls must stay clickable, so everything you can press inside is carved
    out; the empty space between them is what you grab. */

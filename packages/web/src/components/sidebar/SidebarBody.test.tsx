@@ -335,7 +335,7 @@ describe('SidebarBody: the Focus accordion', () => {
   // Each Focus's own panel (its worktree cards), or null while it is folded.
   const panelOf = (name: string) => {
     const header = screen.queryByRole('button', { name: `Switch to ${name}` }) ?? screen.getByRole('heading', { name });
-    return within(header.closest('[data-testid^="focus-"][class*="flex-col gap-0.5"]') as HTMLElement).queryByTestId('focus-group');
+    return within(header.closest('[data-focus-item]') as HTMLElement).queryByTestId('focus-group');
   };
 
   it('switching is the accordion: the new active Focus alone is expanded', () => {

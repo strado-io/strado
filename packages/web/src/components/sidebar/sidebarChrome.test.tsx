@@ -1,4 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from './SidebarNav';
 import { FocusList } from './FocusList';
@@ -63,9 +65,43 @@ describe('sidebar chrome', () => {
     expect(group).toContainElement(screen.getByTestId('cards'));
     for (const cls of ['rounded-xl', 'p-1.5', 'gap-1.5', 'ring-1', 'bg-[rgb(var(--pane-edge)/0.02)]', 'ring-[rgb(var(--pane-edge)/0.05)]']) expect(group.className.split(/\s+/)).toContain(cls);
     expect(group.className).not.toMatch(/border-l/);
-    // A gap between the open group and the rows below; the rows stack tightly.
-    expect(screen.getByTestId('focus-open').className.split(/\s+/)).toContain('mb-2');
+    // A gap between the open group and the rows below, inside the panel; the rows stack tightly.
+    expect(group.parentElement!.className.split(/\s+/)).toContain('pb-2');
     expect(row.parentElement!.parentElement!.className.split(/\s+/)).toContain('gap-0.5');
+  });
+
+  it('expanding or folding a Focus never moves its row: same classes either way; only the panel, below, grows and shrinks', () => {
+    const f = (id: string, name: string, at: string) => ({ id, name, members: [], createdAt: at, lastActiveAt: at });
+    sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['a']));
+    render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-03-02')]} activeId="a" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}
+      jarvis={{ status: null, latest: <div data-testid="latest">line two</div>, selected: false, onOpen: vi.fn() }}>
+      {() => <div data-testid="cards">cards</div>}
+    </FocusList>);
+    const items = () => [...document.querySelectorAll<HTMLElement>('[data-focus-item]')];
+    const shape = () => items().map((el) => [el.className, el.firstElementChild!.className]);
+    const before = shape();
+    // No margins on an item: spacing is the list's gap, the same folded or not.
+    for (const [cls] of before) expect(cls).toBe('flex flex-col');
+    // The panel carries the gaps, inside the part that grows (grid rows, .focus-panel).
+    const panel = screen.getByTestId('focus-group').parentElement!.parentElement!;
+    expect(panel.className).toBe('focus-panel');
+    expect(panel).toHaveAttribute('data-open');
+    expect(panel.firstElementChild!.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-0', 'overflow-hidden', 'pt-0.5']));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fold Open one' }));
+    expect(screen.queryByTestId('focus-group')).toBeNull();
+    // Line two is Jarvis's, not the expansion's: it stays.
+    expect(screen.getByTestId('latest')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show Other' }));
+    expect(shape()).toEqual(before);
+  });
+
+  it('the panel animates its height, 150ms ease-out, and not at all with reduced motion', () => {
+    const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8');
+    expect(css).toMatch(/\.focus-panel \{[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows 150ms ease-out;/);
+    expect(css).toMatch(/\.focus-panel\[data-open\] \{ grid-template-rows: 1fr; \}/);
+    expect(css).toMatch(/@starting-style \{ \.focus-panel\[data-open\] \{ grid-template-rows: 0fr; \} \}/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.focus-panel \{ transition: none; \} \}/);
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {

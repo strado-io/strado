@@ -103,8 +103,10 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
           );
           const b = badges.get(f.id) ?? {};
           return (
-            <div key={f.id} data-testid={isActive ? 'focus-open' : 'focus-row'} data-expanded={open || undefined}
-              className={`flex flex-col gap-0.5 ${open && i > 0 ? 'mt-2' : ''} ${open && i < shown.length - 1 ? 'mb-2' : ''}`}>
+            // Its spacing is the same folded or not: the panel carries its own gaps, so
+            // expanding never moves this row or any above it.
+            <div key={f.id} data-testid={isActive ? 'focus-open' : 'focus-row'} data-focus-item data-expanded={open || undefined}
+              className="flex flex-col">
               {isActive ? (
                 // The active Focus's header is its Jarvis: clicking it (outside the chevron and ⋯) opens the chat.
                 <div data-testid="focus-header" data-selected={jarvis?.selected || undefined}
@@ -148,7 +150,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                 </div>
               )}
               {/* What belongs to this Focus, grouped under its heading (no accent line). */}
-              {open && <div data-testid="focus-group" className={GROUP}>{children(f)}</div>}
+              <FocusPanel open={open} last={i === shown.length - 1}>{() => children(f)}</FocusPanel>
             </div>
           );
         })}
@@ -162,6 +164,38 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
     </section>
   );
 }
+
+// A Focus's panel, under its heading. It grows open and shrinks shut (grid rows
+// 0fr↔1fr, .focus-panel in index.css: no measuring); shutting, it stays drawn,
+// hidden from clicks, until the shrink ends. Its gaps sit inside the part that grows, so only
+// the panel's own height changes.
+const SHUT_MS = 150;
+function FocusPanel({ open, last, children }: { open: boolean; last: boolean; children: () => React.ReactNode }) {
+  const [wasOpen, setWasOpen] = useState(open);
+  const [shutting, setShutting] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    setShutting(!open && animates());
+  }
+  useEffect(() => {
+    if (!shutting) return;
+    const t = setTimeout(() => setShutting(false), SHUT_MS + 50);
+    return () => clearTimeout(t);
+  }, [shutting]);
+  if (!open && !shutting) return null;
+  return (
+    <div className="focus-panel" data-open={open || undefined} onTransitionEnd={(e) => { if (e.target === e.currentTarget && !open) setShutting(false); }}>
+      {/* px-px leaves room for the group's ring, which the clip would cut. */}
+      <div className={`min-h-0 overflow-hidden px-px pt-0.5 ${last ? 'pb-px' : 'pb-2'}`}>
+        <div data-testid={open ? 'focus-group' : undefined} aria-hidden={!open || undefined}
+          className={`${GROUP} ${open ? '' : 'pointer-events-none'}`}>{children()}</div>
+      </div>
+    </div>
+  );
+}
+const animates = () => {
+  try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+};
 
 // Which Focuses are expanded, per window (sessionStorage): another window keeps its own.
 function readExpanded(): Set<string> {
