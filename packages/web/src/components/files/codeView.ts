@@ -3,7 +3,7 @@
 // so CodeMirror stays out of the main bundle. Colours come from
 // the app's theme vars (zinc/sky scales, --pane-card), so every preset —
 // GitHub Light included — holds without a hex in sight.
-import { Annotation, EditorState, RangeSetBuilder, StateEffect, StateField, Transaction } from '@codemirror/state';
+import { Annotation, EditorState, RangeSetBuilder, type SelectionRange, StateEffect, StateField, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { Decoration, type DecorationSet, EditorView, GutterMarker, gutter, highlightActiveLine, hoverTooltip, keymap, lineNumbers } from '@codemirror/view';
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from '@codemirror/language';
@@ -155,6 +155,16 @@ const changeGutter = gutter({
   },
 });
 
+// Find's next/previous match: brought to the middle of the editor, not left
+// at its bottom edge. One already in the middle band stays put, so stepping
+// through matches close together doesn't scroll on every step.
+const centerMatch = (range: SelectionRange, view: EditorView) => {
+  const at = view.coordsAtPos(range.from);
+  const box = view.scrollDOM.getBoundingClientRect();
+  const inMiddle = at && at.top >= box.top + box.height * 0.2 && at.bottom <= box.bottom - box.height * 0.25;
+  return EditorView.scrollIntoView(range, { y: inMiddle ? 'nearest' : 'center' });
+};
+
 export type Selection = { from: number; to: number; text: string } | null;
 /** 1-based, like the navigation routes. */
 export type Pos = { line: number; col: number };
@@ -260,7 +270,7 @@ export async function createCodeView(parent: HTMLElement, o: {
         highlightField,
         changeGutter,
         highlightActiveLine(),
-        search({ top: true, createPanel: createFindPanel }),
+        search({ top: true, createPanel: createFindPanel, scrollToMatch: centerMatch }),
         highlightSelectionMatches(),
         keymap.of([
           // Read-only, plain letters are free: n/p walk the changes. Editable,
