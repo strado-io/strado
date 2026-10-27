@@ -21,6 +21,7 @@ import {
 import { createCloudApi } from '../services/cloudApi.js';
 import { runnerGitCredential } from '../services/runnerGitCredential.js';
 import { resolveSandboxGitBrokerToken } from '../services/sandboxGitBroker.js';
+import { warmHost } from '../services/providerHealth.js';
 
 async function originUrl(repoPath: string): Promise<string | null> {
   try {
@@ -34,6 +35,27 @@ async function currentBranch(worktreePath: string): Promise<string | null> {
     const b = stdout.trim();
     return b && b !== 'HEAD' ? b : null;
   } catch { return null; }
+}
+
+/** Server start: every repo's Git host is checked in the background, so the
+ *  first page load already knows one is down (providerHealth.ts). */
+export async function warmProviderHosts(deps: {
+  workspaces: { list(): Promise<{ id: string }[]> };
+  registry: { get(wsId: string): Promise<{ repos: { list(): Promise<{ path: string }[]> } }> };
+}): Promise<void> {
+  const [glCfg, ghCfg] = [await readGitlabConfig(), await readGithubConfig()];
+  const gl = new Set(Object.keys(glCfg));
+  const gh = new Set(Object.keys(ghCfg).map((k) => k.split('/')[0] ?? k));
+  const hosts = new Set<string>();
+  for (const ws of await deps.workspaces.list().catch(() => [])) {
+    const repos = await deps.registry.get(ws.id).then((s) => s.repos.list(), () => []);
+    for (const repo of repos) {
+      const url = await originUrl(repo.path);
+      const resolved = url ? await resolveProviderAliased(url, gl, gh).catch(() => null) : null;
+      if (resolved) hosts.add(resolved.host);
+    }
+  }
+  for (const host of hosts) warmHost(host);
 }
 
 export type Provider = 'gitlab' | 'github';

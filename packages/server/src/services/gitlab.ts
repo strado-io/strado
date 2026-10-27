@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { AppError, AuthError } from '../errors.js';
-import { clearHostHealth, hostUnreachable, markHostUnreachable } from './providerHealth.js';
+import { clearHostHealth, hostReachable, markHostUnreachable } from './providerHealth.js';
 
 const ConfigSchema = z.record(z.string(), z.object({ token: z.string().min(1) }));
 export type GitlabConfig = z.infer<typeof ConfigSchema>;
@@ -43,7 +43,7 @@ export async function gitlabApiFetch(
   // A host we just failed to reach is refused without touching the network:
   // one blackholed repo would otherwise cost 10s per call, per worktree, per
   // poll tick — enough to keep every browser socket parked.
-  if (hostUnreachable(host)) throw unreachableError(host);
+  if (!(await hostReachable(host))) throw unreachableError(host);
   let res: Response;
   try {
     res = await fetch(`https://${host}/api/v4${pathname}`, {

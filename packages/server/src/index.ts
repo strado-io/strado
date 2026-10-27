@@ -43,6 +43,8 @@ try {
 }
 
 app.log.info(`strado [${profile.name}] listening on http://${HOST}:${PORT}`);
+// Git hosts behind a VPN that's off: known before the first page asks.
+void import('./routes/gitProvider.js').then((m) => m.warmProviderHosts(deps)).catch(() => {});
 deps.debugLog.log(
   'server',
   `listening on http://${HOST}:${PORT} (profile ${profile.name}, home ${profile.homeDir}) — logs at ${deps.debugLog.path}`,

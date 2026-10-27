@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pullRequestsForBranch } from '../../src/services/github';
 import { mergeRequestsForBranch } from '../../src/services/gitlab';
-import { __resetProviderHealth, __setProbe, hostUnreachable, markHostUnreachable } from '../../src/services/providerHealth';
+import { __resetProviderHealth, __setConnectCheck, __setProbe, hostReachable, hostUnreachable, markHostUnreachable } from '../../src/services/providerHealth';
 
-beforeEach(() => __resetProviderHealth());
+beforeEach(() => { __resetProviderHealth(); __setConnectCheck(async () => true); });
 afterEach(() => vi.restoreAllMocks());
 
 describe('unreachable-host breaker', () => {
@@ -88,5 +88,20 @@ describe('unreachable-host breaker', () => {
     answer(true);
     await new Promise((r) => setTimeout(r, 0));
     expect(hostUnreachable('vpn.test')).toBe(false);
+  });
+
+  it('first contact: one quick connect check, shared; a host that fails it is refused without a fetch', async () => {
+    let calls = 0;
+    __setConnectCheck(async (host) => { calls++; return host !== 'blackhole.test'; });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('[]', { status: 200 }));
+    expect(await Promise.all([hostReachable('blackhole.test'), hostReachable('blackhole.test')])).toEqual([false, false]);
+    expect(calls).toBe(1);
+    expect(hostUnreachable('blackhole.test')).toBe(true);
+    await expect(pullRequestsForBranch('blackhole.test', 't', 'o/a', 'b')).rejects.toMatchObject({ code: 'VALIDATION' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    // A host that connected isn't checked again.
+    await expect(pullRequestsForBranch('fine.test', 't', 'o/a', 'b')).resolves.toEqual([]);
+    await expect(pullRequestsForBranch('fine.test', 't', 'o/a', 'c')).resolves.toEqual([]);
+    expect(calls).toBe(2);
   });
 });
