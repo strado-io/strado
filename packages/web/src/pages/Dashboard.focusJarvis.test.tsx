@@ -203,9 +203,9 @@ describe('Dashboard: Focus Jarvis', () => {
     renderDashboard();
     await act(async () => {});
     expect(screen.getByRole('region', { name: 'Jarvis' })).toBeInTheDocument();
-    // The Focus's header is its Jarvis; it reads as selected while the chat shows. A blank Focus says "Ask Jarvis…".
+    // The Focus's header is its Jarvis; it reads as selected while the chat shows. A blank Focus has no second line.
     expect(screen.getByTestId('focus-header')).toHaveAttribute('data-selected', 'true');
-    expect(screen.getByTestId('focus-latest')).toHaveTextContent('Ask Jarvis…');
+    expect(screen.queryByTestId('focus-latest')).toBeNull();
     expect(screen.queryByTestId('jarvis-card')).toBeNull();
   });
 

@@ -199,18 +199,14 @@ export function FocusJarvisStatus() {
   return null;
 }
 
-/** The open Focus's header, line two: Jarvis's latest reply; a blank Focus
- * says "Ask Jarvis…"; otherwise nothing until Jarvis has said something. */
+/** The open Focus's header, line two: Jarvis's latest reply; nothing until
+ * Jarvis has said something. */
 export function FocusJarvisLatest() {
   const host = useContext(HostContext);
   if (!host) return null;
   const line = latestLine(host.chat.entries);
-  if (!line && host.focus.members.length > 0) return null;
-  return (
-    <div data-testid="focus-latest" className={FOCUS_LATEST_CLASS}>
-      {line || <span className="italic">Ask Jarvis…</span>}
-    </div>
-  );
+  if (!line) return null;
+  return <div data-testid="focus-latest" className={FOCUS_LATEST_CLASS}>{line}</div>;
 }
 
 /** The chat in the main area. */
