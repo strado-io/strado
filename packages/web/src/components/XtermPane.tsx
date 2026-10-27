@@ -11,6 +11,7 @@ import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
 import { runIdOfTab } from '../lib/runTab';
+import { isLayoutMoving, onLayoutSettled } from '../lib/layoutMotion';
 import { findFileLinks } from '../lib/fileLinks';
 import { SearchAddon } from '@xterm/addon-search';
 import { TerminalSearchBar, filesSearchKey, searchKey, type SearchPort } from './TerminalSearchBar';
@@ -220,6 +221,15 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  // The size this socket was last told: a resize to the same cols and rows is
+  // not sent (every one reaches the pty as a SIGWINCH, and a TUI redraws).
+  const sentSizeRef = useRef<string | null>(null);
+  const sendSize = (socket: WebSocket, term: Terminal) => {
+    const size = `${term.cols}x${term.rows}`;
+    if (sentSizeRef.current === size) return;
+    sentSizeRef.current = size;
+    socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  };
   const fitRef = useRef<FitAddon | null>(null);
   // Find in the terminal: the addon (per built terminal), the bar, and ⌘F again refocusing an open bar.
   const searchRef = useRef<SearchAddon | null>(null);
@@ -487,9 +497,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     };
 
     const sendResize = () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      if (ws && ws.readyState === WebSocket.OPEN) sendSize(ws, term);
     };
 
     const connect = () => {
@@ -553,6 +561,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
         }
       };
       ws.onopen = () => {
+        // A fresh socket hasn't been told any size yet.
+        sentSizeRef.current = null;
         resumeNext = false;
         if (attempts > 0) { term.write('\r\n[reconnected]\r\n'); attempts = 0; }
         authFailures = 0;
@@ -604,8 +614,13 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
 
     connect();
 
-    const ro = new ResizeObserver(() => { if (fitIfVisible()) sendResize(); });
+    const refit = () => { if (fitIfVisible()) sendResize(); };
+    // During a layout animation (the sidebar sliding) the terminal holds its
+    // size, clipped or with room to spare, and fits once when it settles: one
+    // SIGWINCH instead of one per frame, so a TUI redraws once, not ~20 times.
+    const ro = new ResizeObserver(() => { if (!isLayoutMoving()) refit(); });
     ro.observe(container);
+    const offSettled = onLayoutSettled(refit);
     // rAF and fonts.ready are the "layout settled" signals: re-fit and push the
     // size once the font has loaded and the box has its final dimensions, so a
     // pty that spawned against an early measurement gets corrected.
@@ -623,6 +638,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       cancelAnimationFrame(raf);
       ro.disconnect();
+      offSettled();
       dataSub?.dispose();
       if (ws) {
         ws.onclose = null;
@@ -648,9 +664,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       term.options.fontFamily = activeTerminalFont();
       requestAnimationFrame(() => {
         fitRef.current?.fit();
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        }
+        if (wsRef.current?.readyState === WebSocket.OPEN) sendSize(wsRef.current, term);
       });
     };
     window.addEventListener(APPEARANCE_CHANGE_EVENT, updateAppearance);
@@ -671,9 +685,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       const term = termRef.current;
       if (!container || !term || container.clientWidth === 0 || container.clientHeight === 0) return;
       fitRef.current?.fit();
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      if (wsRef.current?.readyState === WebSocket.OPEN) sendSize(wsRef.current, term);
       if (focused && !barHoldsKeyboard()) term.focus();
     });
     return () => cancelAnimationFrame(raf);
@@ -704,7 +716,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
         {/* padding lives on the wrapper: FitAddon measures the parent's
             border-box height, so padding on the xterm container itself
             over-counts rows and clips the bottom line */}
-        <div ref={containerRef} className="h-full w-full" />
+        {/* Clips a terminal held at its size while the layout animates. */}
+        <div ref={containerRef} className="h-full w-full overflow-hidden" />
       </div>
       {connecting && (
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-4">

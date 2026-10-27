@@ -1,5 +1,5 @@
 import { OpenSidebarButton } from '../components/SidebarToggle';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type FocusTicket, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
 import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } from '../hooks/claudeNotifications';
@@ -30,6 +30,7 @@ import type { UpdateFooterProps } from '../components/UpdateFooter';
 import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
 import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
+import { beginLayoutMotion } from '../lib/layoutMotion';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import type { HostTab } from '../components/hosts/HostDetails';
@@ -545,6 +546,12 @@ export function Dashboard(props: {
     setSidebarWasHidden(sidebarHidden);
     setSidebarSlide(!motionAllowed() ? null : sidebarHidden ? 'out' : 'in');
   }
+  // Terminals hold their size while it slides and fit once at the end
+  // (lib/layoutMotion). A layout effect, so it is declared before this
+  // frame's resize observers run.
+  useLayoutEffect(() => {
+    if (sidebarSlide) beginLayoutMotion(SIDEBAR_SLIDE_MS + 100);
+  }, [sidebarSlide]);
   // Either way the flag clears once the slide is done: left on, the slide in
   // would replay whenever the app reappears (back from Settings, which hides it).
   useEffect(() => {
