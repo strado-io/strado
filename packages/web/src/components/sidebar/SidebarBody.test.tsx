@@ -563,17 +563,14 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(rowNames()).toEqual(['Onboarding', 'Perf', 'Alpha']);
   });
 
-  it('the first six in creation order, then Show all (N); the active one always shows, however far down', () => {
+  it('every Focus shows, in creation order: no cap, no Show all', () => {
     // Created g0…g8 in order; last used the other way round.
     focusMock.focuses = Array.from({ length: 9 }, (_, i) => focus(`g${i}`, `F${i}`, [], `2026-0${9 - i}-01`, `2025-0${i + 1}-01`));
-    focusMock.activeId = 'g8'; // the newest, beyond the six
+    focusMock.activeId = 'g8';
     render(<SidebarBody {...props()} />);
-    expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5']);
-    expect(openHeader()).toHaveTextContent('F8');
-    fireEvent.click(screen.getByRole('button', { name: 'Show all (9)' }));
     expect(rowNames()).toEqual(['F0', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7']);
-    fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }));
-    expect(rowNames()).toHaveLength(6);
+    expect(openHeader()).toHaveTextContent('F8');
+    expect(screen.queryByRole('button', { name: /Show all|Show fewer/ })).toBeNull();
   });
 
   it('the list has no header of its own (New focus is the workspace row\'s +)', () => {

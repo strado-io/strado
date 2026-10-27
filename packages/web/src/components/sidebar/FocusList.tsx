@@ -7,7 +7,7 @@
 // shows. The others are flat one-line headings with their
 // live badges — headings, not cards, so they never read as worktrees. They
 // keep one stable order, creation (byCreated), so using a Focus never moves
-// it: the first six show, the active one always, then "Show all (N)". No
+// it. All of them show, no cap. No
 // header: New focus is the + in the workspace row.
 import { useEffect, useRef, useState } from 'react';
 import type { Focus } from '../../api';
@@ -35,7 +35,6 @@ export type FocusJarvisHeader = {
   onOpen: () => void;
 };
 
-export const FOCUS_LIST_CAP = 6;
 const EXPANDED_KEY = 'strado:focus-expanded';
 const EXPANDED_FOR_KEY = 'strado:focus-expanded-for';
 
@@ -71,7 +70,6 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   /** An expanded Focus's contents: its worktree cards (or a blank Focus's Add/New rows). */
   children: (f: Focus) => React.ReactNode;
 }) {
-  const [showAll, setShowAll] = useState(false);
   const [expanded, toggle, only] = useExpanded();
   // A Focus becoming active is the accordion: it alone is expanded. Compared
   // with the Focus the stored state was made for, so a switch while the
@@ -84,11 +82,7 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
   }, [activeId]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const sorted = [...focuses].sort(byCreated);
-  const capped = sorted.slice(0, FOCUS_LIST_CAP);
-  // The active Focus always shows, however long ago it was used.
-  const shown = filter ? sorted.filter((f) => filter.ids.has(f.id))
-    : showAll ? sorted : sorted.filter((f) => capped.includes(f) || f.id === activeId);
-  const hidden = filter ? 0 : sorted.length - shown.length;
+  const shown = filter ? sorted.filter((f) => filter.ids.has(f.id)) : sorted;
 
   return (
     <section aria-label="Focuses" className="mt-1 flex flex-col">
@@ -155,12 +149,6 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
           );
         })}
         {filter && shown.length === 0 && <p className="flex h-8 items-center px-2 text-[12px] text-zinc-500">No match</p>}
-        {!filter && (hidden > 0 || (showAll && sorted.length > FOCUS_LIST_CAP)) && (
-          <button type="button" onClick={() => setShowAll((s) => !s)}
-            className="self-start rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">
-            {showAll ? 'Show fewer' : `Show all (${sorted.length})`}
-          </button>
-        )}
       </div>
     </section>
   );
