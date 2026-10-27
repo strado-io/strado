@@ -740,7 +740,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const { registerGitChangesRoutes } = await import('./routes/gitChanges.js');
     await registerGitChangesRoutes(scoped);
     const { registerFilesRoutes } = await import('./routes/files.js');
-    await registerFilesRoutes(scoped);
+    await registerFilesRoutes(scoped, lsp);
     const { registerLspRoutes } = await import('./routes/lsp.js');
     await registerLspRoutes(scoped, lsp);
     const { registerOpenInEditorRoute } = await import('./routes/editors.js');

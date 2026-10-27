@@ -218,6 +218,9 @@ export async function registerRunnerRoutes(app: FastifyInstance): Promise<Runner
     }
     for (const p of [raw.toLowerCase(), decoded.toLowerCase()]) {
       if (p === '/api/sandbox' || p.startsWith('/api/sandbox/')) throw forbid();
+      // A runner's files are read-only from here: the Files tab's write is for
+      // a window on that machine only (its own assertLocalHub refuses a relay too).
+      if (/\/files\/write\/?$/.test(p)) throw forbid();
     }
   };
 
