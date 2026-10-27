@@ -107,6 +107,9 @@ export function spawnPty(meta: SessionMeta): Pty {
     resize(c: number, r: number) {
       validateDims(c, r);
       if (exited) return;
+      // The size it already has: nothing to tell the kernel. Clients re-send
+      // their size on every layout frame.
+      if (c === cols && r === rows) return;
       // A resize racing the process exit hits a closed master fd; node-pty's
       // native ioctl then throws (EBADF). Swallow it like the old in-process
       // manager did — the session is gone, the resize is moot.

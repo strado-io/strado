@@ -74,6 +74,43 @@ describe('DaemonTerminalManager', () => {
     expect(manager.snapshot(key)).toContain('\x1b[?1006h');
   }, 15000);
 
+  it('a resize to the size the session has is dropped: no ptyd round trip, no reflow, no SIGWINCH', async () => {
+    manager.destroy();
+    let emuResizes = 0;
+    manager = await createDaemonTerminalManager({
+      stateDir,
+      daemonScript,
+      makeEmulator: (cols, rows) => {
+        const emu = new headlessPkg.Terminal({ cols, rows, allowProposedApi: true, scrollback: 1000 });
+        const serialize = new serializePkg.SerializeAddon();
+        emu.loadAddon(serialize);
+        const resize = emu.resize.bind(emu);
+        emu.resize = (c: number, r: number) => { emuResizes++; resize(c, r); };
+        return { emu, serialize };
+      },
+    });
+    const key = '/tmp\0shell';
+    await manager.ensure(key, '/tmp', { file: '/bin/sh', args: ['-c', 'trap "printf W" WINCH; printf R; while :; do sleep 0.05; done'] }, { cols: 80, rows: 24 });
+    const got: string[] = [];
+    const unsub = manager.subscribe(key, (d) => got.push(d));
+    await vwait(() => manager.snapshot(key).includes('R'));
+    const winches = () => (got.join('').match(/W/g) ?? []).length;
+    // A layout frame re-sending the size: ~20 of these per sidebar slide.
+    for (let i = 0; i < 20; i++) manager.resize(key, 80, 24);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(emuResizes).toBe(0);
+    expect(winches()).toBe(0);
+    manager.resize(key, 100, 30);
+    await vwait(() => winches() === 1);
+    expect(emuResizes).toBe(1);
+    for (let i = 0; i < 20; i++) manager.resize(key, 100, 30);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(emuResizes).toBe(1);
+    expect(winches()).toBe(1);
+    unsub();
+    manager.kill(key);
+  }, 20000);
+
   it('ensure is idempotent on a live session', async () => {
     const key = '/tmp\0shell';
     const a = await manager.ensure(key, '/tmp', shSpec);
