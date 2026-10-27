@@ -174,10 +174,13 @@ function FocusPanel({ open, last, children }: { open: boolean; last: boolean; ch
   if (!open && !shutting) return null;
   return (
     <div className="focus-panel" data-open={open || undefined} onTransitionEnd={(e) => { if (e.target === e.currentTarget && !open) setShutting(false); }}>
-      {/* px-px leaves room for the group's ring, which the clip would cut. */}
-      <div className={`min-h-0 overflow-hidden px-px pt-0.5 ${last ? 'pb-px' : 'pb-2'}`}>
-        <div data-testid={open ? 'focus-group' : undefined} aria-hidden={!open || undefined}
-          className={`${GROUP} ${open ? '' : 'pointer-events-none'}`}>{children()}</div>
+      {/* px-px leaves room for the group's ring, which the clip would cut. The
+          vertical gaps sit inside the clip, so it can shut all the way to 0. */}
+      <div className="min-h-0 overflow-hidden px-px">
+        <div className={`pt-0.5 ${last ? 'pb-px' : 'pb-2'}`}>
+          <div data-testid={open ? 'focus-group' : undefined} aria-hidden={!open || undefined}
+            className={`${GROUP} ${open ? '' : 'pointer-events-none'}`}>{children()}</div>
+        </div>
       </div>
     </div>
   );

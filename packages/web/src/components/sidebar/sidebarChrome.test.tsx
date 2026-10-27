@@ -82,11 +82,16 @@ describe('sidebar chrome', () => {
     const before = shape();
     // No margins on an item: spacing is the list's gap, the same folded or not.
     for (const [cls] of before) expect(cls).toBe('flex flex-col');
-    // The panel carries the gaps, inside the part that grows (grid rows, .focus-panel).
-    const panel = screen.getByTestId('focus-group').parentElement!.parentElement!;
+    // The panel carries the gaps, inside the clip that grows (grid rows, .focus-panel),
+    // so it can shut all the way to 0 with no padding left to snap away.
+    const gaps = screen.getByTestId('focus-group').parentElement!;
+    const clip = gaps.parentElement!;
+    const panel = clip.parentElement!;
     expect(panel.className).toBe('focus-panel');
     expect(panel).toHaveAttribute('data-open');
-    expect(panel.firstElementChild!.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-0', 'overflow-hidden', 'pt-0.5']));
+    expect(clip.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-0', 'overflow-hidden']));
+    expect(clip.className).not.toMatch(/\bp[tby]-/);
+    expect(gaps.className.split(/\s+/)).toContain('pt-0.5');
 
     fireEvent.click(screen.getByRole('button', { name: 'Fold Open one' }));
     expect(screen.queryByTestId('focus-group')).toBeNull();
