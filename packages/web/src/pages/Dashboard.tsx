@@ -52,7 +52,7 @@ import { UsagePage } from '../components/usage/UsagePage';
 import { useCodeReviews } from '../hooks/codeReviews';
 import { requestRunInShell } from '../lib/runInShell';
 import { worktreeLabel } from '../components/sidebar/labels';
-import { FocusJarvisLatest, FocusJarvisMain, FocusJarvisProvider, FocusJarvisStatus, type OpenCard } from '../components/focusJarvis/FocusJarvisHost';
+import { FocusJarvisMain, FocusJarvisProvider, FocusJarvisStatus, type OpenCard } from '../components/focusJarvis/FocusJarvisHost';
 import type { JarvisStart } from '../components/focusJarvis/FocusJarvisView';
 import { useFocusJarvisBadges } from '../components/focusJarvis/badges';
 
@@ -1079,8 +1079,8 @@ export function Dashboard(props: {
           onProjectSettings={(repoId) => { setSettingsProject(repoId); setSettingsSection('projects'); setSettingsNonce((n) => n + 1); }}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
-          // The open Focus's header is its Jarvis: status, latest reply, click to open the chat.
-          jarvis={{ status: <FocusJarvisStatus />, latest: <FocusJarvisLatest />, selected: chatShown, onOpen: openJarvis }}
+          // The open Focus's header is its Jarvis: status, click to open the chat.
+          jarvis={{ status: <FocusJarvisStatus />, selected: chatShown, onOpen: openJarvis }}
           jarvisBadges={jarvisBadges}
           // A Focus opened from its row lands on its Jarvis chat (the restore below reads this).
           onOpenFocus={(id) => writeJarvisOpen(id, true)}

@@ -5,7 +5,6 @@ import { ChatEntryView } from './ChatEntryView';
 import { TabCard } from './TabCard';
 import { ApprovalCard } from './ApprovalCard';
 import { JarvisComposer } from './JarvisComposer';
-import { latestLine } from './badges';
 import { FocusJarvisView, displayOrder } from './FocusJarvisView';
 
 const at = '2026-10-26T10:00:00Z';
@@ -115,15 +114,6 @@ describe('JarvisComposer', () => {
     expect(onStop).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
     expect(screen.getByRole('menuitem', { name: /codex.*soon/i })).toHaveAttribute('aria-disabled', 'true');
-  });
-});
-
-describe('latestLine', () => {
-  it('is Jarvis\'s latest reply, first line only; the person\'s own lines don\'t count', () => {
-    expect(latestLine([{ id: '1', at, type: 'user', text: 'hi', windowId: 'w' }, { id: '2', at, type: 'jarvis', turnId: 't', text: 'Done.\nMore', done: true }])).toBe('Done.');
-    expect(latestLine([{ id: '2', at, type: 'jarvis', turnId: 't', text: 'Done.', done: true }, { id: '3', at, type: 'user', text: 'and now?', windowId: 'w' }])).toBe('Done.');
-    expect(latestLine([{ id: '1', at, type: 'user', text: 'hi', windowId: 'w' }])).toBe('');
-    expect(latestLine([])).toBe('');
   });
 });
 

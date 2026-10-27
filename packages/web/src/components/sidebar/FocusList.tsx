@@ -3,8 +3,8 @@
 // one. A click on the active row shows its chat, or, once the chat shows,
 // folds or expands it. The chevron toggles just that Focus without activating
 // it, to peek at another one's worktrees. What is expanded is remembered per window.
-// The active row is its Jarvis: two lines (status, latest reply), selected
-// while the chat shows. The others are flat one-line headings with their
+// The active row is its Jarvis, with its status, selected while the chat
+// shows. The others are flat one-line headings with their
 // live badges — headings, not cards, so they never read as worktrees. They
 // keep one stable order, creation (byCreated), so using a Focus never moves
 // it: the first six show, the active one always, then "Show all (N)". No
@@ -29,8 +29,6 @@ export type FocusBadges = {
 export type FocusJarvisHeader = {
   /** A pulsing dot while it works, ⚠ amber while an approval waits, nothing at rest. */
   status: React.ReactNode;
-  /** Line two, Jarvis's latest reply: an element that renders FOCUS_LATEST_CLASS's line, or nothing. */
-  latest: React.ReactNode;
   /** The chat is what the main area shows: the header reads as selected. */
   selected: boolean;
   /** The header row was clicked: open the chat. */
@@ -40,14 +38,12 @@ export type FocusJarvisHeader = {
 export const FOCUS_LIST_CAP = 6;
 const EXPANDED_KEY = 'strado:focus-expanded';
 const EXPANDED_FOR_KEY = 'strado:focus-expanded-for';
-/** The header's second line, aligned under the name. */
-export const FOCUS_LATEST_CLASS = 'truncate pl-[1.1rem] pr-1 text-[11px] leading-4 text-zinc-500';
 
 // A Focus row is a heading: flat, a hover tint only (the theme's edge colour,
 // so white on dark and black on light). The open Focus's contents sit in one
 // very quiet panel under it.
 const ROW = 'flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 hover:bg-[rgb(var(--pane-edge)/0.05)]';
-// The open Focus's header: the same row, two lines (the second, Jarvis's latest reply).
+// The open Focus's header: the same row, one line.
 const HEADER = 'flex min-w-0 flex-col rounded-md px-2 py-1';
 const GROUP = 'flex flex-col gap-1.5 rounded-xl bg-[rgb(var(--pane-edge)/0.02)] p-1.5 ring-1 ring-[rgb(var(--pane-edge)/0.05)]';
 
@@ -135,8 +131,6 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                     <Menu label={`${f.name} actions`} alwaysVisible
                       items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...activeMenu]} />
                   </div>
-                  {/* Line two: Jarvis's latest reply, aligned under the name (renders nothing when there is none). */}
-                  {jarvis?.latest}
                 </div>
               ) : (
                 <div className={ROW}>

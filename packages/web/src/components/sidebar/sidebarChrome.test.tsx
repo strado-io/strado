@@ -74,7 +74,7 @@ describe('sidebar chrome', () => {
     const f = (id: string, name: string, at: string) => ({ id, name, members: [], createdAt: at, lastActiveAt: at });
     sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['a']));
     render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-03-02')]} activeId="a" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}
-      jarvis={{ status: null, latest: <div data-testid="latest">line two</div>, selected: false, onOpen: vi.fn() }}>
+      jarvis={{ status: null, selected: false, onOpen: vi.fn() }}>
       {() => <div data-testid="cards">cards</div>}
     </FocusList>);
     const items = () => [...document.querySelectorAll<HTMLElement>('[data-focus-item]')];
@@ -90,8 +90,6 @@ describe('sidebar chrome', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Fold Open one' }));
     expect(screen.queryByTestId('focus-group')).toBeNull();
-    // Line two is Jarvis's, not the expansion's: it stays.
-    expect(screen.getByTestId('latest')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show Other' }));
     expect(shape()).toEqual(before);
   });

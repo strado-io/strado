@@ -6,8 +6,7 @@ import type { JarvisAppPort, JarvisNavPort } from '../../lib/jarvis/execute';
 import { api } from '../../api';
 import { runJarvisAction } from './windowAction';
 import { storedBrowserTabs } from './storedHub';
-import { latestLine, markSeen, newestReply } from './badges';
-import { FOCUS_LATEST_CLASS } from '../sidebar/FocusList';
+import { markSeen, newestReply } from './badges';
 import { readShellNames } from '../../hooks/shellNames';
 import { buildModelContext } from '../../lib/jarvis/model';
 import { jarvisServerPort } from '../../lib/jarvis/serverPort';
@@ -197,16 +196,6 @@ export function FocusJarvisStatus() {
     return <span role="img" aria-label="working" title="Jarvis is working" className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#e8906f]" />;
   }
   return null;
-}
-
-/** The open Focus's header, line two: Jarvis's latest reply; nothing until
- * Jarvis has said something. */
-export function FocusJarvisLatest() {
-  const host = useContext(HostContext);
-  if (!host) return null;
-  const line = latestLine(host.chat.entries);
-  if (!line) return null;
-  return <div data-testid="focus-latest" className={FOCUS_LATEST_CLASS}>{line}</div>;
 }
 
 /** The chat in the main area. */

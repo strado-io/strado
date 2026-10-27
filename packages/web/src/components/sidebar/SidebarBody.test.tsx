@@ -197,18 +197,16 @@ describe('SidebarBody: the active Focus', () => {
   });
 
   const header = (over: Partial<FocusJarvisHeader> = {}): FocusJarvisHeader => ({
-    status: <span role="img" aria-label="working">✦</span>, latest: <div data-testid="latest">Here is what we did</div>, selected: false, onOpen: vi.fn(), ...over,
+    status: <span role="img" aria-label="working">✦</span>, selected: false, onOpen: vi.fn(), ...over,
   });
 
-  it('the open Focus\'s header is its Jarvis: status and latest reply; no Jarvis card in the panel, only worktree cards', () => {
+  it('the open Focus\'s header is its Jarvis: its status; no Jarvis card in the panel, only worktree cards', () => {
     withFocus('local:/r1/wt');
     render(<SidebarBody {...props({ jarvis: header() })} />);
     const h = screen.getByTestId('focus-header');
     expect(within(h).getByRole('img', { name: 'working' })).toBeInTheDocument();
-    expect(within(h).getByTestId('latest')).toHaveTextContent('Here is what we did');
     const group = screen.getByTestId('focus-group');
     expect(within(group).getByRole('button', { name: 'fx-412' })).toBeInTheDocument();
-    expect(within(group).queryByTestId('latest')).toBeNull();
   });
 
   it('clicking the header opens the chat; the chevron only folds the cards; ⋯ only opens its menu', () => {
@@ -225,7 +223,7 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Billing' }));
     expect(onOpen).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByTestId('latest'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
@@ -236,12 +234,12 @@ describe('SidebarBody: the active Focus', () => {
     const name = () => screen.getByRole('button', { name: 'Billing' });
     expect(name()).toHaveAttribute('aria-expanded', 'true');
     // A worktree is open: the click shows the chat, the panel stays.
-    fireEvent.click(screen.getByTestId('latest'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('focus-group')).toBeInTheDocument();
     // The chat shows: a click anywhere on the row folds, and again expands.
     rerender(<SidebarBody {...props({ jarvis: header({ onOpen, selected: true }) })} />);
-    fireEvent.click(screen.getByTestId('latest'));
+    fireEvent.click(screen.getByTestId('focus-header'));
     expect(screen.queryByTestId('focus-group')).toBeNull();
     expect(name()).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(screen.getByTestId('focus-header'));
@@ -455,7 +453,7 @@ describe('SidebarBody: the Focus accordion', () => {
 
   it('after peeking with chevrons, clicking the active header shows its chat and leaves the panels as they are', () => {
     const onOpen = vi.fn();
-    render(<SidebarBody {...props({ jarvis: { status: null, latest: null, selected: false, onOpen } })} />);
+    render(<SidebarBody {...props({ jarvis: { status: null, selected: false, onOpen } })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Show Perf' }));
     fireEvent.click(screen.getByRole('button', { name: 'Show Onboarding' }));
     expect(screen.getAllByTestId('focus-group')).toHaveLength(3);
@@ -506,13 +504,12 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(panelOf('Billing')).toBeNull();
   });
 
-  it('the active Focus folded is still clearly the current one: its two-line header, with status and latest reply', () => {
+  it('the active Focus folded is still clearly the current one: its header, with status', () => {
     sessionStorage.setItem('strado:focus-expanded', '[]');
-    render(<SidebarBody {...props({ jarvis: { status: <span role="img" aria-label="needs approval">⚠</span>, latest: <div data-testid="latest">Approve the deploy?</div>, selected: true, onOpen: vi.fn() } })} />);
+    render(<SidebarBody {...props({ jarvis: { status: <span role="img" aria-label="needs approval">⚠</span>, selected: true, onOpen: vi.fn() } })} />);
     const h = screen.getByTestId('focus-header');
     expect(h).toHaveAttribute('data-selected', 'true');
     expect(within(h).getByRole('img', { name: 'needs approval' })).toBeInTheDocument();
-    expect(within(h).getByTestId('latest')).toHaveTextContent('Approve the deploy?');
     expect(panelOf('Billing')).toBeNull();
   });
 
