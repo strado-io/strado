@@ -273,6 +273,17 @@ describe('FileViewer', () => {
       expect(screen.getByTestId('save-error')).toHaveTextContent('Couldn’t save. Your changes are still here.');
     });
 
+    it('a file that isn\'t UTF-8 is read-only even with a write, and the chip says why', async () => {
+      const write = written();
+      show({ write }, { ...V1, notUtf8: true });
+      await flush();
+      expect(cm.opts!.doc).toBe(TEXT.text);
+      expect(cm.opts!.onChange).toBeUndefined();
+      expect(screen.getByTestId('read-only')).toHaveTextContent('Read-only: not UTF-8');
+      expect(getBuffer('/wt', 'src/app.ts')).toBeUndefined();
+      expect(write).not.toHaveBeenCalled();
+    });
+
     it('read-only: without a write (a runner), and for binary or too-large files even with one', async () => {
       const a = show({ readOnlyWhy: 'Files on runner-dev are read-only here' });
       await flush();

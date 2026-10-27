@@ -81,7 +81,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
   const highlightRef = useRef(highlight);
   highlightRef.current = highlight;
   marksRef.current = marks;
-  const editable = !!write;
+  // A file that isn't UTF-8 is shown, never written (saving would change its bytes).
+  const editable = !!write && !file?.notUtf8;
   const writeRef = useRef(write);
   writeRef.current = write;
   const buf = useBuffer(worktreePath, path, editable);
@@ -99,7 +100,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         if (!live) return;
         setError(null);
         // Editing: the read feeds the buffer (a clean one follows the disk; a dirty one gets the bar).
-        if (writeRef.current && f.text != null && !f.binary && !f.tooLarge) {
+        if (writeRef.current && f.text != null && !f.binary && !f.tooLarge && !f.notUtf8) {
           openBuffer(worktreePath, f.path, { text: f.text, version: f.version }, (body) => writeRef.current!(body));
         }
         // Same text back: keep the object, so the editor (and its cursor) stays put.
@@ -214,6 +215,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
       .catch((err: unknown) => setError(filesError(err, 'file')));
   };
   const readOnly = file && (!editable || file.binary || file.tooLarge);
+  const readOnlyLabel = file?.notUtf8 && !file.binary && !file.tooLarge ? 'Read-only: not UTF-8' : 'Read-only';
   const iconBtn = 'rounded-md px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40';
   const barBtn = 'rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-[rgb(var(--pane-edge)/0.08)] disabled:opacity-40';
   return (
@@ -224,7 +226,8 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
         {buf?.saving && <span className="shrink-0 text-[11px] text-zinc-500" aria-live="polite">Saving…</span>}
         {readOnly && (
           <span className="shrink-0 rounded border border-[rgb(var(--pane-edge)/0.12)] px-1.5 text-[11px] leading-4 text-zinc-500" data-testid="read-only"
-            title={!editable ? readOnlyWhy ?? 'This file can’t be edited here' : file.binary ? 'Binary files can’t be edited here' : 'Files over 1 MB can’t be edited here'}>Read-only</span>
+            title={file.binary ? 'Binary files can’t be edited here' : file.tooLarge ? 'Files over 1 MB can’t be edited here'
+              : file.notUtf8 ? 'This file isn’t UTF-8: saving it here would change its bytes' : readOnlyWhy ?? 'This file can’t be edited here'}>{readOnlyLabel}</span>
         )}
         {selection && onAskAgent && (
           <button type="button" onClick={ask} className="rounded-md bg-sky-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500">

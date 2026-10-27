@@ -441,6 +441,8 @@ export type FileContent = {
   change?: FileChange;
   /** Set with `text`: an opaque token for the bytes read; a write sends it back. */
   version?: string;
+  /** Not valid UTF-8: `text` was decoded lossily, so it is read-only (a save would change bytes). */
+  notUtf8?: true;
 };
 /** The Files tab's one write: replace an existing text file (mirrors server/src/services/files/types.ts). */
 export type FileWriteBody = { path: string; text: string; baseVersion: string; force?: boolean };
