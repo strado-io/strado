@@ -43,7 +43,7 @@ describe('FileViewer', () => {
     expect(props.marks).toHaveBeenCalledWith('src/app.ts');
     expect(cm.opts).toMatchObject({ doc: TEXT.text, path: 'src/app.ts', language: 'typescript' });
     expect(cm.view.setMarks).toHaveBeenLastCalledWith(MARKS);
-    expect(screen.getByTestId('file-viewer')).toHaveTextContent('src/app.ts');
+    expect(screen.getByTestId('file-viewer')).toHaveAccessibleName('src/app.ts');
   });
 
   it('n/p buttons walk the changes; the count is said', async () => {

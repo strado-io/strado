@@ -226,7 +226,7 @@ export function FileViewer({ worktreePath, path, line, col, nonce, reloadKey, re
     <section className="flex h-full min-h-0 flex-col" data-testid="file-viewer" aria-label={path}>
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3">
         {headerStart}
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400" title={path}>{path}</span>
+        <span className="flex-1" />
         {buf?.saving && <span className="shrink-0 text-[11px] text-zinc-500" aria-live="polite">Saving…</span>}
         {readOnly && (
           <span className="shrink-0 rounded border border-[rgb(var(--pane-edge)/0.12)] px-1.5 text-[11px] leading-4 text-zinc-500" data-testid="read-only"
