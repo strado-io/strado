@@ -140,18 +140,40 @@ export const INTERCOM_EVENT_TYPES = ['task.created', 'task.claimed', 'task.relea
 export type IntercomEventType = (typeof INTERCOM_EVENT_TYPES)[number];
 export type IntercomEvent = { type: IntercomEventType; data: { scopeId: string; id: string } & Record<string, unknown> };
 
+// One /events/intercom stream per workspace, shared like /events/worktrees
+// above: the hub, the stations list and agent answers each subscribe, and a
+// stream apiece took connections the page's fetches were waiting for.
+const intercomStreams = new Map<string, { source: EventSource; handlers: Set<(evt: IntercomEvent) => void> }>();
+
 export function subscribeIntercom(wsId: string, handler: (evt: IntercomEvent) => void): Unsub {
-  const es = new EventSource(`/events/intercom?ws=${encodeURIComponent(wsId)}`);
-  const listeners = INTERCOM_EVENT_TYPES.map((type) => {
-    const listener = (e: MessageEvent) => {
-      try { handler({ type, data: JSON.parse(e.data) }); } catch { /* ignore malformed messages */ }
-    };
-    es.addEventListener(type, listener as EventListener);
-    return [type, listener] as const;
-  });
+  const entry = (evt: IntercomEvent) => handler(evt);
+  let stream = intercomStreams.get(wsId);
+  if (!stream) {
+    const source = new EventSource(`/events/intercom?ws=${encodeURIComponent(wsId)}`);
+    const handlers = new Set<(evt: IntercomEvent) => void>();
+    for (const type of INTERCOM_EVENT_TYPES) {
+      source.addEventListener(type, ((e: MessageEvent) => {
+        let evt: IntercomEvent;
+        try { evt = { type, data: JSON.parse(e.data) }; } catch { return; /* ignore malformed messages */ }
+        for (const h of [...handlers]) {
+          try { h(evt); } catch (err) { console.error('[intercom] subscriber failed', err); }
+        }
+      }) as EventListener);
+    }
+    stream = { source, handlers };
+    intercomStreams.set(wsId, stream);
+  }
+  stream.handlers.add(entry);
+  const mine = stream;
+  let active = true;
   return () => {
-    for (const [type, listener] of listeners) es.removeEventListener(type, listener as EventListener);
-    es.close();
+    if (!active) return;
+    active = false;
+    mine.handlers.delete(entry);
+    if (mine.handlers.size === 0 && intercomStreams.get(wsId) === mine) {
+      mine.source.close();
+      intercomStreams.delete(wsId);
+    }
   };
 }
 

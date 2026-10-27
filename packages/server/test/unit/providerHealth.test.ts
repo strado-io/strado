@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pullRequestsForBranch } from '../../src/services/github';
 import { mergeRequestsForBranch } from '../../src/services/gitlab';
-import { __resetProviderHealth } from '../../src/services/providerHealth';
+import { __resetProviderHealth, __setProbe, hostUnreachable, markHostUnreachable } from '../../src/services/providerHealth';
 
 beforeEach(() => __resetProviderHealth());
 afterEach(() => vi.restoreAllMocks());
@@ -66,5 +66,27 @@ describe('unreachable-host breaker', () => {
     // breaker cleared by the successful response — a fresh branch reaches the network
     await expect(pullRequestsForBranch('back.test', 't', 'o/a', 'b3')).resolves.toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('after the cooldown, probes in the background while callers keep failing fast', async () => {
+    let answer!: (up: boolean) => void;
+    const probe = vi.fn(() => new Promise<boolean>((r) => { answer = r; }));
+    __setProbe(probe);
+    markHostUnreachable('vpn.test', 0);
+    expect(hostUnreachable('vpn.test', 30_000)).toBe(true);
+    expect(probe).not.toHaveBeenCalled();
+    // Cooldown over: still refused, one probe started, not one per caller.
+    expect(hostUnreachable('vpn.test', 61_000)).toBe(true);
+    expect(hostUnreachable('vpn.test', 61_001)).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(1);
+    answer(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(hostUnreachable('vpn.test')).toBe(true); // a fresh cooldown
+    expect(probe).toHaveBeenCalledTimes(1);
+    // The next probe gets an answer: calls go through again.
+    expect(hostUnreachable('vpn.test', Date.now() + 61_000)).toBe(true);
+    answer(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(hostUnreachable('vpn.test')).toBe(false);
   });
 });
