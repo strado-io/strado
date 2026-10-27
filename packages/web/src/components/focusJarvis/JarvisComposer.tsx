@@ -89,7 +89,7 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
     <div className="relative">
       {options.length > 0 && (
         <ul role="listbox" aria-label={mention?.sigil === '@' ? 'Agents' : 'Worktrees'}
-          className="glass-pill absolute bottom-full left-0 mb-1 max-h-60 w-64 overflow-auto rounded-lg border p-1 text-[13px]">
+          className="surface-pop absolute bottom-full left-0 z-50 mb-2 max-h-60 w-64 overflow-auto rounded-xl p-1 text-[13px]">
           {options.map((c, i) => (
             <li key={'agentId' in c ? c.agentId : c.worktreePath} role="option" aria-selected={i === pick}
               onMouseDown={(e) => e.preventDefault()} onClick={() => choose(c)}
@@ -106,19 +106,24 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
           onKeyDown={onKeyDown}
           className="block max-h-48 min-h-[2.5rem] w-full resize-none bg-transparent text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500" />
         <div className="mt-1 flex items-center gap-2">
-          <div className="relative">
+          <div>
             <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}
               aria-label={`Agent: ${current.label}`}
               className="rounded-md px-2 py-0.5 text-[12px] text-zinc-400 hover:bg-white/10 hover:text-zinc-200">
               ✦ {current.label}
             </button>
             {menuOpen && (
-              <div role="menu" className="glass-pill absolute bottom-full left-0 mb-1 w-48 rounded-lg border p-1 text-[12px]">
+              // Above the whole composer, never over its text; solid, like every menu.
+              <div role="menu" aria-label="Jarvis runs on" className="surface-pop absolute bottom-full left-0 z-50 mb-2 w-56 rounded-xl p-1 text-[12.5px]">
+                <div className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-wide text-zinc-500">Jarvis runs on</div>
                 {AGENTS.map((a) => (
                   <div key={a.id} role="menuitem" aria-disabled={!a.ready} tabIndex={a.ready ? 0 : -1}
                     onClick={() => { if (a.ready) setMenuOpen(false); }}
-                    className={`flex justify-between rounded-md px-2 py-1 ${a.ready ? 'cursor-pointer text-zinc-200 hover:bg-white/10' : 'text-zinc-600'}`}>
-                    <span>{a.label}</span>{!a.ready && <span>coming soon</span>}
+                    className={`flex h-8 items-center gap-2 rounded-lg px-2 ${a.ready ? 'cursor-pointer text-zinc-100 hover:bg-white/[0.07]' : 'cursor-default text-zinc-500'}`}>
+                    <span className="flex-1">{a.label}</span>
+                    {a.id === current.id
+                      ? <span aria-hidden="true" className="text-[#e8906f]">✓</span>
+                      : !a.ready && <span className="rounded-full border border-white/10 px-1.5 py-px text-[10px] text-zinc-500">Soon</span>}
                   </div>
                 ))}
               </div>

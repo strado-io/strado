@@ -114,7 +114,7 @@ describe('JarvisComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
     expect(onStop).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
-    expect(screen.getByRole('menuitem', { name: /codex.*coming soon/i })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('menuitem', { name: /codex.*soon/i })).toHaveAttribute('aria-disabled', 'true');
   });
 });
 
