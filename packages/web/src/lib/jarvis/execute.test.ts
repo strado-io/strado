@@ -359,11 +359,13 @@ describe('runPlan', () => {
     const r = await runPlan(plan(
       step('nav.page', { page: 'usage' }),
       step('settings.open', { section: 'appearance' }),
+      step('settings.open', { section: 'projects', projectPath: '/r/api' }),
       step('settings.set', { setting: 'appearance.theme', value: 'nord' }),
     ), p);
     expect(r.ok).toBe(true);
     expect(p.app.page).toHaveBeenCalledWith('usage');
-    expect(p.app.settings).toHaveBeenCalledWith('appearance');
+    expect(p.app.settings).toHaveBeenCalledWith('appearance', undefined);
+    expect(p.app.settings).toHaveBeenCalledWith('projects', '/r/api');
     expect(p.app.set).toHaveBeenCalledWith('appearance.theme', 'nord');
     const bare = ports().p;
     expect((await runPlan(plan(step('nav.page', { page: 'usage' })), bare)).failed?.reason).toMatch(/not available/);

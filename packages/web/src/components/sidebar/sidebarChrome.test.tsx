@@ -29,13 +29,13 @@ describe('sidebar chrome', () => {
     expect(nav.className).toMatch(/\bglass\b/);
     expect(nav.className).toMatch(/\bpane-card\b/);
     expect(nav.className).toMatch(/\bh-10\b/);
-    quietButton(screen.getByRole('button', { name: 'Worktrees' }));
+    quietButton(screen.getByRole('button', { name: 'Code reviews' }));
     quietButton(screen.getByRole('button', { name: 'Open settings' }));
     const usage = screen.getByRole('button', { name: 'Usage' });
     expect(usage).toHaveAttribute('aria-current', 'page');
     expect(usage.className).toMatch(/\btab-pill\b/);
     expect(usage.className).toMatch(/\btext-zinc-100\b/);
-    expect(screen.getByRole('button', { name: 'Worktrees' }).className).not.toMatch(/tab-pill/);
+    expect(screen.getByRole('button', { name: 'Code reviews' }).className).not.toMatch(/tab-pill/);
   });
 
   it('the Focus list has no header: no caption, no + of its own (New focus is in the workspace row)', () => {

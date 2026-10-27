@@ -31,7 +31,7 @@ const ACTIONS: Record<Action, string> = {
   tab_interrupt: 'press Ctrl-C in an existing tab (stop what runs in it) without closing it',
   nav_worktree: 'open / switch to a worktree',
   nav_focus: 'switch to a Focus (saved group of worktrees)',
-  nav_page: 'open one of these app pages by its page name: home, the all-worktrees list, code reviews, usage. NOT a worktree (a worktree name like main or master is nav_worktree)',
+  nav_page: 'open one of these app pages by its page name: home, code reviews, usage. NOT a worktree (a worktree name like main or master is nav_worktree)',
   settings_open: 'open Settings (or one section of it), without changing anything',
   ui_sidebar: 'show / open, or hide / close / collapse the left sidebar',
   server_start: "start a worktree's dev server",
@@ -100,8 +100,8 @@ export function createJevRouter(deps: { fetch?: DecisionsFetch; readKey?: () => 
         action: { type: 'choice', instructions: 'Which action does the user want?', criteria: { ...ACTIONS, [NONE]: 'none of these' } },
         mode: { type: 'choice', instructions: 'For a new tab: what kind?', criteria: { shell: 'a shell / terminal', claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi', [NONE]: 'not a new tab' } },
         show: { type: 'choice', instructions: 'For the sidebar: show or hide it?', criteria: { show: 'show / open / expand it', hide: 'hide / close / collapse it', toggle: 'toggle it', [NONE]: 'not about the sidebar' } },
-        page: { type: 'choice', instructions: 'For opening a page of the app: which one?', criteria: { home: 'home / start screen (not a worktree called main or master)', worktrees: 'the list of all worktrees', reviews: 'code reviews / merge or pull requests', usage: 'usage / cost / tokens', [NONE]: 'not a page' } },
-        section: { type: 'choice', instructions: 'For opening Settings: which section? Plain "settings" = profile.', criteria: { profile: 'profile / name / plain settings', organization: 'organization / team', appearance: 'appearance / theme / fonts', workspaces: 'workspaces', agents: 'coding agents config', runners: 'runners / remote machines', integrations: 'integrations in general', jira: 'Jira', linear: 'Linear', gitlab: 'GitLab', github: 'GitHub', privacy: 'privacy / telemetry', commandbox: 'command box / model / keys', [NONE]: 'not Settings' } },
+        page: { type: 'choice', instructions: 'For opening a page of the app: which one?', criteria: { home: 'home / start screen (not a worktree called main or master)', reviews: 'code reviews / merge or pull requests', usage: 'usage / cost / tokens', [NONE]: 'not a page' } },
+        section: { type: 'choice', instructions: 'For opening Settings: which section? Plain "settings" = profile.', criteria: { profile: 'profile / name / plain settings', organization: 'organization / team', appearance: 'appearance / theme / fonts', workspaces: 'workspaces', projects: 'projects / repos / repo settings / run commands', agents: 'coding agents config', runners: 'runners / remote machines', integrations: 'integrations in general', jira: 'Jira', linear: 'Linear', gitlab: 'GitLab', github: 'GitHub', privacy: 'privacy / telemetry', commandbox: 'command box / model / keys', [NONE]: 'not Settings' } },
         split: { type: 'choice', instructions: 'For a move or a new tab: where should it go relative to the other tab?', criteria: { tab: 'in a new tab / as its own tab / separate tab (not a split)', right: 'right of / next to / beside', down: 'below / under', [NONE]: 'not said' } },
       };
       const thisTab = context.focused ? { this: `the focused tab (${context.focused})` } : {};

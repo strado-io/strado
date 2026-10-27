@@ -39,6 +39,8 @@ export type Props = {
   /** New worktree with the repo still to pick (toolbar button); the empty Focus passes its ticket. */
   onNewWorktree: (ticket?: FocusTicket) => void;
   onWorktreeSettings: (w: Worktree) => void;
+  /** Settings › Projects › the worktree's project (a repo id). */
+  onProjectSettings?: (repoId: string) => void;
   onDeleteWorktree: (w: Worktree) => void;
   update: UpdateFooterProps;
   /** Worktrees living on runners, shown under the repo they belong to. */
@@ -170,7 +172,7 @@ function WorkspaceSwitcher({
 export function Sidebar({
   repos, worktrees, selected, onSelect, onOpenSettings,
   onCollapse, onAddRepo, onOpenWorktree,
-  activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree, update,
+  activeWorktreePath, onNewWorktree, onWorktreeSettings, onProjectSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   onOpenMr,
   onOpenDiff,
@@ -194,7 +196,7 @@ export function Sidebar({
   // props, a neighbour pane gets its snapshot.
   const bodyProps = {
     onAddRepo,
-    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+    onOpenWorktree, onOpenMr, onOpenDiff, activeWorktreePath, onNewWorktree, onWorktreeSettings, onProjectSettings, onDeleteWorktree,
     // Dashboard's switch-error handler is its generic error banner.
     onError: onSwitchError,
   };

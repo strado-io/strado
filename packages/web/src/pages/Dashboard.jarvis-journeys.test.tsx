@@ -55,7 +55,7 @@ vi.mock('../api', () => ({
   api: {
     focusJarvis: { log: vi.fn(async () => ({ entries: [], meta: null })), send: vi.fn(), stop: vi.fn(), approve: vi.fn(), setAgent: vi.fn(), streamUrl: () => '/jarvis/events' },
     focuses: fakeFocuses.api,
-    repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One' }]) },
+    repos: { list: vi.fn().mockResolvedValue([{ id: 'r1', name: 'Repo One', path: '/repos/one', defaultPort: 3000 }]), patch: vi.fn().mockResolvedValue({}) },
     worktrees: { list: vi.fn().mockResolvedValue([
       { path: '/wt/FD-9', repoId: 'r1', branch: 'fd-9', meta: { ticketId: 'FD-9' },
         process: { status: 'idle' }, tracked: true,
@@ -88,9 +88,13 @@ const settingsMounts = vi.hoisted(() => ({ n: 0 }));
 vi.mock('../components/settings/SettingsPage', async () => {
   const React = await import('react');
   return {
-    SettingsPage: ({ section }: { section: string }) => {
+    SettingsPage: ({ section, project, projects }: { section: string; project?: string | null; projects?: { repos: { id: string }[]; onPatch: (repo: unknown, patch: unknown) => Promise<void> } }) => {
       React.useEffect(() => { settingsMounts.n += 1; }, []);
-      return <div data-testid="settings-page">settings:{section}</div>;
+      return (
+        <div data-testid="settings-page">settings:{section}{project ? `:${project}` : ''}
+          {projects && <button type="button" onClick={() => void projects.onPatch(projects.repos[0], { defaultPort: 4100 })}>patch first project</button>}
+        </div>
+      );
     },
   };
 });
@@ -505,42 +509,38 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     expect(within(screen.getByTestId('dock')).queryByRole('button', { name: /^claude-1 — / })).not.toBeInTheDocument();
   });
 
-  describe('home vs the Worktrees list', () => {
-    const hero = () => screen.queryByRole('heading', { name: 'What do you want to do?' });
-    const list = () => screen.queryByRole('button', { name: 'New worktree in Repo One' }) ?? screen.queryAllByText('Repo One')[0] ?? null;
-    const sidebarWorktrees = () => {
-      if (!screen.queryByRole('navigation', { name: 'Pages' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
-      return within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Worktrees' });
-    };
+  it('"settings for Repo One" opens Settings › Projects at it; a change saves through the repos API', async () => {
+    askModel.mockResolvedValueOnce(plan({ action: 'settings.open', args: { section: 'projects', project: 'Repo One' } }));
+    renderDashboard();
+    await home();
+    await say('settings for repo one');
+    expect(await screen.findByTestId('settings-page')).toHaveTextContent('settings:projects:r1');
+    const { api } = await import('../api');
+    fireEvent.click(screen.getByRole('button', { name: 'patch first project' }));
+    await waitFor(() => expect(api.repos.patch).toHaveBeenCalledWith(expect.any(String), 'r1', { defaultPort: 4100 }));
+  });
 
-    const worktreesNav = () => within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('button', { name: 'Worktrees' });
-    it('the highlight and the page agree: home highlights no page; the Worktrees list highlights Worktrees', async () => {
+  describe('home (there is no Worktrees page)', () => {
+    const hero = () => screen.queryByRole('heading', { name: 'What do you want to do?' });
+    const nav = () => {
+      if (!screen.queryByRole('navigation', { name: 'Pages' })) fireEvent.keyDown(window, { key: 'b', metaKey: true });
+      return screen.getByRole('navigation', { name: 'Pages' });
+    };
+    it('home highlights no page, and the dock has no Worktrees page', async () => {
       localStorage.setItem('strado:sidebar-collapsed:v2', '0');
       renderDashboard();
       await home();
-      expect(worktreesNav()).not.toHaveAttribute('aria-current');
-      fireEvent.click(worktreesNav());
-      await waitFor(() => expect(hero()).toBeNull());
-      expect(worktreesNav()).toHaveAttribute('aria-current', 'page');
+      expect(within(nav()).queryByRole('button', { name: 'Worktrees' })).toBeNull();
+      expect(within(nav()).queryAllByRole('button', { current: 'page' })).toHaveLength(0);
     });
 
-    it('a worktree whose last tab closes lands where you came from, with the highlight to match', async () => {
+    it('a worktree whose last tab closes lands back home, nothing highlighted', async () => {
       localStorage.setItem('strado:sidebar-collapsed:v2', '0');
       renderDashboard();
-      // From home: back on home, nothing highlighted.
       await openFd9FromHome();
       fireEvent.click(screen.getByRole('button', { name: '‹ Back' })); // TerminalView's onClose (no session left)
       await home();
-      expect(worktreesNav()).not.toHaveAttribute('aria-current');
-      // From the Worktrees list: back on the list, Worktrees highlighted.
-      fireEvent.click(worktreesNav());
-      await waitFor(() => expect(hero()).toBeNull());
-      fireEvent.click(within(screen.getByRole('main')).getAllByText('FD-9')[0]!);
-      await screen.findByTestId('inline-hub');
-      fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
-      await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
-      expect(hero()).toBeNull();
-      expect(worktreesNav()).toHaveAttribute('aria-current', 'page');
+      expect(within(nav()).queryAllByRole('button', { current: 'page' })).toHaveLength(0);
     });
 
     it('app start with a Focus active and no saved view: its Jarvis chat, the header selected, never the global home', async () => {
@@ -558,24 +558,14 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       expect(screen.queryByRole('region', { name: 'Jarvis' })).toBeNull();
     });
 
-    it('the sidebar\'s Worktrees shows the list, not home; "go home" shows home', async () => {
+    it('"go home" from another page shows home', async () => {
       askModel.mockResolvedValueOnce(plan({ action: 'nav.page', args: { page: 'home' } }));
       renderDashboard();
       await home();
-      fireEvent.click(sidebarWorktrees());
+      fireEvent.click(within(nav()).getByRole('button', { name: 'Code reviews' }));
       await waitFor(() => expect(hero()).toBeNull());
-      expect(list()).not.toBeNull();
       await say('go home');
       await home();
-    });
-
-    it('with a hub open, the sidebar\'s Worktrees shows the list (no bounce to home)', async () => {
-      renderDashboard();
-      await openFd9FromHome();
-      fireEvent.click(sidebarWorktrees());
-      await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
-      expect(hero()).toBeNull();
-      expect(list()).not.toBeNull();
     });
 
     it('Back from a hub goes where you came from: home → home', async () => {
@@ -585,18 +575,6 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       await home();
     });
 
-    it('Back from a hub goes where you came from: the list → the list', async () => {
-      renderDashboard();
-      await home();
-      fireEvent.click(sidebarWorktrees());
-      await waitFor(() => expect(hero()).toBeNull());
-      fireEvent.click(screen.getAllByText('FD-9')[0]!);
-      await screen.findByTestId('inline-hub');
-      fireEvent.click(screen.getByRole('button', { name: '‹ Back' }));
-      await waitFor(() => expect(screen.queryByTestId('inline-hub')).toBeNull());
-      expect(hero()).toBeNull();
-      expect(list()).not.toBeNull();
-    });
   });
 
   describe('the sidebar from the box (as ⌘B does)', () => {

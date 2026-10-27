@@ -74,7 +74,7 @@ export type JarvisNavPort = {
 /** The rest of the app: its pages, Settings, and the plain settings there. */
 export type JarvisAppPort = {
   page(page: AppPage): void;
-  settings(section: SettingsSectionId): void;
+  settings(section: SettingsSectionId, projectPath?: string | null): void;
   /** Saves it, then shows its Settings section so the change is seen. */
   set(setting: SettingId, value: string): Promise<void>;
   /** Edit a Focus: the step's args as they are. A create resolves with the new Focus's id. */
@@ -324,7 +324,7 @@ export async function runPlan(plan: { steps: Step[] }, ports: JarvisPorts): Prom
         case 'nav.workspace': ports.nav.workspace(s.args.wsId); break;
         case 'nav.repo': ports.nav.repo(s.args.repoPath); break;
         case 'nav.page': (ports.app ?? fail('Pages are not available here')).page(s.args.page); break;
-        case 'settings.open': (ports.app ?? fail('Settings are not available here')).settings(s.args.section); break;
+        case 'settings.open': (ports.app ?? fail('Settings are not available here')).settings(s.args.section, s.args.projectPath); break;
         case 'ui.sidebar': {
           const app = ports.app;
           if (!app?.sidebar) fail('The sidebar is not available here');

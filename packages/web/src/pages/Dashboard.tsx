@@ -14,7 +14,7 @@ import { lightOf } from '../lib/dock/stations';
 import { focusWorktreesOf, missionStations } from '../components/mission/mission';
 import { OrphanCalls } from '../components/mission/OrphanCalls';
 import { MissionStack } from '../components/mission/MissionStack';
-import { RunCommandsDialog, runCommandsError } from '../components/runCommands/RunCommandsDialog';
+import { runCommandsError } from '../components/runCommands/RunCommandsDialog';
 import { useMissionBox, type MissionBoxDeps } from '../components/mission/useMissionBox';
 import { chipLabel } from '../lib/mention/chips';
 import { jarvisServerPort } from '../lib/jarvis/serverPort';
@@ -49,7 +49,6 @@ import { TerminalView } from './TerminalView';
 import { CodeReviewsPage } from '../components/CodeReviewsPage';
 import { RendererOverlayContext, useRendererOverlayRegistry } from '../contexts/RendererOverlay';
 import { UsagePage } from '../components/usage/UsagePage';
-import { WorktreesPage } from '../components/worktrees/WorktreesPage';
 import { useCodeReviews } from '../hooks/codeReviews';
 import { requestRunInShell } from '../lib/runInShell';
 import { worktreeLabel } from '../components/sidebar/labels';
@@ -390,6 +389,8 @@ export function Dashboard(props: {
   const [ticketsOn, setTicketsOn] = useState(false);
   const { providerErrors } = useTickets();
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  // Settings › Projects › this one (a repo id), from a deep link.
+  const [settingsProject, setSettingsProject] = useState<string | null>(null);
   // A runner's host page to open inside Settings → Runners, from a deep link.
   const [settingsHost, setSettingsHost] = useState<{ runnerId: string; tab?: HostTab } | undefined>(undefined);
   // Bumped when the command box changes a setting while Settings is open: the
@@ -526,11 +527,6 @@ export function Dashboard(props: {
     localStorage.setItem(STORE_SIDEBAR, sidebarCollapsed ? '1' : '0');
   }, [sidebarCollapsed]);
 
-  // Home with nothing open is the start screen. Asking for the list (the
-  // sidebar's Worktrees, "All worktrees →", the box's "worktrees") shows the
-  // full list instead, and stays asked: Back from a worktree opened there
-  // returns to the list. "Go home" (and app start) is home again.
-  const [homeAll, setHomeAll] = useState(false);
   // The sidebar is where the user left it, everywhere (home included): only
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
   // sidebar"). A hub closing itself (its last session gone) must not hide it.
@@ -653,8 +649,8 @@ export function Dashboard(props: {
   // With a Focus active, the main area is never the global home: nothing else
   // open means its Jarvis chat. Home is for when no Focus is active.
   const hubOpen = !!selectedRemote || !!(selectedPath && state.worktrees.some((w) => w.path === selectedPath));
-  const chatShown = !!focusApi.active && !hubOpen && (jarvisOpen || (activeView.kind === 'worktrees' && !homeAll));
-  const onHome = !chatShown && !hubOpen && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0 && !homeAll
+  const chatShown = !!focusApi.active && !hubOpen && (jarvisOpen || activeView.kind === 'worktrees');
+  const onHome = !chatShown && !hubOpen && activeView.kind === 'worktrees' && !state.loading && state.repos.length > 0
     && !focusApi.active && (focusApi.loaded || !focusApi.activeId);
   // Until the list loads, a stored active Focus means its view is coming: no home flash.
   const focusPending = !focusApi.loaded && !!focusApi.activeId;
@@ -818,7 +814,6 @@ export function Dashboard(props: {
   // The bar's mission stack height: its popover opens above all of it (the strip stays visible).
   const [stackHeight, setStackHeight] = useState(0);
   // A repo's run-command editor (from the Worktrees page's repo menu).
-  const [runCommandsRepo, setRunCommandsRepo] = useState<string | null>(null);
   const missionScoped = useMemo(
     () => missionStations(stations, 'focus', focusWorktreesOf(focusApi.active ?? null)),
     [stations, focusApi.active],
@@ -932,11 +927,14 @@ export function Dashboard(props: {
   const appPort: JarvisAppPort = {
     page: (page) => {
       setSettingsSection(null);
-      if (page === 'home') { selectView(INITIAL_VIEW); setHomeAll(false); }
-      else if (page === 'worktrees') { selectView({ kind: 'worktrees' }); setHomeAll(true); }
+      if (page === 'home') selectView(INITIAL_VIEW);
       else selectView({ kind: page });
     },
-    settings: (section) => { setSettingsSection(section); setSettingsNonce((n) => n + 1); },
+    settings: (section, projectPath) => {
+      setSettingsProject(projectPath ? state.repos.find((r) => r.path === projectPath)?.id ?? null : null);
+      setSettingsSection(section);
+      setSettingsNonce((n) => n + 1);
+    },
     set: async (setting, value) => {
       if (setting === 'profile.name') await api.profile.save({ fullName: value });
       else if (setting === 'profile.callMe') await api.profile.save({ callMe: value });
@@ -1064,7 +1062,7 @@ export function Dashboard(props: {
           // Home is no page: nothing in the page row is current there.
           // A worktree's tabs are open: no page is current (the rail shows which worktree).
           selected={onHome || chatShown || selectedRemote || selectedWorktree ? null : activeView}
-          onSelect={(view) => { selectView(view); if (view.kind === 'worktrees') setHomeAll(true); }}
+          onSelect={selectView}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
           onCollapse={() => setSidebarCollapsed(true)}
@@ -1078,6 +1076,7 @@ export function Dashboard(props: {
           activeWorktreePath={selectedRemote?.path ?? selectedPath}
           onNewWorktree={(ticket) => props.onNewWorktree(undefined, ticket)}
           onWorktreeSettings={(w) => props.onMenu(w)}
+          onProjectSettings={(repoId) => { setSettingsProject(repoId); setSettingsSection('projects'); setSettingsNonce((n) => n + 1); }}
           onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
           update={props.update}
           // The open Focus's header is its Jarvis: status, latest reply, click to open the chat.
@@ -1202,54 +1201,18 @@ export function Dashboard(props: {
                     {providerLabel(provider)} connection failed — reconnect in Settings
                   </button>
                 ))}
-              {onHome ? (
               <HomeScreen
                 bar={settingsSection ? null : commandBar(true)}
                 strip={settingsSection ? null : missionStack(false)}
                 recent={recentWorktrees(state.worktrees, state.repos, readWorktreeLru())}
                 waiting={stations.filter((st) => lightOf(st) === 'calling').length + orphanCalls.length}
                 onOpenRecent={(w) => openInlineHub(w)}
-                onAllWorktrees={() => setHomeAll(true)}
                 onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
                 onNewWorktree={() => props.onNewWorktree()}
                 onWaiting={selectFirstNeedsYou}
                 sidebarCollapsed={sidebarHidden}
                 onExpandSidebar={() => setSidebarCollapsed(false)}
               />
-              ) : (
-              <WorktreesPage
-                key={wsId}
-                wsId={wsId}
-                repos={state.repos}
-                worktrees={state.worktrees}
-                remoteWorktrees={remote.worktrees}
-                runnerStatuses={remote.runners}
-                activeWorktreePath={null /* the page shows only while no hub is open */}
-                sidebarCollapsed={sidebarCollapsed}
-                onExpandSidebar={() => setSidebarCollapsed(false)}
-                runningServers={runningServers}
-                onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
-                onNewWorktree={(repoId) => props.onNewWorktree(repoId)}
-                onRunCommands={(repo) => setRunCommandsRepo(repo.id)}
-                onRemoveRepo={async (repo) => {
-                  if (!confirm(`Remove "${repo.name}" from this workspace? Worktrees on disk are left untouched.`)) return;
-                  try {
-                    await api.repos.remove(wsId, repo.id);
-                    const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
-                    commitTree(repos, worktrees);
-                  } catch (err) {
-                    dispatch({ type: 'error', message: (err as Error).message });
-                  }
-                }}
-                onOpenWorktree={(w) => openInlineHub(w)}
-                onOpenRemoteWorktree={openRemoteWorktree}
-                onOpenMr={props.onOpenMr}
-                onWorktreeSettings={(w) => props.onMenu(w)}
-                onDeleteWorktree={(w) => props.onDeleteWorktree(w)}
-                onDeleteRemoteWorktree={(w) => props.onDeleteRemoteWorktree?.(w)}
-                onError={(message) => dispatch({ type: 'error', message })}
-              />
-              )}
               </>
             )}
           </div>
@@ -1270,31 +1233,37 @@ export function Dashboard(props: {
       </div>
 
 
-      {(() => {
-        const repo = runCommandsRepo ? state.repos.find((r) => r.id === runCommandsRepo) : undefined;
-        return repo ? (
-          <RunCommandsDialog
-            repoName={repo.name}
-            commands={repo.runCommands ?? []}
-            onClose={() => setRunCommandsRepo(null)}
-            onSave={async (list) => {
+      {settingsSection && (
+        <SettingsPage
+          key={`${settingsSection}:${settingsNonce}`}
+          section={settingsSection}
+          host={settingsSection === 'runners' ? settingsHost : undefined}
+          project={settingsSection === 'projects' ? settingsProject : null}
+          projects={{
+            repos: state.repos,
+            worktrees: state.worktrees,
+            onAdd: () => { setAddRepoAnchor(null); setShowAddRepo(true); },
+            onPatch: async (repo, patch) => {
+              await api.repos.patch(wsId, repo.id, patch);
+              commitTree(await api.repos.list(wsId), state.worktrees);
+            },
+            onSaveRunCommands: async (repo, list) => {
               try {
                 await api.repos.setRunCommands(wsId, repo.id, list);
                 commitTree(await api.repos.list(wsId), state.worktrees);
               } catch (err) {
                 throw new Error(runCommandsError(err));
               }
-            }}
-          />
-        ) : null;
-      })()}
-      {settingsSection && (
-        <SettingsPage
-          key={`${settingsSection}:${settingsNonce}`}
-          section={settingsSection}
-          host={settingsSection === 'runners' ? settingsHost : undefined}
+            },
+            onRemove: async (repo) => {
+              await api.repos.remove(wsId, repo.id);
+              const [repos, worktrees] = await Promise.all([api.repos.list(wsId), api.worktrees.list(wsId)]);
+              commitTree(repos, worktrees);
+            },
+            onDeleteWorktree: (w) => props.onDeleteWorktree(w),
+          }}
           bottomInset={showDock}
-          onClose={() => { setSettingsSection(null); setSettingsHost(undefined); }}
+          onClose={() => { setSettingsSection(null); setSettingsHost(undefined); setSettingsProject(null); }}
           onJiraConnected={() => {
             track('jira_connected');
             refreshTicketProviders();

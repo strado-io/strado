@@ -95,6 +95,16 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'General' })).not.toBeInTheDocument();
   });
 
+  it('Projects comes right after Workspaces, and opens at the project it is given', () => {
+    const repos = [{ id: 'r1', name: 'api', path: '/code/api', projectSubdir: null, startCommand: '', defaultPort: 3000 }];
+    const projects = { repos, worktrees: [], onAdd: vi.fn(), onPatch: vi.fn(), onSaveRunCommands: vi.fn(), onRemove: vi.fn(), onDeleteWorktree: vi.fn() };
+    render(<SettingsPage onClose={() => {}} section="projects" project="r1" projects={projects} />);
+    const items = [...screen.getByRole('navigation', { name: 'Settings' }).querySelectorAll('button[class*="rounded-lg"]')].map((b) => b.textContent);
+    expect(items.indexOf('Projects')).toBe(items.indexOf('Workspaces') + 1);
+    expect(screen.getByTestId('settings-pane')).toHaveAttribute('data-section', 'projects');
+    expect(screen.getByRole('heading', { name: 'api' })).toBeInTheDocument();
+  });
+
   it('opens runners in its own infrastructure section', () => {
     render(<SettingsPage onClose={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: /^Runners\b/ }));

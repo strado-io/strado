@@ -11,13 +11,6 @@ const reviewsIcon = (
     <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354Z" />
   </svg>
 );
-// Lucide "folder-git-2": every repo and worktree in the space.
-const worktreesIcon = (
-  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5" />
-    <circle cx="13" cy="12" r="2" /><path d="M18 19c-2.8 0-5-2.2-5-5v8" /><circle cx="20" cy="19" r="2" />
-  </svg>
-);
 // A gauge: the quota dial the Usage page is mostly about.
 const usageIcon = (
   <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden {...stroke}>
@@ -55,8 +48,6 @@ export function SidebarNav({ selected, onSelect, onOpenSettings }: {
   return (
     // A glass bar like a pane card: 40px, the 28px buttons inside, settings at the right.
     <nav aria-label="Pages" data-testid="sidebar-nav" className="glass pane-card flex h-10 items-center gap-1 px-1.5">
-      <NavButton label="Worktrees" icon={worktreesIcon} active={selected?.kind === 'worktrees'}
-        onClick={() => onSelect({ kind: 'worktrees' })} />
       <NavButton label="Code reviews" icon={reviewsIcon} active={selected?.kind === 'reviews'}
         onClick={() => onSelect({ kind: 'reviews' })} />
       <NavButton label="Usage" icon={usageIcon} active={selected?.kind === 'usage'}

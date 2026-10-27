@@ -48,6 +48,8 @@ export type SidebarBodyProps = {
   /** New worktree with the repo still to pick (toolbar and blank-space menu); the empty Focus passes its ticket. */
   onNewWorktree: (ticket?: FocusTicket) => void;
   onWorktreeSettings: (w: Worktree) => void;
+  /** Settings › Projects › the worktree's project (a repo id). */
+  onProjectSettings?: (repoId: string) => void;
   onDeleteWorktree: (w: Worktree) => void;
   onOpenRemoteWorktree?: (w: RemoteWorktree, mode?: 'files') => void;
   onDeleteRemoteWorktree?: (w: RemoteWorktree) => void;
@@ -170,7 +172,7 @@ onContextMenu?: (e: React.MouseEvent, items: MenuItem[]) => void;
 export function SidebarBody({
   wsId, repos, worktrees, remoteWorktrees, runnerStatuses,
   onAddRepo, onOpenWorktree, activeWorktreePath,
-  onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onDeleteWorktree,
+  onOpenMr, onOpenDiff, onNewWorktree, onWorktreeSettings, onProjectSettings, onDeleteWorktree,
   onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
   remoteLoading = false, onError, isActivePane = true, jarvis, jarvisBadges, onOpenFocus,
 }: SidebarBodyProps) {
@@ -244,6 +246,7 @@ export function SidebarBody({
     const menuItems: MenuItem[] = [
       ...(openWorktreeInEditor && editor ? [{ text: `Open in ${editor.label}`, onClick: () => openWorktreeInEditor(w) }] : []),
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
+      ...(onProjectSettings && w.repoId ? [{ text: 'Project settings', onClick: () => onProjectSettings(w.repoId!) }] : []),
       { text: `Remove from ${f.name}`, onClick: () => removeFromFocus(f, pinId) },
       { text: 'Delete worktree', danger: true, onClick: () => onDeleteWorktree(w) },
     ];

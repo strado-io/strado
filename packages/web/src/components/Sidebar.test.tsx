@@ -139,15 +139,15 @@ describe('Sidebar tree', () => {
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
-  it('marks only the page you are on; Worktrees is the landing page', () => {
+  it('marks only the page you are on; the dock has no Worktrees page', () => {
     const { unmount } = wrap(<Sidebar {...base} selected={{ kind: 'usage' }} />);
     const nav = () => within(screen.getByRole('navigation', { name: 'Pages' }));
     expect(nav().getByRole('button', { name: 'Usage' })).toHaveAttribute('aria-current', 'page');
-    expect(nav().getByRole('button', { name: 'Worktrees' })).not.toHaveAttribute('aria-current');
+    expect(nav().getByRole('button', { name: 'Code reviews' })).not.toHaveAttribute('aria-current');
+    expect(nav().getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Code reviews', 'Usage', 'Open settings']);
     unmount();
     wrap(<Sidebar {...base} selected={{ kind: 'worktrees' }} />);
-    expect(nav().getByRole('button', { name: 'Worktrees' })).toHaveAttribute('aria-current', 'page');
-    expect(nav().getAllByRole('button', { current: 'page' })).toHaveLength(1);
+    expect(nav().queryAllByRole('button', { current: 'page' })).toHaveLength(0);
   });
 
   describe('focus members', () => {

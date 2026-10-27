@@ -10,13 +10,14 @@ import { LanguageServersSection } from './LanguageServersSection';
 import { EditorSection } from './EditorSection';
 import { ProfileSection } from './ProfileSection';
 import { WorkspaceManagementSection } from '../../pages/WorkspacesPage';
+import { ProjectsSection, type ProjectsProps } from './ProjectsSection';
 import { RunnersPanel } from '../RunnersPanel';
 import type { HostTab } from '../hosts/HostDetails';
 import { useEntitlements } from '../../hooks/entitlements';
 import { TITLE_BAR_HEIGHT, TrafficLightsSpacer, useInsetTitleBar } from '../SidebarToggle';
 import type { Feature } from '../../api';
 
-export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'agents' | 'editor' | 'languageServers' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
+export type SettingsSection = 'profile' | 'organization' | 'appearance' | 'workspaces' | 'projects' | 'agents' | 'editor' | 'languageServers' | 'runners' | 'integrations' | IntegrationId | 'privacy' | 'commandbox';
 
 type NavItem = { id: SettingsSection; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -64,6 +65,9 @@ function SettingsNavIcon({ id }: { id: SettingsSection | 'feedback' }) {
         <path d="M3 9h18M9 9v12" />
       </svg>
     );
+  }
+  if (id === 'projects') {
+    return <svg {...props}><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg>;
   }
   if (id === 'agents') {
     return <svg {...props}><rect x="4" y="7" width="16" height="13" rx="3" /><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" /></svg>;
@@ -114,7 +118,7 @@ const GROUPS: NavGroup[] = [
   },
   {
     title: 'Workspace',
-    items: [{ id: 'workspaces', label: 'Workspaces' }],
+    items: [{ id: 'workspaces', label: 'Workspaces' }, { id: 'projects', label: 'Projects' }],
   },
   { title: 'Agents', items: [{ id: 'agents', label: 'Coding agents' }] },
   { title: 'Files', items: [{ id: 'editor', label: 'Editor' }, { id: 'languageServers', label: 'Language servers' }] },
@@ -158,6 +162,8 @@ export function SettingsPage({
   onOpenFeedback,
   bottomInset = false,
   lspInstall = null,
+  projects,
+  project = null,
 }: {
   section?: SettingsSection;
   /** With section 'runners': open that runner's host page, on this tab. */
@@ -169,6 +175,10 @@ export function SettingsPage({
   onOpenFeedback?: () => void;
   /** Settings › Language servers' Install: the worktree a shell opens in (null: none open on this Mac). */
   lspInstall?: { label: string; run: (command: string) => void } | null;
+  /** Settings › Projects: this workspace's repos and what to do with them. */
+  projects?: ProjectsProps;
+  /** With section 'projects': open at this project (its repo id). */
+  project?: string | null;
 }) {
   const [search, setSearch] = useState('');
   const backButton = useRef<HTMLButtonElement>(null);
@@ -198,6 +208,7 @@ export function SettingsPage({
     integrations: 'github gitlab jira linear connections',
     appearance: 'theme font colors',
     profile: 'account name license',
+    projects: 'repos repositories run commands port remove project',
   };
   const visibleGroups = GROUPS.map((group) => ({
     ...group,
@@ -291,6 +302,7 @@ export function SettingsPage({
             {active === 'organization' && <OrganizationSection />}
             {active === 'appearance' && <AppearanceSection />}
             {active === 'workspaces' && <WorkspaceManagementSection />}
+            {active === 'projects' && (projects ? <ProjectsSection {...projects} initial={project} /> : <p className="text-sm text-zinc-500">No workspace open.</p>)}
             {active === 'agents' && <AgentsSection />}
             {active === 'editor' && <EditorSection />}
             {active === 'languageServers' && <LanguageServersSection install={lspInstall} />}

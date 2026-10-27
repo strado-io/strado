@@ -199,14 +199,13 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toHaveAttribute('placeholder', 'Tell Strado what to do…  ⌘K');
   });
 
-  it('home: "All worktrees →" shows the full list; "⚑ N waiting" selects the agent that needs you', async () => {
+  it('home: no "All worktrees" link (that page is gone); "⚑ N waiting" selects the agent that needs you', async () => {
     noActiveFocus();
     renderDashboard();
     await screen.findByRole('heading', { name: 'What do you want to do?' });
+    expect(screen.queryByRole('button', { name: /All worktrees/ })).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: '⚑ 1 waiting' }));
     expect(await screen.findByTestId('agent-line')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
   });
 
   it('home: typing "add repo <path>" in the big box asks the model, whose nav.addRepo opens the Add repo dialog on that path', async () => {
@@ -238,12 +237,12 @@ describe('Dashboard inline hub', () => {
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toBeInTheDocument();
   });
 
-  it('home has no Dock location (Recent and "All worktrees →" list them); on the Worktrees page the Dock names none, as a label', async () => {
+  it('home has no Dock location (Recent lists the worktrees); off home the Dock names none, as a label', async () => {
     noActiveFocus();
     renderDashboard();
     await home();
     expect(screen.queryByLabelText('No worktree open')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
     const where = await within(await screen.findByTestId('dock')).findByLabelText('No worktree open');
     expect(where.tagName).toBe('SPAN');
   });
@@ -370,8 +369,8 @@ describe('Dashboard inline hub', () => {
     // Home: the box is the page, already focused.
     await home();
     expect(document.activeElement).toBe(screen.getByLabelText('Global search'));
-    fireEvent.click(screen.getByRole('button', { name: 'All worktrees →' }));
-    await waitFor(() => expect(repoRow()).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Code reviews' }));
+    await screen.findByTestId('dock');
     const bar = within(screen.getByTestId('dock')).getByLabelText('Global search');
     expect(screen.getByTestId('command-bar')).toBeInTheDocument();
     expect(document.activeElement).not.toBe(bar);

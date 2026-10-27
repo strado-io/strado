@@ -32,10 +32,10 @@ export const ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 /** Pages of the app the box can open (nav.page). */
-export const APP_PAGES = ['home', 'worktrees', 'reviews', 'usage'] as const;
+export const APP_PAGES = ['home', 'reviews', 'usage'] as const;
 export type AppPage = (typeof APP_PAGES)[number];
 /** Settings sections (SettingsPage's SettingsSection). */
-export const SETTINGS_SECTIONS = ['profile', 'organization', 'appearance', 'workspaces', 'agents', 'runners', 'integrations', 'jira', 'linear', 'gitlab', 'github', 'privacy', 'commandbox'] as const;
+export const SETTINGS_SECTIONS = ['profile', 'organization', 'appearance', 'workspaces', 'projects', 'agents', 'runners', 'integrations', 'jira', 'linear', 'gitlab', 'github', 'privacy', 'commandbox'] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 /** The plain settings the box may change, and the values each takes (null = free text). */
 export const SETTINGS: Record<string, { section: SettingsSectionId; label: string; values: readonly string[] | null; max?: number }> = {
@@ -110,8 +110,8 @@ export type ActionArgs = {
   'nav.newWorktree': { repoPath: string | null };
   /** Open a page of the app (closes Settings). */
   'nav.page': { page: AppPage };
-  /** Open Settings at a section. */
-  'settings.open': { section: SettingsSectionId };
+  /** Open Settings at a section; with 'projects', at one project (its repo path) when the text named it. */
+  'settings.open': { section: SettingsSectionId; projectPath?: string | null };
   /** Change one plain setting; `value` is checked against SETTINGS. */
   'settings.set': { setting: SettingId; value: string };
   /** A Focus (a saved group of worktrees): create (`name`, first members),
