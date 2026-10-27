@@ -227,7 +227,6 @@ export function CodeReviewsPage({
   hasMore,
   pageLimit,
   error,
-  sidebarCollapsed,
   onExpandSidebar,
   onRefresh,
   onStateChange,
@@ -250,9 +249,9 @@ export function CodeReviewsPage({
   /** Non-null when merging repositories: the deepest page that stays exact. */
   pageLimit?: number | null;
   error: string | null;
-  /** With the sidebar hidden the page owns the re-open control, so the shared
-      toolbar row above it can disappear entirely instead of sitting empty. */
-  sidebarCollapsed?: boolean;
+  /** With the sidebar hidden the page owns the re-open control (it reads the
+      sidebar's state itself), so the shared toolbar row above it can disappear
+      entirely instead of sitting empty. */
   onExpandSidebar?: () => void;
   onRefresh: () => void;
   onStateChange: (state: ReviewState) => void;
@@ -320,7 +319,7 @@ export function CodeReviewsPage({
         <div className="shrink-0 border-b border-zinc-900 bg-zinc-950">
           <div className="flex flex-col gap-1.5 px-2.5 py-2">
             <div className="app-drag flex items-center gap-2">
-              <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
+              <OpenSidebarButton onClick={onExpandSidebar} />
               <div className="flex min-w-0 flex-1 rounded-md bg-zinc-900 p-0.5">
                 {(['open', 'merged', 'closed'] as const).map((value) => (
                   <button

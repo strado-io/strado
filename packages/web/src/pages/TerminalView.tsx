@@ -555,7 +555,6 @@ export function TerminalView({
   onClose,
   mode: modeProp,
   sessionId: sessionIdProp = '1',
-  sidebarCollapsed = false,
   onExpandSidebar,
   openSeq = 0,
   modalOpen = false,
@@ -572,7 +571,6 @@ export function TerminalView({
    *  tells an ALREADY-open hub to switch to the requested tab — including when
    *  the same session is re-selected after manual navigation. */
   openSeq?: number;
-  sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
@@ -3137,7 +3135,7 @@ export function TerminalView({
       })()}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="app-drag flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5 text-sm text-zinc-200">
-          <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
+          <OpenSidebarButton onClick={onExpandSidebar} />
           {/* tabs scroll inside this container; the status/action controls sit
               at the row's end — one row, maximum vertical space for panes */}
           <TabStrip

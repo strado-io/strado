@@ -4,6 +4,7 @@
 // the sidebar's top row, or a page toolbar when the sidebar is closed — pads
 // past them and lets that strip drag the window.
 import { useEffect, useState } from 'react';
+import { setSidebarCollapsed, useSidebarCollapsed } from '../lib/sidebarStore';
 
 /**
  * True while the macOS traffic lights sit inside the app: the desktop shell on
@@ -73,12 +74,18 @@ export function TrafficLightsSpacer() {
  * open button. It comes and goes in the same frame as the sidebar, so the
  * toolbar moves once, with everything else.
  */
-export function OpenSidebarButton({ shown, onClick }: { shown: boolean; onClick: () => void }) {
-  if (!shown) return null;
+export function OpenSidebarButton({ shown, onClick }: {
+  /** Overrides the live state (lib/sidebarStore), which it reads by default. */
+  shown?: boolean;
+  /** Defaults to showing the sidebar. */
+  onClick?: () => void;
+}) {
+  const collapsed = useSidebarCollapsed();
+  if (!(shown ?? collapsed)) return null;
   return (
     <>
       <TrafficLightsSpacer />
-      <SidebarToggleButton open={false} onClick={onClick} />
+      <SidebarToggleButton open={false} onClick={onClick ?? (() => setSidebarCollapsed(false))} />
     </>
   );
 }

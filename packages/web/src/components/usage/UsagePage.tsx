@@ -51,9 +51,8 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
  * Costs are estimates at full API rate — subscription plans do not bill per
  * token — so every figure here is labelled rather than presented as an invoice.
  */
-export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar }: {
+export function UsagePage({ wsId, onExpandSidebar }: {
   wsId: string;
-  sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
 }) {
   const [tab, setTab] = useState<Tab>('tokens');
@@ -77,7 +76,7 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar }: {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="app-drag sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-900 bg-zinc-950 px-3 py-2">
-        <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => onExpandSidebar?.()} />
+        <OpenSidebarButton onClick={onExpandSidebar} />
         <Segmented
           label="Usage view"
           value={tab}

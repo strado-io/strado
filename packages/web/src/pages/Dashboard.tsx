@@ -1,5 +1,5 @@
 import { OpenSidebarButton } from '../components/SidebarToggle';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type FocusTicket, type RemoteWorktree, type RunnerStatus, type TicketProviderId } from '../api';
 import { subscribeWorktrees, worktreesReducer } from '../eventStream';
 import { computeClaudeNotifications, snapshotStatuses, type ClaudeStatusMap } from '../hooks/claudeNotifications';
@@ -30,7 +30,7 @@ import type { UpdateFooterProps } from '../components/UpdateFooter';
 import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
 import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
-import { markLayoutJump } from '../lib/layoutMotion';
+import { getSidebarCollapsed, loadSidebarCollapsed, setSidebarCollapsed, useSidebarCollapsed } from '../lib/sidebarStore';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import type { HostTab } from '../components/hosts/HostDetails';
@@ -102,18 +102,12 @@ function reducer(state: State, action: Action): State {
 }
 
 // v2: the Dock build starts with the sidebar hidden, whatever an older build stored.
-const STORE_SIDEBAR = 'strado:sidebar-collapsed:v2';
 
 // Tasks remains the initial destination; code reviews is the second
 // workspace-level view. We intentionally do not restore the old retired view
 // values from `strado:view`.
 // No hub open: the Worktrees page, every repo and worktree in the space.
 const INITIAL_VIEW: SidebarView = { kind: 'worktrees' };
-// Hidden until asked for (⌘B): the Dock at the bottom is all a day needs.
-function readSidebarCollapsed(): boolean {
-  const stored = localStorage.getItem(STORE_SIDEBAR);
-  return stored === null ? true : stored === '1';
-}
 
 // Per-Focus memory of the open worktree, so switching Focus (or space) brings
 // back what each Focus had open instead of the Worktrees page (the tab WITHIN
@@ -363,7 +357,11 @@ export function Dashboard(props: {
   const commandBarRef = useRef<CommandBarHandle | null>(null);
   const focusCommandBar = () => commandBarRef.current?.focus();
   const { showDock } = useHubDisplayPreferences();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
+  // The sidebar's state lives in lib/sidebarStore, outside this component, so
+  // a toggle re-renders only the sidebar and the open buttons. Mounting
+  // re-reads what was persisted (hidden until asked for, ⌘B: the Dock at the
+  // bottom is all a day needs).
+  useState(loadSidebarCollapsed);
   const [activeView, setActiveView] = useState<SidebarView>(INITIAL_VIEW);
   const [reviewState, setReviewState] = useState<MergeRequest['state']>('open');
   const [reviewSearchFilter, setReviewSearchFilter] = useState({ wsId, value: '' });
@@ -524,37 +522,25 @@ export function Dashboard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stations, orphanCalls, stationsLoaded]);
 
-  useEffect(() => {
-    localStorage.setItem(STORE_SIDEBAR, sidebarCollapsed ? '1' : '0');
-  }, [sidebarCollapsed]);
-
   // The sidebar is where the user left it, everywhere (home included): only
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
   // sidebar"). A hub closing itself (its last session gone) must not hide it.
-  const sidebarHidden = sidebarCollapsed;
-  // The sidebar toggles in one frame, as Warp's does: no slide. A slide made
-  // every terminal beside it hold, clip and refit mid-motion, which read as
-  // shaking. Declared as a layout jump (a layout effect, so before this
-  // frame's resize observers run), terminals fit in this same frame and tell
-  // the pty at once: the agent redraws once, right away.
-  const firstSidebarRender = useRef(true);
-  useLayoutEffect(() => {
-    if (firstSidebarRender.current) { firstSidebarRender.current = false; return; }
-    markLayoutJump();
-  }, [sidebarHidden]);
+  // It toggles in one frame, as Warp's does: no slide (a slide made every
+  // terminal beside it hold, clip and refit mid-motion, which read as
+  // shaking). The store declares each toggle a layout jump, so terminals fit
+  // in that same frame and tell the pty at once.
 
-  // Collapsing the sidebar unmounts it, and with it the space chord's own
-  // listener — while the shell keeps intercepting the chord inside embeds and
-  // forwarding it, so it became a swallowed no-op. There is no carousel to
-  // animate here, so this switches straight over.
-  useSpaceShortcut((dir) => {
+  // Collapsed, the sidebar's space chord stands down, while the shell keeps
+  // intercepting the chord inside embeds and forwarding it — so this one
+  // switches straight over (CollapsedSpaceShortcut, below).
+  const moveSpace = (dir: -1 | 1) => {
     const i = allWorkspaces.findIndex((w) => w.id === wsId);
     const target = i === -1 ? undefined : allWorkspaces[i + dir];
     if (!target) return;
     Promise.resolve(switchTo(target.id)).catch((err: unknown) =>
       dispatch({ type: 'error', message: `Could not switch to that workspace: ${(err as Error).message}` }),
     );
-  }, sidebarHidden);
+  };
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -960,7 +946,7 @@ export function Dashboard(props: {
       if (settingsOpenRef.current) setSettingsNonce((n) => n + 1);
     },
     // The same state ⌘B and the collapse/open buttons use.
-    sidebar: (show) => setSidebarCollapsed(!(show ?? sidebarHidden)),
+    sidebar: (show) => setSidebarCollapsed(!(show ?? getSidebarCollapsed())),
     // Focus edits go through the sidebar's own calls: a new Focus becomes the
     // active one, and deleting the active one leaves none active.
     focus: async ({ op, focusId, name, worktreePaths }) => {
@@ -1061,9 +1047,9 @@ export function Dashboard(props: {
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       {/* Settings is a modal over the app, which stays in view behind it. */}
       <div className="flex min-w-0 flex-1" aria-hidden={settingsSection ? true : undefined}>
+      <CollapsedSpaceShortcut move={moveSpace} />
       <div className="contents">
-        <Sidebar
-          hidden={sidebarHidden}
+        <LiveSidebar
           repos={state.repos}
           worktrees={state.worktrees}
           remoteWorktrees={remote.worktrees}
@@ -1118,7 +1104,6 @@ export function Dashboard(props: {
               sessionId={selectedSessionId}
               openSeq={openSeq}
               onClose={() => setSelectedRemote(null)}
-              sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
               modalOpen={modalOpen}
               mission={hubMission}
@@ -1133,7 +1118,6 @@ export function Dashboard(props: {
               sessionId={selectedSessionId}
               openSeq={openSeq}
               onClose={() => setSelectedPath(null)}
-              sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
               modalOpen={modalOpen}
               mission={hubMission}
@@ -1143,7 +1127,7 @@ export function Dashboard(props: {
           <div className="flex min-h-0 flex-1 flex-col">
             {/* The window's grab strip, as on home and the worktree view. */}
             <div data-testid="jarvis-drag" className="app-drag flex h-11 shrink-0 items-center gap-2 px-3">
-              <OpenSidebarButton shown={!!sidebarCollapsed} onClick={() => setSidebarCollapsed(false)} />
+              <OpenSidebarButton />
             </div>
             <div className="flex min-h-0 flex-1">
               <FocusJarvisMain onOpenCard={openJarvisCard} start={jarvisStart} />
@@ -1171,14 +1155,12 @@ export function Dashboard(props: {
             onRepoChange={setReviewRepoId}
             onSearchChange={setReviewSearch}
             onPageChange={codeReviews.goToPage}
-            sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={() => setSidebarCollapsed(false)}
           />
         ) : activeView.kind === 'usage' ? (
           <UsagePage
             key={wsId}
             wsId={wsId}
-            sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={() => setSidebarCollapsed(false)}
           />
         ) : (
@@ -1217,7 +1199,6 @@ export function Dashboard(props: {
                 onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
                 onNewWorktree={() => props.onNewWorktree()}
                 onWaiting={selectFirstNeedsYou}
-                sidebarCollapsed={sidebarHidden}
                 onExpandSidebar={() => setSidebarCollapsed(false)}
               />
               </>
@@ -1330,4 +1311,16 @@ export function Dashboard(props: {
     </RendererOverlayContext.Provider>
     </UiControlProvider>
   );
+}
+
+// The sidebar with its live collapsed state: only this re-renders on a toggle.
+function LiveSidebar(props: Omit<React.ComponentProps<typeof Sidebar>, 'hidden'>) {
+  const hidden = useSidebarCollapsed();
+  return <Sidebar {...props} hidden={hidden} />;
+}
+
+// The workspace switch chord while the sidebar (whose own chord stands down) is collapsed.
+function CollapsedSpaceShortcut({ move }: { move: (dir: -1 | 1) => void }) {
+  useSpaceShortcut(move, useSidebarCollapsed());
+  return null;
 }

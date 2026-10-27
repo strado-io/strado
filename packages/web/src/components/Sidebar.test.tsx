@@ -118,11 +118,11 @@ describe('Sidebar tree', () => {
   // Code reviews / Usage / Settings live in one icon row at the bottom,
   // leaving the rail above for groups and worktrees. No Tasks entry and no
   // counts: the Worktrees page is where you land anyway, and numbers there were noise.
-  it('collapsed, it stays built but is display:none by class (the hidden attribute alone loses to flex)', () => {
+  it('collapsed, it stays built, parked off-screen and invisible (its layout kept), out of the flow', () => {
     wrap(<Sidebar {...base} hidden />);
     const aside = screen.getByTestId('sidebar');
-    expect(aside.className.split(/\s+/)).toContain('hidden');
-    expect(aside.className.split(/\s+/)).not.toContain('flex');
+    expect(aside.className.split(/\s+/)).toEqual(expect.arrayContaining(['invisible', 'fixed', '-left-[200vw]']));
+    expect(aside).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('puts the page switcher in an icon row at the bottom, below the Focus, without Tasks or counts', () => {

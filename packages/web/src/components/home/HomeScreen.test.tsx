@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Worktree } from '../../types';
 import { HomeScreen } from './HomeScreen';
+import { setSidebarCollapsed } from '../../lib/sidebarStore';
 
 const recent = [
   { worktree: { path: '/wt/a' } as Worktree, name: 'master', repo: 'Fleetx Dashboard', openedAt: Date.now() - 2 * 3600_000 },
@@ -58,7 +59,8 @@ describe('HomeScreen (Spotlight-style start)', () => {
 
   it('with the sidebar hidden, a button brings it back (as the Worktrees page had)', () => {
     const expand = vi.fn();
-    setup({ sidebarCollapsed: true, onExpandSidebar: expand });
+    setSidebarCollapsed(true);
+    setup({ onExpandSidebar: expand });
     fireEvent.click(screen.getByLabelText('Open sidebar'));
     expect(expand).toHaveBeenCalled();
   });
