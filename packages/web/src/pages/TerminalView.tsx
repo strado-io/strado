@@ -14,7 +14,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { flushSync } from 'react-dom';
 import type { FileAskContext, RepoConfig, WorkflowStatus, Worktree } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
-import { QuotaCircle } from '../components/usage/QuotaCircle';
 import { track } from '../telemetry';
 import { api, type StationDto, type UiCommandAck, type UiTabRef } from '../api';
 import { subscribeWorktrees } from '../eventStream';
@@ -558,8 +557,6 @@ export function TerminalView({
   sessionId: sessionIdProp = '1',
   sidebarCollapsed = false,
   onExpandSidebar,
-  runningServers,
-  onOpenUsage,
   openSeq = 0,
   modalOpen = false,
   mission,
@@ -577,12 +574,6 @@ export function TerminalView({
   openSeq?: number;
   sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
-  /** The board's running-dev-servers chip, handed down so the same control is
-   *  reachable from inside a worktree. Owned by the Dashboard, which is where
-   *  the live worktree list and the start/stop calls are. */
-  runningServers?: React.ReactNode;
-  /** Switches the board to the Usage view — the quota dial's footer link. */
-  onOpenUsage?: () => void;
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
   modalOpen?: boolean;
@@ -1087,7 +1078,6 @@ export function TerminalView({
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   // The agent-usage popover lives in the toolbar; like the menus it must
   // detach the native Browser view, which otherwise paints over it.
-  const [usageOpen, setUsageOpen] = useState(false);
   const addMenuRef = useRef(false);
   addMenuRef.current = addMenu !== null;
   // "More" menu popover holding the per-worktree header controls.
@@ -3316,8 +3306,6 @@ export function TerminalView({
               </button>
             </>
           )}
-          {/* Usage last: Run, Changes, then the quota dial at the far right. */}
-          <QuotaCircle wsId={localWsId} onOpenUsage={onOpenUsage} onOpenChange={setUsageOpen} />
           {/* Which machine, always visible. Without it a remote hub is
               indistinguishable from a local one. */}
           {remote && (
@@ -3328,7 +3316,6 @@ export function TerminalView({
               {remote.runnerName}
             </span>
           )}
-          {runningServers}
         </div>
         {dtMenu && (
           <>
@@ -3602,7 +3589,7 @@ export function TerminalView({
                 const url = resolvedBrowserUrl(pk, g.path);
                 // renderer overlays paint UNDER native views — detach the
                 // panes while any menu or in-hub dialog is open
-                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || usageOpen || switcher || tabDragging || paneDrop || filePicker || fileAsk);
+                const overlayUp = !!(modalOpen || dtMenu || bwMenu || addMenu || switcher || tabDragging || paneDrop || filePicker || fileAsk);
                 const navigate = (raw: string) => {
                   const q = raw.trim();
                   if (!q) return;

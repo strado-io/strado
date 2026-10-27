@@ -93,7 +93,6 @@ vi.mock('../api', () => ({
       },
     },
     usage: {
-      // One account reporting a limit, so the toolbar shows the quota dial.
       accounts: vi.fn().mockResolvedValue([{
         agent: 'claude', measuredAt: 0, accountLabel: 'dev@example.com', plan: 'TEAM',
         credentialSource: 'Keychain', quotaStatus: 'official',
@@ -276,34 +275,6 @@ describe('renderer modal visibility', () => {
 
     previewMock.mockClear();
     view.rerender(<TerminalView worktree={worktree} onClose={() => {}} modalOpen={false} />);
-    await vi.waitFor(() => {
-      expect(previewMock.mock.calls.some((c) => c[0] === 'open' && c[1] === P)).toBe(true);
-    });
-  });
-
-  it('detaches the native preview while the agent usage popover is open', async () => {
-    const P = worktree.path;
-    localStorage.setItem('strado:browser-tabs', JSON.stringify([P]));
-    localStorage.setItem('strado:browser-urls', JSON.stringify({ [P]: 'https://example.test' }));
-    localStorage.setItem('strado.activeTab', JSON.stringify({ [P]: 'browser:1' }));
-
-    render(<TerminalView worktree={worktree} onClose={() => {}} />);
-    await vi.waitFor(() => {
-      expect(previewMock.mock.calls.some((c) => c[0] === 'open' && c[1] === P)).toBe(true);
-    });
-
-    // The popover is plain DOM in the toolbar; the Browser tab is a native view
-    // that always paints above it — so the view has to step aside.
-    previewMock.mockClear();
-    fireEvent.click(await screen.findByRole('button', { name: /Agent usage/ }));
-    expect(screen.getByRole('dialog', { name: 'Agent usage' })).toBeInTheDocument();
-    await vi.waitFor(() => {
-      expect(previewMock.mock.calls.some((c) => c[0] === 'hide' && c[1] === P)).toBe(true);
-    });
-
-    previewMock.mockClear();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Agent usage' })).not.toBeInTheDocument();
     await vi.waitFor(() => {
       expect(previewMock.mock.calls.some((c) => c[0] === 'open' && c[1] === P)).toBe(true);
     });

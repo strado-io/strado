@@ -907,16 +907,17 @@ export function Dashboard(props: {
       dispatch({ type: 'error', message: (err as Error).message });
     }
   };
-  // One element, rendered in both toolbars — the Worktrees page's and the hub's
-  // — so the "what is serving right now" answer is the same wherever you are. Opening a
-  // row lands on the preview tab in the desktop app; the web build has no
-  // embedded browser, so it opens the hub's shell instead.
+  // What is serving right now, in the sidebar's bottom bar beside Usage, so the
+  // answer is the same wherever you are. Opening a row lands on the preview tab
+  // in the desktop app; the web build has no embedded browser, so it opens the
+  // hub's shell instead.
   const runningServers = (
     <RunningServers
       worktrees={state.worktrees}
       onOpen={(w) => openInlineHub(w, typeof window !== 'undefined' && window.strado ? 'browser' : 'shell')}
       onStop={handleStop}
       onKillExternal={handleKillExternal}
+      placement="up"
     />
   );
 
@@ -1089,6 +1090,7 @@ export function Dashboard(props: {
           onSelect={selectView}
           onSwitchError={(message) => dispatch({ type: 'error', message })}
           onOpenSettings={() => setSettingsSection('profile')}
+          running={runningServers}
           onCollapse={() => setSidebarCollapsed(true)}
           onAddRepo={(anchor) => {
             setAddRepoAnchor(anchor ?? null);
@@ -1131,8 +1133,6 @@ export function Dashboard(props: {
               onClose={() => setSelectedRemote(null)}
               sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
-              runningServers={runningServers}
-              onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
               mission={hubMission}
             />
@@ -1148,8 +1148,6 @@ export function Dashboard(props: {
               onClose={() => setSelectedPath(null)}
               sidebarCollapsed={sidebarCollapsed}
               onExpandSidebar={() => setSidebarCollapsed(false)}
-              runningServers={runningServers}
-              onOpenUsage={() => setActiveView({ kind: 'usage' })}
               modalOpen={modalOpen}
               mission={hubMission}
             />
@@ -1188,7 +1186,6 @@ export function Dashboard(props: {
             onPageChange={codeReviews.goToPage}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={() => setSidebarCollapsed(false)}
-            runningServers={runningServers}
           />
         ) : activeView.kind === 'usage' ? (
           <UsagePage
@@ -1196,7 +1193,6 @@ export function Dashboard(props: {
             wsId={wsId}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={() => setSidebarCollapsed(false)}
-            runningServers={runningServers}
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">

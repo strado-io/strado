@@ -51,11 +51,10 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
  * Costs are estimates at full API rate — subscription plans do not bill per
  * token — so every figure here is labelled rather than presented as an invoice.
  */
-export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServers }: {
+export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar }: {
   wsId: string;
   sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
-  runningServers?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>('tokens');
   const [days, setDays] = useState<UsageRange>(30);
@@ -86,7 +85,6 @@ export function UsagePage({ wsId, sidebarCollapsed, onExpandSidebar, runningServ
           options={[{ value: 'tokens', label: 'Token usage' }, { value: 'machine', label: 'Machine resources' }]}
         />
         <div className="ml-auto flex items-center gap-2">
-          {runningServers}
           <button
             type="button"
             onClick={() => setHideEmails((value) => !value)}

@@ -29,6 +29,8 @@ export type Props = {
   selected: SidebarView | null;
   onSelect: (view: SidebarView) => void;
   onOpenSettings: () => void;
+  /** The running-dev-servers chip, beside Usage in the bottom bar (hidden at zero). */
+  running?: React.ReactNode;
   onCollapse: () => void;
   /** Sliding shut: it stays drawn, unclickable, until the slide ends. */
   collapsing?: boolean;
@@ -174,7 +176,7 @@ function WorkspaceSwitcher({
 }
 
 export function Sidebar({
-  repos, worktrees, selected, onSelect, onOpenSettings,
+  repos, worktrees, selected, onSelect, onOpenSettings, running,
   onCollapse, collapsing = false, slideIn = false, onAddRepo, onOpenWorktree,
   activeWorktreePath, onNewWorktree, onWorktreeSettings, onProjectSettings, onDeleteWorktree, update,
   remoteWorktrees = [], runnerStatuses = [], remoteLoading = false, onOpenRemoteWorktree, onDeleteRemoteWorktree, onRebuildSandbox,
@@ -312,7 +314,7 @@ export function Sidebar({
       {/* The page icons in one glass bar, its bottom on the Dock's line. */}
       <div className="flex flex-col gap-1.5 px-2 pb-2 pt-1.5">
         <UpdateFooter {...update} />
-        <SidebarNav selected={selected} onSelect={onSelect} onOpenSettings={onOpenSettings} />
+        <SidebarNav selected={selected} onSelect={onSelect} onOpenSettings={onOpenSettings} running={running} />
       </div>
     </aside>
   );

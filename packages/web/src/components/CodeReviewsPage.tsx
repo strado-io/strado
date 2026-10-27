@@ -1,5 +1,5 @@
 import { OpenSidebarButton } from './SidebarToggle';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CodeReview, CodeReviewCounts, CodeReviewRepository, MergeRequest, RepoConfig, Worktree } from '../types';
 import { MR_STATE_COLOR, PIPELINE_DETAIL, PrStateIcon, prKind } from './sidebar/prVisuals';
 import { MrReview } from './MrReview';
@@ -229,7 +229,6 @@ export function CodeReviewsPage({
   error,
   sidebarCollapsed,
   onExpandSidebar,
-  runningServers,
   onRefresh,
   onStateChange,
   onRepoChange,
@@ -255,7 +254,6 @@ export function CodeReviewsPage({
       toolbar row above it can disappear entirely instead of sitting empty. */
   sidebarCollapsed?: boolean;
   onExpandSidebar?: () => void;
-  runningServers?: ReactNode;
   onRefresh: () => void;
   onStateChange: (state: ReviewState) => void;
   onRepoChange: (repoId: string) => void;
@@ -333,7 +331,6 @@ export function CodeReviewsPage({
                   >{value} <span className="ml-1 font-mono text-[10px]">{activeCounts[value].toLocaleString()}</span></button>
                 ))}
               </div>
-              {runningServers}
             </div>
             <div className="flex items-center gap-2">
               <input

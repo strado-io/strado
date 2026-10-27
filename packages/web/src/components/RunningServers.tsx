@@ -10,12 +10,16 @@ import { isRunning } from '../hooks/filters';
  * chip hides itself at zero, so it never becomes another empty surface.
  */
 export function RunningServers({
-  worktrees, onOpen, onStop, onKillExternal,
+  worktrees, onOpen, onStop, onKillExternal, placement = 'down',
 }: {
   worktrees: Worktree[];
   onOpen: (w: Worktree) => void;
   onStop: (w: Worktree) => void;
   onKillExternal: (w: Worktree) => void;
+  /** Where the list opens: under the chip, or above the bar it sits in, at that
+   *  bar's width (the sidebar's bottom bar: its nearest positioned box), so it
+   *  stays over the sidebar, clear of a Browser tab's native view. */
+  placement?: 'down' | 'up';
 }) {
   const [open, setOpen] = useState(false);
   const running = worktrees.filter(isRunning);
@@ -43,7 +47,7 @@ export function RunningServers({
           : '';
 
   return (
-    <div className="relative shrink-0 self-center">
+    <div className={`${placement === 'up' ? '' : 'relative '}shrink-0 self-center`}>
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label="Running dev servers"
@@ -58,7 +62,9 @@ export function RunningServers({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="surface-pop absolute right-0 top-full z-50 mt-1 min-w-56 rounded-md p-1">
+          {/* Above the bar it is opaque (menu-solid): frosted glass inside the bar's own
+              glass composites see-through, and what sits above would show. */}
+          <div className={`absolute z-50 min-w-56 rounded-md p-1 ${placement === 'up' ? 'menu-solid inset-x-0 bottom-full mb-2' : 'surface-pop right-0 top-full mt-1'}`}>
             {running.map((w) => (
               <div key={w.path} className="group flex items-center gap-2 rounded pr-1 hover:bg-zinc-900">
                 <button

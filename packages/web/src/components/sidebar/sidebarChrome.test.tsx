@@ -38,6 +38,12 @@ describe('sidebar chrome', () => {
     expect(screen.getByRole('button', { name: 'Code reviews' }).className).not.toMatch(/tab-pill/);
   });
 
+  it('bottom nav: what is running sits right after Usage, before Settings', () => {
+    render(<SidebarNav selected={null} onSelect={vi.fn()} onOpenSettings={vi.fn()} running={<button type="button">2 running</button>} />);
+    const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(names).toEqual(['Code reviews', 'Usage', '2 running', 'Open settings']);
+  });
+
   it('the Focus list has no header: no caption, no + of its own (New focus is in the workspace row)', () => {
     const focus = { id: 'f', name: 'test 2', members: [], createdAt: 't', lastActiveAt: 't' };
     render(<FocusList focuses={[focus]} activeId="f" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>{() => 'cards'}</FocusList>);

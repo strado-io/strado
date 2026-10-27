@@ -1,5 +1,5 @@
-// The sidebar's page switcher: one row of icons at the bottom (Worktrees,
-// Code reviews, Usage, Settings), so the rail above is the Focus. No counts:
+// The sidebar's page switcher: one row of icons at the bottom (Code reviews,
+// Usage, then what is running, Settings at the end), so the rail above is the Focus. No counts:
 // the row is for going somewhere, not for reading numbers. Account things —
 // profile, organization, feedback, sign out — live in Settings.
 import type { SidebarView } from '../Sidebar';
@@ -39,19 +39,22 @@ function NavButton({ label, icon, active = false, onClick }: {
   );
 }
 
-export function SidebarNav({ selected, onSelect, onOpenSettings }: {
+export function SidebarNav({ selected, onSelect, onOpenSettings, running }: {
   /** The page shown; null on home (no page is current there). */
   selected: SidebarView | null;
   onSelect: (view: SidebarView) => void;
   onOpenSettings: () => void;
+  /** The running-dev-servers chip, after Usage; it renders nothing at zero. */
+  running?: React.ReactNode;
 }) {
   return (
     // A glass bar like a pane card: 40px, the 28px buttons inside, settings at the right.
-    <nav aria-label="Pages" data-testid="sidebar-nav" className="glass pane-card flex h-10 items-center gap-1 px-1.5">
+    <nav aria-label="Pages" data-testid="sidebar-nav" className="glass pane-card relative flex h-10 items-center gap-1 px-1.5">
       <NavButton label="Code reviews" icon={reviewsIcon} active={selected?.kind === 'reviews'}
         onClick={() => onSelect({ kind: 'reviews' })} />
       <NavButton label="Usage" icon={usageIcon} active={selected?.kind === 'usage'}
         onClick={() => onSelect({ kind: 'usage' })} />
+      {running}
       <span className="flex-1" />
       <NavButton label="Open settings" icon={settingsIcon} onClick={onOpenSettings} />
     </nav>
