@@ -9,8 +9,15 @@ const settledListeners = new Set<() => void>();
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-/** A layout animation starts now and lasts `ms`; overlapping ones extend it. */
-export function beginLayoutMotion(ms: number): void {
+const startListeners = new Set<(dx: number) => void>();
+
+/**
+ * A layout animation starts now and lasts `ms`; overlapping ones extend it.
+ * `dx` is how much wider the main area ends up (negative: narrower), so a
+ * terminal can take its final size up front instead of being clipped.
+ */
+export function beginLayoutMotion(ms: number, dx = 0): void {
+  for (const cb of [...startListeners]) cb(dx);
   until = Math.max(until, now() + ms);
   if (timer) clearTimeout(timer);
   timer = setTimeout(settle, Math.max(0, until - now()));
@@ -29,4 +36,10 @@ export const isLayoutMoving = (): boolean => now() < until;
 export function onLayoutSettled(cb: () => void): () => void {
   settledListeners.add(cb);
   return () => { settledListeners.delete(cb); };
+}
+
+/** Called as each layout animation starts, with its dx; returns the unsubscribe. */
+export function onLayoutMotionStart(cb: (dx: number) => void): () => void {
+  startListeners.add(cb);
+  return () => { startListeners.delete(cb); };
 }

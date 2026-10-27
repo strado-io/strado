@@ -550,7 +550,10 @@ export function Dashboard(props: {
   // (lib/layoutMotion). A layout effect, so it is declared before this
   // frame's resize observers run.
   useLayoutEffect(() => {
-    if (sidebarSlide) beginLayoutMotion(SIDEBAR_SLIDE_MS + 100);
+    if (!sidebarSlide) return;
+    // Mounted (sliding in) or still drawn (sliding out): its width is what the main area gives or gains.
+    const w = document.querySelector<HTMLElement>('[data-testid="sidebar"]')?.offsetWidth ?? 0;
+    beginLayoutMotion(SIDEBAR_SLIDE_MS + 100, sidebarSlide === 'in' ? -w : w);
   }, [sidebarSlide]);
   // Either way the flag clears once the slide is done: left on, the slide in
   // would replay whenever the app reappears (back from Settings, which hides it).

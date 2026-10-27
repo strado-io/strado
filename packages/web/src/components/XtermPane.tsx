@@ -11,7 +11,7 @@ import { api } from '../api';
 import { attachDroppedImages } from '../hooks/terminalDrop';
 import { APPEARANCE_CHANGE_EVENT } from '../hooks/useAppearance';
 import { runIdOfTab } from '../lib/runTab';
-import { isLayoutMoving, onLayoutSettled } from '../lib/layoutMotion';
+import { isLayoutMoving, onLayoutMotionStart, onLayoutSettled } from '../lib/layoutMotion';
 import { findFileLinks } from '../lib/fileLinks';
 import { SearchAddon } from '@xterm/addon-search';
 import { TerminalSearchBar, filesSearchKey, searchKey, type SearchPort } from './TerminalSearchBar';
@@ -497,16 +497,17 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       if (container.clientWidth === 0 || container.clientHeight === 0) return false;
       const before = `${term.cols}x${term.rows}`;
       fit.fit();
-      // A real resize clears the renderer's drawing buffer at once, but xterm
-      // repaints only on its next frame: one blank frame that reads as a
-      // flicker. Paint now (Tabby does the same; private API, so guarded).
-      if (`${term.cols}x${term.rows}` !== before) {
-        try {
-          (term as unknown as { _core?: { _renderService?: { _renderRows?: (a: number, b: number) => void } } })
-            ._core?._renderService?._renderRows?.(0, term.rows - 1);
-        } catch { /* the next frame paints it */ }
-      }
+      if (`${term.cols}x${term.rows}` !== before) paintNow();
       return true;
+    };
+    // A real resize clears the renderer's drawing buffer at once, but xterm
+    // repaints only on its next frame: one blank frame that reads as a
+    // flicker. Paint now (Tabby does the same; private API, so guarded).
+    const paintNow = () => {
+      try {
+        (term as unknown as { _core?: { _renderService?: { _renderRows?: (a: number, b: number) => void } } })
+          ._core?._renderService?._renderRows?.(0, term.rows - 1);
+      } catch { /* the next frame paints it */ }
     };
 
     const sendResize = () => {
@@ -650,7 +651,55 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     // settles: one SIGWINCH instead of one per frame, so a TUI redraws once.
     const ro = new ResizeObserver(() => { if (!isLayoutMoving()) onResizeFrame(); });
     ro.observe(container);
-    const offSettled = onLayoutSettled(refit);
+    // While a layout animation runs the terminal is pinned to the pane's right
+    // edge, where the text stays still: the sidebar's side is where the room
+    // changes. Narrowing, it takes its final size up front, so nothing is
+    // clipped and a strip on the left closes as the sidebar covers it;
+    // widening, it keeps its size and a strip opens as the sidebar leaves.
+    // The strip is the terminal's own background, so it reads as padding.
+    let pinned = false;
+    const pin = (on: boolean) => {
+      // Keep the gap it has at rest on the right (the scrollbar's room), so
+      // unpinning at the end doesn't shift the text.
+      const screen = term.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
+      const gap = on && screen ? Math.max(0, Math.round(container.getBoundingClientRect().right - screen.right)) : 0;
+      pinned = on;
+      container.style.display = on ? 'flex' : '';
+      container.style.justifyContent = on ? 'flex-end' : '';
+      container.style.paddingRight = on ? `${gap}px` : '';
+      container.style.background = on ? String(term.options.theme?.background ?? '') : '';
+      if (term.element) term.element.style.flexShrink = on ? '0' : '';
+    };
+    const offStart = onLayoutMotionStart((dx) => {
+      if (container.clientWidth === 0 || container.clientHeight === 0) return;
+      pin(true);
+      if (dx >= 0) return;
+      const mainWidth = container.closest('main')?.clientWidth ?? 0;
+      if (mainWidth <= 0) return;
+      // A pane that spans the main area loses all of it; side-by-side splits
+      // divide it by their share.
+      const spans = container.clientWidth > mainWidth * 0.6;
+      const target = Math.max(0, Math.round(spans ? container.clientWidth + dx : container.clientWidth * (mainWidth + dx) / mainWidth));
+      const width = container.style.width;
+      const padding = container.style.paddingRight;
+      container.style.width = `${target}px`;
+      container.style.paddingRight = '';
+      const dims = fit.proposeDimensions();
+      container.style.width = width;
+      container.style.paddingRight = padding;
+      if (dims && dims.cols > 0 && dims.rows > 0 && (dims.cols !== term.cols || dims.rows !== term.rows)) {
+        term.resize(dims.cols, dims.rows);
+        paintNow();
+        sendResize();
+        // Its rest gap at the final width, so it lands exactly where it will stay.
+        const screen = term.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
+        if (screen) container.style.paddingRight = `${Math.max(0, Math.round(target - screen.width))}px`;
+      }
+    });
+    const offSettled = onLayoutSettled(() => {
+      if (pinned) pin(false);
+      refit();
+    });
     // rAF and fonts.ready are the "layout settled" signals: re-fit and push the
     // size once the font has loaded and the box has its final dimensions, so a
     // pty that spawned against an early measurement gets corrected.
@@ -669,6 +718,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       cancelAnimationFrame(raf);
       ro.disconnect();
       offSettled();
+      offStart();
       if (resizeTimer) clearTimeout(resizeTimer);
       window.removeEventListener('pointerup', flushResize);
       dataSub?.dispose();
