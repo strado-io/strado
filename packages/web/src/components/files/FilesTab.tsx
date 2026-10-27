@@ -391,6 +391,19 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   };
 
   const iconBtn = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-white/[0.06] hover:text-zinc-100';
+  // Each pane's place at the end of its tab strip, where the open file's
+  // buttons go (no header row of their own). One ref callback per pane, so
+  // React doesn't detach and reattach it on every render.
+  const [slots, setSlots] = useState<Record<number, HTMLElement | null>>({});
+  const slotRefs = useRef(new Map<number, (el: HTMLElement | null) => void>());
+  const slotRef = (id: number) => {
+    let ref = slotRefs.current.get(id);
+    if (!ref) {
+      ref = (el) => setSlots((s) => (s[id] === el ? s : { ...s, [id]: el }));
+      slotRefs.current.set(id, ref);
+    }
+    return ref;
+  };
   const historyButtons = (
     <span className="flex shrink-0 items-center">
       <button type="button" onClick={goBack} disabled={back.length === 0} aria-label="Back" title="Back (⌘[)"
@@ -475,7 +488,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
                 <section key={pane.id} data-testid={`files-pane-${i}`} aria-label={i === 0 ? 'Files' : 'Files, side'}
                   className={`flex min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-zinc-800/80' : ''}`}
                   onMouseDownCapture={() => dispatch({ type: 'focus', pane: pi })} onFocusCapture={() => dispatch({ type: 'focus', pane: pi })}>
-                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} focused={tabs.panes.length > 1 && tabs.focus === pi} dirty={dirty}
+                  <TabStrip pane={pane} ids={tabIds(pane.id)} leading={i === 0 ? explorerToggle : undefined} trailing={slotRef(pane.id)} focused={tabs.panes.length > 1 && tabs.focus === pi} dirty={dirty}
                     onActivate={(path) => {
                       const tab = pane.tabs.find((x) => x.path === path);
                       if (tab && path !== pane.active) jump(here.current, { path }, 'preview', pi);
@@ -489,7 +502,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
                       read={read} marks={marks} highlight={searchMarks} onAskAgent={onAskAgent}
                       write={where ? undefined : write} readOnlyWhy={where ? `Files on ${remote?.name ?? 'a runner'} are read-only here` : undefined}
                       onNavigate={(kind, at) => navigate(kind, at, pi)} onCursor={(at) => moved(at, pi)} hover={hover} outline={outline}
-                      headerStart={historyButtons}
+                      headerStart={historyButtons} headerSlot={slots[pane.id] ?? null}
                       headerEnd={i === 0 && tabs.panes.length < 2 ? (
                         <button type="button" onClick={() => open({ path: t.path, line: t.line, col: t.col }, 'permanent', 1)}
                           aria-label="Open to the side" title="Open to the side (⌥-click a definition or reference)"
@@ -528,12 +541,14 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
 // One pane's open files: the preview tab in italics, × or middle-click closes,
 // double-click keeps a preview tab. Scrolls sideways, never wraps. Keyboard:
 // ←/→ (Home/End) move between tabs, Enter or Space shows one, Delete closes it.
-function TabStrip({ pane, ids, leading, focused, dirty, onActivate, onPin, onClose, onClosePane }: {
+function TabStrip({ pane, ids, leading, trailing, focused, dirty, onActivate, onPin, onClose, onClosePane }: {
   pane: Pane;
   /** Files with unsaved edits: ● in place of ×, until hovered. */
   dirty: ReadonlySet<string>;
   /** Before the tabs (the first pane's explorer toggle). */
   leading?: ReactNode;
+  /** After the tabs: where the open file's buttons are put (FileViewer's headerSlot). */
+  trailing?: (el: HTMLElement | null) => void;
   ids: { panel: string; tab: (path: string) => string };
   focused: boolean;
   onActivate: (path: string) => void;
@@ -598,6 +613,7 @@ function TabStrip({ pane, ids, leading, focused, dirty, onActivate, onPin, onClo
           );
         })}
       </div>
+      {trailing && <div ref={trailing} className="flex shrink-0 items-center gap-1 px-1" />}
       {onClosePane && (
         <button type="button" onClick={onClosePane} aria-label="Close side pane" title="Close side pane (Esc)"
           className="flex w-8 shrink-0 items-center justify-center text-[13px] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100">×</button>
