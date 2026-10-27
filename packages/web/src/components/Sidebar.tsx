@@ -96,7 +96,7 @@ function WorkspaceSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-[10px] px-1.5 text-left transition-colors hover:bg-white/[0.04]"
+        className={`group flex h-8 min-w-0 items-center gap-2 rounded-[10px] pl-1.5 pr-1 text-left transition-colors hover:bg-white/[0.06] ${open ? 'bg-white/[0.06]' : ''}`}
       >
         {/* A tinted tile, like a tab's icon on the right. */}
         <span
@@ -109,14 +109,14 @@ function WorkspaceSwitcher({
         <span data-testid="space-name" className="truncate text-[14px] font-medium text-zinc-100">
           {active.name}
         </span>
+        {/* One dropdown button: the chevron sits inside it, next to the name. */}
+        <span aria-hidden data-testid="space-chevron"
+          className={`flex h-5 w-4 shrink-0 items-center justify-center text-zinc-500 transition-transform group-hover:text-zinc-300 ${open ? 'rotate-180' : ''}`}>
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
       </button>
-      {/* The switcher's chevron: part of its click target. */}
-      <span aria-hidden data-testid="space-chevron" onClick={() => setOpen((value) => !value)}
-        className="no-drag flex h-8 w-5 shrink-0 cursor-pointer items-center justify-center text-zinc-600">
-        <svg width="12" height="12" viewBox="0 0 12 12">
-          <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
 
       {open && (
         <div
