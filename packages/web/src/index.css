@@ -401,25 +401,26 @@ body {
 /* A Focus's panel in the sidebar (FocusList FocusPanel): grows open and
    shrinks shut by its grid row, 0fr↔1fr, so nothing is measured. Opening
    starts from 0fr (@starting-style), as it mounts already open. */
+:root { --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); }
+
 /* The drawer ease (t3code's): a quick start that settles slowly, so the
    panel glides rather than snaps. Its contents fade and drop in a touch
    behind the height, and leave a touch ahead of it. */
 .focus-panel {
-  --focus-ease: cubic-bezier(0.32, 0.72, 0, 1);
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 220ms var(--focus-ease);
+  transition: grid-template-rows 220ms var(--ease-drawer);
 }
 .focus-panel[data-open] { grid-template-rows: 1fr; transition-duration: 280ms; }
 .focus-panel > * > * {
   opacity: 0;
   transform: translateY(-4px);
-  transition: opacity 140ms ease-out, transform 220ms var(--focus-ease);
+  transition: opacity 140ms ease-out, transform 220ms var(--ease-drawer);
 }
 .focus-panel[data-open] > * > * {
   opacity: 1;
   transform: none;
-  transition: opacity 220ms ease-out 40ms, transform 280ms var(--focus-ease);
+  transition: opacity 220ms ease-out 40ms, transform 280ms var(--ease-drawer);
 }
 @starting-style {
   .focus-panel[data-open] { grid-template-rows: 0fr; }
@@ -577,3 +578,36 @@ body {
 :root[data-theme='light'] [data-testid='tab-tile'] .text-fuchsia-300 { color: rgb(192 38 211); }
 :root[data-theme='light'] [data-testid='tab-tile'] .text-zinc-100 { color: rgb(63 63 70); }
 :root[data-theme='light'] [data-testid='tab-tile'] .text-\[\#e8906f\] { color: rgb(194 87 52); }
+
+/* Everything that pops in eases in on the drawer curve, as the Focus panels
+   do: menus, popovers, hover cards, tooltips and dialogs fade up from a hair
+   smaller and higher; a modal's backdrop only fades. Entry only (they unmount
+   to close). The independent scale and translate properties compose with a
+   popup's own transform (a centring translate) instead of replacing it. In
+   the components layer, so an element's own transition utility still wins. */
+@layer components {
+  .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog']:not(.fixed),
+  .fixed.inset-0[class*='bg-black/'] > * {
+    transition: opacity 160ms ease-out, scale 220ms var(--ease-drawer), translate 220ms var(--ease-drawer);
+  }
+  .fixed.inset-0[class*='bg-black/'] { transition: opacity 180ms ease-out; }
+  @starting-style {
+    .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog']:not(.fixed),
+    .fixed.inset-0[class*='bg-black/'] > * { opacity: 0; scale: 0.97; translate: 0 -4px; }
+    .fixed.inset-0[class*='bg-black/'] { opacity: 0; }
+  }
+}
+
+/* The sidebar slides in and out on the same curve: its margin pulls it off
+   the left edge (--sidebar-w is its width) while the main area takes the room. */
+.sidebar-slide {
+  margin-left: 0;
+  transition: margin-left 260ms var(--ease-drawer);
+}
+.sidebar-slide[data-collapsed] { margin-left: calc(-1 * var(--sidebar-w)); transition-duration: 220ms; }
+@starting-style { .sidebar-slide[data-slide-in] { margin-left: calc(-1 * var(--sidebar-w)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog'],
+  .fixed.inset-0[class*='bg-black/'], .fixed.inset-0[class*='bg-black/'] > *, .sidebar-slide { transition: none; }
+}

@@ -108,6 +108,11 @@ const STORE_SIDEBAR = 'strado:sidebar-collapsed:v2';
 // values from `strado:view`.
 // No hub open: the Worktrees page, every repo and worktree in the space.
 const INITIAL_VIEW: SidebarView = { kind: 'worktrees' };
+// The sidebar's slide shut (.sidebar-slide[data-collapsed] in index.css).
+const SIDEBAR_SLIDE_MS = 220;
+const motionAllowed = () => {
+  try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+};
 // Hidden until asked for (⌘B): the Dock at the bottom is all a day needs.
 function readSidebarCollapsed(): boolean {
   const stored = localStorage.getItem(STORE_SIDEBAR);
@@ -531,6 +536,20 @@ export function Dashboard(props: {
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
   // sidebar"). A hub closing itself (its last session gone) must not hide it.
   const sidebarHidden = sidebarCollapsed;
+  // Toggled, the sidebar slides (.sidebar-slide): hiding, it stays mounted
+  // until it is off the edge; showing, it slides in (only on a toggle, not
+  // when the app first draws).
+  const [sidebarWasHidden, setSidebarWasHidden] = useState(sidebarHidden);
+  const [sidebarSlide, setSidebarSlide] = useState<'in' | 'out' | null>(null);
+  if (sidebarWasHidden !== sidebarHidden) {
+    setSidebarWasHidden(sidebarHidden);
+    setSidebarSlide(!motionAllowed() ? null : sidebarHidden ? 'out' : 'in');
+  }
+  useEffect(() => {
+    if (sidebarSlide !== 'out') return;
+    const t = setTimeout(() => setSidebarSlide(null), SIDEBAR_SLIDE_MS + 40);
+    return () => clearTimeout(t);
+  }, [sidebarSlide]);
 
   // Collapsing the sidebar unmounts it, and with it the space chord's own
   // listener — while the shell keeps intercepting the chord inside embeds and
@@ -1048,9 +1067,11 @@ export function Dashboard(props: {
       }}>
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
       <div className={settingsSection ? 'hidden' : 'flex min-w-0 flex-1'}>
-      {!sidebarHidden && (
+      {(!sidebarHidden || sidebarSlide === 'out') && (
         <div className="contents">
         <Sidebar
+          collapsing={sidebarHidden}
+          slideIn={sidebarSlide === 'in'}
           repos={state.repos}
           worktrees={state.worktrees}
           remoteWorktrees={remote.worktrees}

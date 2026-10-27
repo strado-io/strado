@@ -101,12 +101,21 @@ describe('sidebar chrome', () => {
 
   it('the panel glides on the drawer ease, its contents fade in behind it, and nothing moves with reduced motion', () => {
     const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8');
-    expect(css).toMatch(/--focus-ease: cubic-bezier\(0\.32, 0\.72, 0, 1\);/);
-    expect(css).toMatch(/\.focus-panel \{[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows 220ms var\(--focus-ease\);/);
+    expect(css).toMatch(/--ease-drawer: cubic-bezier\(0\.32, 0\.72, 0, 1\);/);
+    expect(css).toMatch(/\.focus-panel \{[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows 220ms var\(--ease-drawer\);/);
     expect(css).toMatch(/\.focus-panel\[data-open\] \{ grid-template-rows: 1fr; transition-duration: 280ms; \}/);
     expect(css).toMatch(/\.focus-panel\[data-open\] > \* > \* \{[^}]*opacity: 1;/);
     expect(css).toMatch(/@starting-style \{[^@]*\.focus-panel\[data-open\] \{ grid-template-rows: 0fr; \}/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.focus-panel, \.focus-panel > \* > \* \{ transition: none; \} \}/);
+  });
+
+  it('popups (menus, popovers, tooltips, dialogs) and the sidebar ease in on the same curve; reduced motion stills them', () => {
+    const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8');
+    expect(css).toMatch(/\.surface-pop, \.menu-solid, \[role='menu'\], \[role='listbox'\], \[role='tooltip'\], \[role='dialog'\]:not\(\.fixed\),\s+\.fixed\.inset-0\[class\*='bg-black\/'\] > \* \{\s+transition: opacity 160ms ease-out, scale 220ms var\(--ease-drawer\)/);
+    expect(css).toMatch(/@starting-style \{[^@]*opacity: 0; scale: 0\.97; translate: 0 -4px;/);
+    expect(css).toMatch(/\.sidebar-slide\[data-collapsed\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\);/);
+    expect(css).toMatch(/@starting-style \{ \.sidebar-slide\[data-slide-in\] \{ margin-left: calc\(-1 \* var\(--sidebar-w\)\); \} \}/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s+\.surface-pop[^}]*\.sidebar-slide \{ transition: none; \}/);
   });
 
   it('« is a 14px panel icon in the same quiet button', () => {
