@@ -442,14 +442,14 @@ describe('SidebarBody: the Focus accordion', () => {
     expect(calls).toEqual(['activate f3', 'open /r2/wt', 'open /r1/wt']);
   });
 
-  it('badges: agents at work in its worktrees, approvals waiting, an unread reply', () => {
+  it('badges: approvals waiting, an unread reply; agent faces stay on the worktree cards, not the Focus', () => {
     const working = { ...wt('/r2/wt', 'r2'), claudeStatus: 'working', hasClaudeSession: true, claudeSessions: ['1'] } as Worktree;
     render(<SidebarBody {...props({
       worktrees: [wt('/r1/wt', 'r1'), working, wt('/r2/other', 'r2')],
       jarvisBadges: new Map([['f2', { pendingApprovals: 2, unread: true }], ['f3', { pendingApprovals: 0, unread: false }]]),
     })} />);
     const perf = within(list()).getByRole('button', { name: 'Switch to Perf' });
-    expect(within(perf).getByTestId('focus-agents-f3')).toBeInTheDocument();
+    expect(within(perf).queryByTestId('focus-agents-f3')).toBeNull();
     expect(within(perf).queryByRole('img', { name: /waiting for approval/ })).toBeNull();
     const onboarding = within(list()).getByRole('button', { name: 'Switch to Onboarding' });
     expect(within(onboarding).getByRole('img', { name: '2 waiting for approval' })).toBeInTheDocument();

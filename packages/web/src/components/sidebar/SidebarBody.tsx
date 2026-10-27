@@ -318,14 +318,11 @@ export function SidebarBody({
     )];
   });
 
-  // A collapsed Focus's row: the faces of its agents while one works or
-  // waits (as on the cards), and its Jarvis's own badges.
+  // A Focus's row: only its Jarvis's own badges. Agent faces belong to the
+  // worktree cards, not the Focus.
   const badges = new Map<string, FocusBadges>(focuses.map((f) => {
-    const locals = f.members.flatMap((id) => { const w = localByPinId.get(id); return w ? [w] : []; });
-    const live = locals.some((w) => agentWorking(w) || agentWaiting(w));
     const j = jarvisBadges?.get(f.id);
     return [f.id, {
-      ...(live ? { agents: <SessionAvatarStack chips={sessionChips(locals, browserTabs).filter((c) => c.mode !== 'shell' && c.mode !== 'browser')} testId={`focus-agents-${f.id}`} tinted /> } : {}),
       pendingApprovals: j?.pendingApprovals ?? 0,
       unread: j?.unread ?? false,
     }];
