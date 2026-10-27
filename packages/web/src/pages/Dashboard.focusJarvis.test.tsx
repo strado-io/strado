@@ -95,6 +95,13 @@ describe('Dashboard: Focus Jarvis', () => {
     expect(hubProps.last).toBeNull();
   });
 
+  it('the chat has a grab strip, so the window can be dragged from it as from a worktree', async () => {
+    focusList.members = ['local:/a/A-1'];
+    renderDashboard();
+    await act(async () => {});
+    expect(screen.getByTestId('jarvis-drag')).toHaveClass('app-drag');
+  });
+
   it('in the chat, ⌘⇧F / Ctrl+Shift+F does nothing: no worktree opens and the composer keeps its text', async () => {
     focusList.members = ['local:/a/A-1'];
     renderDashboard();
