@@ -545,9 +545,11 @@ export function Dashboard(props: {
     setSidebarWasHidden(sidebarHidden);
     setSidebarSlide(!motionAllowed() ? null : sidebarHidden ? 'out' : 'in');
   }
+  // Either way the flag clears once the slide is done: left on, the slide in
+  // would replay whenever the app reappears (back from Settings, which hides it).
   useEffect(() => {
-    if (sidebarSlide !== 'out') return;
-    const t = setTimeout(() => setSidebarSlide(null), SIDEBAR_SLIDE_MS + 40);
+    if (!sidebarSlide) return;
+    const t = setTimeout(() => setSidebarSlide(null), SIDEBAR_SLIDE_MS + 80);
     return () => clearTimeout(t);
   }, [sidebarSlide]);
 

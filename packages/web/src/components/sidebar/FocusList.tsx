@@ -157,23 +157,33 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
 // A Focus's panel, under its heading. It grows open and shrinks shut (grid rows
 // 0fr↔1fr, .focus-panel in index.css: no measuring); shutting, it stays drawn,
 // hidden from clicks, until the shrink ends. Its gaps sit inside the part that grows, so only
-// the panel's own height changes.
+// the panel's own height changes. It grows in only right after it was toggled
+// open (data-enter): a panel already open that reappears (back from Settings,
+// which hides the app) must not replay the grow.
 const SHUT_MS = 220;
+const OPEN_MS = 280;
 function FocusPanel({ open, last, children }: { open: boolean; last: boolean; children: () => React.ReactNode }) {
   const [wasOpen, setWasOpen] = useState(open);
   const [shutting, setShutting] = useState(false);
+  const [entering, setEntering] = useState(false);
   if (wasOpen !== open) {
     setWasOpen(open);
     setShutting(!open && animates());
+    setEntering(open && animates());
   }
   useEffect(() => {
     if (!shutting) return;
     const t = setTimeout(() => setShutting(false), SHUT_MS + 50);
     return () => clearTimeout(t);
   }, [shutting]);
+  useEffect(() => {
+    if (!entering) return;
+    const t = setTimeout(() => setEntering(false), OPEN_MS + 50);
+    return () => clearTimeout(t);
+  }, [entering]);
   if (!open && !shutting) return null;
   return (
-    <div className="focus-panel" data-open={open || undefined} onTransitionEnd={(e) => { if (e.target === e.currentTarget && !open) setShutting(false); }}>
+    <div className="focus-panel" data-open={open || undefined} data-enter={entering || undefined} onTransitionEnd={(e) => { if (e.target === e.currentTarget && !open) setShutting(false); }}>
       {/* px-px leaves room for the group's ring, which the clip would cut. The
           vertical gaps sit inside the clip, so it can shut all the way to 0. */}
       <div className="min-h-0 overflow-hidden px-px">

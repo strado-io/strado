@@ -105,7 +105,8 @@ describe('sidebar chrome', () => {
     expect(css).toMatch(/\.focus-panel \{[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows 220ms var\(--ease-drawer\);/);
     expect(css).toMatch(/\.focus-panel\[data-open\] \{ grid-template-rows: 1fr; transition-duration: 280ms; \}/);
     expect(css).toMatch(/\.focus-panel\[data-open\] > \* > \* \{[^}]*opacity: 1;/);
-    expect(css).toMatch(/@starting-style \{[^@]*\.focus-panel\[data-open\] \{ grid-template-rows: 0fr; \}/);
+    // Only a panel just toggled open grows in: one that reappears with the app (back from Settings) doesn't.
+    expect(css).toMatch(/@starting-style \{[^@]*\.focus-panel\[data-open\]\[data-enter\] \{ grid-template-rows: 0fr; \}/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.focus-panel, \.focus-panel > \* > \* \{ transition: none; \} \}/);
   });
 

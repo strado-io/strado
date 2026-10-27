@@ -422,9 +422,11 @@ body {
   transform: none;
   transition: opacity 220ms ease-out 40ms, transform 280ms var(--ease-drawer);
 }
+/* Only a panel just toggled open grows in (data-enter): one that reappears
+   with the app (back from Settings) is simply there. */
 @starting-style {
-  .focus-panel[data-open] { grid-template-rows: 0fr; }
-  .focus-panel[data-open] > * > * { opacity: 0; transform: translateY(-4px); }
+  .focus-panel[data-open][data-enter] { grid-template-rows: 0fr; }
+  .focus-panel[data-open][data-enter] > * > * { opacity: 0; transform: translateY(-4px); }
 }
 @media (prefers-reduced-motion: reduce) { .focus-panel, .focus-panel > * > * { transition: none; } }
 
