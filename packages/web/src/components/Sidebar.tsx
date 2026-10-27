@@ -272,7 +272,8 @@ export function Sidebar({
   return (
     // On the app canvas, like the panes: no edge of its own, so its cards float
     // on the same ground as the pane cards across the gutter.
-    <aside data-testid="sidebar" hidden={hidden} className="relative flex h-screen shrink-0 flex-col bg-zinc-950" style={{ width }}>
+    // display:none by class: the hidden attribute alone loses to the flex class.
+    <aside data-testid="sidebar" hidden={hidden} className={`${hidden ? 'hidden' : 'flex'} relative h-screen shrink-0 flex-col bg-zinc-950`} style={{ width }}>
       <div
         role="separator"
         aria-orientation="vertical"

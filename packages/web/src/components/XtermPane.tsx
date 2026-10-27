@@ -81,6 +81,8 @@ function barHoldsKeyboard(): boolean {
  * background, so a terminal and its card read as one surface. */
 // A drag's pause long enough to tell the pty the new size.
 const PTY_RESIZE_SETTLE_MS = 120;
+// The longest an agent pane shows its old frame waiting for the redraw.
+const HOLD_MS = 150;
 
 export function cardTerminalTheme(theme: ITheme): ITheme {
   const rgb = getComputedStyle(document.documentElement).getPropertyValue('--pane-card').trim().split(/\s+/).map(Number);
@@ -227,11 +229,11 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
   // The size this socket was last told: a resize to the same cols and rows is
   // not sent (every one reaches the pty as a SIGWINCH, and a TUI redraws).
   const sentSizeRef = useRef<string | null>(null);
-  const sendSize = (socket: WebSocket, term: Terminal) => {
-    const size = `${term.cols}x${term.rows}`;
+  const sendSize = (socket: WebSocket, term: Terminal, cols = term.cols, rows = term.rows) => {
+    const size = `${cols}x${rows}`;
     if (sentSizeRef.current === size) return;
     sentSizeRef.current = size;
-    socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
   };
   const fitRef = useRef<FitAddon | null>(null);
   // Find in the terminal: the addon (per built terminal), the bar, and ⌘F again refocusing an open bar.
@@ -495,6 +497,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     // resize the user's live pty down to minimum dimensions.
     const fitIfVisible = () => {
       if (container.clientWidth === 0 || container.clientHeight === 0) return false;
+      dropHeld();
       const before = `${term.cols}x${term.rows}`;
       fit.fit();
       if (`${term.cols}x${term.rows}` !== before) paintNow();
@@ -512,6 +515,39 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
 
     const sendResize = () => {
       if (ws && ws.readyState === WebSocket.OPEN) sendSize(ws, term);
+    };
+
+    // An agent (Claude, Codex, pi, opencode) draws its UI in place, so the
+    // instant the width changes xterm re-wraps the old frame and its boxes
+    // look shredded until the agent redraws. On a layout jump the pane
+    // instead tells the pty the new size at once but keeps showing the old
+    // frame (clipped or padded), and takes the size the moment the agent's
+    // redraw arrives, painting both together, or after HOLD_MS if it is
+    // quiet. A shell re-wraps right away: that reflow is what you want there.
+    let held: { cols: number; rows: number } | null = null;
+    let heldTimer: ReturnType<typeof setTimeout> | undefined;
+    const dropHeld = () => {
+      if (heldTimer) { clearTimeout(heldTimer); heldTimer = undefined; }
+      held = null;
+    };
+    const takeHeld = (): boolean => {
+      if (!held) return false;
+      const { cols, rows } = held;
+      dropHeld();
+      if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+      return true;
+    };
+    const holdForRedraw = (): boolean => {
+      if (tab.mode === 'shell' || !ws || ws.readyState !== WebSocket.OPEN) return false;
+      if (container.clientWidth === 0 || container.clientHeight === 0) return false;
+      const dims = fit.proposeDimensions();
+      if (!dims || !(dims.cols > 0 && dims.rows > 0)) return false;
+      if (dims.cols === term.cols && dims.rows === term.rows) { dropHeld(); return true; }
+      held = { cols: dims.cols, rows: dims.rows };
+      sendSize(ws, term, dims.cols, dims.rows);
+      if (heldTimer) clearTimeout(heldTimer);
+      heldTimer = setTimeout(() => { if (takeHeld()) paintNow(); }, HOLD_MS);
+      return true;
     };
 
     const connect = () => {
@@ -551,17 +587,21 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
           return;
         }
         if (typeof ev.data === 'string') {
+          // A held size lands with the output that follows it (the agent's
+          // redraw), and both paint in this task: no shredded frame between.
+          const took = takeHeld();
+          const after = took ? paintNow : undefined;
           // opencode/opentui only: rewrite its OSC 66 cell-measurement probe
           // into plain text so the cursor advances and it reads a real cell
           // width, and answer the capability probes it blocks on. Other modes
           // pass through untouched (2026 is swallowed at the parser for all).
           if (tab.mode === 'opencode') {
-            term.write(renderSizedText(ev.data));
+            term.write(renderSizedText(ev.data), after);
             answerCapabilityProbes(ev.data, ws);
           } else if (tab.mode === 'claude' && terminalUsesLightTheme()) {
-            term.write(renderClaudeLight(ev.data));
+            term.write(renderClaudeLight(ev.data), after);
           } else {
-            term.write(ev.data);
+            term.write(ev.data, after);
           }
           // Server prints exactly this right before closing on pty exit; it's
           // our signal that the close is a real end, not a transport drop.
@@ -653,7 +693,10 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     // fits once when it settles, instead of once per frame.
     const ro = new ResizeObserver(() => {
       if (isLayoutMoving()) return;
-      if (isLayoutJump()) { if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = undefined; } refit(); }
+      if (isLayoutJump()) {
+        if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = undefined; }
+        if (!holdForRedraw()) refit();
+      }
       else onResizeFrame();
     });
     ro.observe(container);
@@ -677,6 +720,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       ro.disconnect();
       offSettled();
       if (resizeTimer) clearTimeout(resizeTimer);
+      dropHeld();
       window.removeEventListener('pointerup', flushResize);
       dataSub?.dispose();
       if (ws) {

@@ -389,7 +389,7 @@ describe('TerminalView', () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
     const ws = FakeWS.instances[0]!;
     act(() => { ws.onmessage?.({ data: 'output-line' }); });
-    expect(termWrite).toHaveBeenCalledWith('output-line');
+    expect(termWrite).toHaveBeenCalledWith('output-line', undefined);
   });
 
   it('forwards terminal input as a data frame', () => {
