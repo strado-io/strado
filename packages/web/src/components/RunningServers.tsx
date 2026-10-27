@@ -126,7 +126,7 @@ export function RunningServers({
           className={`flex h-7 shrink-0 items-center gap-1 rounded-md border px-1.5 transition-colors ${
             open ? 'tab-pill text-zinc-100' : 'border-transparent text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200'}`}
         >
-          <ServerIcon />
+          <ActivityIcon />
           <span className="text-[11px] tabular-nums text-emerald-400">{running.length}</span>
         </button>
       ) : (
@@ -159,12 +159,12 @@ export function RunningServers({
   );
 }
 
-// Lucide "server": what is serving.
-function ServerIcon() {
+// Lucide "activity": something live. Not "server", which stands for a
+// machine (a runner) elsewhere in the app.
+function ActivityIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect width="20" height="8" x="2" y="2" rx="2" ry="2" /><rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
-      <line x1="6" x2="6.01" y1="6" y2="6" /><line x1="6" x2="6.01" y1="18" y2="18" />
+      <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
     </svg>
   );
 }
