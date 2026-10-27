@@ -39,6 +39,31 @@ describe('SearchPanel', () => {
     expect(onPick).toHaveBeenLastCalledWith(ANSWER.hits[1], true, query);
   });
 
+  it('replace: › shows the box; Replace all asks first, replaces in the found files, says what it did, searches again', async () => {
+    const search = vi.fn(async (_q: SearchQuery, _s: AbortSignal) => ANSWER);
+    const replace = vi.fn(async () => ({ replaced: 2, files: 1, skipped: ['src/b.ts'], failed: [] }));
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<SearchPanel search={search} replace={replace} onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.queryByLabelText('Replace with')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle replace' }));
+    fireEvent.change(screen.getByLabelText('Search text'), { target: { value: 'open' } });
+    await settle();
+    fireEvent.change(screen.getByLabelText('Replace with'), { target: { value: 'shut' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Replace all' }));
+    expect(ask).toHaveBeenCalledWith('Replace 2 matches in 2 files with “shut”?');
+    await settle();
+    expect(replace).toHaveBeenCalledWith({ q: 'open', word: false, case: false, regex: false }, 'shut', ['src/a.ts', 'src/b.ts']);
+    expect(screen.getByRole('status')).toHaveTextContent('Replaced 2 matches in 1 file · 1 file with unsaved edits left alone');
+    await settle();
+    expect(search).toHaveBeenCalledTimes(2);
+    ask.mockRestore();
+  });
+
+  it('no replace without the prop (a runner\'s read-only files)', () => {
+    render(<SearchPanel search={vi.fn(async () => ANSWER)} onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Toggle replace' })).toBeNull();
+  });
+
   it('the switches are buttons in the box with tooltips, saying whether they are on', () => {
     render(<SearchPanel search={vi.fn(async () => ANSWER)} onPick={vi.fn()} onClose={vi.fn()} />);
     for (const name of ['Match case', 'Match whole word', 'Use regular expression']) {

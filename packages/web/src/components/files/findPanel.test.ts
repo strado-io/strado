@@ -18,10 +18,10 @@ const settle = () => new Promise((r) => setTimeout(r, COUNT_DEBOUNCE_MS + 30));
 
 const DOC = 'const fetchGroups = 1;\nfetchGroups();\nFetchGroups;\nfetchGroupsAll;\n';
 
-async function setUp() {
+async function setUp(onChange?: (text: string) => void) {
   const parent = document.createElement('div');
   document.body.append(parent);
-  const view = await createCodeView(parent, { doc: DOC, path: 'x.ts', language: null, marks: null, onSelection: vi.fn() });
+  const view = await createCodeView(parent, { doc: DOC, path: 'x.ts', language: null, marks: null, onSelection: vi.fn(), onChange });
   const content = parent.querySelector<HTMLElement>('.cm-content')!;
   content.focus();
   content.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }));
@@ -133,6 +133,34 @@ describe('find bar', () => {
     content.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }));
     btn(parent.querySelector('.cm-find')!, 'Close find').click();
     expect(parent.querySelector('.cm-find')).toBeNull();
+  });
+
+  it('read-only: no replace row', async () => {
+    const { bar } = await setUp();
+    expect(bar!.querySelector('button[aria-label="Toggle replace"]')).toBeNull();
+  });
+
+  it('editable: › shows the replace row; Enter replaces the next, ⌘Enter all; one undo per replace', async () => {
+    const onChange = vi.fn();
+    const { bar } = await setUp(onChange);
+    const toggle = btn(bar!, 'Toggle replace');
+    const row = bar!.querySelector<HTMLElement>('.cm-find-replace')!;
+    expect(row.hidden).toBe(true);
+    toggle.click();
+    expect(row.hidden).toBe(false);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const replace = row.querySelector('input')!;
+    expect(document.activeElement).toBe(replace);
+    await type(bar!.querySelector('input')!, 'fetchGroups');
+    await type(replace, 'loadGroups');
+    key(replace, 'Enter'); // selects the first match
+    key(replace, 'Enter'); // replaces it
+    expect(onChange).toHaveBeenLastCalledWith(expect.stringMatching(/^const loadGroups = 1;\nfetchGroups\(\);/));
+    key(replace, 'Enter', { metaKey: true });
+    await settle();
+    // Case-insensitive by default: FetchGroups too; fetchGroupsAll is a substring match.
+    expect(onChange).toHaveBeenLastCalledWith('const loadGroups = 1;\nloadGroups();\nloadGroups;\nloadGroupsAll;\n');
+    expect(bar!.querySelector('.cm-find-count')!.textContent).toBe('No results');
   });
 
   it('theme vars only — no raw hex, only 13px/11px type', () => {

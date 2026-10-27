@@ -11,7 +11,8 @@ import { useCallback, useEffect, useId, useReducer, useRef, useState, type Keybo
 import { selectionIn } from './codeSelection';
 import { api, type RemoteFilesTarget } from '../../api';
 import type { FileAskContext, FileWriteBody, LspServerId, LspServerStatus, NavAnswer, NavHit, SearchQuery } from '../../types';
-import { discardBuffer, saveAll, saveBuffer, useDirtyFiles } from './buffers';
+import { discardBuffer, getBuffer, isDirty, reloadBuffer, saveAll, saveBuffer, useDirtyFiles } from './buffers';
+import { replaceInFiles } from './replaceInFiles';
 import { SavePromptHost, askSaveChanges, useOwnSavePromptHost } from './savePrompt';
 import { requestRunInShell } from '../../lib/runInShell';
 import { FileTree } from './FileTree';
@@ -265,6 +266,12 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const outline = useCallback((p: string, signal: AbortSignal) => api.lsp.outline(wsId, worktreePath, p, where, signal), [wsId, worktreePath, runnerId, remoteWsId]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // ⌘⇧F's Replace all: on this machine only (a runner's files are read-only here).
+  const replace = useCallback((q: SearchQuery, replacement: string, paths: string[]) => replaceInFiles(paths, q, replacement, {
+    read, write: (body) => api.files.write(wsId, worktreePath, body),
+    isDirty: (p) => isDirty(getBuffer(worktreePath, p)),
+    written: (p, text, version) => { if (getBuffer(worktreePath, p)) reloadBuffer(worktreePath, p, { text, version }); },
+  }), [read, wsId, worktreePath]);
   const search = useCallback((q: SearchQuery, signal: AbortSignal) => api.files.search(wsId, worktreePath, q, where, signal), [wsId, worktreePath, runnerId, remoteWsId]);
 
   // How many files differ from HEAD, for the Changed chip; re-read with Refresh.
@@ -443,7 +450,7 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
             className={`${iconBtn} text-zinc-400`}><RefreshIcon /></button>
         </div>
         {searching ? (
-          <SearchPanel search={search} seed={searchSeed} onClose={closeSearch} onPick={(h, side, query) => { setSearchMarks(query); pickHit(h, fromHere(), side); }} />
+          <SearchPanel search={search} replace={where ? undefined : replace} seed={searchSeed} onClose={closeSearch} onPick={(h, side, query) => { setSearchMarks(query); pickHit(h, fromHere(), side); }} />
         ) : (
           <FileTree load={loadDir} changedOnly={changedOnly} selected={selected} reloadKey={reloadKey} reveal={reveal}
             onSelect={(p) => jump(fromHere(), { path: p }, 'preview')}

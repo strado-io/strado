@@ -12,7 +12,7 @@ import { SearchQuery as CmQuery, highlightSelectionMatches, search, searchKeymap
 import { tags as t } from '@lezer/highlight';
 import type { FileMarks, SearchQuery } from '../../types';
 import { changeStarts, lineMarks, stepChange, type LineMark } from './changes';
-import { createFindPanel } from './findPanel';
+import { createFindPanel, openReplace } from './findPanel';
 import { registerSelection } from './codeSelection';
 import { lineEndings } from './lineEndings';
 import { renderHover } from './hoverMarkdown';
@@ -38,9 +38,10 @@ const theme = EditorView.theme({
   '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: v('sky-400', 0.4), outline: `1px solid ${v('sky-300', 0.8)}` },
   '.cm-panels': { backgroundColor: 'transparent', color: v('zinc-200') },
   '.cm-panels.cm-panels-top': { borderBottom: `1px solid ${v('zinc-800', 0.8)}` },
-  // The find bar (findPanel.ts): one 32px glass row.
+  // The find bar (findPanel.ts): one 32px glass row, and the replace row
+  // under it for an editable file.
   '.cm-find': {
-    display: 'flex', alignItems: 'center', gap: '2px', height: '32px', padding: '0 8px',
+    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '2px', minHeight: '32px', padding: '0 8px',
     backgroundColor: v('zinc-900', 0.8), backdropFilter: 'blur(12px)', fontSize: '11px',
   },
   '.cm-find-input': {
@@ -62,6 +63,11 @@ const theme = EditorView.theme({
   '.cm-find-btn:focus-visible': { outline: `1px solid ${v('sky-400', 0.6)}` },
   '.cm-find-toggle': { fontFamily: 'var(--font-mono)' },
   '.cm-find-toggle.cm-find-on': { color: v('zinc-100') },
+  '.cm-find-replace': { display: 'flex', alignItems: 'center', gap: '2px', flexBasis: '100%', height: '30px', paddingLeft: '24px' },
+  '.cm-find-replace[hidden]': { display: 'none' },
+  '.cm-find-expand': { transition: 'transform 150ms var(--ease-drawer)' },
+  '.cm-find-expand.cm-find-open': { transform: 'rotate(90deg)' },
+  '.cm-find-word': { width: 'auto', padding: '0 6px' },
   '.cm-find-sep': { width: '1px', height: '14px', margin: '0 4px', backgroundColor: v('zinc-800') },
   '.cm-tooltip': { backgroundColor: v('zinc-900'), color: v('zinc-200'), border: `1px solid ${v('zinc-700')}`, borderRadius: '8px', overflow: 'hidden' },
   '.cm-tooltip-hover': { maxWidth: '560px', maxHeight: '320px', overflow: 'auto' },
@@ -280,6 +286,7 @@ export async function createCodeView(parent: HTMLElement, o: {
             : [{ key: 'n', run: () => step(1) != null }, { key: 'p', run: () => step(-1) != null }]),
           { key: 'F12', run: () => navigate('definition') },
           { key: 'Shift-F12', run: () => navigate('references') },
+          ...(editable ? [{ key: 'Mod-Alt-f', run: openReplace }] : []),
           ...searchKeymap,
           // Typing, ⌘Z / ⇧⌘Z (and Ctrl-Y). Tab is left to move focus, as in the
           // rest of the app; ⌘[ ⌘] stay the Files tab's back/forward, not indent.
