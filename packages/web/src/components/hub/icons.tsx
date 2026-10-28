@@ -68,6 +68,15 @@ export function PlusIcon({ className = '', size = 14 }: { className?: string; si
   );
 }
 
+/** Discard: a curved arrow back (undo), in Plus/Minus's 16-unit grid and stroke. */
+export function DiscardIcon({ className = '', size = 14 }: { className?: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" className={className}>
+      <path d="M6 3.5 3 6.5l3 3M3 6.5h6.25a3.25 3.25 0 0 1 0 6.5H7.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function MinusIcon({ className = '', size = 14 }: { className?: string; size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" className={className}>

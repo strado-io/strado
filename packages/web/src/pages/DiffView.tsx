@@ -11,7 +11,7 @@ import { MrReviewModal } from '../components/MrReviewModal';
 import { MrReview } from '../components/MrReview';
 import { PrStateIcon } from '../components/sidebar/prVisuals';
 import { invalidateMrPath } from '../hooks/mrSummaries';
-import { MinusIcon, PlusIcon } from '../components/hub/icons';
+import { DiscardIcon, MinusIcon, PlusIcon } from '../components/hub/icons';
 
 type Tab = 'changes' | 'branch';
 type MrProbe = Awaited<ReturnType<typeof api.worktrees.mergeRequests>> | { kind: 'loading' };
@@ -706,7 +706,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true, t
   const stagedList = changesFiles.filter((f) => f.staged !== 'none');
   const unstagedList = changesFiles.filter((f) => f.staged !== 'full');
   const sectionBtn =
-    'flex h-4 w-4 shrink-0 items-center justify-center rounded text-[12px] leading-none text-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30';
+    'flex h-5 w-5 shrink-0 items-center justify-center rounded text-[12px] leading-none text-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30';
   const selectedChangeFile = changesFiles.find((f) => f.path === selected) ?? null;
   const stagedCount = changesFiles.filter((f) => f.staged !== 'none').length;
   // `||`, not `??`: the main checkout is adopted with an empty ticketId.
@@ -749,7 +749,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true, t
               }}
               className={`${iconBtn} text-zinc-500 hover:bg-red-900/50 hover:text-red-300`}
             >
-              ↺
+              <DiscardIcon size={12} />
             </button>
             <button
               aria-label={`Stage ${f.path}`}
@@ -1062,7 +1062,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true, t
                       onClick={() => void onUnstageAll()}
                       className={sectionBtn}
                     >
-                      <MinusIcon size={11} />
+                      <MinusIcon size={12} />
                     </button>
                   </div>
                 )}
@@ -1078,7 +1078,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true, t
                         onClick={onDiscardAll}
                         className={`${sectionBtn} hover:bg-red-900/50 hover:text-red-300`}
                       >
-                        ⤺
+                        <DiscardIcon size={12} />
                       </button>
                       <button
                         aria-label="Stage all"
@@ -1087,7 +1087,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true, t
                         onClick={() => void onStageAll()}
                         className={sectionBtn}
                       >
-                        <PlusIcon size={11} />
+                        <PlusIcon size={12} />
                       </button>
                     </span>
                   </div>
