@@ -112,49 +112,56 @@ describe('JarvisComposer', () => {
     render(<JarvisComposer {...props} running onStop={onStop} />);
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
     expect(onStop).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
-    expect(screen.getByRole('menuitem', { name: /codex.*soon/i })).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(screen.getByRole('button', { name: /^model:/i }));
+    fireEvent.click(within(screen.getByRole('tablist', { name: 'Agents' })).getByRole('tab', { name: 'Codex' }));
+    expect(screen.getByRole('dialog', { name: 'Choose a model' })).toHaveTextContent("Codex can't run Jarvis yet");
   });
-
-  it('the chip names the agent, then its model and effort when they are not the default', () => {
+  it('the buttons say the model (with its agent) and the effort when it is not the default', () => {
     const { rerender } = render(<JarvisComposer {...props} />);
-    expect(screen.getByRole('button', { name: 'Agent: Claude' })).toHaveTextContent(/^Claude$/);
+    expect(screen.getByRole('button', { name: 'Model: Claude default' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Effort: Default' })).not.toHaveTextContent('Default');
     rerender(<JarvisComposer {...props} model="opus" effort="high" />);
-    expect(screen.getByRole('button', { name: 'Agent: Claude · Opus · High' })).toHaveTextContent('Claude · Opus · High');
-    rerender(<JarvisComposer {...props} effort="xhigh" />);
-    expect(screen.getByRole('button', { name: /agent: claude/i })).toHaveTextContent(/^Claude · Extra high$/);
+    expect(screen.getByRole('button', { name: 'Model: Claude Opus' })).toHaveTextContent('Claude Opus');
+    expect(screen.getByRole('button', { name: 'Effort: High' })).toHaveTextContent('High');
     // A full model id the list doesn't name is said as it is.
     rerender(<JarvisComposer {...props} model="claude-sonnet-4-5" />);
-    expect(screen.getByRole('button', { name: /agent: claude/i })).toHaveTextContent('Claude · claude-sonnet-4-5');
+    expect(screen.getByRole('button', { name: /^model:/i })).toHaveTextContent('Claude claude-sonnet-4-5');
   });
-
-  it('the menu ticks the current model and effort; picking one sets it and closes the menu', () => {
+  it('the picker: the agent\'s models, the current one ticked; search narrows; a click or ⌘n picks and closes', () => {
     const onSettings = vi.fn();
     render(<JarvisComposer {...props} model="sonnet" effort={null} onSettings={onSettings} />);
-    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
-    expect(screen.getByRole('menuitemradio', { name: 'Sonnet' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getAllByRole('menuitemradio', { name: 'Default' }).map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true']);
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Opus' }));
+    fireEvent.click(screen.getByRole('button', { name: /^model:/i }));
+    const options = () => screen.getAllByRole('option');
+    expect(options().map((o) => o.getAttribute('aria-selected'))).toEqual(['false', 'false', 'false', 'true', 'false']);
+    expect(options()[3]).toHaveTextContent('Claude Sonnet');
+    expect(options()[3]).toHaveTextContent('⌘4');
+    fireEvent.change(screen.getByLabelText('Search models'), { target: { value: 'op' } });
+    expect(options()).toHaveLength(1);
+    fireEvent.click(options()[0]!);
     expect(onSettings).toHaveBeenLastCalledWith({ model: 'opus' });
-    expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Extra high' }));
-    expect(onSettings).toHaveBeenLastCalledWith({ effort: 'xhigh' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^model:/i }));
+    fireEvent.keyDown(screen.getByLabelText('Search models'), { key: '3', metaKey: true });
+    expect(onSettings).toHaveBeenLastCalledWith({ model: 'opus' });
+    fireEvent.click(screen.getByRole('button', { name: /^model:/i }));
+    fireEvent.keyDown(screen.getByLabelText('Search models'), { key: '1', ctrlKey: true });
+    expect(onSettings).toHaveBeenLastCalledWith({ model: null });
   });
-
-  it('Default sends null; the one already picked sends nothing', () => {
+  it('a starred model shows under the star; effort: Default sends null, the current one nothing', () => {
+    localStorage.removeItem('strado:jarvis-model-favs');
     const onSettings = vi.fn();
     render(<JarvisComposer {...props} model="opus" effort="max" onSettings={onSettings} />);
-    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
-    const [modelDefault] = screen.getAllByRole('menuitemradio', { name: 'Default' });
-    fireEvent.click(modelDefault!);
-    expect(onSettings).toHaveBeenLastCalledWith({ model: null });
-    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
-    fireEvent.click(screen.getAllByRole('menuitemradio', { name: 'Default' })[1]!);
+    fireEvent.click(screen.getByRole('button', { name: /^model:/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Star Claude Haiku' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Starred' }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([expect.stringContaining('Claude Haiku')]);
+    fireEvent.click(screen.getByRole('button', { name: 'Effort: Max' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Max' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Default' }));
     expect(onSettings).toHaveBeenLastCalledWith({ effort: null });
-    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Effort: Max' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Max' }));
-    expect(onSettings).toHaveBeenCalledTimes(2);
+    expect(onSettings).toHaveBeenCalledTimes(1);
   });
 });
 
