@@ -328,7 +328,8 @@ function TicketMenu({ configured, selected, worktrees, onPick, onClose }: {
 const svg = (size: number, children: ReactNode) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
 );
-const TicketIcon = ({ size = 12 }: { size?: number }) => svg(size, <><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" /><path d="M13 5v2M13 17v2M13 11v2" /></>);
+// A task, as Jira and Linear draw one: a checked square.
+const TicketIcon = ({ size = 12 }: { size?: number }) => svg(size, <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="m8 12 3 3 5-6" /></>);
 const BranchIcon = ({ size = 12 }: { size?: number }) => svg(size, <><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="6" r="3" /><path d="M6 9v6M18 9a9 9 0 0 1-9 9" /></>);
 const BoxIcon = () => svg(14, <><path d="M21 8 12 3 3 8v8l9 5 9-5Z" /><path d="m3 8 9 5 9-5M12 13v8" /></>);
 const UpDownIcon = () => svg(12, <path d="m7 15 5 5 5-5M7 9l5-5 5 5" />);
