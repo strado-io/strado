@@ -367,15 +367,11 @@ describe('Sidebar tree', () => {
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });
 
-  it('New worktree lives in the blank-space menu; adding a project does not (that is the toolbar\'s)', () => {
-    const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
-    wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
+  it('blank space has no right-click menu (the Focus\'s ⋯ has its actions)', () => {
+    wrap(<Sidebar {...base} />);
     fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
-    expect(screen.queryByRole('button', { name: 'Add repo…' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'New focus…' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'New worktree…' }));
-    expect(onNewWorktree).toHaveBeenCalled();
-    expect(onAddRepo).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'New worktree…' })).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('has no New worktree button of its own; the workspace row is just its name and chevron, New is in the toolbar under it', () => {

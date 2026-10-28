@@ -361,21 +361,16 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('textbox', { name: 'Search focuses and worktrees' })).toHaveFocus();
   });
 
-  it('right-clicking a card opens its menu at the cursor; blank space offers New worktree and Add worktrees (to the open Focus)', () => {
+  it('right-clicking a card opens its menu at the cursor; blank space opens nothing', () => {
     withFocus('local:/r1/wt');
-    const onAddRepo = vi.fn();
-    const { container } = render(<SidebarBody {...props({ onAddRepo })} />);
+    const { container } = render(<SidebarBody {...props()} />);
     fireEvent.contextMenu(screen.getByRole('button', { name: 'fx-412' }), { clientX: 40, clientY: 80 });
-    let menu = screen.getByRole('menu');
+    const menu = screen.getByRole('menu');
     expect(menu).toHaveStyle({ left: '40px', top: '80px' });
     expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['Settings', 'Remove from Billing', 'Delete worktree']);
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.contextMenu(container.querySelector('.overflow-y-auto')!, { clientX: 20, clientY: 300 });
-    menu = screen.getByRole('menu');
-    expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['New worktree…', 'Add worktrees…']);
-    fireEvent.click(within(menu).getByRole('button', { name: 'Add worktrees…' }));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(onAddRepo).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', async () => {

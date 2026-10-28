@@ -216,12 +216,6 @@ export function SidebarBody({
     e.stopPropagation(); // a row's menu, not the blank-space one below
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
-  // Right-click on blank sidebar space: worktrees for the Focus you're in.
-  // (Projects are added from the toolbar; a Focus from New focus.)
-  const openBlankContextMenu = (e: React.MouseEvent) => openContextMenu(e, [
-    { text: 'New worktree…', onClick: () => onNewWorktree(active?.ticket) },
-    ...(active ? [{ text: 'Add worktrees…', onClick: () => setAddingMembers(true) }] : []),
-  ]);
   // Last-opened times for the cards; the same map ⌘K ranks by.
   const lru = readWorktreeLru();
   // Ticket summaries the Dashboard polls for every row: a card with no name of its own borrows its ticket's.
@@ -390,7 +384,8 @@ export function SidebarBody({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <SidebarToolbar query={query} onQuery={setQuery} onAddProject={onAddRepo} onNew={() => openComposer()} shortcut={isActivePane} />
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={openBlankContextMenu}>
+      {/* No menu on blank space: the Focus's ⋯ has New worktree and Add worktrees. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={(e) => e.preventDefault()}>
         <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
