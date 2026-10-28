@@ -4,7 +4,7 @@
 //   its first prompt (needs a worktree);
 // - 🎫: link a ticket (fills the name, adds the worktrees already on it);
 // - ⑂: add existing worktrees, shown as chips over the text;
-// - under the box, the project and its worktree: a new one (its branch named
+// - beside the agent, the project and its worktree: a new one (its branch named
 //   from the first line), an existing one, or the main checkout. No project:
 //   a Focus with just what's chipped (or nothing).
 // A seed worktree (the hub gate's pending open) arrives as a chip and names it.
@@ -16,7 +16,6 @@ import { useTickets } from '../../hooks/tickets';
 import { useRendererOverlay } from '../../contexts/RendererOverlay';
 import { worktreeLabel } from '../sidebar/labels';
 import { createdPinId, localPinId, remotePinId } from '../sidebar/pinIds';
-import { FocusIcon } from '../sidebar/FocusSwitcher';
 import { WorktreePicker } from './WorktreePicker';
 import { loadMyTickets } from './myTickets';
 import { mainBranchOf } from '../NewWorktreeDialog';
@@ -166,7 +165,7 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
   };
   const agentInfo = AGENTS.find((a) => a.mode === agent);
   const iconBtn = (on: boolean) => `flex h-8 w-8 items-center justify-center rounded-lg transition ${on ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100'}`;
-  const footChip = 'flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 disabled:opacity-50';
+  const footChip = 'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px] text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200 disabled:opacity-50';
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[18vh]" onMouseDown={creating ? undefined : onClose}>
@@ -193,13 +192,56 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); } }}
             placeholder="What are you working on?"
             className="min-h-[64px] w-full resize-none bg-transparent px-4 pt-3 text-[15px] text-zinc-100 outline-none placeholder:text-zinc-500" />
+          {needsWorktree && <p className="px-4 pb-1 text-[12px] text-amber-400/90">Pick a project or a worktree for {agentInfo?.label}</p>}
           <div className="flex items-center gap-1.5 px-3 pb-3">
-            <span className="mr-1 text-sky-400"><FocusIcon size={16} /></span>
-            <button type="button" onClick={() => setMenu(menu === 'agent' ? null : 'agent')} aria-label="Agent" aria-expanded={menu === 'agent'}
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 text-[13px] text-zinc-300 hover:border-zinc-600">
-              {agentInfo ? <>{agentInfo.icon}{agentInfo.label}</> : 'No agent'}
-              <ChevronIcon />
-            </button>
+            <span className="relative">
+              <button type="button" onClick={() => setMenu(menu === 'agent' ? null : 'agent')} aria-label="Agent" aria-expanded={menu === 'agent'}
+                className="flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 text-[13px] text-zinc-300 hover:border-zinc-600">
+                {agentInfo ? <>{agentInfo.icon}{agentInfo.label}</> : 'No agent'}
+                <ChevronIcon />
+              </button>
+              {menu === 'agent' && (
+                <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-48">
+                  <MenuItem on={!agent} onClick={() => { setAgent(null); setMenu(null); }}>No agent</MenuItem>
+                  {AGENTS.map((a) => (
+                    <MenuItem key={a.mode} on={agent === a.mode} onClick={() => { setAgent(a.mode); setMenu(null); }}>{a.icon}{a.label}</MenuItem>
+                  ))}
+                </Popover>
+              )}
+            </span>
+            <span className="relative min-w-0">
+              <button type="button" className={footChip} disabled={creating} onClick={() => setMenu(menu === 'project' ? null : 'project')} aria-label="Project" aria-expanded={menu === 'project'}>
+                <BoxIcon />{repo ? repo.name : 'No project'}<UpDownIcon />
+              </button>
+              {menu === 'project' && (
+                <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-64">
+                  <MenuItem on={!repo} onClick={() => { setRepoId(null); setMenu(null); }}>No project</MenuItem>
+                  {repos.map((r) => (
+                    <MenuItem key={r.id} on={repoId === r.id} onClick={() => { setRepoId(r.id); setPlace({ kind: 'new' }); setMenu(null); }}>{r.name}</MenuItem>
+                  ))}
+                </Popover>
+              )}
+            </span>
+            {repo && (
+              <span className="relative min-w-0">
+                <button type="button" className={footChip} disabled={creating} onClick={() => setMenu(menu === 'place' ? null : 'place')} aria-label="Worktree" aria-expanded={menu === 'place'}>
+                  <BranchIcon />{placeLabel}<UpDownIcon />
+                </button>
+                {menu === 'place' && repo && (
+                  <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-72">
+                    <MenuItem on={place.kind === 'new'} onClick={() => { setPlace({ kind: 'new' }); setMenu(null); }}>
+                      New worktree{firstLine && <span className="ml-auto truncate font-mono text-[11px] text-zinc-500">{slug(firstLine)}</span>}
+                    </MenuItem>
+                    {mainCheckout && <MenuItem on={place.kind === 'main'} onClick={() => { setPlace({ kind: 'main' }); setMenu(null); }}>Main checkout</MenuItem>}
+                    {repoWorktrees.length > 0 && <div className="mx-2 my-1 h-px bg-zinc-800" />}
+                    {repoWorktrees.map((w) => (
+                      <MenuItem key={w.path} on={place.kind === 'existing' && place.pinId === localPinId(w)}
+                        onClick={() => { setPlace({ kind: 'existing', pinId: localPinId(w) }); setMenu(null); }}>{worktreeLabel(w)}</MenuItem>
+                    ))}
+                  </Popover>
+                )}
+              </span>
+            )}
             <span className="flex-1" />
             {configured.length > 0 && (
               <button type="button" onClick={() => setMenu(menu === 'ticket' ? null : 'ticket')} aria-label="Link a ticket" title="Link a ticket" className={iconBtn(!!ticket)}><TicketIcon size={15} /></button>
@@ -211,14 +253,6 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
             </button>
           </div>
 
-          {menu === 'agent' && (
-            <Popover onClose={() => setMenu(null)} className="left-12 top-full mt-1 w-48">
-              <MenuItem on={!agent} onClick={() => { setAgent(null); setMenu(null); }}>No agent</MenuItem>
-              {AGENTS.map((a) => (
-                <MenuItem key={a.mode} on={agent === a.mode} onClick={() => { setAgent(a.mode); setMenu(null); }}>{a.icon}{a.label}</MenuItem>
-              ))}
-            </Popover>
-          )}
           {menu === 'ticket' && <TicketMenu configured={configured} selected={ticket} worktrees={worktrees} onPick={pickTicket} onClose={() => setMenu(null)} />}
           {menu === 'worktrees' && (
             <Popover onClose={() => setMenu(null)} className="right-12 top-full mt-1 w-96 p-2">
@@ -227,38 +261,6 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
           )}
         </div>
 
-        <div className="relative flex items-center gap-1 px-2">
-          <button type="button" className={footChip} disabled={creating} onClick={() => setMenu(menu === 'project' ? null : 'project')} aria-label="Project" aria-expanded={menu === 'project'}>
-            <BoxIcon />{repo ? repo.name : 'No project'}<UpDownIcon />
-          </button>
-          {repo && (
-            <button type="button" className={footChip} disabled={creating} onClick={() => setMenu(menu === 'place' ? null : 'place')} aria-label="Worktree" aria-expanded={menu === 'place'}>
-              <BranchIcon />{placeLabel}<UpDownIcon />
-            </button>
-          )}
-          {needsWorktree && <span className="ml-1 text-[12px] text-amber-400/90">Pick a project or a worktree for {agentInfo?.label}</span>}
-          {menu === 'project' && (
-            <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-64">
-              <MenuItem on={!repo} onClick={() => { setRepoId(null); setMenu(null); }}>No project</MenuItem>
-              {repos.map((r) => (
-                <MenuItem key={r.id} on={repoId === r.id} onClick={() => { setRepoId(r.id); setPlace({ kind: 'new' }); setMenu(null); }}>{r.name}</MenuItem>
-              ))}
-            </Popover>
-          )}
-          {menu === 'place' && repo && (
-            <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-72">
-              <MenuItem on={place.kind === 'new'} onClick={() => { setPlace({ kind: 'new' }); setMenu(null); }}>
-                New worktree{firstLine && <span className="ml-auto truncate font-mono text-[11px] text-zinc-500">{slug(firstLine)}</span>}
-              </MenuItem>
-              {mainCheckout && <MenuItem on={place.kind === 'main'} onClick={() => { setPlace({ kind: 'main' }); setMenu(null); }}>Main checkout</MenuItem>}
-              {repoWorktrees.length > 0 && <div className="mx-2 my-1 h-px bg-zinc-800" />}
-              {repoWorktrees.map((w) => (
-                <MenuItem key={w.path} on={place.kind === 'existing' && place.pinId === localPinId(w)}
-                  onClick={() => { setPlace({ kind: 'existing', pinId: localPinId(w) }); setMenu(null); }}>{worktreeLabel(w)}</MenuItem>
-              ))}
-            </Popover>
-          )}
-        </div>
         {jobId && <div className="px-2"><JobSteps progress={progress} /></div>}
         {error && <p role="alert" className="mx-2 rounded-md bg-red-950/60 px-2.5 py-1.5 text-xs text-red-200">{error}</p>}
       </div>
