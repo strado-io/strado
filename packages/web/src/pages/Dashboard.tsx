@@ -31,6 +31,7 @@ import { publishTickets, providerLabel, useTickets } from '../hooks/tickets';
 import { isRunning } from '../hooks/filters';
 import { RunningServers } from '../components/RunningServers';
 import { getSidebarCollapsed, loadSidebarCollapsed, setSidebarCollapsed, useSidebarCollapsed } from '../lib/sidebarStore';
+import { useAppHistory, type Place } from '../lib/navHistory';
 import { OnboardingWelcome } from '../components/OnboardingWelcome';
 import { SettingsPage, type SettingsSection } from '../components/settings/SettingsPage';
 import type { HostTab } from '../components/hosts/HostDetails';
@@ -284,6 +285,10 @@ export function Dashboard(props: {
   // hub switches to the requested tab even when it's already showing this
   // worktree — its mode/sessionId are only read at mount.
   const [openSeq, setOpenSeq] = useState(0);
+  // The open is a ⌘[ / ⌘] step back to a tab: switch to it only if it is still open.
+  const [openSoft, setOpenSoft] = useState(false);
+  // The hub's tab on screen, as TerminalView reports it: part of the place ⌘[ / ⌘] record.
+  const [hubTab, setHubTab] = useState<{ path: string; mode: string; id: string } | null>(null);
   // The Focus whose stored selection has been restored; until then the store
   // is read-only for it, so a not-yet-restored null never wipes it, and the
   // selection on screen is never written under a Focus it did not come from.
@@ -312,7 +317,7 @@ export function Dashboard(props: {
   // Pin ids whose join is still in flight: the gate effect must not close
   // the hub in the beat between the open and the server's answer.
   const joiningRef = useRef(new Set<string>());
-  const openInlineHub = useCallback((w: Worktree, mode?: typeof selectedMode, sessionId?: string) => {
+  const openInlineHub = useCallback((w: Worktree, mode?: typeof selectedMode, sessionId?: string, soft = false) => {
     const gate = focusGateRef.current();
     if (gate !== 'open') {
       pendingFocusOpenRef.current = { kind: 'local', w, mode, sessionId };
@@ -328,6 +333,7 @@ export function Dashboard(props: {
     if (mode === 'claude' || mode === 'codex' || mode === 'opencode' || mode === 'pi') rememberClosedAgent(mode, w.path, false);
     setSelectedMode(mode);
     setSelectedSessionId(sessionId);
+    setOpenSoft(soft);
     // Bump the open sequence so an already-open hub applies this request (its
     // mode/sessionId are read only at mount).
     setOpenSeq((n) => n + 1);
@@ -669,6 +675,46 @@ export function Dashboard(props: {
     const w = state.worktrees.find((x) => x.path === r.worktreePath);
     if (w) openInlineHub(w, r.mode, r.sessionId);
   };
+  // ⌘[ / ⌘]: where you are, as a place in the workspace's history (lib/navHistory).
+  const navPlace: Place | null = !focusApi.loaded && !!focusApi.activeId ? null
+    : selectedRemote ? { kind: 'remote', focusId: focusApi.activeId, runnerId: selectedRemote.runnerId, path: selectedRemote.path }
+    : hubOpen && selectedPath ? {
+      kind: 'hub', focusId: focusApi.activeId, path: selectedPath,
+      ...(hubTab && hubTab.path === selectedPath ? { tab: { mode: hubTab.mode, id: hubTab.id } } : {}),
+    }
+    : activeView.kind !== 'worktrees' ? { kind: 'page', page: activeView.kind }
+    : chatShown && focusApi.activeId ? { kind: 'jarvis', focusId: focusApi.activeId }
+    : { kind: 'home' };
+  const navFocusOk = (id: string | null) => id === null || focusApi.focuses.some((f) => f.id === id);
+  useAppHistory({
+    scope: wsId,
+    place: navPlace,
+    valid: (p) => {
+      if (p.kind === 'hub') return navFocusOk(p.focusId) && state.worktrees.some((w) => w.path === p.path);
+      if (p.kind === 'remote') return navFocusOk(p.focusId) && remote.worktrees.some((w) => w.runnerId === p.runnerId && w.path === p.path);
+      if (p.kind === 'jarvis') return navFocusOk(p.focusId);
+      return true;
+    },
+    go: (p) => {
+      if (p.kind === 'page') { selectView({ kind: p.page }); return; }
+      if (p.kind === 'home') { selectView(INITIAL_VIEW); setJarvisOpen(false); return; }
+      // Another Focus: leave it set to come back to this place, then switch; its restore opens it.
+      if (p.focusId && p.focusId !== focusApi.activeId) {
+        writeJarvisOpen(p.focusId, p.kind === 'jarvis');
+        if (p.kind === 'hub') writeSelPath(p.focusId, p.path);
+        focusApi.activate(p.focusId);
+        return;
+      }
+      if (p.kind === 'jarvis') { setActiveView(INITIAL_VIEW); openJarvis(); return; }
+      if (p.kind === 'remote') {
+        const w = remote.worktrees.find((x) => x.runnerId === p.runnerId && x.path === p.path);
+        if (w) openRemoteWorktree(w);
+        return;
+      }
+      const w = state.worktrees.find((x) => x.path === p.path);
+      if (w) openInlineHub(w, p.tab?.mode as typeof selectedMode, p.tab?.id, true);
+    },
+  });
   // Persist the open worktree under the active Focus (remote hubs store nothing).
   useEffect(() => {
     const id = focusApi.activeId;
@@ -1103,6 +1149,8 @@ export function Dashboard(props: {
               mode={selectedMode}
               sessionId={selectedSessionId}
               openSeq={openSeq}
+              openSoft={openSoft}
+              onActiveTab={setHubTab}
               onClose={() => setSelectedRemote(null)}
               onExpandSidebar={() => setSidebarCollapsed(false)}
               modalOpen={modalOpen}
@@ -1117,6 +1165,8 @@ export function Dashboard(props: {
               mode={selectedMode}
               sessionId={selectedSessionId}
               openSeq={openSeq}
+              openSoft={openSoft}
+              onActiveTab={setHubTab}
               onClose={() => setSelectedPath(null)}
               onExpandSidebar={() => setSidebarCollapsed(false)}
               modalOpen={modalOpen}

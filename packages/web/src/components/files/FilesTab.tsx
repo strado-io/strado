@@ -388,6 +388,8 @@ export function FilesTab({ wsId, worktreePath, remote, openPath, searchRequest =
     const alt = e.altKey && !t.closest?.('.cm-editor');
     // Ctrl+- / Ctrl+Shift+- are VS Code's Mac defaults (Shift turns '-' into '_').
     const minus = e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.key === '-' || e.key === '_');
+    // ⌘[ / ⌘] with no place left here in code fall through to the app's history (lib/navHistory).
+    if (mod && !e.shiftKey && !e.altKey && (e.key === '[' || e.key === ']') && (e.key === '[' ? back : forward).length === 0) return;
     if ((mod && !e.shiftKey && e.key === '[') || (alt && e.key === 'ArrowLeft') || (minus && !e.shiftKey)) { e.preventDefault(); goBack(); }
     else if ((mod && !e.shiftKey && e.key === ']') || (alt && e.key === 'ArrowRight') || (minus && e.shiftKey)) { e.preventDefault(); goForward(); }
     else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); }

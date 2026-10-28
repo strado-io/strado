@@ -54,14 +54,14 @@ const Chevron = ({ open }: { open: boolean }) => (
 /** The sidebar's search: the Focuses that match, and those to show expanded (a worktree in them matched). */
 export type FocusFilter = { ids: ReadonlySet<string>; expand: ReadonlySet<string> };
 
-export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRename, jarvis, filter, children }: {
+export function FocusList({ focuses, activeId, badges, onOpen, menuFor, onRename, jarvis, filter, children }: {
   focuses: Focus[];
   activeId: string | null;
   badges: Map<string, FocusBadges>;
   /** An inactive row was clicked: make that Focus the active one. */
   onOpen: (id: string) => void;
-  /** The active Focus's ⋯ menu (Rename is added here). */
-  activeMenu: MenuItem[];
+  /** A Focus's ⋯ menu (Rename is added here): always shown on the open one, on hover on the rest. */
+  menuFor: (f: Focus) => MenuItem[];
   onRename: (id: string, name: string) => void;
   /** The active Focus's Jarvis, for its header. */
   jarvis?: FocusJarvisHeader;
@@ -123,11 +123,11 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                     {jarvis?.status}
                     <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                     <Menu label={`${f.name} actions`} alwaysVisible
-                      items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...activeMenu]} />
+                      items={[{ text: 'Rename', onClick: () => setRenaming(f.id) }, ...menuFor(f)]} />
                   </div>
                 </div>
               ) : (
-                <div className={ROW}>
+                <div className={`${ROW} group`}>
                   {chevron}
                   <button type="button" onClick={() => onOpen(f.id)} title={`Switch to ${f.name}${hint}`} aria-label={`Switch to ${f.name}`}
                     className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left">
@@ -141,6 +141,9 @@ export function FocusList({ focuses, activeId, badges, onOpen, activeMenu, onRen
                     )}
                     <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-600">{shortRelativeTime(f.lastActiveAt)}</span>
                   </button>
+                  {/* On hover, the same ⋯ as the open Focus's; each item switches to this one first. */}
+                  <Menu label={`${f.name} actions`}
+                    items={[{ text: 'Rename', onClick: () => { onOpen(f.id); setRenaming(f.id); } }, ...menuFor(f)]} />
                 </div>
               )}
               {/* What belongs to this Focus, grouped under its heading (no accent line). */}

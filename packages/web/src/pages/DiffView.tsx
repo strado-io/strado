@@ -6,11 +6,12 @@ import { api, ApiClientError } from '../api';
 import { parseUnifiedDiff, hunkPatch, type ParsedDiff, type DiffHunk, type DiffLine } from '../lib/diff';
 import { SearchSelect } from '../components/SearchSelect';
 import { GitTreePanel } from '../components/GitTreePanel';
+import { GIT_REFRESH_EVENT } from '../components/GitPill';
 import { MrReviewModal } from '../components/MrReviewModal';
 import { MrReview } from '../components/MrReview';
 import { PrStateIcon } from '../components/sidebar/prVisuals';
 import { invalidateMrPath } from '../hooks/mrSummaries';
-import { MinusIcon, PlusIcon } from '../components/hub/icons';
+import { DiscardIcon, MinusIcon, PlusIcon } from '../components/hub/icons';
 
 type Tab = 'changes' | 'branch';
 type MrProbe = Awaited<ReturnType<typeof api.worktrees.mergeRequests>> | { kind: 'loading' };
@@ -279,11 +280,14 @@ const HunkBlock = memo(
 
 /** The worktree's changes and MRs: a modal by default, or `embedded` as a hub
  * tab (fills its pane, no Close; keys only while `active`). */
-export function DiffView({ worktree, onClose, embedded = false, active = true }: {
+export function DiffView({ worktree, onClose, embedded = false, active = true, treeSeq = 0 }: {
   worktree: Worktree;
   onClose?: () => void;
+  /** In a hub: no toolbar — the hub's Git pill (GitPill) pulls, pushes and opens PRs. */
   embedded?: boolean;
   active?: boolean;
+  /** Bumps when the Git pill asks for the git tree. */
+  treeSeq?: number;
 }) {
   const { workspace } = useWorkspace();
   const wsId = workspace.id;
@@ -386,6 +390,21 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
       setError(errMessage(e));
     }
   }
+
+  // The Git pill asked for the tree.
+  useEffect(() => {
+    if (treeSeq === 0) return;
+    setShowTree(true);
+    setMrsOpen(false);
+  }, [treeSeq]);
+  // The Git pill pulled, pushed or refreshed this worktree: reload what's shown.
+  const refreshRef = useRef<() => void>(() => {});
+  refreshRef.current = () => { void refreshAll(tab); };
+  useEffect(() => {
+    const onChange = (e: Event) => { if ((e as CustomEvent<{ path: string }>).detail?.path === worktree.path) refreshRef.current(); };
+    window.addEventListener(GIT_REFRESH_EVENT, onChange);
+    return () => window.removeEventListener(GIT_REFRESH_EVENT, onChange);
+  }, [worktree.path]);
 
   async function refreshAll(which: Tab) {
     const paths = await loadList(which);
@@ -687,7 +706,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
   const stagedList = changesFiles.filter((f) => f.staged !== 'none');
   const unstagedList = changesFiles.filter((f) => f.staged !== 'full');
   const sectionBtn =
-    'flex h-4 w-4 shrink-0 items-center justify-center rounded text-[12px] leading-none text-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30';
+    'flex h-5 w-5 shrink-0 items-center justify-center rounded text-[12px] leading-none text-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30';
   const selectedChangeFile = changesFiles.find((f) => f.path === selected) ?? null;
   const stagedCount = changesFiles.filter((f) => f.staged !== 'none').length;
   // `||`, not `??`: the main checkout is adopted with an empty ticketId.
@@ -730,7 +749,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
               }}
               className={`${iconBtn} text-zinc-500 hover:bg-red-900/50 hover:text-red-300`}
             >
-              ↺
+              <DiscardIcon size={12} />
             </button>
             <button
               aria-label={`Stage ${f.path}`}
@@ -890,9 +909,15 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
             </div>
           </div>
         )}
+        {embedded ? (showTree && (
+          <div className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3 text-[11px] text-zinc-400">
+            <span className="text-zinc-200">Git tree</span>
+            <span className="flex-1" />
+            <button onClick={() => setShowTree(false)} className="rounded px-1.5 py-0.5 hover:bg-white/[0.06] hover:text-zinc-100">Back to changes</button>
+          </div>
+        )) : (
         <div className="flex items-center gap-2 border-b border-zinc-800/80 px-3 py-1 text-sm text-zinc-200">
-          {/* Identity, not navigation: worktree name + a branch chip, then a
-              divider, so nothing here reads as one more tab. */}
+          {/* Identity, not navigation: the worktree's name and its branch. */}
           <div className="flex min-w-0 max-w-[55%] items-center gap-2">
             <span className="truncate font-mono text-zinc-100" title={label}>{label}</span>
             {currentBranch && currentBranch !== label && (
@@ -904,66 +929,8 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
                 <span className="truncate">{currentBranch}</span>
               </span>
             )}
-            {/* Comparing THIS branch with another is a property of the branch,
-                so it sits beside the chip; the base picker appears once on. */}
-            <button
-              onClick={() => {
-                const on = !(!mrsOpen && !showTree && tab === 'branch');
-                setTab(on ? 'branch' : 'changes');
-                setShowTree(false);
-                setMrsOpen(false);
-              }}
-              aria-pressed={!mrsOpen && !showTree && tab === 'branch'}
-              title="Compare this branch with a base branch"
-              className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] transition ${
-                !mrsOpen && !showTree && tab === 'branch'
-                  ? 'border-sky-500/40 bg-sky-500/10 text-sky-200'
-                  : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-              }`}
-            >
-              vs base
-            </button>
-            {!mrsOpen && !showTree && tab === 'branch' && (
-              <SearchSelect
-                value={baseOverride ?? baseBranch}
-                options={[
-                  ...(baseBranch && !branches.includes(baseBranch) ? [baseBranch] : []),
-                  ...branches.filter((b) => b !== currentBranch),
-                ]}
-                onSelect={selectBase}
-                ariaLabel="Comparison base"
-                placeholder="Search branches…"
-              />
-            )}
           </div>
-          <span aria-hidden className="h-5 w-px shrink-0 bg-zinc-800" />
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex shrink-0 items-center rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5">
-              <button
-                onClick={() => { setTab('changes'); setShowTree(false); setMrsOpen(false); }}
-                aria-pressed={!mrsOpen && !showTree && tab === 'changes'}
-                className={segmentClass(!mrsOpen && !showTree && tab === 'changes')}
-              >
-                Changes
-              </button>
-              {(mrProbe.kind === 'list' || mrProbe.kind === 'needsAuth') && (
-                <button
-                  onClick={openMrs}
-                  aria-pressed={mrsOpen}
-                  aria-label={`${mrProbe.provider === 'github' ? 'PRs' : 'MRs'}${mrProbe.kind === 'list' ? ` (${mrProbe.mergeRequests.length})` : ''}`}
-                  title={mrProbe.provider === 'github' ? 'Pull requests' : 'Merge requests'}
-                  className={`${segmentClass(mrsOpen)} inline-flex items-center gap-1.5`}
-                >
-                  {mrProbe.provider === 'github' ? 'PRs' : 'MRs'}
-                  {mrProbe.kind === 'list' && (
-                    <span className="rounded bg-zinc-800 px-1 font-mono text-[10px] tabular-nums text-zinc-300">
-                      {mrProbe.mergeRequests.length}
-                    </span>
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
+          <span className="flex-1" />
           <button
             onClick={() => { setShowTree((p) => !p); setMrsOpen(false); }}
             title="Git tree"
@@ -1059,6 +1026,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
             </button>
           )}
         </div>
+        )}
 
         {mrsOpen ? (
           <div className="flex min-h-0 flex-1">
@@ -1094,7 +1062,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
                       onClick={() => void onUnstageAll()}
                       className={sectionBtn}
                     >
-                      <MinusIcon size={11} />
+                      <MinusIcon size={12} />
                     </button>
                   </div>
                 )}
@@ -1110,7 +1078,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
                         onClick={onDiscardAll}
                         className={`${sectionBtn} hover:bg-red-900/50 hover:text-red-300`}
                       >
-                        ⤺
+                        <DiscardIcon size={12} />
                       </button>
                       <button
                         aria-label="Stage all"
@@ -1119,7 +1087,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
                         onClick={() => void onStageAll()}
                         className={sectionBtn}
                       >
-                        <PlusIcon size={11} />
+                        <PlusIcon size={12} />
                       </button>
                     </span>
                   </div>

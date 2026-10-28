@@ -1,47 +1,54 @@
-// New focus: a centred dialog that seeds the Focus at creation. From ticket
-// (pick one of your open tickets: the name follows, the ticket is linked,
-// worktrees with that ticket are pre-checked), From worktrees (the picker),
-// Blank, or New worktree (make one, NewWorktreeDialog's way, then the Focus
-// with it; or, with a Focus active, add it there instead). All tabs share the
-// name and the checked set; Create & switch makes the Focus and activates it.
-// A seed worktree (the hub gate's pending open) arrives pre-checked and names
-// a blank Focus.
-import { useEffect, useMemo, useState } from 'react';
+// New focus: one box — say what you're working on, Enter. The first line names
+// the Focus; the rest is the task. Everything else is optional, in place:
+// - the agent menu: start Claude / Codex / … in the worktree with the task as
+//   its first prompt (needs a worktree);
+// - 🎫: link a ticket (fills the name, adds the worktrees already on it);
+// - ⑂: add existing worktrees, shown as chips over the text;
+// - beside the agent, the project and its worktree: a new one (its branch named
+//   from the first line), an existing one, or the main checkout. No project:
+//   a Focus with just what's chipped (or nothing).
+// A seed worktree (the hub gate's pending open) arrives as a chip and names it.
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { FocusTicket, RemoteWorktree, TicketIssueDto, TicketProviderId } from '../../api';
 import type { RepoConfig, Worktree } from '../../types';
 import { useTickets } from '../../hooks/tickets';
 import { useRendererOverlay } from '../../contexts/RendererOverlay';
 import { worktreeLabel } from '../sidebar/labels';
-import { localPinId, remotePinId } from '../sidebar/pinIds';
-import { FocusIcon } from '../sidebar/FocusSwitcher';
+import { createdPinId, localPinId, remotePinId } from '../sidebar/pinIds';
 import { WorktreePicker } from './WorktreePicker';
 import { loadMyTickets } from './myTickets';
-import { mainBranchOf, useSourceBranches } from '../NewWorktreeDialog';
-import { SearchSelect } from '../SearchSelect';
+import { mainBranchOf } from '../NewWorktreeDialog';
 import { JobSteps } from '../JobSteps';
 import { useJobSteps } from '../../hooks/jobSteps';
 import { startWorktreeJob } from '../../lib/worktreeJob';
-import { createdPinId } from '../sidebar/pinIds';
+import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon } from '../hub/icons';
 
-type Tab = 'ticket' | 'worktrees' | 'blank' | 'worktree';
+export type AgentMode = 'claude' | 'codex' | 'opencode' | 'pi';
+const AGENTS: { mode: AgentMode; label: string; icon: ReactNode }[] = [
+  { mode: 'claude', label: 'Claude', icon: <ClaudeIcon size={13} /> },
+  { mode: 'codex', label: 'Codex', icon: <CodexIcon size={13} /> },
+  { mode: 'opencode', label: 'OpenCode', icon: <OpencodeIcon size={13} /> },
+  { mode: 'pi', label: 'Pi', icon: <PiIcon size={13} /> },
+];
 
 /** A Focus name as a worktree name; the server makes the branch from it. */
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
-export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, seedPinId, activeFocus, onCreate, onAddToFocus, onClose }: {
-  /** Where a new worktree is made (the New worktree tab); without it the tab is not offered. */
+/** Where the Focus's own worktree comes from, once a project is picked. */
+type Place = { kind: 'new' } | { kind: 'main' } | { kind: 'existing'; pinId: string };
+
+export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, seedPinId, onCreate, onStartAgent, onClose }: {
+  /** Where a new worktree is made; without it, projects can't make one. */
   workspaceId?: string;
   repos: RepoConfig[];
   worktrees: Worktree[];
   remoteWorktrees: RemoteWorktree[];
-  /** A worktree to start from: pre-checked, and the name when nothing else gives one. */
+  /** A worktree to start from: a chip, and the name when nothing else gives one. */
   seedPinId?: string | null;
-  /** The Focus active now: the New worktree tab can add to it instead. */
-  activeFocus?: { id: string; name: string } | null;
-  onCreate: (name: string, members: string[], ticket?: FocusTicket) => void;
-  /** The New worktree tab's "Add to <active Focus>". */
-  onAddToFocus?: (focusId: string, pinId: string) => void;
+  onCreate: (name: string, members: string[], ticket?: FocusTicket) => Promise<unknown> | void;
+  /** After the Focus exists: start `mode` in that worktree with the task as its first prompt. */
+  onStartAgent?: (worktreePath: string, mode: AgentMode, prompt: string) => void;
   onClose: () => void;
 }) {
   useRendererOverlay(true);
@@ -54,212 +61,281 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
     if (remote) return { pinId: seedPinId, label: remote.branch ?? remote.name, ticket: null, provider: undefined };
     return null;
   }, [seedPinId, worktrees, remoteWorktrees]);
-  const [tab, setTab] = useState<Tab>(seed ? 'worktrees' : configured.length > 0 ? 'ticket' : 'blank');
-  const [name, setName] = useState(seed?.label ?? '');
-  const [nameTouched, setNameTouched] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(seed ? [seed.pinId] : []));
-  const [ticket, setTicket] = useState<FocusTicket | null>(seed?.ticket ? { provider: seed.provider ?? 'jira', key: seed.ticket } : null);
-  const [query, setQuery] = useState('');
-  const [issues, setIssues] = useState<TicketIssueDto[] | null>(null);
-  const [issuesFailed, setIssuesFailed] = useState(false);
-  const [ticketSummary, setTicketSummary] = useState<string | null>(null);
 
-  // New worktree: the repo, its name (the branch follows), where it starts,
-  // and whether it joins the active Focus or makes a new one.
-  const [repoId, setRepoId] = useState(repos[0]?.id ?? '');
-  const repo = repos.find((r) => r.id === repoId);
-  const [wtName, setWtName] = useState('');
-  const [wtTouched, setWtTouched] = useState(false);
-  const [base, setBase] = useState(mainBranchOf(worktrees, repos[0]) ?? 'main');
-  // Asked of git only once the tab is open.
-  const branches = useSourceBranches(tab === 'worktree' ? workspaceId : undefined, repo, worktrees, base);
-  const [target, setTarget] = useState<'add' | 'new'>(activeFocus ? 'add' : 'new');
+  const [text, setText] = useState(seed?.label ?? '');
+  const [chips, setChips] = useState<Set<string>>(() => new Set(seed ? [seed.pinId] : []));
+  const [ticket, setTicket] = useState<FocusTicket | null>(seed?.ticket ? { provider: seed.provider ?? 'jira', key: seed.ticket } : null);
+  const [agent, setAgent] = useState<AgentMode | null>(null);
+  const [repoId, setRepoId] = useState<string | null>(null);
+  const [place, setPlace] = useState<Place>({ kind: 'new' });
+  const [menu, setMenu] = useState<'agent' | 'ticket' | 'worktrees' | 'project' | 'place' | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [wtError, setWtError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const progress = useJobSteps(jobId);
+  const box = useRef<HTMLTextAreaElement>(null);
+
+  const repo = repos.find((r) => r.id === repoId) ?? null;
+  const firstLine = text.split('\n')[0]!.trim();
+  const task = text.trim();
+  const name = firstLine || (ticket ? ticket.key : '');
+  const repoWorktrees = repo ? worktrees.filter((w) => w.repoId === repo.id && w.path !== repo.path) : [];
+  const mainCheckout = repo ? worktrees.find((w) => w.path === repo.path) ?? null : null;
+  const placeLabel = !repo ? null
+    : place.kind === 'new' ? 'New worktree'
+    : place.kind === 'main' ? 'Main checkout'
+    : worktreeLabel(worktrees.find((w) => localPinId(w) === place.pinId) ?? ({ path: place.pinId } as Worktree));
+  // The worktree the agent would start in, before anything is made.
+  const agentTarget = (): Worktree | null => {
+    if (repo && place.kind === 'main') return mainCheckout;
+    if (repo && place.kind === 'existing') return worktrees.find((w) => localPinId(w) === place.pinId) ?? null;
+    const first = [...chips].map((id) => worktrees.find((w) => localPinId(w) === id)).find(Boolean);
+    return first ?? null;
+  };
+  // An agent needs somewhere to run: a new worktree on the way, or one already there.
+  const needsWorktree = !!agent && !(repo && place.kind === 'new') && !agentTarget();
+  const canCreate = !creating && name.length > 0 && !needsWorktree;
 
   useEffect(() => {
-    // A worktree on its way: closing would drop its Focus.
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); if (!creating) onClose(); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (menu) setMenu(null);
+      else if (!creating) onClose();
+    };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose, creating]);
-  useEffect(() => {
-    if (tab !== 'ticket' || issues) return;
-    let alive = true;
-    loadMyTickets(configured).then((list) => { if (alive) setIssues(list); }).catch(() => { if (alive) { setIssues([]); setIssuesFailed(true); } });
-    return () => { alive = false; };
-  }, [tab, issues, configured]);
+  }, [onClose, creating, menu]);
 
-  const toggle = (pinId: string, on: boolean) => setSelected((prev) => { const next = new Set(prev); on ? next.add(pinId) : next.delete(pinId); return next; });
-  // Worktrees carrying a ticket join when it is picked.
-  const withTicket = (key: string) => worktrees.filter((w) => w.meta?.ticketId?.trim().toLowerCase() === key.toLowerCase()).map(localPinId);
-  const pickTicket = (t: FocusTicket, summary?: string) => {
-    setTicket(t);
-    setTicketSummary(summary ?? null);
-    if (!nameTouched) setName(summary ? `${t.key} · ${summary}` : t.key);
-    setSelected((prev) => new Set([...prev, ...withTicket(t.key)]));
+  // Done: the Focus with everything chipped (and the new worktree), then the agent.
+  const finish = async (made: { pinId: string; path: string } | null) => {
+    const members = new Set(chips);
+    if (repo && place.kind === 'main' && mainCheckout) members.add(localPinId(mainCheckout));
+    if (repo && place.kind === 'existing') members.add(place.pinId);
+    if (made) members.add(made.pinId);
+    await onCreate(name, [...members], ticket ?? undefined);
+    const target = made?.path ?? agentTarget()?.path;
+    if (agent && target) onStartAgent?.(target, agent, task);
+    onClose();
   };
-
-  const q = query.trim().toLowerCase();
-  const visibleIssues = (issues ?? []).filter((i) => !q || i.key.toLowerCase().includes(q) || i.summary.toLowerCase().includes(q));
-  const typedKey = /^[a-z]+-\d+$/i.test(query.trim()) && !(issues ?? []).some((i) => i.key.toLowerCase() === q) ? query.trim().toUpperCase() : null;
-  // The worktree's name follows the ticket, else the Focus name; the Focus
-  // name follows the worktree's when it has none of its own.
-  const wtShown = wtTouched ? wtName : ticket ? (ticketSummary || ticket.key) : slug(name);
-  const focusName = name || (wtTouched ? wtName : '');
-  const adding = tab === 'worktree' && target === 'add' && !!activeFocus;
-  const canCreate = tab === 'worktree'
-    ? !creating && !!repo && wtShown.trim().length > 0 && (adding || focusName.trim().length > 0)
-    : name.trim().length > 0;
-  // The job finished: the worktree joins the active Focus, or a new one made with it.
   useEffect(() => {
     if (!progress.done) return;
     const pinId = createdPinId(progress.result);
-    if (pinId) {
-      if (adding) onAddToFocus?.(activeFocus!.id, pinId);
-      else onCreate(focusName.trim(), [pinId], ticket ?? undefined);
-    }
-    onClose();
+    const path = pinId?.startsWith('local:') ? pinId.slice('local:'.length) : null;
+    void finish(pinId && path ? { pinId, path } : null).catch((e) => { setError(e instanceof Error ? e.message : String(e)); setCreating(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress.done]);
   useEffect(() => { if (progress.error) setCreating(false); }, [progress.error]);
-  const submitWorktree = async () => {
-    if (!workspaceId || !repo) return;
-    setWtError(null);
+
+  const submit = async () => {
+    if (!canCreate) return;
+    setError(null);
     setCreating(true);
     try {
-      const started = await startWorktreeJob(workspaceId, {
-        repoId: repo.id, ticketId: ticket?.key ?? '', ticketProvider: ticket?.provider,
-        title: wtShown.trim(), sourceBranch: base, sourceWorktree: repo.path,
-      });
-      if (started?.jobId) setJobId(started.jobId);
-      else { setCreating(false); setWtError('Couldn’t start the worktree.'); }
-    } catch (err) {
-      setWtError(err instanceof Error ? err.message : 'Couldn’t create the worktree.');
+      if (repo && place.kind === 'new' && workspaceId) {
+        const started = await startWorktreeJob(workspaceId, {
+          repoId: repo.id, ticketId: ticket?.key ?? '', ticketProvider: ticket?.provider,
+          title: slug(firstLine) || ticket?.key || 'focus', sourceBranch: mainBranchOf(worktrees, repo) ?? 'main', sourceWorktree: repo.path,
+        });
+        if (started?.jobId) setJobId(started.jobId);
+        else { setCreating(false); setError('Couldn’t start the worktree.'); }
+        return;
+      }
+      await finish(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
       setCreating(false);
     }
   };
-  const submit = () => {
-    if (!canCreate) return;
-    if (tab === 'worktree') { void submitWorktree(); return; }
-    onCreate(name.trim(), [...selected], ticket ?? undefined);
-    onClose();
-  };
 
-  const tabButton = (id: Tab, label: string) => (
-    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-      className={`rounded-md px-2.5 py-1 text-xs ${tab === id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}>{label}</button>
-  );
+  const toggleChip = (pinId: string, on: boolean) => setChips((prev) => { const next = new Set(prev); on ? next.add(pinId) : next.delete(pinId); return next; });
+  const chipLabel = (pinId: string) => {
+    const local = worktrees.find((w) => localPinId(w) === pinId);
+    if (local) return worktreeLabel(local);
+    const remote = remoteWorktrees.find((w) => remotePinId(w) === pinId);
+    return remote ? (remote.branch ?? remote.name) : pinId;
+  };
+  const pickTicket = (t: FocusTicket, summary?: string) => {
+    setTicket(t);
+    if (!firstLine) setText(summary ? `${t.key}: ${summary}` : t.key);
+    const onIt = worktrees.filter((w) => w.meta?.ticketId?.trim().toLowerCase() === t.key.toLowerCase()).map(localPinId);
+    setChips((prev) => new Set([...prev, ...onIt]));
+    setMenu(null);
+    box.current?.focus();
+  };
+  const agentInfo = AGENTS.find((a) => a.mode === agent);
+  const iconBtn = (on: boolean) => `flex h-8 w-8 items-center justify-center rounded-lg transition ${on ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100'}`;
+  const footChip = 'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px] text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200 disabled:opacity-50';
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={creating ? undefined : onClose}>
-      <div role="dialog" aria-label={adding ? 'New worktree' : 'New focus'} onMouseDown={(e) => e.stopPropagation()}
-        className="flex w-full max-w-lg flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
-        <div className="flex items-center gap-2">
-          <span className="text-sky-400"><FocusIcon size={16} /></span>
-          <h2 className="text-sm font-medium text-zinc-100">{adding ? 'New worktree' : 'New focus'}</h2>
-          <div role="tablist" aria-label="Start from" className="ml-auto flex gap-0.5 rounded-md bg-zinc-900 p-0.5">
-            {configured.length > 0 && tabButton('ticket', 'From ticket')}
-            {tabButton('worktrees', 'From worktrees')}
-            {tabButton('blank', 'Blank')}
-            {workspaceId && repos.length > 0 && tabButton('worktree', 'New worktree')}
-          </div>
-        </div>
-
-        {tab === 'ticket' && (
-          <div className="flex min-h-0 flex-col gap-2">
-            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tickets"
-              placeholder="Search tickets or type a key…"
-              className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none" />
-            <div role="listbox" aria-label="Tickets" className="flex max-h-48 min-h-0 flex-col overflow-y-auto">
-              {issues === null && <p className="px-2 py-2 text-xs text-zinc-600">Loading…</p>}
-              {issues !== null && issuesFailed && <p className="px-2 py-2 text-xs text-amber-500/80">Could not load tickets.</p>}
-              {issues !== null && !issuesFailed && visibleIssues.length === 0 && !typedKey && (
-                <p className="px-2 py-2 text-xs text-zinc-600">{issues.length === 0 ? 'No open tickets.' : 'No match.'}</p>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[18vh]" onMouseDown={creating ? undefined : onClose}>
+      <div role="dialog" aria-label="New focus" onMouseDown={(e) => e.stopPropagation()} className="flex w-full max-w-2xl flex-col gap-2">
+        <div className="relative flex flex-col rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+          {(chips.size > 0 || ticket) && (
+            <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+              {ticket && (
+                <span className="flex items-center gap-1 rounded-md bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">
+                  <TicketIcon />{ticket.key}
+                  <button type="button" aria-label={`Unlink ${ticket.key}`} onClick={() => setTicket(null)} className="ml-0.5 text-zinc-500 hover:text-zinc-200">×</button>
+                </span>
               )}
-              {visibleIssues.map((i) => {
-                const on = ticket?.key === i.key && ticket.provider === i.provider;
-                const n = withTicket(i.key).length;
-                return (
-                  <button key={`${i.provider}:${i.key}`} type="button" role="option" aria-selected={on} onClick={() => pickTicket({ provider: i.provider, key: i.key }, i.summary)}
-                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-zinc-900 ${on ? 'bg-zinc-900 text-zinc-100' : 'text-zinc-300'}`}>
-                    <span className="shrink-0 font-mono text-xs text-zinc-400">{i.key}</span>
-                    <span className="min-w-0 flex-1 truncate">{i.summary}</span>
-                    {n > 0 && <span className="shrink-0 text-[10px] text-zinc-600">{n} worktree{n === 1 ? '' : 's'}</span>}
-                  </button>
-                );
-              })}
-              {typedKey && (
-                <button type="button" role="option" aria-selected={ticket?.key === typedKey} onClick={() => pickTicket({ provider: configured[0] ?? 'jira', key: typedKey })}
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-900">
-                  <span className="shrink-0 font-mono text-xs text-zinc-400">{typedKey}</span>
-                  <span className="min-w-0 flex-1 truncate">Use this key</span>
+              {[...chips].map((id) => (
+                <span key={id} className="flex items-center gap-1 rounded-md bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300">
+                  <BranchIcon />{chipLabel(id)}
+                  <button type="button" aria-label={`Remove ${chipLabel(id)}`} onClick={() => toggleChip(id, false)} className="ml-0.5 text-zinc-500 hover:text-zinc-200">×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <textarea ref={box} autoFocus rows={2} value={text} disabled={creating} aria-label="What are you working on?"
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); } }}
+            placeholder="What are you working on?"
+            className="min-h-[64px] w-full resize-none bg-transparent px-4 pt-3 text-[15px] text-zinc-100 outline-none placeholder:text-zinc-500" />
+          {needsWorktree && <p className="px-4 pb-1 text-[12px] text-amber-400/90">Pick a project or a worktree for {agentInfo?.label}</p>}
+          <div className="flex items-center gap-1.5 px-3 pb-3">
+            <span className="relative">
+              <button type="button" onClick={() => setMenu(menu === 'agent' ? null : 'agent')} aria-label="Agent" aria-expanded={menu === 'agent'}
+                className="flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 text-[13px] text-zinc-300 hover:border-zinc-600">
+                {agentInfo ? <>{agentInfo.icon}{agentInfo.label}</> : 'No agent'}
+                <ChevronIcon />
+              </button>
+              {menu === 'agent' && (
+                <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-48">
+                  <MenuItem on={!agent} onClick={() => { setAgent(null); setMenu(null); }}>No agent</MenuItem>
+                  {AGENTS.map((a) => (
+                    <MenuItem key={a.mode} on={agent === a.mode} onClick={() => { setAgent(a.mode); setMenu(null); }}>{a.icon}{a.label}</MenuItem>
+                  ))}
+                </Popover>
+              )}
+            </span>
+            <span className="relative min-w-0">
+              <button type="button" className={footChip} disabled={creating} onClick={() => setMenu(menu === 'project' ? null : 'project')} aria-label="Project" aria-expanded={menu === 'project'}>
+                <BoxIcon />{repo ? repo.name : 'No project'}<UpDownIcon />
+              </button>
+              {menu === 'project' && (
+                <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-64">
+                  <MenuItem on={!repo} onClick={() => { setRepoId(null); setMenu(null); }}>No project</MenuItem>
+                  {repos.map((r) => (
+                    <MenuItem key={r.id} on={repoId === r.id} onClick={() => { setRepoId(r.id); setPlace({ kind: 'new' }); setMenu(null); }}>{r.name}</MenuItem>
+                  ))}
+                </Popover>
+              )}
+            </span>
+            {repo && (
+              <span className="relative min-w-0">
+                <button type="button" className={footChip} disabled={creating} onClick={() => setMenu(menu === 'place' ? null : 'place')} aria-label="Worktree" aria-expanded={menu === 'place'}>
+                  <BranchIcon />{placeLabel}<UpDownIcon />
                 </button>
-              )}
-            </div>
-            {ticket && (
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <span>Linked to <span className="font-mono text-zinc-300">{ticket.key}</span></span>
-                <button type="button" onClick={() => setTicket(null)} className="text-zinc-500 underline underline-offset-2 hover:text-zinc-300">unlink</button>
-              </div>
+                {menu === 'place' && repo && (
+                  <Popover onClose={() => setMenu(null)} className="left-0 top-full mt-1 w-72">
+                    <MenuItem on={place.kind === 'new'} onClick={() => { setPlace({ kind: 'new' }); setMenu(null); }}>
+                      New worktree{firstLine && <span className="ml-auto truncate font-mono text-[11px] text-zinc-500">{slug(firstLine)}</span>}
+                    </MenuItem>
+                    {mainCheckout && <MenuItem on={place.kind === 'main'} onClick={() => { setPlace({ kind: 'main' }); setMenu(null); }}>Main checkout</MenuItem>}
+                    {repoWorktrees.length > 0 && <div className="mx-2 my-1 h-px bg-zinc-800" />}
+                    {repoWorktrees.map((w) => (
+                      <MenuItem key={w.path} on={place.kind === 'existing' && place.pinId === localPinId(w)}
+                        onClick={() => { setPlace({ kind: 'existing', pinId: localPinId(w) }); setMenu(null); }}>{worktreeLabel(w)}</MenuItem>
+                    ))}
+                  </Popover>
+                )}
+              </span>
             )}
-          </div>
-        )}
-        {tab === 'worktrees' && (
-          <WorktreePicker repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} selected={selected} onToggle={toggle} autoFocus />
-        )}
-
-        {tab === 'worktree' && (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <label className="flex min-w-0 items-center gap-1.5">
-                <span>Project</span>
-                <select aria-label="Project" value={repoId} disabled={creating}
-                  onChange={(e) => { setRepoId(e.target.value); setBase(mainBranchOf(worktrees, repos.find((r) => r.id === e.target.value)) ?? 'main'); }}
-                  className="min-w-0 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-200 focus:outline-none">
-                  {repos.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
-              </label>
-              <span className="ml-auto shrink-0">from</span>
-              <SearchSelect value={base} options={branches} onSelect={setBase} ariaLabel="Source branch" placeholder="Search branches…" align="right" />
-            </div>
-            <input autoFocus value={wtShown} aria-label="Worktree name" disabled={creating}
-              onChange={(e) => { setWtName(e.target.value); setWtTouched(true); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-              placeholder="Branch / worktree name"
-              className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 font-mono text-sm text-zinc-200 placeholder:font-sans placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none" />
-            {activeFocus && (
-              <div role="radiogroup" aria-label="Put it in" className="flex flex-col gap-1 text-xs text-zinc-400">
-                <label className="flex items-center gap-2"><input type="radio" name="wt-target" checked={target === 'add'} disabled={creating} onChange={() => setTarget('add')} />Add to {activeFocus.name}</label>
-                <label className="flex items-center gap-2"><input type="radio" name="wt-target" checked={target === 'new'} disabled={creating} onChange={() => setTarget('new')} />New focus with it</label>
-              </div>
+            <span className="flex-1" />
+            {configured.length > 0 && (
+              <button type="button" onClick={() => setMenu(menu === 'ticket' ? null : 'ticket')} aria-label="Link a ticket" title="Link a ticket" className={iconBtn(!!ticket)}><TicketIcon size={15} /></button>
             )}
-            {jobId && <JobSteps progress={progress} />}
-            {wtError && <p className="rounded-md bg-red-950/60 px-2.5 py-1.5 text-xs text-red-200">{wtError}</p>}
+            <button type="button" onClick={() => setMenu(menu === 'worktrees' ? null : 'worktrees')} aria-label="Add worktrees" title="Add existing worktrees" className={iconBtn(chips.size > 0)}><BranchIcon size={15} /></button>
+            <button type="button" onClick={() => void submit()} disabled={!canCreate} aria-label="Create focus" title="Create (Enter)"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-100 text-zinc-950 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-400">
+              {creating ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-500 border-t-zinc-950" /> : <ArrowUpIcon />}
+            </button>
           </div>
-        )}
 
-        {!adding && <label className="flex flex-col gap-1 text-xs text-zinc-500">
-          <input autoFocus={tab === 'blank'} value={tab === 'worktree' ? focusName : name} aria-label="Focus name"
-            onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-            placeholder="Name"
-            className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none" />
-        </label>}
-
-        <div className="flex items-center gap-2">
-          {tab !== 'worktree' && selected.size > 0 && <span className="text-xs text-zinc-600">{selected.size} worktree{selected.size === 1 ? '' : 's'} selected</span>}
-          <span className="flex-1" />
-          <button type="button" onClick={onClose} disabled={creating} className="rounded-md px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200">Cancel</button>
-          <button type="button" onClick={submit} disabled={!canCreate}
-            className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-950 hover:bg-white disabled:opacity-40">
-            {tab !== 'worktree' ? 'Create & switch' : creating ? 'Creating…' : adding ? 'Create' : 'Create & switch'}
-          </button>
+          {menu === 'ticket' && <TicketMenu configured={configured} selected={ticket} worktrees={worktrees} onPick={pickTicket} onClose={() => setMenu(null)} />}
+          {menu === 'worktrees' && (
+            <Popover onClose={() => setMenu(null)} className="right-12 top-full mt-1 w-96 p-2" scroll={false}>
+              <WorktreePicker repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} selected={chips} onToggle={toggleChip} autoFocus />
+            </Popover>
+          )}
         </div>
+
+        {jobId && <div className="px-2"><JobSteps progress={progress} /></div>}
+        {error && <p role="alert" className="mx-2 rounded-md bg-red-950/60 px-2.5 py-1.5 text-xs text-red-200">{error}</p>}
       </div>
     </div>,
     document.body,
   );
 }
+
+/** `scroll`: false when the content scrolls itself (the worktree picker's list), so there's one scrollbar. */
+function Popover({ children, className, onClose, scroll = true }: { children: ReactNode; className: string; onClose: () => void; scroll?: boolean }) {
+  return (
+    <>
+      <div className="fixed inset-0 z-10" onMouseDown={onClose} />
+      <div role="menu" className={`menu-solid absolute z-20 rounded-xl border p-1 ${scroll ? 'max-h-80 overflow-y-auto' : 'flex max-h-96 flex-col overflow-hidden'} ${className}`}>{children}</div>
+    </>
+  );
+}
+
+function MenuItem({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" role="menuitemradio" aria-checked={on} onClick={onClick}
+      className={`flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-white/[0.06] ${on ? 'text-zinc-100' : 'text-zinc-300'}`}>
+      {children}
+    </button>
+  );
+}
+
+function TicketMenu({ configured, selected, worktrees, onPick, onClose }: {
+  configured: TicketProviderId[];
+  selected: FocusTicket | null;
+  worktrees: Worktree[];
+  onPick: (t: FocusTicket, summary?: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [issues, setIssues] = useState<TicketIssueDto[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    loadMyTickets(configured).then((list) => { if (alive) setIssues(list); }).catch(() => { if (alive) { setIssues([]); setFailed(true); } });
+    return () => { alive = false; };
+  }, [configured]);
+  const q = query.trim().toLowerCase();
+  const shown = (issues ?? []).filter((i) => !q || i.key.toLowerCase().includes(q) || i.summary.toLowerCase().includes(q));
+  const typedKey = /^[a-z]+-\d+$/i.test(query.trim()) && !(issues ?? []).some((i) => i.key.toLowerCase() === q) ? query.trim().toUpperCase() : null;
+  const onIt = (key: string) => worktrees.filter((w) => w.meta?.ticketId?.trim().toLowerCase() === key.toLowerCase()).length;
+  return (
+    <Popover onClose={onClose} className="right-12 top-full mt-1 w-96" scroll={false}>
+      <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tickets" placeholder="Search tickets or type a key…"
+        className="mb-1 w-full shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600" />
+      {/* Only the list scrolls; the search stays put. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      {issues === null && <p className="px-2 py-1.5 text-[11px] text-zinc-500">Loading…</p>}
+      {issues !== null && failed && <p className="px-2 py-1.5 text-[11px] text-amber-500/80">Could not load tickets.</p>}
+      {issues !== null && !failed && shown.length === 0 && !typedKey && <p className="px-2 py-1.5 text-[11px] text-zinc-500">{issues.length === 0 ? 'No open tickets.' : 'No match.'}</p>}
+      {shown.map((i) => (
+        <MenuItem key={`${i.provider}:${i.key}`} on={selected?.key === i.key} onClick={() => onPick({ provider: i.provider, key: i.key }, i.summary)}>
+          <span className="shrink-0 font-mono text-[11px] text-zinc-400">{i.key}</span>
+          <span className="min-w-0 flex-1 truncate">{i.summary}</span>
+          {onIt(i.key) > 0 && <span className="shrink-0 text-[10px] text-zinc-600">{onIt(i.key)} worktree{onIt(i.key) === 1 ? '' : 's'}</span>}
+        </MenuItem>
+      ))}
+      {typedKey && <MenuItem on={false} onClick={() => onPick({ provider: configured[0] ?? 'jira', key: typedKey })}><span className="font-mono text-[11px]">{typedKey}</span>Use this key</MenuItem>}
+      </div>
+    </Popover>
+  );
+}
+
+const svg = (size: number, children: ReactNode) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
+);
+// A task, as Jira and Linear draw one: a checked square.
+const TicketIcon = ({ size = 12 }: { size?: number }) => svg(size, <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="m8 12 3 3 5-6" /></>);
+const BranchIcon = ({ size = 12 }: { size?: number }) => svg(size, <><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="6" r="3" /><path d="M6 9v6M18 9a9 9 0 0 1-9 9" /></>);
+const BoxIcon = () => svg(14, <><path d="M21 8 12 3 3 8v8l9 5 9-5Z" /><path d="m3 8 9 5 9-5M12 13v8" /></>);
+const UpDownIcon = () => svg(12, <path d="m7 15 5 5 5-5M7 9l5-5 5 5" />);
+const ChevronIcon = () => svg(12, <path d="m6 9 6 6 6-6" />);
+const ArrowUpIcon = () => svg(15, <path d="M12 19V5M5 12l7-7 7 7" />);

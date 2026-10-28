@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RepoConfig, Worktree } from '../../types';
 import type { Focus, RemoteWorktree } from '../../api';
@@ -144,21 +144,14 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('button', { name: 'feat/x' })).toHaveTextContent('Add rate limiting');
   });
 
-  it('Open in <editor>: in a local card\'s menu, opens the worktree; a failure reports fixed words', async () => {
+  it('a local card\'s menu has no Open in <editor> (Settings first)', async () => {
     editorsApi.list.mockResolvedValue({ preferred: null, editors: [{ id: 'zed', label: 'Zed', available: true, lines: true }] });
-    editorsApi.open.mockResolvedValue(undefined);
     withFocus('local:/r1/wt');
-    const onError = vi.fn();
-    render(<SidebarBody {...props({ onError })} />);
+    render(<SidebarBody {...props()} />);
     await act(async () => {});
     fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
-    expect(editorsApi.open).toHaveBeenCalledWith('w1', { worktreePath: '/r1/wt', editor: 'zed' });
-    editorsApi.open.mockRejectedValue(new Error('spawn zed ENOENT /secret'));
-    fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
-    await act(async () => {});
-    expect(onError).toHaveBeenCalledWith("Couldn't open the editor");
+    expect(screen.queryByRole('button', { name: 'Open in Zed' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
   });
 
   it('a runner worktree\'s menu has no Open in <editor>', async () => {
@@ -188,12 +181,10 @@ describe('SidebarBody: the active Focus', () => {
     expect(focusMock.setMembership).toHaveBeenCalledWith('f1', 'remote:rn1:/srv/wt/FX-77', false);
   });
 
-  it('with no Focus, nothing is open and New focus below the list opens the composer', () => {
+  it('with no Focus, nothing is open and the list shows no New focus button (the toolbar has it)', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.queryByTestId('focus-open')).toBeNull();
-    const toolbar = screen.getByTestId('sidebar-toolbar');
-    fireEvent.click(screen.getAllByRole('button', { name: 'New focus' }).find((b) => !toolbar.contains(b))!);
-    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New focus' })).toBeNull();
   });
 
   const header = (over: Partial<FocusJarvisHeader> = {}): FocusJarvisHeader => ({
@@ -282,8 +273,8 @@ describe('SidebarBody: the active Focus', () => {
     render(<SidebarBody {...props({ jarvis: header() })} />);
     expect(screen.getByTestId('focus-header')).toBeInTheDocument();
     const group = screen.getByTestId('focus-group');
-    expect(within(group).getByRole('button', { name: 'Add worktrees' })).toBeInTheDocument();
-    expect(within(group).getByRole('button', { name: 'New worktree here' })).toBeInTheDocument();
+    expect(within(group).getByRole('button', { name: 'Add existing' })).toBeInTheDocument();
+    expect(within(group).getByRole('button', { name: 'New worktree' })).toBeInTheDocument();
   });
 
   it('the empty Focus offers Add worktrees (a picker that adds the checked ones) and New worktree here (with its ticket)', () => {
@@ -291,9 +282,9 @@ describe('SidebarBody: the active Focus', () => {
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    fireEvent.click(within(list()).getByRole('button', { name: 'New worktree here' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'New worktree' }));
     expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
-    fireEvent.click(within(list()).getByRole('button', { name: 'Add worktrees' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'Add existing' }));
     const dialog = screen.getByRole('dialog', { name: 'Add worktrees to Billing' });
     fireEvent.click(within(within(dialog).getByRole('group', { name: 'api' })).getByRole('checkbox', { name: 'fx-412' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
@@ -361,30 +352,26 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('textbox', { name: 'Search focuses and worktrees' })).toHaveFocus();
   });
 
-  it('right-clicking a card opens its menu at the cursor; blank space offers New worktree, Add repo and New focus', () => {
+  it('right-clicking a card opens its menu at the cursor; blank space opens nothing', () => {
     withFocus('local:/r1/wt');
-    const onAddRepo = vi.fn();
-    const { container } = render(<SidebarBody {...props({ onAddRepo })} />);
+    const { container } = render(<SidebarBody {...props()} />);
     fireEvent.contextMenu(screen.getByRole('button', { name: 'fx-412' }), { clientX: 40, clientY: 80 });
-    let menu = screen.getByRole('menu');
+    const menu = screen.getByRole('menu');
     expect(menu).toHaveStyle({ left: '40px', top: '80px' });
     expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['Settings', 'Remove from Billing', 'Delete worktree']);
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.contextMenu(container.querySelector('.overflow-y-auto')!, { clientX: 20, clientY: 300 });
-    menu = screen.getByRole('menu');
-    expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['New worktree…', 'Add repo…', 'New focus…']);
-    fireEvent.click(within(menu).getByRole('button', { name: 'Add repo…' }));
-    expect(onAddRepo).toHaveBeenCalledWith({ left: 20, right: 20, bottom: 300 });
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', () => {
+  it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', async () => {
     render(<SidebarBody {...props()} />);
     fireEvent(window, new CustomEvent('strado:new-focus', { detail: { seedPinId: 'local:/r2/other' } }));
     const dialog = screen.getByRole('dialog', { name: 'New focus' });
-    expect(within(dialog).getByLabelText('Focus name')).toHaveValue('fx-412');
-    expect(within(dialog).getByRole('checkbox', { name: 'fx-412', checked: true })).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & switch' }));
-    expect(focusMock.create).toHaveBeenCalledWith('fx-412', ['local:/r2/other'], undefined);
+    expect(within(dialog).getByLabelText('What are you working on?')).toHaveValue('fx-412');
+    expect(within(dialog).getByRole('button', { name: 'Remove fx-412' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create focus' }));
+    await waitFor(() => expect(focusMock.create).toHaveBeenCalledWith('fx-412', ['local:/r2/other'], undefined));
   });
 });
 
