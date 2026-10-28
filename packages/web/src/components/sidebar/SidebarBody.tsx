@@ -216,11 +216,11 @@ export function SidebarBody({
     e.stopPropagation(); // a row's menu, not the blank-space one below
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
-  // Right-click on blank sidebar space: what you can make from here.
+  // Right-click on blank sidebar space: worktrees for the Focus you're in.
+  // (Projects are added from the toolbar; a Focus from New focus.)
   const openBlankContextMenu = (e: React.MouseEvent) => openContextMenu(e, [
-    { text: 'New worktree…', onClick: () => onNewWorktree() },
-    { text: 'Add repo…', onClick: () => onAddRepo({ left: e.clientX, right: e.clientX, bottom: e.clientY }) },
-    { text: 'New focus…', onClick: () => openComposer() },
+    { text: 'New worktree…', onClick: () => onNewWorktree(active?.ticket) },
+    ...(active ? [{ text: 'Add worktrees…', onClick: () => setAddingMembers(true) }] : []),
   ]);
   // Last-opened times for the cards; the same map ⌘K ranks by.
   const lru = readWorktreeLru();

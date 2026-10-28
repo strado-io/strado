@@ -361,7 +361,7 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('textbox', { name: 'Search focuses and worktrees' })).toHaveFocus();
   });
 
-  it('right-clicking a card opens its menu at the cursor; blank space offers New worktree, Add repo and New focus', () => {
+  it('right-clicking a card opens its menu at the cursor; blank space offers New worktree and Add worktrees (to the open Focus)', () => {
     withFocus('local:/r1/wt');
     const onAddRepo = vi.fn();
     const { container } = render(<SidebarBody {...props({ onAddRepo })} />);
@@ -372,9 +372,10 @@ describe('SidebarBody: the active Focus', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.contextMenu(container.querySelector('.overflow-y-auto')!, { clientX: 20, clientY: 300 });
     menu = screen.getByRole('menu');
-    expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['New worktree…', 'Add repo…', 'New focus…']);
-    fireEvent.click(within(menu).getByRole('button', { name: 'Add repo…' }));
-    expect(onAddRepo).toHaveBeenCalledWith({ left: 20, right: 20, bottom: 300 });
+    expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['New worktree…', 'Add worktrees…']);
+    fireEvent.click(within(menu).getByRole('button', { name: 'Add worktrees…' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(onAddRepo).not.toHaveBeenCalled();
   });
 
   it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', async () => {

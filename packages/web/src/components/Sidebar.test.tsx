@@ -367,16 +367,15 @@ describe('Sidebar tree', () => {
     expect(screen.getAllByRole('dialog', { name: 'New focus' })).toHaveLength(1);
   });
 
-  it('New worktree and Add repo live in the blank-space menu (and the open Focus\'s ⋯ menu)', () => {
+  it('New worktree lives in the blank-space menu; adding a project does not (that is the toolbar\'s)', () => {
     const onNewWorktree = vi.fn(); const onAddRepo = vi.fn();
     wrap(<Sidebar {...base} onNewWorktree={onNewWorktree} onAddRepo={onAddRepo} />);
     fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
+    expect(screen.queryByRole('button', { name: 'Add repo…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New focus…' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'New worktree…' }));
     expect(onNewWorktree).toHaveBeenCalled();
-    expect(activePane().queryByRole('button', { name: 'Add repo' })).toBeNull();
-    fireEvent.contextMenu(activePane().getByRole('region', { name: 'Focus' }).parentElement!, { clientX: 5, clientY: 50 });
-    fireEvent.click(screen.getByRole('button', { name: 'Add repo…' }));
-    expect(onAddRepo).toHaveBeenCalledWith(expect.objectContaining({ bottom: 50 }));
+    expect(onAddRepo).not.toHaveBeenCalled();
   });
 
   it('has no New worktree button of its own; the workspace row is just its name and chevron, New is in the toolbar under it', () => {
