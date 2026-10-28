@@ -144,21 +144,14 @@ describe('SidebarBody: the active Focus', () => {
     expect(screen.getByRole('button', { name: 'feat/x' })).toHaveTextContent('Add rate limiting');
   });
 
-  it('Open in <editor>: in a local card\'s menu, opens the worktree; a failure reports fixed words', async () => {
+  it('a local card\'s menu has no Open in <editor> (Settings first)', async () => {
     editorsApi.list.mockResolvedValue({ preferred: null, editors: [{ id: 'zed', label: 'Zed', available: true, lines: true }] });
-    editorsApi.open.mockResolvedValue(undefined);
     withFocus('local:/r1/wt');
-    const onError = vi.fn();
-    render(<SidebarBody {...props({ onError })} />);
+    render(<SidebarBody {...props()} />);
     await act(async () => {});
     fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
-    expect(editorsApi.open).toHaveBeenCalledWith('w1', { worktreePath: '/r1/wt', editor: 'zed' });
-    editorsApi.open.mockRejectedValue(new Error('spawn zed ENOENT /secret'));
-    fireEvent.click(screen.getByRole('button', { name: 'fx-412 actions' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Zed' }));
-    await act(async () => {});
-    expect(onError).toHaveBeenCalledWith("Couldn't open the editor");
+    expect(screen.queryByRole('button', { name: 'Open in Zed' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
   });
 
   it('a runner worktree\'s menu has no Open in <editor>', async () => {

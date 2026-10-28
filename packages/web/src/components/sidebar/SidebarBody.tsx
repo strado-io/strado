@@ -254,7 +254,6 @@ export function SidebarBody({
     const testIdSuffix = w.path;
     const pinId = localPinId(w);
     const menuItems: MenuItem[] = [
-      ...(openWorktreeInEditor && editor ? [{ text: `Open in ${editor.label}`, onClick: () => openWorktreeInEditor(w) }] : []),
       { text: 'Settings', onClick: () => onWorktreeSettings(w) },
       ...(onProjectSettings && w.repoId ? [{ text: 'Project settings', onClick: () => onProjectSettings(w.repoId!) }] : []),
       { text: `Remove from ${f.name}`, onClick: () => removeFromFocus(f, pinId) },
