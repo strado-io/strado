@@ -308,9 +308,11 @@ function TicketMenu({ configured, selected, worktrees, onPick, onClose }: {
   const typedKey = /^[a-z]+-\d+$/i.test(query.trim()) && !(issues ?? []).some((i) => i.key.toLowerCase() === q) ? query.trim().toUpperCase() : null;
   const onIt = (key: string) => worktrees.filter((w) => w.meta?.ticketId?.trim().toLowerCase() === key.toLowerCase()).length;
   return (
-    <Popover onClose={onClose} className="right-12 top-full mt-1 w-96">
+    <Popover onClose={onClose} className="right-12 top-full mt-1 w-96" scroll={false}>
       <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tickets" placeholder="Search tickets or type a key…"
-        className="mb-1 w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600" />
+        className="mb-1 w-full shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600" />
+      {/* Only the list scrolls; the search stays put. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
       {issues === null && <p className="px-2 py-1.5 text-[11px] text-zinc-500">Loading…</p>}
       {issues !== null && failed && <p className="px-2 py-1.5 text-[11px] text-amber-500/80">Could not load tickets.</p>}
       {issues !== null && !failed && shown.length === 0 && !typedKey && <p className="px-2 py-1.5 text-[11px] text-zinc-500">{issues.length === 0 ? 'No open tickets.' : 'No match.'}</p>}
@@ -322,6 +324,7 @@ function TicketMenu({ configured, selected, worktrees, onPick, onClose }: {
         </MenuItem>
       ))}
       {typedKey && <MenuItem on={false} onClick={() => onPick({ provider: configured[0] ?? 'jira', key: typedKey })}><span className="font-mono text-[11px]">{typedKey}</span>Use this key</MenuItem>}
+      </div>
     </Popover>
   );
 }
