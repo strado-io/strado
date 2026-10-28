@@ -21,6 +21,7 @@ import { githubProjectFromCloneUrl, runnerGitCredential } from '../services/runn
 import { credentialFromSandboxEnv } from '../services/modelCredential.js';
 import { parseRemoteUrl } from '../services/gitProviders.js';
 import { explainCloneFailure } from '../services/cloneAuthHint.js';
+import { currentBranch } from '../services/gitWorktree.js';
 
 export type WorktreeRow = {
   path: string;
@@ -58,7 +59,8 @@ const CreateBody = z.object({
   repoId: z.string(),
   ticketId: z.string(),
   title: z.string().min(1),
-  sourceBranch: z.string().min(1),
+  // Omitted when the client doesn't know the repo's branch: the server reads it.
+  sourceBranch: z.string().min(1).optional(),
   sourceWorktree: z.string().min(1),
   port: z.number().int().positive().nullable().optional(),
   env: z.record(z.string()).optional(),
@@ -390,7 +392,7 @@ export async function registerWorktreesRoutes(app: FastifyInstance) {
           bareRepo,
           targetPath: targetWorktree,
           branch: slug,
-          sourceBranch: body.sourceBranch,
+          sourceBranch: body.sourceBranch ?? (await currentBranch(repo.path)) ?? 'main',
         });
       } else {
         await app.deps.git.create({

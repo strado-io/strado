@@ -29,19 +29,22 @@ export function mainBranchOf(worktrees: Worktree[], r?: RepoConfig): string | nu
 
 /** The branches a new worktree can start from: the chosen one, the repo's
  * worktrees' at once, then every local and remote branch once git answers. */
-export function useSourceBranches(workspaceId: string | undefined, repo: RepoConfig | undefined, worktrees: Worktree[], sourceBranch: string): string[] {
-  const [options, setOptions] = useState<string[]>([sourceBranch]);
+export function useSourceBranches(workspaceId: string | undefined, repo: RepoConfig | undefined, worktrees: Worktree[], sourceBranch: string,
+  onHead?: (branch: string) => void): string[] {
+  const [options, setOptions] = useState<string[]>([sourceBranch].filter(Boolean));
   useEffect(() => {
     const localBranches = worktrees
       .filter((worktree) => worktree.repoId === repo?.id && worktree.branch)
       .map((worktree) => worktree.branch!);
-    setOptions(Array.from(new Set([sourceBranch, ...localBranches])));
+    setOptions(Array.from(new Set([sourceBranch, ...localBranches].filter(Boolean))));
     if (!workspaceId || !repo?.path) return;
 
     let current = true;
     api.worktrees.git.branches(workspaceId, repo.path)
-      .then(({ branches }) => {
-        if (current) setOptions(Array.from(new Set([sourceBranch, ...branches])));
+      .then(({ branches, current: head }) => {
+        if (!current) return;
+        setOptions(Array.from(new Set([sourceBranch, ...branches].filter(Boolean))));
+        if (head) onHead?.(head);
       })
       .catch(() => undefined);
     return () => { current = false; };
@@ -54,7 +57,8 @@ export type CreatePayload = {
   ticketId: string;
   ticketProvider?: TicketProviderId;
   title: string;
-  sourceBranch: string;
+  /** Omitted: the repo's current branch, read by the server. */
+  sourceBranch?: string;
   sourceWorktree: string;
   port?: number;
   env?: Record<string, string>;
@@ -102,11 +106,13 @@ export function NewWorktreeDialog({
   const initialRepo = repos.find((r) => r.id === preselectRepoId) ?? repos[0];
   // Opened from a repo row's + button: the repo is already decided — no picker.
   const lockedRepo = repos.find((r) => r.id === preselectRepoId);
-  // The repo's real default branch; guessing 'master' broke repos on 'main'.
+  // The repo's real branch, never a guess ('master' broke repos on 'main', and
+  // 'main' broke repos on 'master'). '' until known: git's current branch fills
+  // it, and failing that the server reads it.
   const [repoId, setRepoId] = useState(initialRepo?.id ?? '');
   const [ticketId, setTicketId] = useState(preselectTicket?.key ?? '');
   const [title, setTitle] = useState('');
-  const [sourceBranch, setSourceBranch] = useState(mainBranchOf(worktrees, initialRepo) ?? 'main');
+  const [sourceBranch, setSourceBranch] = useState(mainBranchOf(worktrees, initialRepo) ?? '');
 
   // Switching repos re-points the source branch at the newly-selected repo's
   // main worktree. The main worktree remains the internal linking default; it
@@ -114,13 +120,14 @@ export function NewWorktreeDialog({
   function changeRepo(id: string) {
     setRepoId(id);
     const r = repos.find((x) => x.id === id);
-    setSourceBranch(mainBranchOf(worktrees, r) ?? 'main');
+    setSourceBranch(mainBranchOf(worktrees, r) ?? '');
   }
   // '' = this machine. Only online runners are selectable: creating on an
   // offline box would queue nothing and fail at the first request.
   const [runnerId, setRunnerId] = useState('');
   const selectedRepo = repos.find((r) => r.id === repoId);
-  const branchOptions = useSourceBranches(workspaceId, selectedRepo, worktrees, sourceBranch);
+  const branchOptions = useSourceBranches(workspaceId, selectedRepo, worktrees, sourceBranch,
+    (head) => setSourceBranch((s) => s || head));
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -217,7 +224,7 @@ export function NewWorktreeDialog({
         ticketId,
         ticketProvider,
         title: title.trim(),
-        sourceBranch,
+        sourceBranch: sourceBranch || undefined,
         sourceWorktree,
         runnerId: runnerId || undefined,
       });
@@ -441,7 +448,7 @@ export function NewWorktreeDialog({
                 <span className="text-zinc-200">{selectedRepo?.name ?? repoId}</span>
                 {' / '}{title}
                 <br />
-                source: <span className="font-mono text-zinc-300">{sourceBranch}</span>
+                source: <span className="font-mono text-zinc-300">{sourceBranch || 'current branch'}</span>
               </p>
               <JobSteps progress={progress} where={runnerName} />
               {error && <div className="mt-3 rounded-md bg-red-950/60 px-3 py-2 text-xs text-red-200">{error}</div>}

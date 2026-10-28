@@ -14,7 +14,8 @@ export function startWorktreeJob(wsId: string, payload: CreatePayload) {
       ticketId: payload.ticketId,
       ticketProvider: payload.ticketProvider,
       title: payload.title,
-      sourceBranch: payload.sourceBranch,
+      // A runner clones from origin, where 'main' is the likeliest default.
+      sourceBranch: payload.sourceBranch ?? 'main',
     });
   }
   track('worktree_created');

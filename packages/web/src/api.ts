@@ -513,7 +513,7 @@ export const api = {
       repoId: string;
       ticketId: string;
       title: string;
-      sourceBranch: string;
+      sourceBranch?: string;
       sourceWorktree: string;
       port?: number;
       env?: Record<string, string>;

@@ -6,8 +6,9 @@ const SHOW_STATUS_KEY = 'strado:hub-show-status';
 const SHOW_DOCK_KEY = 'strado:show-dock';
 const CHANGE_EVENT = 'strado:hub-display-change';
 
+// All three start off: a quiet hub by default. Only an explicit "on" shows them.
 function readPreference(key: string): boolean {
-  return localStorage.getItem(key) !== 'false';
+  return localStorage.getItem(key) === 'true';
 }
 
 export function useHubDisplayPreferences() {

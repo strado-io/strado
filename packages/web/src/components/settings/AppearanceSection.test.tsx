@@ -55,31 +55,31 @@ describe('AppearanceSection', () => {
     expect(document.documentElement.dataset.terminalFont).toBe('jetbrains');
   });
 
-  it('persists independent hub time and status visibility toggles', () => {
+  it('hub time and status start off, and each toggle persists on its own', () => {
     render(<AppearanceSection />);
     const time = screen.getByRole('switch', { name: 'Show elapsed time' });
     const status = screen.getByRole('switch', { name: 'Show status' });
-    expect(time).toHaveAttribute('aria-checked', 'true');
-    expect(status).toHaveAttribute('aria-checked', 'true');
-    expect(time.firstElementChild).toHaveClass('left-0.5', 'translate-x-4');
+    expect(time).toHaveAttribute('aria-checked', 'false');
+    expect(status).toHaveAttribute('aria-checked', 'false');
+    expect(time.firstElementChild).toHaveClass('left-0.5', 'translate-x-0');
 
     fireEvent.click(time);
     fireEvent.click(status);
 
-    expect(time).toHaveAttribute('aria-checked', 'false');
-    expect(status).toHaveAttribute('aria-checked', 'false');
-    expect(time.firstElementChild).toHaveClass('left-0.5', 'translate-x-0');
-    expect(localStorage.getItem('strado:hub-show-time')).toBe('false');
-    expect(localStorage.getItem('strado:hub-show-status')).toBe('false');
+    expect(time).toHaveAttribute('aria-checked', 'true');
+    expect(status).toHaveAttribute('aria-checked', 'true');
+    expect(time.firstElementChild).toHaveClass('left-0.5', 'translate-x-4');
+    expect(localStorage.getItem('strado:hub-show-time')).toBe('true');
+    expect(localStorage.getItem('strado:hub-show-status')).toBe('true');
   });
 
-  it('the bottom bar is shown by default and can be hidden', () => {
+  it('the bottom bar is hidden by default and can be shown', () => {
     render(<AppearanceSection />);
     const dock = screen.getByRole('switch', { name: 'Show bottom bar' });
-    expect(dock).toHaveAttribute('aria-checked', 'true');
-    fireEvent.click(dock);
     expect(dock).toHaveAttribute('aria-checked', 'false');
-    expect(localStorage.getItem('strado:show-dock')).toBe('false');
+    fireEvent.click(dock);
+    expect(dock).toHaveAttribute('aria-checked', 'true');
+    expect(localStorage.getItem('strado:show-dock')).toBe('true');
   });
 
   it('defaults the interface font to Inter until the user picks one', () => {

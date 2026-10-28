@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NewWorktreeDialog, dominantProjectKey } from './NewWorktreeDialog';
 import { publishTickets } from '../hooks/tickets';
 
@@ -142,8 +142,21 @@ describe('NewWorktreeDialog', () => {
     fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Thing' } });
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
     expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ repoId: 'r', ticketId: 'FD-1', title: 'Thing', sourceBranch: 'main' }),
+      expect.objectContaining({ repoId: 'r', ticketId: 'FD-1', title: 'Thing' }),
     );
+    // The branch isn't known here, so none is guessed: the server reads the repo's.
+    expect(onSubmit.mock.calls[0][0].sourceBranch).toBeUndefined();
+  });
+
+  it('starts from the branch the repo is on (master here), never a guessed main', async () => {
+    gitBranches.mockResolvedValue({ branches: ['master', 'dev'], current: 'master' });
+    const onSubmit = vi.fn();
+    render(<NewWorktreeDialog workspaceId="workspace-1" repos={repos} worktrees={[]} onCancel={() => {}} onSubmit={onSubmit} />);
+    await waitFor(() => expect(gitBranches).toHaveBeenCalled());
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Thing' } });
+    fireEvent.click(screen.getByRole('button', { name: /create/i }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ sourceBranch: 'master' }));
   });
 
   it('loads Git branches into a source branch dropdown', async () => {
@@ -278,7 +291,7 @@ describe('NewWorktreeDialog', () => {
       expect(await screen.findByRole('heading', { name: 'Create worktree' })).toBeInTheDocument();
       expect(screen.getByLabelText(/^title$/i)).not.toBeVisible();
       expect(screen.getByTestId('creation-summary')).toHaveTextContent('r / Thing');
-      expect(screen.getByTestId('creation-summary')).toHaveTextContent('source: main');
+      expect(screen.getByTestId('creation-summary')).toHaveTextContent('source: current branch');
       expect(screen.getByText(/^on runner-dev$/i)).toBeVisible();
       expect(screen.getByText('0:00')).toBeVisible();
     });

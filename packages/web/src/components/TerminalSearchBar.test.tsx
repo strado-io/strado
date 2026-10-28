@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { TerminalSearchBar, searchKey, type SearchPort } from './TerminalSearchBar';
+import { TerminalSearchBar, filePickerKey, searchKey, type SearchPort } from './TerminalSearchBar';
 
 function port() {
   let cb: ((r: { index: number; count: number }) => void) | null = null;
@@ -108,5 +108,20 @@ describe('searchKey: ⌘F on a Mac, Ctrl+F elsewhere', () => {
     expect(searchKey(k({ ctrlKey: true, key: 'F' }), false)).toBe(true);
     expect(searchKey(k({ metaKey: true }), false)).toBe(false);
     expect(searchKey(k({ ctrlKey: true, altKey: true }), false)).toBe(false);
+  });
+});
+
+describe('filePickerKey: ⌘P on a Mac, Ctrl+P elsewhere (Linux, Windows)', () => {
+  const k = (o: Partial<KeyboardEvent>) => ({ type: 'keydown', key: 'p', metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...o }) as KeyboardEvent;
+  it('mac', () => {
+    expect(filePickerKey(k({ metaKey: true }), true)).toBe(true);
+    expect(filePickerKey(k({ ctrlKey: true }), true)).toBe(false);
+    expect(filePickerKey(k({ metaKey: true, shiftKey: true }), true)).toBe(false);
+  });
+  it('elsewhere', () => {
+    expect(filePickerKey(k({ ctrlKey: true }), false)).toBe(true);
+    expect(filePickerKey(k({ ctrlKey: true, key: 'P' }), false)).toBe(true);
+    expect(filePickerKey(k({ metaKey: true }), false)).toBe(false);
+    expect(filePickerKey(k({ ctrlKey: true, type: 'keyup' }), false)).toBe(false);
   });
 });
