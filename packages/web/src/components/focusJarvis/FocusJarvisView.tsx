@@ -85,7 +85,7 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
   return (
     <section aria-label="Jarvis" className="flex h-full min-h-0 flex-1 flex-col">
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4 px-4 py-6">
+        <div className="mx-auto flex w-full max-w-[820px] flex-col gap-4 px-4 py-6">
           {hasOlder && (
             <button type="button" onClick={onLoadOlder} className="self-center text-[12px] text-zinc-500 hover:text-zinc-300">Earlier messages</button>
           )}
@@ -108,7 +108,7 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
           {thinking && <ThinkingLine />}
         </div>
       </div>
-      <div className="mx-auto w-full max-w-[640px] px-4 pb-4">
+      <div className="mx-auto w-full max-w-[820px] px-4 pb-4">
         {error && <div role="alert" className="mb-2 text-[12px] text-red-300">{error}</div>}
         <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'}
           model={meta?.model ?? null} effort={meta?.effort ?? null} onSettings={onSettings} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
