@@ -273,8 +273,8 @@ describe('SidebarBody: the active Focus', () => {
     render(<SidebarBody {...props({ jarvis: header() })} />);
     expect(screen.getByTestId('focus-header')).toBeInTheDocument();
     const group = screen.getByTestId('focus-group');
-    expect(within(group).getByRole('button', { name: 'Add worktrees' })).toBeInTheDocument();
-    expect(within(group).getByRole('button', { name: 'New worktree here' })).toBeInTheDocument();
+    expect(within(group).getByRole('button', { name: 'Add existing' })).toBeInTheDocument();
+    expect(within(group).getByRole('button', { name: 'New worktree' })).toBeInTheDocument();
   });
 
   it('the empty Focus offers Add worktrees (a picker that adds the checked ones) and New worktree here (with its ticket)', () => {
@@ -282,9 +282,9 @@ describe('SidebarBody: the active Focus', () => {
     focusMock.activeId = 'f1';
     const onNewWorktree = vi.fn();
     render(<SidebarBody {...props({ onNewWorktree })} />);
-    fireEvent.click(within(list()).getByRole('button', { name: 'New worktree here' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'New worktree' }));
     expect(onNewWorktree).toHaveBeenCalledWith({ provider: 'jira', key: 'FD-9' });
-    fireEvent.click(within(list()).getByRole('button', { name: 'Add worktrees' }));
+    fireEvent.click(within(list()).getByRole('button', { name: 'Add existing' }));
     const dialog = screen.getByRole('dialog', { name: 'Add worktrees to Billing' });
     fireEvent.click(within(within(dialog).getByRole('group', { name: 'api' })).getByRole('checkbox', { name: 'fx-412' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
