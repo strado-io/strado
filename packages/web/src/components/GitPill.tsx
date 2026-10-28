@@ -3,7 +3,7 @@
 // - the counts open Changes (⌘L);
 // - ↑N pushes the N commits ahead to origin, ↓N pulls the N behind; each shows
 //   only when it isn't 0;
-// - ▾: Pull, Push, Create PR…, Git tree, Refresh.
+// - ▾: Pull, Pull from… (any branch, into this one), Push, Create PR…, Git tree, Refresh.
 // Ahead/behind come from refresh-git (against origin/<branch>), re-read on
 // mount, on focus, and after anything here. A push or pull reports in a small
 // note under the pill. The Changes view listens for GIT_REFRESH_EVENT to reload.
@@ -60,7 +60,7 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
   onOpenChanges: () => void;
   onOpenTree: () => void;
 }) {
-  const [menu, setMenu] = useState<'main' | 'mr' | null>(null);
+  const [menu, setMenu] = useState<'main' | 'mr' | 'pull' | null>(null);
   const [op, setOp] = useState<Op>(null);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [targets, setTargets] = useState<string[] | null>(null);
@@ -79,13 +79,14 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
     return () => clearTimeout(t);
   }, [note]);
 
-  const open = (which: 'main' | 'mr') => {
+  const open = (which: 'main' | 'mr' | 'pull') => {
     setAnchor(root.current?.getBoundingClientRect() ?? null);
     setMenu(which);
   };
   const close = () => { setMenu(null); setFilter(''); };
 
-  const run = async (kind: 'push' | 'pull') => {
+  /** `source` for a pull: a branch to bring in ("origin/main", or a local one); default origin/<this branch>. */
+  const run = async (kind: 'push' | 'pull', source?: string) => {
     close();
     if (op || !branch) return;
     setOp(kind);
@@ -98,8 +99,9 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
         await api.worktrees.git.push(wsId, worktree.path, remote);
         setNote({ text: `Pushed ${branch} to ${remote}`, error: false });
       } else {
-        await api.worktrees.git.pull(wsId, worktree.path, `origin/${branch}`);
-        setNote({ text: `Pulled origin/${branch}`, error: false });
+        const from = source ?? `origin/${branch}`;
+        await api.worktrees.git.pull(wsId, worktree.path, from);
+        setNote({ text: `Pulled ${from} into ${branch}`, error: false });
       }
     } catch (e) {
       setNote({ text: errMessage(e), error: true });
@@ -109,17 +111,24 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
     }
   };
 
-  const openMrPicker = () => {
-    open('mr');
+  // Create PR… targets: branches on origin. Pull from…: every other branch, local or remote.
+  const openPicker = (which: 'mr' | 'pull') => {
+    open(which);
     setTargets(null);
     api.worktrees.git.branches(wsId, worktree.path)
       .then((r) => {
         const cur = r.current ?? branch;
-        setTargets([...new Set(r.branches.filter((b) => b.startsWith('origin/')).map((b) => b.slice('origin/'.length)))].filter((b) => b !== cur));
+        setTargets(which === 'mr'
+          ? [...new Set(r.branches.filter((b) => b.startsWith('origin/')).map((b) => b.slice('origin/'.length)))].filter((b) => b !== cur)
+          : r.branches.filter((b) => b !== cur));
       })
       .catch((e) => { setTargets([]); setNote({ text: errMessage(e), error: true }); });
   };
 
+  const pick = (t: string) => {
+    if (menu === 'pull') void run('pull', t);
+    else { setMrTarget(t); close(); }
+  };
   const item = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-white/[0.06] disabled:opacity-40';
   const shown = (targets ?? []).filter((t) => t.toLowerCase().includes(filter.toLowerCase()));
   const below = anchor ? { top: anchor.bottom + 6, right: Math.max(8, window.innerWidth - anchor.right) } : null;
@@ -180,7 +189,7 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
       {menu && below && createPortal(
         <>
           <div className="fixed inset-0 z-[90]" onMouseDown={close} />
-          <div role="menu" aria-label={menu === 'mr' ? 'Create PR into' : 'Git'} style={{ top: below.top, right: below.right }}
+          <div role="menu" aria-label={menu === 'mr' ? 'Create PR into' : menu === 'pull' ? 'Pull from' : 'Git'} style={{ top: below.top, right: below.right }}
             className="menu-solid fixed z-[91] w-60 rounded-xl border p-1"
             onKeyDown={(e) => { if (e.key === 'Escape') close(); }}>
             {menu === 'main' ? (
@@ -188,10 +197,13 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
                 <button role="menuitem" className={item} disabled={!!op || !branch} onClick={() => void run('pull')}>
                   <span className="w-4 text-center text-amber-300">↓</span>Pull{status?.behind ? <span className="ml-auto font-mono text-[11px] text-zinc-500">{status.behind}</span> : null}
                 </button>
+                <button role="menuitem" className={item} disabled={!!op || !branch} onClick={() => openPicker('pull')}>
+                  <span className="w-4 text-center text-amber-300">↓</span>Pull from…
+                </button>
                 <button role="menuitem" className={item} disabled={!!op || !branch} onClick={() => void run('push')}>
                   <span className="w-4 text-center text-sky-300">↑</span>Push{status?.ahead ? <span className="ml-auto font-mono text-[11px] text-zinc-500">{status.ahead}</span> : null}
                 </button>
-                <button role="menuitem" className={item} disabled={!branch} onClick={openMrPicker}>
+                <button role="menuitem" className={item} disabled={!branch} onClick={() => openPicker('mr')}>
                   <span className="flex w-4 justify-center"><PrIcon /></span>Create PR…
                 </button>
                 <div className="my-1 h-px bg-zinc-800" />
@@ -204,15 +216,15 @@ export function GitPill({ wsId, worktree, status, additions, deletions, active, 
               </>
             ) : (
               <>
-                <div className="px-2 pb-1 pt-1 text-[11px] text-zinc-500">Create PR from {branch} into</div>
+                <div className="px-2 pb-1 pt-1 text-[11px] text-zinc-500">{menu === 'mr' ? `Create PR from ${branch} into` : `Pull into ${branch} from`}</div>
                 <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search branches…" aria-label="Target branch"
-                  onKeyDown={(e) => { if (e.key === 'Enter' && shown[0]) { setMrTarget(shown[0]); close(); } }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && shown[0]) pick(shown[0]); }}
                   className="mb-1 w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600" />
                 <div className="max-h-64 overflow-y-auto">
                   {targets === null ? <div className="px-2 py-1.5 text-[11px] text-zinc-500">Loading branches…</div>
-                    : shown.length === 0 ? <div className="px-2 py-1.5 text-[11px] text-zinc-500">No branches on origin</div>
+                    : shown.length === 0 ? <div className="px-2 py-1.5 text-[11px] text-zinc-500">{menu === 'mr' ? 'No branches on origin' : 'No other branches'}</div>
                     : shown.map((t) => (
-                      <button key={t} role="menuitem" className={`${item} font-mono text-[11px]`} onClick={() => { setMrTarget(t); close(); }}>{t}</button>
+                      <button key={t} role="menuitem" className={`${item} font-mono text-[11px]`} onClick={() => pick(t)}>{t}</button>
                     ))}
                 </div>
               </>

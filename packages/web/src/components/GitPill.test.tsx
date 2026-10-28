@@ -57,11 +57,24 @@ describe('GitPill', () => {
   it('the menu: Pull from origin/<branch>, Git tree', async () => {
     const p = pill();
     fireEvent.click(screen.getByRole('button', { name: 'Git actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /Pull/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Pull$/ }));
     await waitFor(() => expect(git.pull).toHaveBeenCalledWith('ws', '/wt', 'origin/feat'));
     fireEvent.click(screen.getByRole('button', { name: 'Git actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: /Git tree/ }));
     expect(p.onOpenTree).toHaveBeenCalled();
+  });
+
+  it('Pull from…: any other branch, local or on origin, pulled into this one', async () => {
+    pill();
+    fireEvent.click(screen.getByRole('button', { name: 'Git actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Pull from/ }));
+    expect(await screen.findByRole('menuitem', { name: 'origin/develop' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'main' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'feat' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Target branch'), { target: { value: 'origin/main' } });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'origin/main' }));
+    await waitFor(() => expect(git.pull).toHaveBeenCalledWith('ws', '/wt', 'origin/main'));
+    expect(await screen.findByRole('status')).toHaveTextContent('Pulled origin/main into feat');
   });
 
   it('Create PR…: pick a branch on origin, then the dialog creates it here', async () => {
