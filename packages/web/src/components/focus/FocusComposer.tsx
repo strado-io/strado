@@ -255,7 +255,7 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
 
           {menu === 'ticket' && <TicketMenu configured={configured} selected={ticket} worktrees={worktrees} onPick={pickTicket} onClose={() => setMenu(null)} />}
           {menu === 'worktrees' && (
-            <Popover onClose={() => setMenu(null)} className="right-12 top-full mt-1 w-96 p-2">
+            <Popover onClose={() => setMenu(null)} className="right-12 top-full mt-1 w-96 p-2" scroll={false}>
               <WorktreePicker repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} selected={chips} onToggle={toggleChip} autoFocus />
             </Popover>
           )}
@@ -269,11 +269,12 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
   );
 }
 
-function Popover({ children, className, onClose }: { children: ReactNode; className: string; onClose: () => void }) {
+/** `scroll`: false when the content scrolls itself (the worktree picker's list), so there's one scrollbar. */
+function Popover({ children, className, onClose, scroll = true }: { children: ReactNode; className: string; onClose: () => void; scroll?: boolean }) {
   return (
     <>
       <div className="fixed inset-0 z-10" onMouseDown={onClose} />
-      <div role="menu" className={`menu-solid absolute z-20 max-h-80 overflow-y-auto rounded-xl border p-1 ${className}`}>{children}</div>
+      <div role="menu" className={`menu-solid absolute z-20 rounded-xl border p-1 ${scroll ? 'max-h-80 overflow-y-auto' : 'flex max-h-96 flex-col overflow-hidden'} ${className}`}>{children}</div>
     </>
   );
 }
