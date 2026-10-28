@@ -1,16 +1,18 @@
 import { useMemo, useRef, useState } from 'react';
 import { insertChip, mentionAt, pruneChips, toWire, type Chip, type Mention } from '../../lib/mention/chips';
 import { JARVIS_MESSAGE_MAX, type JarvisAgent } from '../../types';
-import { StopIcon } from '../hub/icons';
+import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, StopIcon } from '../hub/icons';
+import { KIND_ICON } from '../hub/TabTile';
 
 export type AgentChip = { label: string; agentId: string };
 export type WorktreeChip = { label: string; worktreePath: string };
 
-const AGENTS: { id: string; label: string; ready: boolean }[] = [
-  { id: 'claude', label: 'Claude', ready: true },
-  { id: 'codex', label: 'Codex', ready: false },
-  { id: 'opencode', label: 'OpenCode', ready: false },
-  { id: 'pi', label: 'Pi', ready: false },
+// Each with the icon and tint its terminal tab has.
+const AGENTS: { id: 'claude' | 'codex' | 'opencode' | 'pi'; label: string; ready: boolean; Icon: typeof ClaudeIcon }[] = [
+  { id: 'claude', label: 'Claude', ready: true, Icon: ClaudeIcon },
+  { id: 'codex', label: 'Codex', ready: false, Icon: CodexIcon },
+  { id: 'opencode', label: 'OpenCode', ready: false, Icon: OpencodeIcon },
+  { id: 'pi', label: 'Pi', ready: false, Icon: PiIcon },
 ];
 const MENTION_MAX = 8;
 
@@ -109,6 +111,7 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
             <div key={a.id} role="menuitem" aria-disabled={!a.ready} tabIndex={a.ready ? 0 : -1}
               onClick={() => { if (a.ready) setMenuOpen(false); }}
               className={`flex h-8 items-center gap-2 rounded-lg px-2 ${a.ready ? 'cursor-pointer text-zinc-100 hover:bg-[rgb(var(--pane-edge)/0.07)]' : 'cursor-default text-zinc-500'}`}>
+              <a.Icon size={14} className={`${KIND_ICON[a.id]} ${a.ready ? '' : 'opacity-50'}`} />
               <span className="flex-1">{a.label}</span>
               {a.id === current.id
                 ? <span aria-hidden="true" className="text-[#e8906f]">✓</span>
@@ -127,8 +130,8 @@ export function JarvisComposer({ running, agent, onSend, onStop, agents, worktre
           <div>
             <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}
               aria-label={`Agent: ${current.label}`}
-              className="rounded-md px-2 py-0.5 text-[12px] text-zinc-400 hover:bg-white/10 hover:text-zinc-200">
-              ✦ {current.label}
+              className="flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[12px] text-zinc-400 hover:bg-white/10 hover:text-zinc-200">
+              <current.Icon size={13} className={KIND_ICON[current.id]} />{current.label}
             </button>
           </div>
           <span className="flex-1" />
