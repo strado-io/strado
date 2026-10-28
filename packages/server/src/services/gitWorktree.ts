@@ -11,7 +11,8 @@ export type WorktreeListItem = {
 export type CreateOptions = {
   repoPath: string;
   branch: string;
-  sourceBranch: string;
+  /** Omitted: branch from the repo's HEAD, whatever branch that is. */
+  sourceBranch?: string;
   targetPath: string;
 };
 
@@ -35,7 +36,13 @@ export function createGitWorktreeService(): GitWorktreeService {
       return parsePorcelain(stdout);
     },
     async create({ repoPath, branch, sourceBranch, targetPath }) {
-      await exec('git', ['-C', repoPath, 'worktree', 'add', targetPath, '-b', branch, sourceBranch]);
+      const args = ['-C', repoPath, 'worktree', 'add', targetPath, '-b', branch];
+      if (sourceBranch) args.push(sourceBranch);
+      try {
+        await exec('git', args);
+      } catch (err) {
+        throw await explainCreateFailure(repoPath, err);
+      }
     },
     async remove({ repoPath, targetPath, force }) {
       try {
@@ -64,6 +71,31 @@ export function createGitWorktreeService(): GitWorktreeService {
       await exec('git', ['-C', repoPath, 'branch', '-D', branch]);
     },
   };
+}
+
+/** The branch a repo's checkout is on, or null when HEAD is detached. */
+export async function currentBranch(repoPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec('git', ['-C', repoPath, 'symbolic-ref', '--short', '-q', 'HEAD']);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// "git exited 128" tells a person nothing. A repo with no commits gets a plain
+// sentence (a fresh `git init` is the usual cause); anything else carries git's
+// own last line.
+async function explainCreateFailure(repoPath: string, err: unknown): Promise<unknown> {
+  if (!(err instanceof AppError) || err.code !== 'SHELL_FAILED') return err;
+  const hasCommit = await exec('git', ['-C', repoPath, 'rev-parse', '--verify', '-q', 'HEAD']).then(() => true, () => false);
+  if (!hasCommit) {
+    return new AppError('VALIDATION', 'This repo has no commits yet. Make a first commit, then create a worktree.', err.details);
+  }
+  const details = err.details && typeof err.details === 'object' ? err.details as { stderr?: unknown } : null;
+  const stderr = typeof details?.stderr === 'string' ? details.stderr.trim() : '';
+  const line = stderr.split('\n').filter(Boolean).pop()?.replace(/^(fatal|error):\s*/, '');
+  return line ? new AppError('SHELL_FAILED', `could not create worktree: ${line}`, err.details) : err;
 }
 
 function parsePorcelain(stdout: string): WorktreeListItem[] {

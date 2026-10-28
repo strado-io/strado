@@ -76,6 +76,8 @@ describe('FocusComposer', () => {
     expect(screen.getByRole('button', { name: 'Worktree' })).toHaveTextContent('New worktree');
     enter();
     await waitFor(() => expect(api.worktrees.create).toHaveBeenCalledWith('ws', expect.objectContaining({ repoId: 'r2', title: 'login-redirect', sourceWorktree: '/r2' })));
+    // r2's checkout isn't in the list, so no branch is guessed: the server reads the repo's own.
+    expect(vi.mocked(api.worktrees.create).mock.calls[0]?.[1]?.sourceBranch).toBeUndefined();
     expect(onCreate).not.toHaveBeenCalled();
     await waitFor(() => expect(jobHandler).not.toBeNull());
     jobHandler!({ type: 'done', data: { result: { path: '/r2/login-redirect' } } });
