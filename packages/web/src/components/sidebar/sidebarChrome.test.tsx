@@ -63,7 +63,7 @@ describe('sidebar chrome', () => {
 
   it('the Focus list has no header: no caption, no + of its own (New focus is in the workspace row)', () => {
     const focus = { id: 'f', name: 'test 2', members: [], createdAt: 't', lastActiveAt: 't' };
-    render(<FocusList focuses={[focus]} activeId="f" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>{() => 'cards'}</FocusList>);
+    render(<FocusList focuses={[focus]} activeId="f" badges={new Map()} menuFor={() => []} onOpen={vi.fn()} onRename={vi.fn()}>{() => 'cards'}</FocusList>);
     expect(screen.queryByText(/^Focuses$/i)).toBeNull();
     expect(screen.queryByRole('button', { name: 'New focus' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'test 2' })).toBeInTheDocument();
@@ -72,13 +72,17 @@ describe('sidebar chrome', () => {
   it('Focus rows are headings, not cards: flat with a theme-aware hover tint; the open one\'s contents sit in one quiet group', () => {
     const f = (id: string, name: string, at: string) => ({ id, name, members: [], createdAt: 't', lastActiveAt: at });
     sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['a']));
-    render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-02-01')]} activeId="a" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>
+    render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-02-01')]} activeId="a" badges={new Map()} menuFor={() => []} onOpen={vi.fn()} onRename={vi.fn()}>
       {() => <div data-testid="cards">cards</div>}
     </FocusList>);
     const row = screen.getByRole('button', { name: 'Switch to Other' }).parentElement!;
     for (const cls of ['glass', 'pane-card', 'border', 'rounded-xl']) expect(row.className.split(/\s+/)).not.toContain(cls);
     for (const cls of ['h-8', 'px-2', 'rounded-md', 'hover:bg-[rgb(var(--pane-edge)/0.05)]']) expect(row.className.split(/\s+/)).toContain(cls);
-    expect(row.querySelectorAll('svg')).toHaveLength(1); // the chevron; no Focus icon
+    expect(row.querySelectorAll('svg')).toHaveLength(2); // the chevron and the ⋯; no Focus icon
+    // Its ⋯ shows on hover only.
+    const more = within(row).getByRole('button', { name: 'Other actions' });
+    expect(more.className).toMatch(/opacity-0.*group-hover:opacity-100/);
+    expect(row.className.split(/\s+/)).toContain('group');
     expect(within(row).getByText('Other').className).toMatch(/text-\[13px\].*font-medium/);
     // The open Focus's header uses the same row; its contents are grouped, no accent line.
     const header = screen.getByTestId('focus-header');
@@ -96,7 +100,7 @@ describe('sidebar chrome', () => {
   it('expanding or folding a Focus never moves its row: same classes either way; only the panel, below, grows and shrinks', () => {
     const f = (id: string, name: string, at: string) => ({ id, name, members: [], createdAt: at, lastActiveAt: at });
     sessionStorage.setItem('strado:focus-expanded', JSON.stringify(['a']));
-    render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-03-02')]} activeId="a" badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}
+    render(<FocusList focuses={[f('a', 'Open one', '2026-03-01'), f('b', 'Other', '2026-03-02')]} activeId="a" badges={new Map()} menuFor={() => []} onOpen={vi.fn()} onRename={vi.fn()}
       jarvis={{ status: null, selected: false, onOpen: vi.fn() }}>
       {() => <div data-testid="cards">cards</div>}
     </FocusList>);

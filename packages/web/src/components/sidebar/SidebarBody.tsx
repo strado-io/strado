@@ -360,16 +360,17 @@ export function SidebarBody({
       unread: j?.unread ?? false,
     }];
   }));
-  const deleteActive = () => {
-    if (!active) return;
-    const n = active.members.length;
-    if (n === 0 || confirm(`Delete "${active.name}"? Its ${n} worktree${n === 1 ? '' : 's'} stay where they are.`)) void remove(active.id).catch(report('Could not delete focus'));
+  const deleteFocus = (f: Focus) => {
+    const n = f.members.length;
+    if (n === 0 || confirm(`Delete "${f.name}"? Its ${n} worktree${n === 1 ? '' : 's'} stay where they are.`)) void remove(f.id).catch(report('Could not delete focus'));
   };
-  const activeMenu: MenuItem[] = active ? [
-    { text: 'Add worktrees…', onClick: () => setAddingMembers(true) },
-    { text: 'New worktree here…', onClick: () => onNewWorktree(active.ticket) },
-    { text: 'Delete focus', danger: true, onClick: deleteActive },
-  ] : [];
+  // A Focus's ⋯: adding to one that isn't open switches to it first, so the
+  // worktrees land where you're looking.
+  const menuFor = (f: Focus): MenuItem[] => [
+    { text: 'Add worktrees…', onClick: () => { if (f.id !== activeId) activate(f.id); setAddingMembers(true); } },
+    { text: 'New worktree here…', onClick: () => { if (f.id !== activeId) activate(f.id); onNewWorktree(f.ticket); } },
+    { text: 'Delete focus', danger: true, onClick: () => deleteFocus(f) },
+  ];
 
   // The empty states' actions: full-width rows, drawn like a place a card will go.
   const emptyAction = 'flex w-full items-center gap-2.5 rounded-lg border border-dashed border-zinc-800 px-3 py-2.5 text-left text-xs text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-200';
@@ -385,7 +386,7 @@ export function SidebarBody({
       <SidebarToolbar query={query} onQuery={setQuery} onAddProject={onAddRepo} onNew={() => openComposer()} shortcut={isActivePane} />
       {/* No menu on blank space: the Focus's ⋯ has New worktree and Add worktrees. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" onContextMenu={(e) => e.preventDefault()}>
-        <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} activeMenu={activeMenu}
+        <FocusList focuses={focuses} activeId={active?.id ?? null} badges={badges} menuFor={menuFor}
           onOpen={(id) => { onOpenFocus?.(id); activate(id); }}
           onRename={(id, name) => void rename(id, name).catch(report('Could not rename focus'))}
           jarvis={jarvis} filter={filter}>

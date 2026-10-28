@@ -32,7 +32,7 @@ describe('useFocusShortcut', () => {
   it('⌘N is the Nth row of the sidebar\'s list', () => {
     const activate = vi.fn();
     const many = [...focuses, f('d', '2026-04-01', '2026-01-01'), f('e', '2025-12-01', '2026-07-01')];
-    render(<FocusList focuses={many} activeId={null} badges={new Map()} activeMenu={[]} onOpen={vi.fn()} onRename={vi.fn()}>{() => null}</FocusList>);
+    render(<FocusList focuses={many} activeId={null} badges={new Map()} menuFor={() => []} onOpen={vi.fn()} onRename={vi.fn()}>{() => null}</FocusList>);
     renderHook(() => useFocusShortcut({ focuses: many, activeId: null, activate }));
     const rows = screen.getAllByRole('button', { name: /^Switch to / }).map((b) => b.getAttribute('aria-label')!.replace('Switch to ', ''));
     expect(rows).toEqual(['e', 'b', 'a', 'c', 'd']);
@@ -48,7 +48,7 @@ describe('useFocusShortcut', () => {
     function Harness() {
       const [activeId, setActiveId] = useState<string | null>('a');
       useFocusShortcut({ focuses, activeId, activate: setActiveId });
-      return <FocusList focuses={focuses} activeId={activeId} badges={new Map()} activeMenu={[]} onOpen={setActiveId} onRename={vi.fn()}>{(x) => <span>cards of {x.id}</span>}</FocusList>;
+      return <FocusList focuses={focuses} activeId={activeId} badges={new Map()} menuFor={() => []} onOpen={setActiveId} onRename={vi.fn()}>{(x) => <span>cards of {x.id}</span>}</FocusList>;
     }
     render(<Harness />);
     expect(screen.getAllByTestId('focus-group').map((g) => g.textContent)).toEqual(['cards of a', 'cards of c']);
