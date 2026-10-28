@@ -135,7 +135,7 @@ export function FocusComposer({ workspaceId, repos, worktrees, remoteWorktrees, 
       if (repo && place.kind === 'new' && workspaceId) {
         const started = await startWorktreeJob(workspaceId, {
           repoId: repo.id, ticketId: ticket?.key ?? '', ticketProvider: ticket?.provider,
-          title: slug(firstLine) || ticket?.key || 'focus', sourceBranch: mainBranchOf(worktrees, repo) ?? 'main', sourceWorktree: repo.path,
+          title: slug(firstLine) || ticket?.key || 'focus', sourceBranch: mainBranchOf(worktrees, repo) ?? undefined, sourceWorktree: repo.path,
         });
         if (started?.jobId) setJobId(started.jobId);
         else { setCreating(false); setError('Couldn’t start the worktree.'); }
