@@ -104,14 +104,18 @@ export function CommandBoxSection() {
   const [localError, setLocalError] = useState<string | null>(null);
   const [wakes, setWakes] = useState<boolean | null>(null);
   const [wakesError, setWakesError] = useState<string | null>(null);
+  const [ask, setAsk] = useState<boolean | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
 
   useEffect(() => {
     api.profile.get().then((p) => {
       setLocal(!!p.jarvisLocalOnly);
       setWakes(p.jarvisWakes !== false);
+      setAsk(!!p.jarvisAsk);
     }).catch(() => {
       setLocal(false);
       setWakes(true);
+      setAsk(false);
     });
   }, []);
 
@@ -124,6 +128,18 @@ export function CommandBoxSection() {
     } catch (e) {
       setWakes(!next);
       setWakesError((e as Error).message);
+    }
+  };
+
+  const toggleAsk = async () => {
+    const next = !ask;
+    setAsk(next);
+    setAskError(null);
+    try {
+      await api.profile.save({ jarvisAsk: next });
+    } catch (e) {
+      setAsk(!next);
+      setAskError((e as Error).message);
     }
   };
 
@@ -187,6 +203,22 @@ export function CommandBoxSection() {
         </span>
       </label>
       {wakesError && <p role="alert" className="mt-1.5 text-xs text-red-400">{wakesError}</p>}
+
+      <label className="mt-4 flex items-start gap-3">
+        <input
+          type="checkbox"
+          aria-label="Jarvis asks before acting"
+          checked={!!ask}
+          disabled={ask === null}
+          onChange={() => void toggleAsk()}
+          className="mt-0.5 h-4 w-4 accent-sky-600"
+        />
+        <span>
+          <span className="text-sm text-zinc-200">Jarvis asks before acting</span>
+          <span className="block text-xs text-zinc-500">On: Jarvis waits for your OK before it runs a shell line, closes a tab, stops a server or adds a worktree. Off: it just does them. A destructive command (rm -rf, a force push) always asks.</span>
+        </span>
+      </label>
+      {askError && <p role="alert" className="mt-1.5 text-xs text-red-400">{askError}</p>}
     </div>
   );
 }

@@ -715,6 +715,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       execute,
       scope: focusScopeOf(stores, (ws, focusId) => ('lastContext' in runner && typeof runner.lastContext === 'function' ? runner.lastContext(ws, focusId) : null), grants),
       approvalArgs,
+      askFirst: async () => (await readProfile()).jarvisAsk,
     });
   }
 

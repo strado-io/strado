@@ -85,6 +85,15 @@ describe('CommandBoxSection', () => {
     await waitFor(() => expect(profile.save).toHaveBeenCalledWith({ jarvisWakes: false }));
     expect(box).not.toBeChecked();
   });
+  it('"Jarvis asks before acting" is off unless the profile says true; saves to the profile', async () => {
+    render(<CommandBoxSection />);
+    const box = await screen.findByRole('checkbox', { name: /jarvis asks before acting/i });
+    await waitFor(() => expect(box).not.toBeDisabled());
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+    await waitFor(() => expect(profile.save).toHaveBeenCalledWith({ jarvisAsk: true }));
+    expect(box).toBeChecked();
+  });
   it('a failed wakes save flips back and says why', async () => {
     profile.get.mockResolvedValue({ fullName: '', callMe: '', telemetryOptOut: false, jarvisWakes: false });
     profile.save.mockRejectedValue(new Error('disk full'));
@@ -119,8 +128,8 @@ describe('CommandBoxSection', () => {
       render(<CommandBoxSection />);
       await screen.findByRole('checkbox', { name: /local only/i });
       expect(screen.queryByText(/Hey Strado/)).not.toBeInTheDocument();
-      // Local only and Jarvis's "speaks up"; nothing for voice.
-      expect(screen.getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual(['Local only (never send to a model)', 'Jarvis speaks up when agents finish']);
+      // Local only and Jarvis's "speaks up" and "asks"; nothing for voice.
+      expect(screen.getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual(['Local only (never send to a model)', 'Jarvis speaks up when agents finish', 'Jarvis asks before acting']);
     } finally {
       delete (window as { strado?: unknown }).strado;
     }

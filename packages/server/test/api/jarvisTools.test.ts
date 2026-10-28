@@ -67,6 +67,8 @@ beforeEach(async () => {
   const deps = await buildDeps({ configDir: path.join(tmp, 'config'), homeStateDir: path.join(tmp, 'home') });
   app = await buildApp({ ...deps, jarvis: fakeRunner() });
   FOCUS = (await (await app.deps.registry.get('default')).focuses.create({ name: 'Login', members: ['local:/w/api'] })).id;
+  // These tests are about approvals: Settings › Jarvis asks before acting is on (it's off by default).
+  await app.inject({ method: 'PUT', url: '/api/profile', payload: { jarvisAsk: true } });
   turns = new Map([
     [TOKEN, { ws: 'default', focusId: FOCUS, turnId: 't1', windowId: 'win1', wake: false }],
     [WAKE, { ws: 'default', focusId: FOCUS, turnId: 't2', windowId: '', wake: true }],
@@ -114,6 +116,16 @@ describe('jarvis tool gateway', () => {
     expect(again.json().text).toMatch(/already waiting/);
     expect(sent).toEqual([]);
     expect(of(await log(), 'approval')).toHaveLength(1);
+  });
+
+  it('by default (asking off) steps just run — a shell line, closing a tab — but a destructive command and a wake\'s agent start still ask', async () => {
+    await app.inject({ method: 'PUT', url: '/api/profile', payload: { jarvisAsk: false } });
+    openWindow('win1');
+    expect((await call('jarvis_run_in_shell', { tab: 'shell-1', command: 'npm test' })).json().text).not.toMatch(/approval/i);
+    expect((await call('jarvis_close_tab', { tab: 'shell-1' })).json().text).not.toMatch(/approval/i);
+    expect(of(await log(), 'approval')).toEqual([]);
+    expect((await call('jarvis_run_in_shell', { tab: 'shell-1', command: 'rm -rf /' })).json().text).toMatch(/^Waiting for the person's approval/);
+    expect((await call('jarvis_open_tab', { mode: 'claude', worktree: 'api' }, WAKE)).json().text).toMatch(/^Waiting for the person's approval/);
   });
 
   it('a destructive command\'s approval names the danger', async () => {

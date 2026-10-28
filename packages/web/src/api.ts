@@ -222,7 +222,9 @@ export type ToolStatus = {
 
 /** `jarvisLocalOnly`: the ⌘K box never sends text to a model (the server refuses /jarvis/plan). */
 /** `jarvisWakes`: Focus Jarvis speaks up when an agent it started finishes (default on). */
-export type Profile = { fullName: string; callMe: string; telemetryOptOut: boolean; jarvisLocalOnly?: boolean; jarvisWakes?: boolean };
+export type Profile = { fullName: string; callMe: string; telemetryOptOut: boolean; jarvisLocalOnly?: boolean; jarvisWakes?: boolean;
+  /** Focus Jarvis waits for approval before consequential steps (default off; destructive commands always ask). */
+  jarvisAsk?: boolean };
 export type ModelCredentialSummary = { present: boolean; last4: string | null };
 
 export type KbFile = { path: string; size: number; mtimeMs: number };
