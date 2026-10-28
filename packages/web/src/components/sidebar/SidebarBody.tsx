@@ -2,7 +2,7 @@
 // active one open with its ✦ Jarvis card and worktree cards. Nothing else: a
 // Focus is one task's set of worktrees, and everything else is a ⌘K or a
 // Focus switch away.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Focus, FocusTicket, RemoteWorktree, RunnerStatus } from '../../api';
 import type { MergeRequest, RepoConfig, Worktree } from '../../types';
 import { useMrSummaries } from '../../hooks/mrSummaries';
@@ -24,7 +24,8 @@ import { FocusIcon } from './FocusSwitcher';
 import { FocusList, type FocusBadges, type FocusFilter, type FocusJarvisHeader } from './FocusList';
 import { SidebarToolbar } from './SidebarToolbar';
 import { PlusIcon } from '../hub/icons';
-import { FocusComposer } from '../focus/FocusComposer';
+import { FocusComposer, type AgentMode } from '../focus/FocusComposer';
+import { createJarvisServerPort } from '../../lib/jarvis/serverPort';
 import { AddWorktreesDialog } from '../focus/AddWorktreesDialog';
 export { BranchIcon, RepoIcon, type MenuItem } from './rowBits';
 import { shortRelativeTime } from '../../lib/relativeTime';
@@ -185,6 +186,21 @@ export function SidebarBody({
   const [composer, setComposer] = useState<{ seedPinId: string | null } | null>(null);
   const [addingMembers, setAddingMembers] = useState(false);
   const openComposer = (seedPinId: string | null = null) => { setComposer({ seedPinId }); };
+  // The composer's agent: started with the task as its first prompt (as Jarvis
+  // does), then its tab opened — a new worktree may take a moment to be listed.
+  const worktreesRef = useRef(worktrees);
+  worktreesRef.current = worktrees;
+  const startAgent = (worktreePath: string, mode: AgentMode, prompt: string) => {
+    void createJarvisServerPort(wsId).spawn({ mode, worktreePath, ...(prompt ? { prompt } : {}) })
+      .then(async ({ tab }) => {
+        for (let i = 0; i < 20; i++) {
+          const w = worktreesRef.current.find((x) => x.path === worktreePath);
+          if (w) { onOpenWorktree(w, mode, tab.sessionId); return; }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      })
+      .catch(report(`Could not start ${mode}`));
+  };
   // Only the active pane answers the event: the carousel's neighbour panes
   // would each open one too.
   useEffect(() => {
@@ -422,9 +438,8 @@ export function SidebarBody({
 
       {composer && (
         <FocusComposer workspaceId={wsId} repos={repos} worktrees={worktrees} remoteWorktrees={remoteWorktrees} seedPinId={composer.seedPinId}
-          activeFocus={active ? { id: active.id, name: active.name } : null}
-          onAddToFocus={(id, pinId) => void setMembership(id, pinId, true).catch(report('Could not add to focus'))}
-          onCreate={(name, members, ticket) => void create(name, members, ticket).catch(report('Could not create focus'))}
+          onCreate={(name, members, ticket) => create(name, members, ticket).catch(report('Could not create focus'))}
+          onStartAgent={startAgent}
           onClose={() => setComposer(null)} />
       )}
       {addingMembers && active && (

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RepoConfig, Worktree } from '../../types';
 import type { Focus, RemoteWorktree } from '../../api';
@@ -377,14 +377,14 @@ describe('SidebarBody: the active Focus', () => {
     expect(onAddRepo).toHaveBeenCalledWith({ left: 20, right: 20, bottom: 300 });
   });
 
-  it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', () => {
+  it('the new-focus event (⇧⌘N, the hub gate) opens the composer, seeded with the worktree being opened', async () => {
     render(<SidebarBody {...props()} />);
     fireEvent(window, new CustomEvent('strado:new-focus', { detail: { seedPinId: 'local:/r2/other' } }));
     const dialog = screen.getByRole('dialog', { name: 'New focus' });
-    expect(within(dialog).getByLabelText('Focus name')).toHaveValue('fx-412');
-    expect(within(dialog).getByRole('checkbox', { name: 'fx-412', checked: true })).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & switch' }));
-    expect(focusMock.create).toHaveBeenCalledWith('fx-412', ['local:/r2/other'], undefined);
+    expect(within(dialog).getByLabelText('What are you working on?')).toHaveValue('fx-412');
+    expect(within(dialog).getByRole('button', { name: 'Remove fx-412' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create focus' }));
+    await waitFor(() => expect(focusMock.create).toHaveBeenCalledWith('fx-412', ['local:/r2/other'], undefined));
   });
 });
 

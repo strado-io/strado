@@ -193,7 +193,7 @@ describe('Dashboard inline hub', () => {
     expect(screen.queryByTestId('dock')).not.toBeInTheDocument(); // one command area on home
     fireEvent.click(within(screen.getByRole('list', { name: 'Recent' })).getByRole('button', { name: /FD-9/ }));
     // No Focus active: the open asks for one first.
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'New focus' })).getByRole('button', { name: 'Create & switch' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'New focus' })).getByRole('button', { name: 'Create focus' }));
     await screen.findByTestId('inline-hub');
     expect(screen.queryByRole('heading', { name: 'What do you want to do?' })).not.toBeInTheDocument();
     expect(within(screen.getByTestId('dock')).getByLabelText('Global search')).toHaveAttribute('placeholder', 'Tell Strado what to do…  ⌘K');
@@ -405,9 +405,9 @@ describe('Dashboard inline hub', () => {
     const dialog = await screen.findByRole('dialog', { name: 'New focus' });
     expect(screen.queryByTestId('inline-hub')).toBeNull();
     expect(fakeFocuses.api.create).not.toHaveBeenCalled();
-    expect(within(dialog).getByLabelText('Focus name')).toHaveValue('FD-9');
-    fireEvent.change(within(dialog).getByLabelText('Focus name'), { target: { value: 'Billing' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & switch' }));
+    expect(within(dialog).getByLabelText('What are you working on?')).toHaveValue('FD-9');
+    fireEvent.change(within(dialog).getByLabelText('What are you working on?'), { target: { value: 'Billing' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create focus' }));
     expect(await screen.findByTestId('inline-hub')).toHaveTextContent('hub:/wt/FD-9');
     await waitFor(() => expect(fakeFocuses.api.create).toHaveBeenCalledWith('default', { name: 'Billing', members: ['local:/wt/FD-9'], ticket: { provider: 'jira', key: 'FD-9' } }));
     await waitFor(() => expect(focusPill('Billing')).toBeInTheDocument());
