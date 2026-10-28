@@ -1649,6 +1649,7 @@ describe('TerminalView', () => {
   });
 
   it('shows the workflow-status dropdown for tracked worktrees and patches via the API', () => {
+    localStorage.setItem('strado:hub-show-status', 'true'); // off by default
     render(
       <TerminalView
         worktree={{ ...baseWorktree, shellSessions: ['1'] } as Worktree}
@@ -1676,15 +1677,15 @@ describe('TerminalView', () => {
     expect(screen.queryByLabelText('Workflow status')).not.toBeInTheDocument();
   });
 
-  it('shows tracked time by default and hides it when disabled in Appearance settings', () => {
+  it('hides tracked time by default and shows it when turned on in Appearance settings', () => {
     const timed = { ...baseWorktree, activitySeconds: 3900, shellSessions: ['1'] } as Worktree;
     const first = render(<TerminalView worktree={timed} mode="shell" sessionId="1" onClose={vi.fn()} />);
-    expect(screen.getByTitle('Active time / original estimate')).toHaveTextContent('1h 5m');
+    expect(screen.queryByTitle('Active time / original estimate')).not.toBeInTheDocument();
     first.unmount();
 
-    localStorage.setItem('strado:hub-show-time', 'false');
+    localStorage.setItem('strado:hub-show-time', 'true');
     render(<TerminalView worktree={timed} mode="shell" sessionId="1" onClose={vi.fn()} />);
-    expect(screen.queryByTitle('Active time / original estimate')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Active time / original estimate')).toHaveTextContent('1h 5m');
   });
 
   it('hides the workflow-status dropdown for untracked worktrees', () => {
