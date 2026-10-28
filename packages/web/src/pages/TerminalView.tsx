@@ -1,3 +1,4 @@
+import { noteHubTabs } from '../lib/navHistory';
 import { OpenSidebarButton } from '../components/SidebarToggle';
 import { isRunTab, runIdOfTab, runTabId } from '../lib/runTab';
 import { RunButton, type RunEntry, type RunStatus } from '../components/runCommands/RunButton';
@@ -562,6 +563,8 @@ export function TerminalView({
   sessionId: sessionIdProp = '1',
   onExpandSidebar,
   openSeq = 0,
+  openSoft = false,
+  onActiveTab,
   modalOpen = false,
   mission,
 }: {
@@ -576,6 +579,11 @@ export function TerminalView({
    *  tells an ALREADY-open hub to switch to the requested tab — including when
    *  the same session is re-selected after manual navigation. */
   openSeq?: number;
+  /** The open request only switches to a tab that is still open, never
+   *  reopens one (⌘[ / ⌘] going back to a place, lib/navHistory). */
+  openSoft?: boolean;
+  /** The tab on screen changed: a place for ⌘[ / ⌘]. */
+  onActiveTab?: (tab: { path: string; mode: string; id: string }) => void;
   onExpandSidebar?: () => void;
   /** A renderer modal outside this hub is open. WebContentsViews always paint
    *  above renderer HTML, so the preview and DevTools must be detached. */
@@ -2646,6 +2654,7 @@ export function TerminalView({
   useEffect(() => {
     if (!openReqMounted.current) { openReqMounted.current = true; return; }
     if (modeProp === undefined) return;
+    if (openSoft && !tabsRef.current.some((e) => e.tab.mode === modeProp && e.tab.id === sessionIdProp)) return;
     if (modeProp === 'shell') {
       setActive({ path: worktree.path, mode: 'shell', id: sessionIdProp, remote: remoteFor(worktree.path) });
     } else {
@@ -2659,6 +2668,15 @@ export function TerminalView({
   // strip, so everything they read goes through refs, not this render's values.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  // ⌘[ / ⌘]: the tab on screen is a place; a closed tab stops being one.
+  useEffect(() => {
+    onActiveTab?.({ path: active.path, mode: active.mode, id: active.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active.path, active.mode, active.id]);
+  const openTabsKey = tabs.map((e) => `${e.tab.mode}:${e.tab.id}`).join(',');
+  useEffect(() => {
+    noteHubTabs(worktree.path, tabsRef.current.map((e) => ({ mode: e.tab.mode, id: e.tab.id })));
+  }, [openTabsKey, worktree.path]);
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const hasTab = (key: string) => tabsRef.current.some((entry) => tabKeyOf(entry.tab) === key);
