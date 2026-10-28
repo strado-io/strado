@@ -14,7 +14,7 @@ import { runIdOfTab } from '../lib/runTab';
 import { isLayoutJump, isLayoutMoving, onLayoutSettled } from '../lib/layoutMotion';
 import { findFileLinks } from '../lib/fileLinks';
 import { SearchAddon } from '@xterm/addon-search';
-import { TerminalSearchBar, filesSearchKey, searchKey, type SearchPort } from './TerminalSearchBar';
+import { TerminalSearchBar, filePickerKey, filesSearchKey, searchKey, type SearchPort } from './TerminalSearchBar';
 import { ClaudeIcon, CodexIcon, OpencodeIcon, PiIcon, ShellIcon } from './hub/icons';
 
 const TRUE_BLACK_TERMINAL_THEME: ITheme = {
@@ -404,6 +404,9 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
         // ⌘⇧F (Ctrl+Shift+F off a Mac) is the worktree's file search: the hub
         // takes it at the window; it never reaches the pty (Ctrl+Shift+F would send ^F).
         if (filesSearchKey(e, isMac())) return false;
+        // Likewise ⌘P (Ctrl+P off a Mac, as in VS Code's terminal): go to a file.
+        // Off a Mac that costs the shell's ^P; ↑ still walks history.
+        if (filePickerKey(e, isMac())) return false;
         if (
           e.type === 'keydown' && e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey &&
           e.key.toLowerCase() === 'c' && term.hasSelection()

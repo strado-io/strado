@@ -41,7 +41,7 @@ import { jarvisServerPort } from '../lib/jarvis/serverPort';
 import { RUN_IN_SHELL_EVENT, type RunInShellRequest } from '../lib/runInShell';
 import { WorkflowStatusSelect } from '../components/WorkflowStatusSelect';
 import { TicketStatusSelect } from '../components/TicketStatusSelect';
-import { filesSearchKey } from '../components/TerminalSearchBar';
+import { filePickerKey, filesSearchKey } from '../components/TerminalSearchBar';
 import { SavePromptHost, SavePromptProvided, askSaveChanges } from '../components/files/savePrompt';
 import { discardBuffer, dirtyFiles, saveAll } from '../components/files/buffers';
 import { formatActiveTime } from '../components/WorktreeRow';
@@ -1890,9 +1890,9 @@ export function TerminalView({
         openChangesRef.current();
         return;
       }
-      // Cmd+P: go to a file in the active worktree, in the Files tab. Only
-      // with focus in the hub (the chord is never forwarded from an embed).
-      if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'p') {
+      // Cmd+P (Ctrl+P off a Mac): go to a file in the active worktree, in the
+      // Files tab. Only with focus in the hub (never forwarded from an embed).
+      if (filePickerKey(e, isMacPlatform())) {
         if (e.repeat) return;
         e.preventDefault();
         e.stopPropagation();

@@ -280,7 +280,7 @@ describe('Files tab in the hub', () => {
 
   it('⌘P lists the worktree files; Enter opens the pick in the Files tab', async () => {
     render(<TerminalView worktree={worktree} onClose={() => {}} />);
-    fireEvent.keyDown(window, { key: 'p', metaKey: true });
+    fireEvent.keyDown(window, { key: 'p', ctrlKey: true }); // jsdom isn't a Mac: Ctrl+P, as on Linux
     const input = await screen.findByRole('combobox', { name: 'Go to file' });
     await flush();
     expect(filesList).toHaveBeenCalledWith('default', ROOT, undefined);
