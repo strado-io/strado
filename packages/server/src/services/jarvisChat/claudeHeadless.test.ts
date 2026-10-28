@@ -38,7 +38,7 @@ function fakeChild(lines: string[], code = 0, opts: { hold?: boolean } = {}) {
   return { child, input: () => input, killed: () => killed };
 }
 
-const base = { cwd: '/j/f1', resume: null, systemPrompt: 'You are Jarvis.', mcpConfigPath: '/j/f1/mcp.json', env: { PATH: '/bin' } };
+const base = { agent: 'claude' as const, mcp: { command: 'node', args: ['/h/strado-mcp.mjs'], env: {} }, cwd: '/j/f1', resume: null, systemPrompt: 'You are Jarvis.', mcpConfigPath: '/j/f1/mcp.json', env: { PATH: '/bin' } };
 
 async function collect(it: AsyncIterable<HeadlessEvent>) {
   const out: HeadlessEvent[] = [];

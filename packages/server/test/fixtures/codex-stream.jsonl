@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a18478-db8d-7013-94e9-39628e6edbe1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll locate the `jarvis_ping` tool and check the registered tool list, then call `jarvis_ping` once."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"strado","tool":"jarvis_ping","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"strado","tool":"jarvis_ping","arguments":{},"result":{"content":[{"type":"text","text":"pong (token present)"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"`jarvis_ping` returned `pong (token present)`. There is no tool named `other_tool` in `ALL_TOOLS`."}}
+{"type":"turn.completed","usage":{"input_tokens":24692,"cached_input_tokens":14592,"cache_write_input_tokens":0,"output_tokens":131,"reasoning_output_tokens":0}}

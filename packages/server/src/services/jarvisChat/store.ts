@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors.js';
 import { redact } from '../hostTabs/redact.js';
-import { JARVIS_EFFORTS, JARVIS_LIMITS, JARVIS_MODEL_RE, type ChatEntry, type JarvisAgent, type JarvisEffort, type JarvisMeta, type NewChatEntry } from './types.js';
+import { JARVIS_AGENTS, JARVIS_EFFORTS, JARVIS_LIMITS, JARVIS_MODEL_RE, type ChatEntry, type JarvisAgent, type JarvisEffort, type JarvisMeta, type NewChatEntry } from './types.js';
 
 /** `removed`: the Focus's chat is gone (the Focus was deleted); streams end. */
 export type JarvisChatChange = { entry?: ChatEntry; meta?: JarvisMeta; removed?: true };
@@ -191,7 +191,7 @@ export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } =
     try {
       const r = JSON.parse(await fs.readFile(metaPath(focusId), 'utf8')) as Partial<MetaFile>;
       m = {
-        agent: r.agent === 'claude' ? r.agent : 'claude',
+        agent: (JARVIS_AGENTS as readonly string[]).includes(r.agent as string) ? r.agent as JarvisAgent : 'claude',
         sessionId: typeof r.sessionId === 'string' ? r.sessionId : null,
         lastActiveAt: typeof r.lastActiveAt === 'string' ? r.lastActiveAt : null,
         model: typeof r.model === 'string' && JARVIS_MODEL_RE.test(r.model) ? r.model : null,

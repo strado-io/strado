@@ -38,6 +38,7 @@ const ApproveBody = z.object({ approve: z.boolean(), windowId: WindowId, context
 const AgentBody = z.object({ agent: z.enum(JARVIS_AGENTS as [JarvisAgent, ...JarvisAgent[]]) }).strict();
 // null: back to the agent's default.
 const SettingsBody = z.object({
+  agent: z.enum(JARVIS_AGENTS as [JarvisAgent, ...JarvisAgent[]]).optional(),
   model: z.string().regex(JARVIS_MODEL_RE).nullable().optional(),
   effort: z.enum(JARVIS_EFFORTS).nullable().optional(),
 }).strict();
@@ -109,11 +110,20 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
   });
 
   // Model and effort take effect from the next turn; the session carries on.
+  // A different agent (picked with its model) is a fresh session, as above.
   app.put<{ Params: Params }>('/focuses/:id/jarvis/settings', async (req) => {
     assertLocalHub(req.headers);
     const id = await focusOf(req);
-    const { model, effort } = SettingsBody.parse(req.body);
-    return req.workspace!.stores.jarvis.setMeta(id, { model, effort });
+    const { agent, model, effort } = SettingsBody.parse(req.body);
+    const { jarvis } = req.workspace!.stores;
+    if (agent && (await jarvis.meta(id)).agent !== agent) {
+      await needRunner(runner).stop(req.workspace!.id, id);
+      // Another CLI's model and effort words mean nothing here: back to its defaults unless given.
+      await jarvis.setMeta(id, { agent, sessionId: null, model: model ?? null, effort: effort ?? null });
+      await jarvis.append(id, { type: 'agent', agent });
+      return jarvis.meta(id);
+    }
+    return jarvis.setMeta(id, { model, effort });
   });
 
   // `meta` first, then `entry` (upsert by id) and `meta` as they change, and

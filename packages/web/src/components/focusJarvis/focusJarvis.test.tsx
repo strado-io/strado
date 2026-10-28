@@ -161,14 +161,16 @@ describe('JarvisComposer', () => {
     await act(async () => { fireEvent.keyDown(box, { key: 'Enter' }); });
     expect(onSend).toHaveBeenCalledWith('ask @{claude-1@a}');
   });
-  it('shows stop while running; other agents are coming soon', () => {
+  it('shows stop while running; another agent\'s model switches Jarvis to that agent', () => {
     const onStop = vi.fn();
-    render(<JarvisComposer {...props} running onStop={onStop} />);
+    const onSettings = vi.fn();
+    render(<JarvisComposer {...props} running onStop={onStop} onSettings={onSettings} />);
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
     expect(onStop).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /^model:/i }));
     fireEvent.click(within(screen.getByRole('tablist', { name: 'Agents' })).getByRole('tab', { name: 'Codex' }));
-    expect(screen.getByRole('dialog', { name: 'Choose a model' })).toHaveTextContent("Codex can't run Jarvis yet");
+    fireEvent.click(screen.getAllByRole('option')[0]!);
+    expect(onSettings).toHaveBeenLastCalledWith({ agent: 'codex', model: null });
   });
   it('the buttons say the model (with its agent) and the effort when it is not the default', () => {
     const { rerender } = render(<JarvisComposer {...props} />);

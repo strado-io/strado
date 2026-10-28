@@ -174,6 +174,15 @@ describe('stop, approvals, agent', () => {
     expect((await app.inject({ method: 'PUT', url: `${base()}/agent`, headers: local, payload: { agent: 'emacs' } })).statusCode).toBe(400);
   });
 
+  it('PUT settings with another agent: a fresh session on that agent with the picked model, a divider in the log; effort back to its default', async () => {
+    await (await store()).setMeta(focusId, { sessionId: 'old', effort: 'high' });
+    const res = await app.inject({ method: 'PUT', url: `${base()}/settings`, headers: local, payload: { agent: 'codex', model: 'gpt-5-codex' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ agent: 'codex', sessionId: null, model: 'gpt-5-codex', effort: null });
+    expect((await (await store()).page(focusId, {})).map((e) => e.type)).toEqual(['agent']);
+    expect((await app.inject({ method: 'PUT', url: `${base()}/settings`, headers: local, payload: { agent: 'emacs' } })).statusCode).toBe(400);
+  });
+
   it('PUT settings: model and effort are kept for the next turn; null goes back to the default; bad ones 400', async () => {
     const put = (payload: object) => app.inject({ method: 'PUT', url: `${base()}/settings`, headers: local, payload });
     const res = await put({ model: 'opus', effort: 'high' });

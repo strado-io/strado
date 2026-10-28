@@ -14,9 +14,9 @@ import type { JarvisContext } from '../jarvisModel.js';
 
 export type { JarvisContext };
 
-/** The agent CLI that runs a Focus's Jarvis. Codex, Pi and OpenCode follow. */
-export type JarvisAgent = 'claude';
-export const JARVIS_AGENTS: readonly JarvisAgent[] = ['claude'];
+/** The agent CLI that runs a Focus's Jarvis, headless (each has its adapter). */
+export type JarvisAgent = 'claude' | 'codex' | 'opencode' | 'pi';
+export const JARVIS_AGENTS: readonly JarvisAgent[] = ['claude', 'codex', 'opencode', 'pi'];
 
 export type CardKind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'run' | 'browser';
 /** A tab Jarvis opened, as the chat's live card finds it again. `tab` is the
@@ -75,7 +75,7 @@ export type JarvisMeta = {
 export const JARVIS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type JarvisEffort = (typeof JARVIS_EFFORTS)[number];
 /** A model name as the CLI takes it: an alias or a full id, nothing that could be a flag. */
-export const JARVIS_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,79}$/;
+export const JARVIS_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,119}$/;
 
 export const JARVIS_LIMITS = {
   turnMs: 300_000,

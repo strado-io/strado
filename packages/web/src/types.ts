@@ -501,7 +501,7 @@ export type OpenInEditorBody = { worktreePath: string; path?: string; line?: num
 
 // Focus Jarvis: each Focus's chat, run by the person's own agent CLI with
 // Strado's actions as its tools. Mirrors server/src/services/jarvisChat/types.ts.
-export type JarvisAgent = 'claude';
+export type JarvisAgent = 'claude' | 'codex' | 'opencode' | 'pi';
 export type JarvisCardKind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'run' | 'browser';
 /** A tab Jarvis opened: `tab` is its session name ("claude-1"), `worktree` the worktree's name as
  * Jarvis says it, `worktreePath` its exact path (what wakes and the chat match on; older cards lack it). */
@@ -531,7 +531,8 @@ export type JarvisMeta = {
   effort: JarvisEffort | null;
 };
 /** A change to how Jarvis runs; a field left out stays as it is, null resets it. */
-export type JarvisSettings = { model?: string | null; effort?: JarvisEffort | null };
+/** `agent`: switch the CLI (a fresh session), with `model` as picked for it. */
+export type JarvisSettings = { agent?: JarvisAgent; model?: string | null; effort?: JarvisEffort | null };
 export const JARVIS_MESSAGE_MAX = 16 * 1024;
 /** The ui command a Focus Jarvis turn sends this window: one action, in model args. */
 export const JARVIS_UI_OP = 'jarvis.action';

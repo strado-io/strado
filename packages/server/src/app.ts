@@ -671,7 +671,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     const { createJarvisExecutor, createJarvisWorktree, cardOpen, focusScopeOf, grantAdds, registerJarvisToolRoutes, trackAsks, trustWatcher, watchTrust } = await import('./routes/jarvisTools.js');
     const { createApprovalArgs } = await import('./services/jarvisChat/approvalArgs.js');
     const { createJarvisRunner } = await import('./services/jarvisChat/runner.js');
-    const { runClaudeHeadless } = await import('./services/jarvisChat/claudeHeadless.js');
+    const { runHeadless } = await import('./services/jarvisChat/headless.js');
     const { appWakeSource, createJarvisWakes } = await import('./services/jarvisChat/wakes.js');
     const { readProfile } = await import('./services/profileStore.js');
     const stores = (ws: string) => deps.registry.get(ws);
@@ -689,7 +689,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
     ), grants);
     deps.jarvis ??= createJarvisRunner({
       stores,
-      spawnHeadless: (o) => runClaudeHeadless(o),
+      spawnHeadless: (o) => runHeadless(o),
       runApproved: execute,
       approvalArgs,
       tabOpen: cardOpen(() => deps.terminal.liveSessions()),

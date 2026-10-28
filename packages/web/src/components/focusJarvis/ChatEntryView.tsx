@@ -16,6 +16,7 @@ export type EntryHandlers = {
 type ViewProps = { entry: ChatEntry; live?: boolean } & EntryHandlers;
 
 const quiet = 'text-[12px] text-zinc-500';
+const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
 
 /** One line of the chat: the person's bubble on the right, Jarvis's reply as
  * plain text, each step it took as one line with an icon (and the tab it
@@ -46,7 +47,7 @@ export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onAppr
     case 'event':
       return <EventLine text={entry.text} />;
     case 'agent':
-      return <div className={`text-center ${quiet}`}>Jarvis now runs on {entry.agent === 'claude' ? 'Claude' : entry.agent}</div>;
+      return <div className={`text-center ${quiet}`}>Jarvis now runs on {AGENT_NAMES[entry.agent] ?? entry.agent}</div>;
     case 'turn':
       if (entry.state === 'failed') {
         return (

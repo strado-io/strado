@@ -7,19 +7,34 @@ type AgentId = 'claude' | 'codex' | 'opencode' | 'pi';
 // Each with the icon and tint its terminal tab has.
 export const AGENTS: { id: AgentId; label: string; vendor: string; ready: boolean; Icon: typeof ClaudeIcon }[] = [
   { id: 'claude', label: 'Claude', vendor: 'Anthropic', ready: true, Icon: ClaudeIcon },
-  { id: 'codex', label: 'Codex', vendor: 'OpenAI', ready: false, Icon: CodexIcon },
-  { id: 'opencode', label: 'OpenCode', vendor: 'OpenCode', ready: false, Icon: OpencodeIcon },
-  { id: 'pi', label: 'Pi', vendor: 'Pi', ready: false, Icon: PiIcon },
+  { id: 'codex', label: 'Codex', vendor: 'OpenAI', ready: true, Icon: CodexIcon },
+  { id: 'opencode', label: 'OpenCode', vendor: 'OpenCode', ready: true, Icon: OpencodeIcon },
+  { id: 'pi', label: 'Pi', vendor: 'Pi', ready: true, Icon: PiIcon },
 ];
 type Model = { agent: AgentId; id: string | null; label: string };
-// The models each agent offers Jarvis; null is the agent's own default. Only
-// Claude's are known yet; the others get theirs when they can run Jarvis.
+// The models each agent offers Jarvis; null is the agent's own default.
 const MODELS: Model[] = [
   { agent: 'claude', id: null, label: 'Claude default' },
   { agent: 'claude', id: 'fable', label: 'Claude Fable' },
   { agent: 'claude', id: 'opus', label: 'Claude Opus' },
   { agent: 'claude', id: 'sonnet', label: 'Claude Sonnet' },
   { agent: 'claude', id: 'haiku', label: 'Claude Haiku' },
+  // From `codex debug models` (OpenAI's catalog: it changes with Codex updates).
+  { agent: 'codex', id: null, label: 'Codex default' },
+  { agent: 'codex', id: 'gpt-6-luna', label: 'GPT-6 Luna' },
+  { agent: 'codex', id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+  { agent: 'codex', id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  { agent: 'opencode', id: null, label: 'OpenCode default' },
+  // From `pi --list-models`, through OpenRouter (how Pi is logged in here).
+  { agent: 'pi', id: null, label: 'Pi default' },
+  { agent: 'pi', id: 'openrouter/anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5' },
+  { agent: 'pi', id: 'openrouter/anthropic/claude-opus-5.5', label: 'Claude Opus 5.5' },
+  { agent: 'pi', id: 'openrouter/anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5' },
+  { agent: 'pi', id: 'openrouter/openai/gpt-5.5', label: 'GPT-5.5' },
+  { agent: 'pi', id: 'openrouter/google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
+  { agent: 'pi', id: 'openrouter/z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash' },
+  { agent: 'pi', id: 'openrouter/moonshotai/kimi-k3', label: 'Kimi K3' },
+  { agent: 'pi', id: 'openrouter/deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
 ];
 export const EFFORTS: { id: JarvisEffort | null; label: string }[] = [
   { id: null, label: 'Default' },
@@ -103,7 +118,8 @@ export function ModelPicker({ agent, model, onSettings }: {
   const choose = (m: Model) => {
     setOpen(false);
     if (m.agent === current.id && m.id === model) return;
-    onSettings({ model: m.id });
+    // Another agent's model switches Jarvis to that agent (a fresh session).
+    onSettings(m.agent === current.id ? { model: m.id } : { agent: m.agent, model: m.id });
   };
   const star = (m: Model) => {
     const k = keyOf(m);
