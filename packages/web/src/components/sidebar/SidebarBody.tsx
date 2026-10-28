@@ -20,7 +20,6 @@ import { WorktreeRowItem, type OpenWorktree } from './WorktreeRowItem';
 import { HoverActions, Menu, MenuPopover, MergeRequestBadge, agentWaiting, agentWorking, diffBadge, isRunning, type MenuItem } from './rowBits';
 import { useFocuses } from '../../hooks/useFocuses';
 import { NEW_FOCUS_EVENT } from '../../hooks/focusShortcut';
-import { FocusIcon } from './FocusSwitcher';
 import { FocusList, type FocusBadges, type FocusFilter, type FocusJarvisHeader } from './FocusList';
 import { SidebarToolbar } from './SidebarToolbar';
 import { PlusIcon } from '../hub/icons';
@@ -410,14 +409,6 @@ export function SidebarBody({
             );
           }}
         </FocusList>
-        {/* No active Focus: as before, below the list. */}
-        {!active && (
-          <div className="mt-2 px-1 py-1">
-            <button type="button" onClick={() => openComposer()} className={emptyAction}>
-              <span className="text-zinc-500"><FocusIcon size={14} /></span>New focus
-            </button>
-          </div>
-        )}
         {/* First runner fetch still in flight: say so, quietly. Runner rows
             appearing a beat after the local ones otherwise looks like a bug. */}
         {remoteLoading && (

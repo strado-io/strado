@@ -181,12 +181,10 @@ describe('SidebarBody: the active Focus', () => {
     expect(focusMock.setMembership).toHaveBeenCalledWith('f1', 'remote:rn1:/srv/wt/FX-77', false);
   });
 
-  it('with no Focus, nothing is open and New focus below the list opens the composer', () => {
+  it('with no Focus, nothing is open and the list shows no New focus button (the toolbar has it)', () => {
     render(<SidebarBody {...props()} />);
     expect(screen.queryByTestId('focus-open')).toBeNull();
-    const toolbar = screen.getByTestId('sidebar-toolbar');
-    fireEvent.click(screen.getAllByRole('button', { name: 'New focus' }).find((b) => !toolbar.contains(b))!);
-    expect(screen.getByRole('dialog', { name: 'New focus' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New focus' })).toBeNull();
   });
 
   const header = (over: Partial<FocusJarvisHeader> = {}): FocusJarvisHeader => ({
