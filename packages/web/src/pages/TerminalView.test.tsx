@@ -2124,7 +2124,7 @@ describe('TerminalView', () => {
 
 describe('shortCount', () => {
   it('keeps the changes pill narrow', async () => {
-    const { shortCount } = await import('./TerminalView');
+    const { shortCount } = await import('../components/GitPill');
     expect([0, 999, 1000, 1234, 9999, 12_345].map(shortCount)).toEqual(['0', '999', '1k', '1.2k', '10k', '12k']);
   });
 });

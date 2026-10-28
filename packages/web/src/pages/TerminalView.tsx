@@ -1,3 +1,4 @@
+import { GitPill, useGitStatus } from '../components/GitPill';
 import { noteHubTabs } from '../lib/navHistory';
 import { OpenSidebarButton } from '../components/SidebarToggle';
 import { isRunTab, runIdOfTab, runTabId } from '../lib/runTab';
@@ -552,10 +553,6 @@ function BrowserPreviewPane({
 }
 
 
-/** 1234 → 1.2k, 12345 → 12k: the changes pill stays narrow. */
-export const shortCount = (n: number): string =>
-  n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(n / 1000)}k`;
-
 export function TerminalView({
   worktree,
   onClose,
@@ -594,6 +591,10 @@ export function TerminalView({
   };
 }) {
   const { workspace } = useWorkspace();
+  // The worktree's branch and ahead/behind, for the Git pill and the Changes pane's title.
+  const [gitStatus] = useGitStatus(workspace.id, worktree.path, !worktree.remote);
+  // Bumped by the Git pill's "Git tree": the Changes view shows its tree.
+  const [diffTreeSeq, setDiffTreeSeq] = useState(0);
   const { showTime, showStatus } = useHubDisplayPreferences();
   const localWsId = workspace.id;
   /**
@@ -1723,6 +1724,9 @@ export function TerminalView({
         key={key}
         paneKey={key}
         title={label}
+        subtitle={tab.mode === 'diff' && tab.path === worktree.path
+          ? [worktree.meta?.ticketId || worktree.path.split('/').pop(), gitStatus?.branch].filter(Boolean).join(' · ')
+          : undefined}
         icon={<TabTile mode={tab.mode} icon={entry?.icon} />}
         focused={!newPaneKey && sameTab(active, tab)}
         docked={docked}
@@ -3320,21 +3324,17 @@ export function TerminalView({
               capability flag applies to the Browser. */}
           {!remote && (
             <>
-              {/* A pill like Run's, the counts shortened past 999 (1.2k); exact in the tooltip. */}
-              <button
-                className={`flex h-7 shrink-0 items-center self-center rounded-md border px-1.5 transition ${
-                  active.mode === 'diff' ? 'border-zinc-600 bg-zinc-800 text-zinc-100' : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-white/5 hover:text-zinc-100'
-                }`}
-                onClick={openChanges}
-                title={`Changes (⌘L): +${activeDiff?.additions ?? 0} −${activeDiff?.deletions ?? 0} lines`}
-                aria-label="Changes"
-                aria-pressed={active.mode === 'diff'}
-              >
-                <span className="flex gap-1 font-mono text-[11px] tabular-nums leading-none">
-                  <span className="text-emerald-400">+{shortCount(activeDiff?.additions ?? 0)}</span>
-                  <span className="text-red-300">−{shortCount(activeDiff?.deletions ?? 0)}</span>
-                </span>
-              </button>
+              {/* Git without opening Changes: branch, counts, push/pull, Create PR (GitPill). */}
+              <GitPill
+                wsId={wsId}
+                worktree={worktree}
+                status={gitStatus}
+                additions={activeDiff?.additions ?? 0}
+                deletions={activeDiff?.deletions ?? 0}
+                active={active.mode === 'diff'}
+                onOpenChanges={openChanges}
+                onOpenTree={() => { setDiffTreeSeq((n) => n + 1); if (active.mode !== 'diff') openChanges(); }}
+              />
             </>
           )}
           {/* Which machine, always visible. Without it a remote hub is
@@ -3859,6 +3859,7 @@ export function TerminalView({
                 >
                   <DiffView
                     embedded
+                    treeSeq={g.path === worktree.path ? diffTreeSeq : 0}
                     active={placed && sameTab(active, { path: g.path, mode: 'diff', id: '1' })}
                     worktree={rowsRef.current.get(g.path) ?? (g.path === worktree.path ? worktree : ({ path: g.path } as Worktree))}
                   />

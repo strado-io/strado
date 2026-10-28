@@ -6,6 +6,7 @@ import { api, ApiClientError } from '../api';
 import { parseUnifiedDiff, hunkPatch, type ParsedDiff, type DiffHunk, type DiffLine } from '../lib/diff';
 import { SearchSelect } from '../components/SearchSelect';
 import { GitTreePanel } from '../components/GitTreePanel';
+import { GIT_REFRESH_EVENT } from '../components/GitPill';
 import { MrReviewModal } from '../components/MrReviewModal';
 import { MrReview } from '../components/MrReview';
 import { PrStateIcon } from '../components/sidebar/prVisuals';
@@ -279,11 +280,14 @@ const HunkBlock = memo(
 
 /** The worktree's changes and MRs: a modal by default, or `embedded` as a hub
  * tab (fills its pane, no Close; keys only while `active`). */
-export function DiffView({ worktree, onClose, embedded = false, active = true }: {
+export function DiffView({ worktree, onClose, embedded = false, active = true, treeSeq = 0 }: {
   worktree: Worktree;
   onClose?: () => void;
+  /** In a hub: no toolbar — the hub's Git pill (GitPill) pulls, pushes and opens PRs. */
   embedded?: boolean;
   active?: boolean;
+  /** Bumps when the Git pill asks for the git tree. */
+  treeSeq?: number;
 }) {
   const { workspace } = useWorkspace();
   const wsId = workspace.id;
@@ -386,6 +390,21 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
       setError(errMessage(e));
     }
   }
+
+  // The Git pill asked for the tree.
+  useEffect(() => {
+    if (treeSeq === 0) return;
+    setShowTree(true);
+    setMrsOpen(false);
+  }, [treeSeq]);
+  // The Git pill pulled, pushed or refreshed this worktree: reload what's shown.
+  const refreshRef = useRef<() => void>(() => {});
+  refreshRef.current = () => { void refreshAll(tab); };
+  useEffect(() => {
+    const onChange = (e: Event) => { if ((e as CustomEvent<{ path: string }>).detail?.path === worktree.path) refreshRef.current(); };
+    window.addEventListener(GIT_REFRESH_EVENT, onChange);
+    return () => window.removeEventListener(GIT_REFRESH_EVENT, onChange);
+  }, [worktree.path]);
 
   async function refreshAll(which: Tab) {
     const paths = await loadList(which);
@@ -890,6 +909,13 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
             </div>
           </div>
         )}
+        {embedded ? (showTree && (
+          <div className="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3 text-[11px] text-zinc-400">
+            <span className="text-zinc-200">Git tree</span>
+            <span className="flex-1" />
+            <button onClick={() => setShowTree(false)} className="rounded px-1.5 py-0.5 hover:bg-white/[0.06] hover:text-zinc-100">Back to changes</button>
+          </div>
+        )) : (
         <div className="flex items-center gap-2 border-b border-zinc-800/80 px-3 py-1 text-sm text-zinc-200">
           {/* Identity, not navigation: the worktree's name and its branch. */}
           <div className="flex min-w-0 max-w-[55%] items-center gap-2">
@@ -1000,6 +1026,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
             </button>
           )}
         </div>
+        )}
 
         {mrsOpen ? (
           <div className="flex min-h-0 flex-1">
