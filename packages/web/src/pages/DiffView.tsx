@@ -891,8 +891,7 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
           </div>
         )}
         <div className="flex items-center gap-2 border-b border-zinc-800/80 px-3 py-1 text-sm text-zinc-200">
-          {/* Identity, not navigation: worktree name + a branch chip, then a
-              divider, so nothing here reads as one more tab. */}
+          {/* Identity, not navigation: the worktree's name and its branch. */}
           <div className="flex min-w-0 max-w-[55%] items-center gap-2">
             <span className="truncate font-mono text-zinc-100" title={label}>{label}</span>
             {currentBranch && currentBranch !== label && (
@@ -904,66 +903,8 @@ export function DiffView({ worktree, onClose, embedded = false, active = true }:
                 <span className="truncate">{currentBranch}</span>
               </span>
             )}
-            {/* Comparing THIS branch with another is a property of the branch,
-                so it sits beside the chip; the base picker appears once on. */}
-            <button
-              onClick={() => {
-                const on = !(!mrsOpen && !showTree && tab === 'branch');
-                setTab(on ? 'branch' : 'changes');
-                setShowTree(false);
-                setMrsOpen(false);
-              }}
-              aria-pressed={!mrsOpen && !showTree && tab === 'branch'}
-              title="Compare this branch with a base branch"
-              className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] transition ${
-                !mrsOpen && !showTree && tab === 'branch'
-                  ? 'border-sky-500/40 bg-sky-500/10 text-sky-200'
-                  : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-              }`}
-            >
-              vs base
-            </button>
-            {!mrsOpen && !showTree && tab === 'branch' && (
-              <SearchSelect
-                value={baseOverride ?? baseBranch}
-                options={[
-                  ...(baseBranch && !branches.includes(baseBranch) ? [baseBranch] : []),
-                  ...branches.filter((b) => b !== currentBranch),
-                ]}
-                onSelect={selectBase}
-                ariaLabel="Comparison base"
-                placeholder="Search branches…"
-              />
-            )}
           </div>
-          <span aria-hidden className="h-5 w-px shrink-0 bg-zinc-800" />
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex shrink-0 items-center rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5">
-              <button
-                onClick={() => { setTab('changes'); setShowTree(false); setMrsOpen(false); }}
-                aria-pressed={!mrsOpen && !showTree && tab === 'changes'}
-                className={segmentClass(!mrsOpen && !showTree && tab === 'changes')}
-              >
-                Changes
-              </button>
-              {(mrProbe.kind === 'list' || mrProbe.kind === 'needsAuth') && (
-                <button
-                  onClick={openMrs}
-                  aria-pressed={mrsOpen}
-                  aria-label={`${mrProbe.provider === 'github' ? 'PRs' : 'MRs'}${mrProbe.kind === 'list' ? ` (${mrProbe.mergeRequests.length})` : ''}`}
-                  title={mrProbe.provider === 'github' ? 'Pull requests' : 'Merge requests'}
-                  className={`${segmentClass(mrsOpen)} inline-flex items-center gap-1.5`}
-                >
-                  {mrProbe.provider === 'github' ? 'PRs' : 'MRs'}
-                  {mrProbe.kind === 'list' && (
-                    <span className="rounded bg-zinc-800 px-1 font-mono text-[10px] tabular-nums text-zinc-300">
-                      {mrProbe.mergeRequests.length}
-                    </span>
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
+          <span className="flex-1" />
           <button
             onClick={() => { setShowTree((p) => !p); setMrsOpen(false); }}
             title="Git tree"
