@@ -24,7 +24,14 @@ const MODELS: Model[] = [
   { agent: 'codex', id: 'gpt-6-luna', label: 'GPT-6 Luna' },
   { agent: 'codex', id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
   { agent: 'codex', id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  // From `opencode models`, through OpenRouter (how OpenCode is logged in here).
   { agent: 'opencode', id: null, label: 'OpenCode default' },
+  { agent: 'opencode', id: 'openrouter/anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5' },
+  { agent: 'opencode', id: 'openrouter/anthropic/claude-opus-5.5', label: 'Claude Opus 5.5' },
+  { agent: 'opencode', id: 'openrouter/anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5' },
+  { agent: 'opencode', id: 'openrouter/openai/gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+  { agent: 'opencode', id: 'openrouter/google/gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+  { agent: 'opencode', id: 'opencode/big-pickle', label: 'Big Pickle (free)' },
   // From `pi --list-models`, through OpenRouter (how Pi is logged in here).
   { agent: 'pi', id: null, label: 'Pi default' },
   { agent: 'pi', id: 'openrouter/anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5' },
