@@ -173,6 +173,18 @@ describe('stop, approvals, agent', () => {
     expect(await (await store()).page(focusId, {})).toEqual([]);
     expect((await app.inject({ method: 'PUT', url: `${base()}/agent`, headers: local, payload: { agent: 'emacs' } })).statusCode).toBe(400);
   });
+
+  it('PUT settings: model and effort are kept for the next turn; null goes back to the default; bad ones 400', async () => {
+    const put = (payload: object) => app.inject({ method: 'PUT', url: `${base()}/settings`, headers: local, payload });
+    const res = await put({ model: 'opus', effort: 'high' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ model: 'opus', effort: 'high' });
+    expect(await (await store()).meta(focusId)).toMatchObject({ model: 'opus', effort: 'high' });
+    expect((await put({ effort: null })).json()).toMatchObject({ model: 'opus', effort: null });
+    expect((await put({ model: '--dangerously-skip-permissions' })).statusCode).toBe(400);
+    expect((await put({ effort: 'extreme' })).statusCode).toBe(400);
+    expect((await put({ model: 'opus', extra: 1 })).statusCode).toBe(400);
+  });
 });
 
 describe('SSE', () => {

@@ -522,9 +522,16 @@ export type ChatEntry =
   | { id: string; at: string; type: 'event'; text: string }
   | { id: string; at: string; type: 'turn'; turnId: string; state: TurnState; wake?: boolean; error?: string; fix?: string }
   | { id: string; at: string; type: 'agent'; agent: JarvisAgent };
+export type JarvisEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type JarvisMeta = {
   focusId: string; agent: JarvisAgent; sessionId: string | null; lastActiveAt: string | null; pendingApprovals: number; running: boolean;
+  /** An alias ("opus") or a full model id; null is the agent's default. Applies from the next turn. */
+  model: string | null;
+  /** null is the agent's default. Applies from the next turn. */
+  effort: JarvisEffort | null;
 };
+/** A change to how Jarvis runs; a field left out stays as it is, null resets it. */
+export type JarvisSettings = { model?: string | null; effort?: JarvisEffort | null };
 export const JARVIS_MESSAGE_MAX = 16 * 1024;
 /** The ui command a Focus Jarvis turn sends this window: one action, in model args. */
 export const JARVIS_UI_OP = 'jarvis.action';

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import type { ChatEntry, JarvisMeta } from '../../types';
+import type { ChatEntry, JarvisMeta, JarvisSettings } from '../../types';
 import { ChatEntryView, type EntryHandlers } from './ChatEntryView';
 import { ThinkingLine } from './ToolLine';
 import { JarvisComposer, type AgentChip, type WorktreeChip } from './JarvisComposer';
@@ -39,7 +39,7 @@ export function displayOrder(entries: ChatEntry[]): ChatEntry[] {
 
 /** A Focus's Jarvis in the main area, T3 Code style: one centred column, the
  * chat scrolling above, the composer pinned below. */
-export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onLoadOlder, agents, worktrees, start, ...handlers }: {
+export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onSettings, onLoadOlder, agents, worktrees, start, ...handlers }: {
   focusName: string;
   /** The empty chat's starting points (none in tests that don't need them). */
   start?: JarvisStart;
@@ -51,6 +51,8 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
   /** Resolves once the server has the message; rejects to keep the draft. */
   onSend: (text: string) => Promise<void>;
   onStop: () => void;
+  /** A model or effort picked in the composer's menu. */
+  onSettings: (settings: JarvisSettings) => void;
   onLoadOlder: () => void;
   agents: AgentChip[];
   worktrees: WorktreeChip[];
@@ -108,7 +110,8 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
       </div>
       <div className="mx-auto w-full max-w-[640px] px-4 pb-4">
         {error && <div role="alert" className="mb-2 text-[12px] text-red-300">{error}</div>}
-        <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
+        <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'}
+          model={meta?.model ?? null} effort={meta?.effort ?? null} onSettings={onSettings} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
       </div>
     </section>
   );

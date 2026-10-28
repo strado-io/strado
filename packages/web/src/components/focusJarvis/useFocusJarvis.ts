@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { uiClientId } from '../../lib/uiControl';
-import type { ChatEntry, JarvisMeta } from '../../types';
+import type { ChatEntry, JarvisMeta, JarvisSettings } from '../../types';
 
 /** Of two copies of one entry, the one to keep: the incoming one, unless it
  * is an earlier copy of something already settled — a finished reply (or a
@@ -44,6 +44,8 @@ export type FocusJarvis = {
   send: (text: string) => Promise<void>;
   approve: (entryId: string, approve: boolean) => Promise<void>;
   stop: () => Promise<void>;
+  /** The model or effort Jarvis runs with, from the next turn. */
+  setSettings: (settings: JarvisSettings) => Promise<void>;
   loadOlder: () => Promise<void>;
   /** Re-fetch the latest page now (after a refused approval, say). */
   reload: () => void;
@@ -194,7 +196,16 @@ export function useFocusJarvis(wsId: string, focusId: string | null, getContext:
     }
   }, [wsId, focusId, entries]);
 
+  // The stream brings the new meta too; this shows it without waiting, in
+  // the chat that asked (as W6).
+  const setSettings = useCallback(async (settings: JarvisSettings) => {
+    if (!focusId) return;
+    const key = `${wsId}\u0000${focusId}`;
+    const next = await api.focusJarvis.setSettings(wsId, focusId, settings);
+    if (chatRef.current === key) setMeta(next);
+  }, [wsId, focusId]);
+
   const reload = useCallback(() => reloadRef.current(), []);
 
-  return { entries, meta, hasOlder, send, approve, stop, loadOlder, reload };
+  return { entries, meta, hasOlder, send, approve, stop, setSettings, loadOlder, reload };
 }

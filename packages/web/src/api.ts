@@ -1,5 +1,5 @@
 import type { RepoConfig, Worktree, ProcInfo, Workspace, WorkflowStatus, MergeRequest, MergeRequestChange, ReviewDiscussion, ReviewCommit, CodeReview, CodeReviewCounts, CodeReviewRepository, MachineSample, UsageAccount, UsageSummary } from './types';
-import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, FileWriteBody, FileWriteResult, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody, ChatEntry, JarvisMeta, JarvisAgent } from './types';
+import type { RunCommand, SessionMetrics, AgentConnection, ConnectionAgent, HostInfo, SandboxList, SandboxAction, LogPage, LogQuery, FileTreePage, FileList, FileContent, FileMarks, FileWriteBody, FileWriteResult, NavAnswer, HoverAnswer, OutlineAnswer, SearchQuery, SearchAnswer, LspServerId, LspServerStatus, EditorId, EditorsAnswer, OpenInEditorBody, ChatEntry, JarvisMeta, JarvisAgent, JarvisSettings } from './types';
 
 /** Per-worktree outcome of a merge-request lookup, as the batch route reports it. */
 export type WorktreeMergeRequests =
@@ -451,6 +451,8 @@ export const api = {
       request<unknown>(`${jarvisBase(wsId, focusId)}/approvals/${encodeURIComponent(entryId)}`, { method: 'POST', body: JSON.stringify(body) }).then(() => undefined),
     setAgent: (wsId: string, focusId: string, agent: JarvisAgent) =>
       request<JarvisMeta>(`${jarvisBase(wsId, focusId)}/agent`, { method: 'PUT', body: JSON.stringify({ agent }) }),
+    setSettings: (wsId: string, focusId: string, settings: JarvisSettings) =>
+      request<JarvisMeta>(`${jarvisBase(wsId, focusId)}/settings`, { method: 'PUT', body: JSON.stringify(settings) }),
     streamUrl: (wsId: string, focusId: string) => `${jarvisBase(wsId, focusId)}/events`,
   },
   repos: {

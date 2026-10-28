@@ -157,7 +157,7 @@ describe('jarvis chat store', () => {
   });
 
   it('meta: defaults, setMeta persists, counts pending approvals and running', async () => {
-    expect(await store.meta('f1')).toEqual({ focusId: 'f1', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false });
+    expect(await store.meta('f1')).toEqual({ focusId: 'f1', agent: 'claude', sessionId: null, model: null, effort: null, lastActiveAt: null, pendingApprovals: 0, running: false });
     await store.setMeta('f1', { sessionId: 's-1' });
     const ap = await store.append('f1', { type: 'approval', turnId: 't', action: 'tab.close', args: {}, summary: 'Close', state: 'pending' });
     const m = await createJarvisChatStore(dir).meta('f1');

@@ -175,7 +175,7 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       // Stopped before it started: no process at all.
       if (!abort.signal.aborted) for await (const e of deps.spawnHeadless({
         cwd, prompt: turnPrompt(job.input, await tabsOf(ws, focusId, job.input)), resume: meta.sessionId, systemPrompt: JARVIS_CHAT_SYSTEM,
-        mcpConfigPath: mcpFile, env: await env(), signal: abort.signal,
+        mcpConfigPath: mcpFile, model: meta.model, effort: meta.effort, env: await env(), signal: abort.signal,
       })) {
         if (e.type === 'session' && e.sessionId !== meta.sessionId) await st.setMeta(focusId, { sessionId: e.sessionId });
         else if (e.type === 'text') { reply += e.delta; await writeReply(false); }

@@ -90,6 +90,15 @@ describe('runClaudeHeadless', () => {
     expect(claudeArgv(base)).not.toContain('--resume');
   });
 
+  it('argv: the Focus\'s model and effort when set; none of either at the default', () => {
+    const argv = claudeArgv({ ...base, model: 'opus', effort: 'high' });
+    expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+    expect(argv[argv.indexOf('--effort') + 1]).toBe('high');
+    const plain = claudeArgv({ ...base, model: null, effort: null });
+    expect(plain).not.toContain('--model');
+    expect(plain).not.toContain('--effort');
+  });
+
   it('streams the recorded turn and sends the prompt on stdin', async () => {
     const fake = fakeChild(fixture('claude-stream.jsonl'));
     let seen: { cmd: string; args: string[]; cwd: string } | null = null;

@@ -6,6 +6,7 @@ const log = vi.fn();
 const send = vi.fn();
 const stop = vi.fn();
 const approve = vi.fn();
+const setSettings = vi.fn();
 vi.mock('../../api', () => ({
   api: {
     focusJarvis: {
@@ -13,6 +14,7 @@ vi.mock('../../api', () => ({
       send: (...a: unknown[]) => send(...a),
       stop: (...a: unknown[]) => stop(...a),
       approve: (...a: unknown[]) => approve(...a),
+      setSettings: (...a: unknown[]) => setSettings(...a),
       streamUrl: (ws: string, id: string) => `/api/w/${ws}/focuses/${id}/jarvis/events`,
     },
   },
@@ -37,7 +39,7 @@ class FakeSource {
   emit(name: string, data: unknown) { this.listeners.get(name)?.({ data: JSON.stringify(data) } as MessageEvent); }
 }
 
-const meta: JarvisMeta = { focusId: 'f1', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false };
+const meta: JarvisMeta = { focusId: 'f1', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false, model: null, effort: null };
 const user = (id: string, text: string): ChatEntry => ({ id, at: '2026-10-26T10:00:00Z', type: 'user', text, windowId: 'win-1' });
 const reply = (id: string, text: string, done = false): ChatEntry => ({ id, at: '2026-10-26T10:00:01Z', type: 'jarvis', turnId: 't1', text, done });
 
@@ -45,7 +47,7 @@ let origES: unknown;
 beforeEach(() => {
   origES = (globalThis as any).EventSource;
   (globalThis as any).EventSource = FakeSource;
-  log.mockReset(); send.mockReset(); stop.mockReset(); approve.mockReset();
+  log.mockReset(); send.mockReset(); stop.mockReset(); approve.mockReset(); setSettings.mockReset();
   log.mockResolvedValue({ entries: [user('e1', 'hi')], meta });
 });
 afterEach(() => { (globalThis as any).EventSource = origES; });
@@ -87,6 +89,15 @@ describe('useFocusJarvis', () => {
     await waitFor(() => expect(result.current.meta).not.toBeNull());
     await act(() => result.current.approve('e9', false));
     expect(approve).toHaveBeenCalledWith('ws1', 'f1', 'e9', { approve: false, windowId: 'win-1', context: {} });
+  });
+
+  it('sets the model or effort and shows the meta the server sends back', async () => {
+    setSettings.mockResolvedValue({ ...meta, model: 'opus', effort: null });
+    const { result } = renderHook(() => useFocusJarvis('ws1', 'f1', () => ({})));
+    await waitFor(() => expect(result.current.meta).not.toBeNull());
+    await act(() => result.current.setSettings({ model: 'opus' }));
+    expect(setSettings).toHaveBeenCalledWith('ws1', 'f1', { model: 'opus' });
+    expect(result.current.meta).toMatchObject({ model: 'opus', effort: null });
   });
 
   it('closes the stream when the Focus changes', async () => {

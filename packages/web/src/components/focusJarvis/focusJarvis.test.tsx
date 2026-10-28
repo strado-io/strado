@@ -8,7 +8,7 @@ import { JarvisComposer } from './JarvisComposer';
 import { FocusJarvisView, displayOrder } from './FocusJarvisView';
 
 const at = '2026-10-26T10:00:00Z';
-const meta: JarvisMeta = { focusId: 'f1', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false };
+const meta: JarvisMeta = { focusId: 'f1', agent: 'claude', sessionId: null, lastActiveAt: null, pendingApprovals: 0, running: false, model: null, effort: null };
 const approval = (over: Partial<Extract<ChatEntry, { type: 'approval' }>> = {}): Extract<ChatEntry, { type: 'approval' }> =>
   ({ id: 'a1', at, type: 'approval', turnId: 't1', action: 'run.stop', args: {}, summary: 'Stop dev in fleetx-api', state: 'pending', ...over });
 const noop = () => {};
@@ -71,7 +71,7 @@ describe('ApprovalCard', () => {
 });
 
 describe('JarvisComposer', () => {
-  const props = { running: false, agent: 'claude' as const, onSend: vi.fn(async () => {}), onStop: vi.fn(), agents: [{ label: 'claude-1', agentId: 'claude-1@a' }], worktrees: [] };
+  const props = { running: false, agent: 'claude' as const, model: null, effort: null, onSettings: vi.fn(), onSend: vi.fn(async () => {}), onStop: vi.fn(), agents: [{ label: 'claude-1', agentId: 'claude-1@a' }], worktrees: [] };
   it('enter sends, shift-enter makes a newline', async () => {
     const onSend = vi.fn(async () => {});
     render(<JarvisComposer {...props} onSend={onSend} />);
@@ -115,12 +115,53 @@ describe('JarvisComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
     expect(screen.getByRole('menuitem', { name: /codex.*soon/i })).toHaveAttribute('aria-disabled', 'true');
   });
+
+  it('the chip names the agent, then its model and effort when they are not the default', () => {
+    const { rerender } = render(<JarvisComposer {...props} />);
+    expect(screen.getByRole('button', { name: 'Agent: Claude' })).toHaveTextContent(/^Claude$/);
+    rerender(<JarvisComposer {...props} model="opus" effort="high" />);
+    expect(screen.getByRole('button', { name: 'Agent: Claude · Opus · High' })).toHaveTextContent('Claude · Opus · High');
+    rerender(<JarvisComposer {...props} effort="xhigh" />);
+    expect(screen.getByRole('button', { name: /agent: claude/i })).toHaveTextContent(/^Claude · Extra high$/);
+    // A full model id the list doesn't name is said as it is.
+    rerender(<JarvisComposer {...props} model="claude-sonnet-4-5" />);
+    expect(screen.getByRole('button', { name: /agent: claude/i })).toHaveTextContent('Claude · claude-sonnet-4-5');
+  });
+
+  it('the menu ticks the current model and effort; picking one sets it and closes the menu', () => {
+    const onSettings = vi.fn();
+    render(<JarvisComposer {...props} model="sonnet" effort={null} onSettings={onSettings} />);
+    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
+    expect(screen.getByRole('menuitemradio', { name: 'Sonnet' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getAllByRole('menuitemradio', { name: 'Default' }).map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true']);
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Opus' }));
+    expect(onSettings).toHaveBeenLastCalledWith({ model: 'opus' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Extra high' }));
+    expect(onSettings).toHaveBeenLastCalledWith({ effort: 'xhigh' });
+  });
+
+  it('Default sends null; the one already picked sends nothing', () => {
+    const onSettings = vi.fn();
+    render(<JarvisComposer {...props} model="opus" effort="max" onSettings={onSettings} />);
+    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
+    const [modelDefault] = screen.getAllByRole('menuitemradio', { name: 'Default' });
+    fireEvent.click(modelDefault!);
+    expect(onSettings).toHaveBeenLastCalledWith({ model: null });
+    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
+    fireEvent.click(screen.getAllByRole('menuitemradio', { name: 'Default' })[1]!);
+    expect(onSettings).toHaveBeenLastCalledWith({ effort: null });
+    fireEvent.click(screen.getByRole('button', { name: /agent: claude/i }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Max' }));
+    expect(onSettings).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('FocusJarvisView', () => {
   it('a blank Focus shows only Jarvis, ready for a message', () => {
     render(<FocusJarvisView focusName="Billing" entries={[]} meta={meta} hasOlder={false} resolve={() => ({ open: false })}
-      onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
+      onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onSettings={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
     expect(screen.getByRole('region', { name: /jarvis/i })).toHaveTextContent(/what should we do in billing/i);
     expect(screen.getByRole('textbox', { name: /message jarvis/i })).toBeInTheDocument();
   });
@@ -132,7 +173,7 @@ describe('steps as lines', () => {
     ({ id: 's1', at, type: 'action', turnId: 'T', action: 'agent.recap', summary: 'Recap api/claude-1', ok: true, ...over });
   const view = (entries: ChatEntry[], running: boolean) => render(
     <FocusJarvisView focusName="Billing" entries={entries} meta={{ ...meta, running }} hasOlder={false} resolve={() => ({ open: false })}
-      onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
+      onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onSettings={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
 
   it('a running step spins; with nothing spinning, the turn says Thinking…', () => {
     const { rerender } = view([step({ state: 'running' })], true);
@@ -142,7 +183,7 @@ describe('steps as lines', () => {
     expect(line).toHaveTextContent('Recap api/claude-1');
     expect(screen.queryByText('Thinking…')).toBeNull();
     rerender(<FocusJarvisView focusName="Billing" entries={[step({ detail: 'It fixed the login test.' })]} meta={{ ...meta, running: true }} hasOlder={false}
-      resolve={() => ({ open: false })} onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
+      resolve={() => ({ open: false })} onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onSettings={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
     expect(screen.getByTestId('jarvis-action')).toHaveAttribute('data-state', 'done');
     expect(screen.getByText('Thinking…')).toBeInTheDocument();
   });

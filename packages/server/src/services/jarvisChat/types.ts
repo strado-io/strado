@@ -62,10 +62,20 @@ export type JarvisMeta = {
   agent: JarvisAgent;
   /** The agent CLI's own session id, resumed by every later turn. */
   sessionId: string | null;
+  /** The model the agent runs (an alias like "opus" or a full id); null: the agent's default. */
+  model: string | null;
+  /** How hard it thinks; null: the agent's default. */
+  effort: JarvisEffort | null;
   lastActiveAt: string | null;
   pendingApprovals: number;
   running: boolean;
 };
+
+/** Claude Code's --effort levels. */
+export const JARVIS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type JarvisEffort = (typeof JARVIS_EFFORTS)[number];
+/** A model name as the CLI takes it: an alias or a full id, nothing that could be a flag. */
+export const JARVIS_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,79}$/;
 
 export const JARVIS_LIMITS = {
   turnMs: 300_000,

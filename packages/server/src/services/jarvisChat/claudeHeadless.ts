@@ -27,6 +27,9 @@ export type HeadlessOpts = {
   resume: string | null;
   systemPrompt: string;
   mcpConfigPath: string;
+  /** Null (or absent): Claude Code's own default. */
+  model?: string | null;
+  effort?: string | null;
   env: Record<string, string>;
   signal: AbortSignal;
 };
@@ -45,7 +48,7 @@ const API_ERRORS: Record<string, HeadlessEvent> = {
   rate_limit: { type: 'error', message: 'Claude Code hit its usage limit', fix: 'Try again later, or pick another agent' },
 };
 
-export function claudeArgv(o: Pick<HeadlessOpts, 'resume' | 'systemPrompt' | 'mcpConfigPath'>): string[] {
+export function claudeArgv(o: Pick<HeadlessOpts, 'resume' | 'systemPrompt' | 'mcpConfigPath' | 'model' | 'effort'>): string[] {
   return [
     '-p',
     '--output-format', 'stream-json', '--verbose',
@@ -56,6 +59,8 @@ export function claudeArgv(o: Pick<HeadlessOpts, 'resume' | 'systemPrompt' | 'mc
     '--permission-mode', 'dontAsk',
     '--append-system-prompt', o.systemPrompt,
     ...(o.resume ? ['--resume', o.resume] : []),
+    ...(o.model ? ['--model', o.model] : []),
+    ...(o.effort ? ['--effort', o.effort] : []),
   ];
 }
 

@@ -7,7 +7,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
 import type { JarvisChatChange } from '../services/jarvisChat/store.js';
-import { JARVIS_AGENTS, JARVIS_LIMITS, type ChatEntry, type JarvisAgent, type JarvisContext, type JarvisMeta } from '../services/jarvisChat/types.js';
+import { JARVIS_AGENTS, JARVIS_EFFORTS, JARVIS_LIMITS, JARVIS_MODEL_RE, type ChatEntry, type JarvisAgent, type JarvisContext, type JarvisMeta } from '../services/jarvisChat/types.js';
 import { JarvisContextBody } from './jarvis.js';
 import { assertLocalHub } from './profile.js';
 
@@ -36,6 +36,11 @@ const SendBody = z.object({
 }).strict();
 const ApproveBody = z.object({ approve: z.boolean(), windowId: WindowId, context: JarvisContextBody }).strict();
 const AgentBody = z.object({ agent: z.enum(JARVIS_AGENTS as [JarvisAgent, ...JarvisAgent[]]) }).strict();
+// null: back to the agent's default.
+const SettingsBody = z.object({
+  model: z.string().regex(JARVIS_MODEL_RE).nullable().optional(),
+  effort: z.enum(JARVIS_EFFORTS).nullable().optional(),
+}).strict();
 
 type Params = { id: string };
 
@@ -101,6 +106,14 @@ export async function registerFocusJarvisRoutes(app: FastifyInstance, runner: Fo
     await jarvis.setMeta(id, { agent, sessionId: null });
     await jarvis.append(id, { type: 'agent', agent });
     return jarvis.meta(id);
+  });
+
+  // Model and effort take effect from the next turn; the session carries on.
+  app.put<{ Params: Params }>('/focuses/:id/jarvis/settings', async (req) => {
+    assertLocalHub(req.headers);
+    const id = await focusOf(req);
+    const { model, effort } = SettingsBody.parse(req.body);
+    return req.workspace!.stores.jarvis.setMeta(id, { model, effort });
   });
 
   // `meta` first, then `entry` (upsert by id) and `meta` as they change, and
