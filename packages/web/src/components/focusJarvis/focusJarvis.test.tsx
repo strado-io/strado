@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import type { ChatEntry, JarvisMeta } from '../../types';
 import { ChatEntryView } from './ChatEntryView';
@@ -72,6 +72,60 @@ describe('ApprovalCard', () => {
 
 describe('JarvisComposer', () => {
   const props = { running: false, agent: 'claude' as const, model: null, effort: null, onSettings: vi.fn(), onSend: vi.fn(async () => {}), onStop: vi.fn(), agents: [{ label: 'claude-1', agentId: 'claude-1@a' }], worktrees: [] };
+  describe('hold to speak', () => {
+    type Ev = { type: 'partial'; text: string } | { type: 'final'; text: string } | { type: 'level'; rms: number };
+    let emit: (e: Ev) => void = () => {};
+    const voice = { available: true, start: vi.fn(), stop: vi.fn(), cancel: vi.fn(), onEvent: (fn: (e: Ev) => void) => { emit = fn; return () => {}; } };
+    beforeEach(() => { (window as { strado?: unknown }).strado = { voice }; vi.clearAllMocks(); });
+    afterEach(() => { delete (window as { strado?: unknown }).strado; });
+
+    it('the mic: hold to listen, words land after what was typed, release stops; nothing is sent', async () => {
+      const onSend = vi.fn(async () => {});
+      render(<JarvisComposer {...props} agents={[{ label: 'claude-1', agentId: 'c' }]} onSend={onSend} />);
+      const box = screen.getByRole('textbox', { name: /message jarvis/i });
+      fireEvent.change(box, { target: { value: 'please' } });
+      fireEvent.pointerDown(await screen.findByRole('button', { name: 'Hold to speak' }));
+      expect(voice.start).toHaveBeenCalledWith(['claude-1']);
+      act(() => emit({ type: 'partial', text: 'open a shell' }));
+      expect(box).toHaveValue('please open a shell');
+      fireEvent.pointerUp(screen.getByRole('button', { name: /listening/i }));
+      expect(voice.stop).toHaveBeenCalled();
+      act(() => emit({ type: 'final', text: 'open a shell in api' }));
+      expect(box).toHaveValue('please open a shell in api');
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('Escape while listening throws the words away', async () => {
+      render(<JarvisComposer {...props} />);
+      const box = screen.getByRole('textbox', { name: /message jarvis/i });
+      fireEvent.pointerDown(await screen.findByRole('button', { name: 'Hold to speak' }));
+      act(() => emit({ type: 'partial', text: 'never mind' }));
+      fireEvent.keyDown(box, { key: 'Escape' });
+      expect(voice.cancel).toHaveBeenCalled();
+      expect(box).toHaveValue('');
+    });
+
+    it('Space held in the box turns into hold-to-speak; a tap just types', async () => {
+      vi.useFakeTimers();
+      try {
+        render(<JarvisComposer {...props} />);
+        const box = screen.getByRole('textbox', { name: /message jarvis/i });
+        await act(async () => {}); // the bridge says it's available
+        fireEvent.keyDown(box, { key: ' ' });
+        fireEvent.keyUp(box, { key: ' ' });
+        act(() => { vi.advanceTimersByTime(400); });
+        expect(voice.start).not.toHaveBeenCalled();
+        fireEvent.keyDown(box, { key: ' ' });
+        act(() => { vi.advanceTimersByTime(400); });
+        expect(voice.start).toHaveBeenCalled();
+        fireEvent.keyUp(box, { key: ' ' });
+        expect(voice.stop).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('enter sends, shift-enter makes a newline', async () => {
     const onSend = vi.fn(async () => {});
     render(<JarvisComposer {...props} onSend={onSend} />);
