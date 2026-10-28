@@ -31,6 +31,12 @@ export function searchKey(e: Pick<KeyboardEvent, 'type' | 'key' | 'metaKey' | 'c
   return mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
 }
 
+/** ⌘P on a Mac, Ctrl+P elsewhere (keydown): go to a file in the worktree, from any tab. */
+export function filePickerKey(e: Pick<KeyboardEvent, 'type' | 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, mac: boolean): boolean {
+  if (e.type !== 'keydown' || e.key.toLowerCase() !== 'p' || e.shiftKey || e.altKey) return false;
+  return mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+}
+
 /** ⌘⇧F on a Mac, Ctrl+Shift+F elsewhere (keydown): search the worktree's files, from any tab. */
 export function filesSearchKey(e: Pick<KeyboardEvent, 'type' | 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, mac: boolean): boolean {
   if (e.type !== 'keydown' || e.key.toLowerCase() !== 'f' || !e.shiftKey || e.altKey) return false;
