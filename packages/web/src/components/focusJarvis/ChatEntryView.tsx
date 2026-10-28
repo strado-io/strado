@@ -2,6 +2,7 @@ import type { ChatEntry, TabCardRef } from '../../types';
 import { AnswerText } from '../jarvis/AnswerText';
 import { ApprovalCard } from './ApprovalCard';
 import { TabCard } from './TabCard';
+import { EventLine, ToolLine } from './ToolLine';
 import type { ResolvedCard } from './cards';
 
 export type EntryHandlers = {
@@ -11,12 +12,15 @@ export type EntryHandlers = {
   onApprove: (entryId: string, approve: boolean) => Promise<void>;
 };
 
+/** `live`: the turn is still running (a step marked running really is). */
+type ViewProps = { entry: ChatEntry; live?: boolean } & EntryHandlers;
+
 const quiet = 'text-[12px] text-zinc-500';
 
 /** One line of the chat: the person's bubble on the right, Jarvis's reply as
- * plain text, its work as a compact log line (with the tab it opened), an
- * approval, or a note. */
-export function ChatEntryView({ entry, resolve, onOpenCard, onApprove }: { entry: ChatEntry } & EntryHandlers) {
+ * plain text, each step it took as one line with an icon (and the tab it
+ * opened), an approval, or a note. */
+export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onApprove }: ViewProps) {
   switch (entry.type) {
     case 'user':
       return (
@@ -32,18 +36,15 @@ export function ChatEntryView({ entry, resolve, onOpenCard, onApprove }: { entry
       );
     case 'action':
       return (
-        <div className="flex flex-col gap-1.5">
-          <div className={`flex min-w-0 items-baseline gap-1.5 ${quiet}`} data-testid="jarvis-action">
-            <span aria-hidden className={entry.ok ? 'text-emerald-400' : 'text-red-400'}>{entry.ok ? '✓' : '✗'}</span>
-            <span className="truncate">{entry.summary}{entry.error ? ` — ${entry.error}` : ''}</span>
-          </div>
-          {entry.card && <TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard} />}
+        <div className="flex flex-col gap-1">
+          <ToolLine entry={entry} live={live} />
+          {entry.card && <div className="ml-7"><TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard} /></div>}
         </div>
       );
     case 'approval':
       return <ApprovalCard entry={entry} onApprove={onApprove} />;
     case 'event':
-      return <div className={`text-center ${quiet}`}>{entry.text}</div>;
+      return <EventLine text={entry.text} />;
     case 'agent':
       return <div className={`text-center ${quiet}`}>Jarvis now runs on {entry.agent === 'claude' ? 'Claude' : entry.agent}</div>;
     case 'turn':

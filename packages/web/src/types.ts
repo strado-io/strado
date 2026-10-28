@@ -511,7 +511,13 @@ export type TurnState = 'running' | 'done' | 'interrupted' | 'failed' | 'stopped
 export type ChatEntry =
   | { id: string; at: string; type: 'user'; text: string; windowId: string }
   | { id: string; at: string; type: 'jarvis'; turnId: string; text: string; done: boolean }
-  | { id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef }
+  | {
+      id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef;
+      /** 'running' while the step runs; absent once done. */
+      state?: 'running';
+      /** What the step gave back, capped; shown when its line is opened. */
+      detail?: string;
+    }
   | { id: string; at: string; type: 'approval'; turnId: string; action: string; args: Record<string, unknown>; summary: string; danger?: string; state: ApprovalState; result?: string }
   | { id: string; at: string; type: 'event'; text: string }
   | { id: string; at: string; type: 'turn'; turnId: string; state: TurnState; wake?: boolean; error?: string; fix?: string }

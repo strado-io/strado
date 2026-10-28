@@ -12,6 +12,7 @@ import { exec } from '../../src/shell';
 import { JARVIS_CHAT_SYSTEM } from '../../src/services/jarvisChat/prompt';
 import { jarvisToolSpecs } from '../../src/services/jarvisChat/tools';
 import type { JarvisRunner, TurnRef } from '../../src/services/jarvisChat/runner';
+import type { ChatEntry } from '../../src/services/jarvisChat/types';
 import { createUiClients, type UiCommand } from '../../src/services/uiClients';
 import { JARVIS_TOKEN_HEADER, JARVIS_TOOLS, type ChatEntry, type JarvisContext, type JarvisToolSpec } from '../../src/services/jarvisChat/types';
 // @ts-expect-error plain ESM module without types
@@ -218,6 +219,23 @@ describe('jarvis tool gateway', () => {
     const res = await call('jarvis_recap', { agent: 'claude-1', focus: null });
     expect(res.json().text).not.toContain('sk-ant-abcdef123456');
     expect(res.json().text).toContain('[redacted]');
+  });
+
+  it('a step shows as running when it starts, then becomes one line with its result (redacted)', async () => {
+    openWindow('win1');
+    const seen: ChatEntry[] = [];
+    const off = (await app.deps.registry.get('default')).jarvis.onChange((_f, c) => { if (c.entry?.type === 'action') seen.push(c.entry); });
+    ack = () => ({ ok: true, text: 'claude-1 fixed it; it printed ANTHROPIC_API_KEY=sk-ant-abcdef123456' });
+    await call('jarvis_recap', { agent: 'claude-1', focus: null });
+    off();
+    expect(seen.map((e) => (e as { state?: string }).state ?? 'done')).toEqual(['running', 'done']);
+    expect(seen[0]!.id).toBe(seen[1]!.id);
+    const [step] = of(await log(), 'action');
+    expect(of(await log(), 'action')).toHaveLength(1);
+    expect(step).toMatchObject({ ok: true, summary: expect.stringMatching(/^Recap/) });
+    expect(step).not.toHaveProperty('state');
+    expect((step as { detail?: string }).detail).toContain('claude-1 fixed it');
+    expect((step as { detail?: string }).detail).not.toContain('sk-ant-abcdef123456');
   });
 
   it('bad arguments are a 400 with a fixed message; an unknown tool is a 404', async () => {

@@ -32,7 +32,13 @@ export type ChatEntry =
   | { id: string; at: string; type: 'user'; text: string; windowId: string }
   /** Streamed: the same id is upserted while `done` is false. */
   | { id: string; at: string; type: 'jarvis'; turnId: string; text: string; done: boolean }
-  | { id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef }
+  | {
+      id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef;
+      /** 'running' while the step runs; absent once it's done (and in logs from before this field). */
+      state?: 'running';
+      /** What the step gave back (a recap, a command's output), capped; the chat shows it on a click. */
+      detail?: string;
+    }
   | {
       id: string; at: string; type: 'approval'; turnId: string; action: string; args: Record<string, unknown>;
       /** Exactly what will happen, for the card ("Stop dev in fleetx-api"). */

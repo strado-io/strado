@@ -126,14 +126,77 @@ describe('FocusJarvisView', () => {
   });
 });
 
+describe('steps as lines', () => {
+  type Action = Extract<ChatEntry, { type: 'action' }>;
+  const step = (over: Partial<Action> = {}): Action =>
+    ({ id: 's1', at, type: 'action', turnId: 'T', action: 'agent.recap', summary: 'Recap api/claude-1', ok: true, ...over });
+  const view = (entries: ChatEntry[], running: boolean) => render(
+    <FocusJarvisView focusName="Billing" entries={entries} meta={{ ...meta, running }} hasOlder={false} resolve={() => ({ open: false })}
+      onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
+
+  it('a running step spins; with nothing spinning, the turn says Thinking…', () => {
+    const { rerender } = view([step({ state: 'running' })], true);
+    const line = screen.getByTestId('jarvis-action');
+    expect(line).toHaveAttribute('data-state', 'running');
+    expect(within(line).getByRole('status', { name: 'running' })).toBeInTheDocument();
+    expect(line).toHaveTextContent('Recap api/claude-1');
+    expect(screen.queryByText('Thinking…')).toBeNull();
+    rerender(<FocusJarvisView focusName="Billing" entries={[step({ detail: 'It fixed the login test.' })]} meta={{ ...meta, running: true }} hasOlder={false}
+      resolve={() => ({ open: false })} onOpenCard={noop} onApprove={later} onSend={later} onStop={noop} onLoadOlder={noop} agents={[]} worktrees={[]} />);
+    expect(screen.getByTestId('jarvis-action')).toHaveAttribute('data-state', 'done');
+    expect(screen.getByText('Thinking…')).toBeInTheDocument();
+  });
+
+  it('a done step opens to what it gave back; a failed one says Failed and why', () => {
+    view([step({ detail: 'It fixed the login test.' }), step({ id: 's2', summary: 'Run npm test in api', action: 'shell.run', ok: false, error: 'no such tab' })], false);
+    const [done, failed] = screen.getAllByTestId('jarvis-action');
+    expect(screen.getByTestId('jarvis-steps')).toContainElement(done!);
+    expect(screen.queryByText('It fixed the login test.')).toBeNull();
+    fireEvent.click(within(done!).getByRole('button'));
+    expect(screen.getByText('It fixed the login test.')).toBeInTheDocument();
+    expect(failed).toHaveAttribute('data-state', 'failed');
+    expect(failed).toHaveTextContent('Failed');
+    fireEvent.click(within(failed!).getByRole('button'));
+    expect(screen.getByText('no such tab')).toBeInTheDocument();
+  });
+
+  it('an agent\'s report is one line; its answer opens rendered, not as raw markdown', () => {
+    view([{ id: 'e1', at, type: 'event', text: 'claude-1 finished: The file is **LoginComponent.tsx**' }], false);
+    const line = screen.getByTestId('jarvis-event');
+    expect(line).toHaveTextContent('claude-1 finished');
+    expect(line).not.toHaveTextContent('LoginComponent');
+    fireEvent.click(within(line).getByRole('button'));
+    expect(screen.getByText('LoginComponent.tsx').tagName).toBe('STRONG');
+  });
+
+  it('a decided approval is one line saying how it went; a pending one keeps its buttons', () => {
+    view([
+      approval({ id: 'a1', state: 'approved', result: 'It failed: No tab "browser-1"' }),
+      approval({ id: 'a2', state: 'pending', summary: 'Close api/shell-1' }),
+    ], false);
+    const [done, pending] = screen.getAllByTestId('approval-card');
+    expect(done).toHaveAttribute('data-state', 'approved');
+    expect(done).toHaveTextContent('Approved · failed');
+    expect(within(done!).queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(within(pending!).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+
+  it('a step left running by a turn that ended reads Stopped, not a spinner forever', () => {
+    view([step({ state: 'running' })], false);
+    expect(screen.getByTestId('jarvis-action')).toHaveAttribute('data-state', 'stopped');
+    expect(screen.queryByRole('status', { name: 'running' })).toBeNull();
+    expect(screen.queryByText('Thinking…')).toBeNull();
+  });
+});
+
 describe('displayOrder', () => {
-  it('within a turn, Jarvis\'s text comes before its approvals, actions and cards; turns and messages keep their places', () => {
+  it('within a turn, the steps come first (as agents show tool calls), then the answer, then approvals and how it ended; turns and messages keep their places', () => {
     const e = (id: string, type: string, turnId?: string) => ({ id, at, type, ...(turnId ? { turnId } : {}) }) as unknown as ChatEntry;
     const order = displayOrder([
       e('u1', 'user'), e('t1', 'turn', 'A'), e('ap', 'approval', 'A'), e('j1', 'jarvis', 'A'), e('ac', 'action', 'A'),
       e('t2', 'turn', 'B'), e('ac2', 'action', 'B'), e('j2', 'jarvis', 'B'), e('u2', 'user'), e('ac3', 'action', 'A'),
     ]).map((x) => x.id);
-    expect(order).toEqual(['u1', 'j1', 't1', 'ap', 'ac', 'j2', 't2', 'ac2', 'u2', 'ac3']);
+    expect(order).toEqual(['u1', 'ac', 'j1', 't1', 'ap', 'ac2', 'j2', 't2', 'u2', 'ac3']);
   });
 });
 
