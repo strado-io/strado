@@ -1023,6 +1023,8 @@ export function Dashboard(props: {
       dialogOpen={!!(props.modalOpen || feedbackOpen || showAddRepo)}
       embedded={!hero}
       hero={hero}
+      // Bottom bar hidden: ⌘K opens the bar as a dialog mid-window, results below it.
+      dropDown={!hero && !showDock}
       stations={stations}
       mission={{ stations: missionScoped, openRef: openAgentRef, shellRef: missionShellRef }}
       agentKey={missionBox.agentKey}
@@ -1319,12 +1321,12 @@ export function Dashboard(props: {
         />
       )}
       {settingsSection && (
-        // Follows Settings › Appearance › Show bottom bar: hidden, it opens only while ⌘K holds the keyboard.
-        <div className={`fixed inset-x-0 bottom-0 z-[60] flex items-center bg-zinc-950 px-4 ${showDock
-          ? 'h-11 border-t border-zinc-900'
-          : 'h-0 overflow-hidden focus-within:h-11 focus-within:overflow-visible focus-within:border-t focus-within:border-zinc-900'}`}
+        // Follows Settings › Appearance › Show bottom bar: hidden, ⌘K opens it as the same mid-window dialog.
+        <div className={`fixed inset-x-0 bottom-0 z-[60] bg-zinc-950 ${showDock ? 'border-t border-zinc-900' : ''}`}
           data-testid="settings-command-bar" data-collapsed={!showDock || undefined}>
-          {commandBar(false)}
+          <Dock worktree={dockWorktree} focus={focusApi.active?.name ?? null} collapsed={!showDock}>
+            {commandBar(false)}
+          </Dock>
         </div>
       )}
 

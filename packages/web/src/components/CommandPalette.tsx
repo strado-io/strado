@@ -222,6 +222,7 @@ export function CommandPalette({
   onOpen,
   embedded = false,
   hero = false,
+  dropDown = false,
   stations,
   voice = null,
   dialogOpen = false,
@@ -261,6 +262,8 @@ export function CommandPalette({
   /** The home screen's big box: focused on arrival, results drop below it, and
    * nothing pops up until there is something to show (the Recent list stays visible). */
   hero?: boolean;
+  /** The bar shows as a dialog in the middle of the window (bottom bar hidden): its results open below it. */
+  dropDown?: boolean;
   /** The desktop shell's on-device speech (push-to-talk); absent elsewhere, and then there is no mic. */
   voice?: VoiceBridge | null;
   /** A dialog the app has open (Add repo, New worktree, …): push-to-talk keys belong to it. */
@@ -809,7 +812,8 @@ export function CommandPalette({
     // Keep talking: the keyboard stays in the box after a run — a tab that
     // opened or came up does not take it — until you ask to go to a tab
     // ("focus the shell"); Esc or a click elsewhere also hands it back.
-    if (keepOpen || !plan.steps.some((st) => st.action === 'tab.focus')) {
+    // As a mid-window dialog, a run closes it (unless asked to stay open).
+    if (keepOpen || (!dropDown && !plan.steps.some((st) => st.action === 'tab.focus'))) {
       settle();
       if (keepOpen) inputRef.current?.focus();
     } else {
@@ -1060,7 +1064,8 @@ export function CommandPalette({
   };
 
   const pick = (r: Result) => {
-    if (document.activeElement === inputRef.current) { settle(); onClose(); } else dismiss();
+    // As a mid-window dialog, going somewhere closes it; as the bottom bar it keeps the keyboard.
+    if (document.activeElement === inputRef.current && !dropDown) { settle(); onClose(); } else dismiss();
     if (r.kind === 'worktree') {
       if (r.remote) onOpenRemoteWorktree?.(r.remote);
       else onOpenWorktree(r.worktree, r.wsId);
@@ -1227,11 +1232,11 @@ export function CommandPalette({
       {popover && (
         <div
           data-testid="command-bar-popover"
-          data-placement={hero ? 'below' : 'above'}
+          data-placement={hero || dropDown ? 'below' : 'above'}
           // Keep focus in the bar: a click on a row must not blur it first.
           onMouseDown={(e) => e.preventDefault()}
-          style={hero ? undefined : { marginBottom: `${4 + popoverLift}px` }}
-          className={hero
+          style={hero || dropDown ? undefined : { marginBottom: `${4 + popoverLift}px` }}
+          className={hero || dropDown
             ?'surface-pop absolute left-0 right-0 top-full z-[60] mt-2 overflow-hidden rounded-lg'
             :`surface-pop absolute bottom-full left-0 right-0 z-[60] overflow-hidden sm:right-auto sm:w-[36rem] sm:max-w-[calc(100vw-2rem)] sm:rounded-lg ${embedded ?'sm:left-0' :'sm:left-4'}`}
         >
@@ -1397,7 +1402,7 @@ export function CommandPalette({
         </div>
       )}
       {v.phase === 'error' && v.error && (
-        <div role="alert" className={`surface-pop absolute left-0 right-0 z-[60] rounded-lg border-amber-900/60 px-3 py-2 text-xs text-amber-300 ${hero ?'top-full mt-2' :'bottom-full mb-1 sm:w-[36rem]'}`}>
+        <div role="alert" className={`surface-pop absolute left-0 right-0 z-[60] rounded-lg border-amber-900/60 px-3 py-2 text-xs text-amber-300 ${hero || dropDown ?'top-full mt-2' :'bottom-full mb-1 sm:w-[36rem]'}`}>
           {VOICE_PERMISSION[v.error.code] ? (
             <>
               {`Strado needs ${VOICE_PERMISSION[v.error.code]!.what} permission — `}

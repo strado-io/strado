@@ -249,6 +249,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   it('home → "open FD-9 and run dev": the worktree opens, its dev server starts, the keyboard stays in the box (now in the Dock)', async () => {
+    localStorage.setItem('strado:show-dock', 'true'); // the bottom bar keeps the keyboard; the ⌘K dialog closes after a run
     const { api } = await import('../api');
     askModel.mockResolvedValueOnce(plan({ action: 'nav.worktree', args: { name: 'FD-9' } }, { action: 'server.start', args: {} }));
     renderDashboard();
@@ -280,6 +281,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   it('"open usage": the Usage page shows and the keyboard stays in the box', async () => {
+    localStorage.setItem('strado:show-dock', 'true'); // the bottom bar keeps the keyboard; the ⌘K dialog closes after a run
     askModel.mockResolvedValueOnce(plan({ action: 'nav.page', args: { page: 'usage' } }));
     renderDashboard();
     await home();
@@ -314,7 +316,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     expect(await screen.findByTestId('settings-page')).toBeInTheDocument();
     const bar = screen.getByTestId('settings-command-bar');
     expect(bar).toHaveAttribute('data-collapsed', 'true');
-    expect(bar.className).toMatch(/\bh-0\b/);
+    expect(within(bar).getByTestId('dock').className).toMatch(/\bh-0\b/);
   });
 
   it('voice: hold ⌥Space on home, speak, release → the words wait in the box; ⏎ runs them as if typed', async () => {
