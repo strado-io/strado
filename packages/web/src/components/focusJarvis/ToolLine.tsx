@@ -62,7 +62,7 @@ export function StepRow({ icon, summary, tone, status, body, testId, state }: {
   const iconTone = tone === 'failed' ? 'text-red-400' : tone === 'running' ? 'text-zinc-300' : 'text-zinc-500';
   const verbTone = tone === 'running' ? 'jarvis-shimmer' : tone === 'failed' ? 'text-red-300' : 'text-zinc-300';
   return (
-    <div data-testid={testId} data-state={state}>
+    <div data-testid={testId} data-state={state} className="-mx-1.5">
       <button type="button" disabled={!body} aria-expanded={body ? open : undefined} onClick={() => setOpen((o) => !o)}
         className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] enabled:hover:bg-[rgb(var(--pane-edge)/0.05)]">
         <span className={iconTone}>{icon}</span>
@@ -131,7 +131,7 @@ export function EventLine({ text }: { text: string }) {
 /** While a turn runs and no step shows its own spinner: Jarvis is thinking. */
 export function ThinkingLine() {
   return (
-    <div aria-live="polite" className="flex items-center gap-2 px-1.5 py-1 text-[12.5px]">
+    <div aria-live="polite" className="-mx-1.5 flex items-center gap-2 px-1.5 py-1 text-[12.5px]">
       <span role="status" aria-label="Jarvis is working" className="braille-spinner font-mono text-[12px] leading-none text-[#e8906f]" />
       <span className="jarvis-shimmer font-medium">Thinking…</span>
     </div>

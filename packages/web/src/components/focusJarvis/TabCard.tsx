@@ -1,6 +1,6 @@
 import type React from 'react';
 import type { TabCardRef } from '../../types';
-import { KIND_ICON, TabTile } from '../hub/TabTile';
+import { KIND_ICON } from '../hub/TabTile';
 import { ClaudeIcon, CodexIcon, GlobeIcon, OpencodeIcon, PiIcon, ShellIcon } from '../hub/icons';
 import type { ResolvedCard } from './cards';
 
@@ -19,17 +19,16 @@ export function TabCard({ card, resolved, onOpen }: { card: TabCardRef; resolved
   const closed = !resolved.open;
   const title = card.label || card.url || `${KIND_LABEL[card.kind]} · ${card.tab}`;
   return (
+    // One compact line: the step above it already says what happened.
     <div data-testid="tab-card" data-closed={closed}
-      className={`glass pane-card flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2 ${closed ? 'opacity-50' : ''}`}>
-      <TabTile mode={tileMode} icon={<Icon className={closed ? 'text-zinc-500' : KIND_ICON[tileMode]} />} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-zinc-200">{title}</div>
-        <div className="truncate text-[11px] text-zinc-500">
-          {card.worktree}
-          {resolved.open && resolved.status && (
-            <span className={resolved.status === 'working' || resolved.status === 'needs you' ? 'text-amber-300' : ''}> · {resolved.status}</span>
-          )}
-        </div>
+      className={`flex h-9 min-w-0 items-center gap-2 rounded-lg border border-[rgb(var(--pane-edge)/0.08)] bg-[rgb(var(--pane-edge)/0.03)] pl-2.5 pr-1 ${closed ? 'opacity-50' : ''}`}>
+      <Icon className={`shrink-0 ${closed ? 'text-zinc-500' : KIND_ICON[tileMode]}`} />
+      <div className="min-w-0 flex-1 truncate text-[12.5px]">
+        <span className="font-medium text-zinc-200">{title}</span>
+        <span className="text-zinc-500"> · {card.worktree}</span>
+        {resolved.open && resolved.status && (
+          <span className={resolved.status === 'working' || resolved.status === 'needs you' ? 'text-amber-300' : 'text-zinc-500'}> · {resolved.status}</span>
+        )}
       </div>
       {resolved.open
         ? <button type="button" onClick={() => onOpen(resolved)} aria-label={`Open ${title}`}

@@ -85,7 +85,7 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
   return (
     <section aria-label="Jarvis" className="flex h-full min-h-0 flex-1 flex-col">
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[820px] flex-col gap-4 px-4 py-6">
+        <div className="mx-auto flex w-full max-w-[820px] flex-col gap-5 px-4 py-6">
           {hasOlder && (
             <button type="button" onClick={onLoadOlder} className="self-center text-[12px] text-zinc-500 hover:text-zinc-300">Earlier messages</button>
           )}
@@ -97,15 +97,26 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
               {start && <JarvisStartList start={start} />}
             </div>
           )}
-          {groupSteps(displayOrder(entries)).map((g) => g.length === 1
-            ? <ChatEntryView key={g[0]!.id} entry={g[0]!} live={live(g[0]!)} {...handlers} />
+          {blocks(displayOrder(entries).filter(shown), thinking).map((b) => b.kind === 'user'
+            ? <div key={b.entry.id} className="mt-4 first:mt-0"><ChatEntryView entry={b.entry} {...handlers} /></div>
             : (
-              // A turn's steps sit together, a line each, like any agent's tool calls.
-              <div key={g[0]!.id} data-testid="jarvis-steps" className="-my-1 flex flex-col gap-0.5">
-                {g.map((e) => <ChatEntryView key={e.id} entry={e} live={live(e)} {...handlers} />)}
+              // One reply: Jarvis's mark, then its steps, cards and answer beside it.
+              <div key={b.entries[0]?.id ?? 'thinking'} data-testid="jarvis-turn" className="flex gap-2.5">
+                <span aria-hidden className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#e8906f]/15 text-[12px] text-[#e8906f]">✦</span>
+                <div className="flex min-w-0 flex-1 flex-col gap-3">
+                  <div className="text-[12px] font-medium leading-6 text-zinc-400">Jarvis</div>
+                  {groupSteps(b.entries).map((g) => g.length === 1
+                    ? <ChatEntryView key={g[0]!.id} entry={g[0]!} live={live(g[0]!)} {...handlers} />
+                    : (
+                      // A turn's steps sit together, a line each, like any agent's tool calls.
+                      <div key={g[0]!.id} data-testid="jarvis-steps" className="-my-1 flex flex-col gap-0.5">
+                        {g.map((e) => <ChatEntryView key={e.id} entry={e} live={live(e)} {...handlers} />)}
+                      </div>
+                    ))}
+                  {b.thinking && <ThinkingLine />}
+                </div>
               </div>
             ))}
-          {thinking && <ThinkingLine />}
         </div>
       </div>
       <div className="mx-auto w-full max-w-[820px] px-4 pb-4">
@@ -115,6 +126,29 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
       </div>
     </section>
   );
+}
+
+/** Entries that draw something (a running or finished turn marker and the agent switch don't). */
+const shown = (e: ChatEntry) => e.type !== 'agent' && !(e.type === 'turn' && e.state !== 'failed' && e.state !== 'stopped' && e.state !== 'interrupted');
+
+type Block = { kind: 'user'; entry: ChatEntry } | { kind: 'jarvis'; entries: ChatEntry[]; thinking: boolean };
+/** The chat as exchanges: each message of yours, then everything Jarvis did
+ * until the next one as one reply. "Thinking…" goes in the last reply (a new
+ * one if you just sent). */
+function blocks(list: ChatEntry[], thinking: boolean): Block[] {
+  const out: Block[] = [];
+  for (const e of list) {
+    const last = out[out.length - 1];
+    if (e.type === 'user') out.push({ kind: 'user', entry: e });
+    else if (last?.kind === 'jarvis') last.entries.push(e);
+    else out.push({ kind: 'jarvis', entries: [e], thinking: false });
+  }
+  if (thinking) {
+    const last = out[out.length - 1];
+    if (last?.kind === 'jarvis') last.thinking = true;
+    else out.push({ kind: 'jarvis', entries: [], thinking: true });
+  }
+  return out;
 }
 
 /** Entries drawn as one-line steps: actions, decided approvals, agents' reports. */
