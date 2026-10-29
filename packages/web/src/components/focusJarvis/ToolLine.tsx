@@ -64,9 +64,9 @@ export function StepRow({ icon, summary, tone, status, body, testId, state }: {
   return (
     <div data-testid={testId} data-state={state} className="-mx-1.5">
       <button type="button" disabled={!body} aria-expanded={body ? open : undefined} onClick={() => setOpen((o) => !o)}
-        className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] enabled:hover:bg-[rgb(var(--pane-edge)/0.05)]">
+        className="group flex w-fit min-w-0 max-w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] enabled:hover:bg-[rgb(var(--pane-edge)/0.05)]">
         <span className={iconTone}>{icon}</span>
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 truncate">
           <span className={`font-medium ${verbTone}`}>{verb}</span>
           {rest.length > 0 && <span className="text-zinc-500"> {rest.join(' ')}</span>}
         </span>
@@ -80,7 +80,7 @@ export function StepRow({ icon, summary, tone, status, body, testId, state }: {
         )}
       </button>
       {open && body && (
-        <div className="ml-7 mt-0.5 max-h-72 overflow-auto rounded-md bg-[rgb(var(--pane-edge)/0.04)] px-2.5 py-2">{body}</div>
+        <div className="ml-[22px] mt-0.5 max-h-72 overflow-auto rounded-md bg-[rgb(var(--pane-edge)/0.04)] px-2.5 py-2">{body}</div>
       )}
     </div>
   );

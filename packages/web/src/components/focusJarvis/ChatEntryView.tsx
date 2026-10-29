@@ -35,7 +35,7 @@ export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onAppr
       return (
         <div className="flex flex-col gap-1">
           <ToolLine entry={entry} live={live} />
-          {entry.card && <div className="ml-7"><TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard} /></div>}
+          {entry.card && <div className="ml-[22px]"><TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard} /></div>}
         </div>
       );
     case 'approval':
