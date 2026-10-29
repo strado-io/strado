@@ -2,6 +2,7 @@ import type { ChatEntry, TabCardRef } from '../../types';
 import { AnswerText } from '../jarvis/AnswerText';
 import { ApprovalCard } from './ApprovalCard';
 import { TabCard } from './TabCard';
+import { useState } from 'react';
 import { EventLine, ToolLine } from './ToolLine';
 import type { ResolvedCard } from './cards';
 
@@ -23,14 +24,10 @@ const quiet = 'text-[12px] text-zinc-500';
 export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onApprove }: ViewProps) {
   switch (entry.type) {
     case 'user':
-      return (
-        <div className="flex justify-end">
-          <div data-testid="jarvis-user" className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-white/10 px-3.5 py-2 text-[13px] text-zinc-100">{entry.text}</div>
-        </div>
-      );
+      return <UserBubble text={entry.text} />;
     case 'jarvis':
       return (
-        <div className="text-[13px] leading-relaxed text-zinc-200" aria-busy={!entry.done}>
+        <div className="text-[14px] leading-relaxed text-zinc-200" aria-busy={!entry.done}>
           <AnswerText text={entry.text} />
         </div>
       );
@@ -62,4 +59,30 @@ export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onAppr
       }
       return null;
   }
+}
+
+/** A long message folds to its first lines; "Show more" opens it, "Show less" folds it again. */
+const LONG_CHARS = 600;
+const LONG_LINES = 10;
+
+/** Your message: a roomy bubble on the right. */
+function UserBubble({ text }: { text: string }) {
+  const long = text.length > LONG_CHARS || text.split('\n').length > LONG_LINES;
+  const [open, setOpen] = useState(false);
+  const folded = long && !open;
+  return (
+    <div className="flex justify-end">
+      <div className="flex max-w-[85%] flex-col rounded-[20px] bg-white/[0.08] px-5 py-3.5">
+        <div data-testid="jarvis-user"
+          className={`whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-100 ${folded ? 'max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]' : ''}`}>
+          {text}
+        </div>
+        {long && (
+          <button type="button" onClick={() => setOpen((o) => !o)} className="mt-2 self-end text-[12px] text-zinc-500 hover:text-zinc-300">
+            {open ? 'Show less' : 'Show more'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }

@@ -23,6 +23,20 @@ describe('ChatEntryView', () => {
     expect(screen.getByTestId('jarvis-user')).toHaveTextContent('open claude');
     expect(screen.getByTestId('jarvis-answer')).toHaveTextContent('Opened Claude.');
   });
+  it('a long message of yours folds; Show more opens it, Show less folds it again; a short one has neither', () => {
+    const long = 'This only changed the page open in your preview. '.repeat(20);
+    render(<>
+      <ChatEntryView entry={{ id: 'u1', at, type: 'user', text: long, windowId: 'w' }} resolve={() => ({ open: false })} onOpenCard={noop} onApprove={later} />
+      <ChatEntryView entry={{ id: 'u2', at, type: 'user', text: 'short', windowId: 'w' }} resolve={() => ({ open: false })} onOpenCard={noop} onApprove={later} />
+    </>);
+    const [bubble] = screen.getAllByTestId('jarvis-user');
+    expect(bubble!.className).toMatch(/max-h-48/);
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(bubble!.className).not.toMatch(/max-h-48/);
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
+    expect(bubble!.className).toMatch(/max-h-48/);
+    expect(screen.getAllByRole('button', { name: /show (more|less)/i })).toHaveLength(1);
+  });
   it('a failed turn says why and the fix', () => {
     render(<ChatEntryView entry={{ id: 'x', at, type: 'turn', turnId: 't1', state: 'failed', error: 'Claude is not signed in', fix: 'Run claude login' }}
       resolve={() => ({ open: false })} onOpenCard={noop} onApprove={later} />);
