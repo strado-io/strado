@@ -72,6 +72,8 @@ describe('Dock hidden (bottom bar off): ⌘K opens it as a dialog mid-window', (
     act(() => box.focus());
     expect(dock).toHaveAttribute('data-dialog', 'true');
     expect(dock.className).toMatch(/fixed.*left-1\/2.*top-\[14vh\]/);
+    // Just the box: no location line in the dialog.
+    expect(screen.queryByTestId('dock-location')).toBeNull();
     expect(box).toHaveFocus();
     fireEvent.mouseDown(screen.getByTestId('dock-backdrop'));
     expect(box).not.toHaveFocus();

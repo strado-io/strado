@@ -39,13 +39,14 @@ export function Dock({ worktree, focus = null, bare = false, collapsed = false, 
       onFocus={() => setActive(true)}
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActive(false); }}
       className={dialog
-        ? 'fixed left-1/2 top-[14vh] z-[70] flex w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-stretch gap-2 rounded-2xl border border-white/10 bg-zinc-950 p-3 shadow-2xl'
+        // Just the box: no location line, no card around it.
+        ? 'fixed left-1/2 top-[14vh] z-[70] flex w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-stretch rounded-lg bg-zinc-950 shadow-2xl'
         : `dock-panel relative flex shrink-0 items-center gap-3 px-4 ${collapsed
           ? 'h-0 overflow-hidden focus-within:h-auto focus-within:min-h-11 focus-within:overflow-visible focus-within:pb-2 focus-within:pt-1'
           : 'min-h-11 pb-2 pt-1'}`}>
       {/* Each part carries its kind's icon (the sidebar's own) and says what it is on hover. */}
-      <span data-testid="dock-location" aria-label={label ? `Worktree: ${label}` : 'No worktree open'}
-        className={`flex shrink-0 items-center gap-1.5 pl-1 text-[12px] text-zinc-300 ${dialog ? 'max-w-full' : 'max-w-[42%]'}`}>
+      {!dialog && <span data-testid="dock-location" aria-label={label ? `Worktree: ${label}` : 'No worktree open'}
+        className="flex max-w-[42%] shrink-0 items-center gap-1.5 pl-1 text-[12px] text-zinc-300">
         {focus && (
           <span data-testid="dock-focus" title={`Focus: ${focus}`} className="flex min-w-0 shrink items-center gap-1 text-zinc-500">
             <span className="shrink-0 text-sky-400/80"><FocusIcon size={12} /></span>
@@ -64,7 +65,7 @@ export function Dock({ worktree, focus = null, bare = false, collapsed = false, 
           <BranchIcon className="shrink-0 text-emerald-400/80" />
           <span className="truncate font-medium text-zinc-200">{here ?? 'no worktree'}</span>
         </span>
-      </span>
+      </span>}
       {children ?? <div className="min-w-0 flex-1" />}
     </div>
     </>
