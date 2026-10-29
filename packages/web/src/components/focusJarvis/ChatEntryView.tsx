@@ -32,12 +32,12 @@ export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onAppr
         </div>
       );
     case 'action':
-      return (
-        <div className="flex flex-col gap-1">
-          <ToolLine entry={entry} live={live} />
-          {entry.card && <div className="ml-[22px]"><TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard} /></div>}
-        </div>
-      );
+      // A step that opened a tab is that tab's line ("Shell opened shell-5 · ran …"); a failed one keeps its error.
+      if (entry.card && entry.ok) {
+        return <TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard}
+          command={/running `([^`]+)`/.exec(entry.summary)?.[1]} running={entry.state === 'running' && live} />;
+      }
+      return <ToolLine entry={entry} live={live} />;
     case 'approval':
       return <ApprovalCard entry={entry} onApprove={onApprove} />;
     case 'event':
