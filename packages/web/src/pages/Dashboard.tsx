@@ -12,7 +12,6 @@ import { recentInFocus, recentWorktrees } from '../lib/home/recent';
 import { AddWorktreesDialog } from '../components/focus/AddWorktreesDialog';
 import { lightOf } from '../lib/dock/stations';
 import { focusWorktreesOf, missionStations } from '../components/mission/mission';
-import { OrphanCalls } from '../components/mission/OrphanCalls';
 import { MissionStack } from '../components/mission/MissionStack';
 import { runCommandsError } from '../components/runCommands/RunCommandsDialog';
 import { useMissionBox, type MissionBoxDeps } from '../components/mission/useMissionBox';
@@ -462,7 +461,8 @@ export function Dashboard(props: {
 
   const prevClaude = useRef<ClaudeStatusMap>({});
   // Every agent/shell tab with its calls to you: the Dock, Mission Control and the call notifier.
-  const { stations, orphanCalls, loaded: stationsLoaded } = useStations(wsId);
+  // A call whose asker's tab closed has no one to answer to: not shown.
+  const { stations, loaded: stationsLoaded } = useStations(wsId);
   useEffect(() => {
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       Notification.requestPermission().catch(() => undefined);
@@ -511,7 +511,7 @@ export function Dashboard(props: {
   useEffect(() => {
     if (!stationsLoaded) return;
     const label = (p: string) => state.worktrees.find((w) => w.path === p)?.meta?.ticketId ?? p.split('/').pop() ?? p;
-    const { seen, fire } = nextSeenCalls(prevOpenCalls.current, stations, label, orphanCalls);
+    const { seen, fire } = nextSeenCalls(prevOpenCalls.current, stations, label, []);
     prevOpenCalls.current = seen;
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     for (const n of fire) {
@@ -520,13 +520,12 @@ export function Dashboard(props: {
       notification.onclick = () => {
         window.focus();
         // Its tab, as before, and its pill in the strip: the box is ready for the reply.
-        // An orphan call (its asker's tab closed) has neither: its line sits above the strip.
         if (worktree && n.mode && n.sessionId) openInlineHub(worktree, n.mode as typeof selectedMode, n.sessionId);
         if (n.agentId) selectAgentRef.current(n.agentId);
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stations, orphanCalls, stationsLoaded]);
+  }, [stations, stationsLoaded]);
 
   // The sidebar is where the user left it, everywhere (home included): only
   // their own toggle changes it (⌘B, its buttons, the box's "hide the
@@ -870,7 +869,6 @@ export function Dashboard(props: {
   const selectAgentRef = useRef(selectAgent);
   selectAgentRef.current = selectAgent;
   // "Who needs me?" (home's waiting count): the first agent calling you, in the strip's order.
-  // Only orphan calls (no pill to select): their lines are already above the strip.
   const selectFirstNeedsYou = () => {
     const first = [...missionScoped, ...stations].find((st) => lightOf(st) === 'calling');
     if (first) selectAgent(first.agentId);
@@ -903,8 +901,7 @@ export function Dashboard(props: {
     ? <div data-testid="selected-agent-line" className="min-w-0 px-2 py-0.5">{missionBox.line}</div>
     : null;
   // In the bar it reports its height, so the popover opens above it (home's popover opens below the box).
-  const orphanLines = <OrphanCalls calls={orphanCalls} onDismiss={(id) => api.intercom.escalations.dismiss(wsId, id)} />;
-  const missionStack = (inBar: boolean) => <MissionStack onHeight={inBar ? setStackHeight : undefined} approvals={orphanLines} strip={agentStrip} />;
+  const missionStack = (inBar: boolean) => <MissionStack onHeight={inBar ? setStackHeight : undefined} approvals={null} strip={agentStrip} />;
   // The chip names the project too: "master" alone doesn't say which repo.
   const repoNameOf = (id: string | null | undefined) => (id ? state.repos.find((r) => r.id === id)?.name ?? null : null);
   const dockWorktree = selectedRemote
@@ -1246,7 +1243,7 @@ export function Dashboard(props: {
                 bar={settingsSection ? null : commandBar(true)}
                 strip={settingsSection ? null : missionStack(false)}
                 recent={recentWorktrees(state.worktrees, state.repos, readWorktreeLru())}
-                waiting={stations.filter((st) => lightOf(st) === 'calling').length + orphanCalls.length}
+                waiting={stations.filter((st) => lightOf(st) === 'calling').length}
                 onOpenRecent={(w) => openInlineHub(w)}
                 onAddRepo={() => { setAddRepoAnchor(null); setShowAddRepo(true); }}
                 onNewWorktree={() => props.onNewWorktree()}
