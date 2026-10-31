@@ -73,15 +73,20 @@ describe('PaneCard: one pane as its own card', () => {
 });
 
 describe('PaneCard: header buttons', () => {
-  it('zoom and float sit together, lit while on; minimize and close sit together', () => {
-    card({ onZoom: vi.fn(), zoomed: true, onDock: vi.fn(), floating: true, onMinimize: vi.fn(), onClose: vi.fn() });
-    const zoom = screen.getByRole('button', { name: 'Unzoom Shell' });
+  it('a float: zoom and float sit together, float lit; minimize and close sit together', () => {
+    card({ onZoom: vi.fn(), onDock: vi.fn(), floating: true, onMinimize: vi.fn(), onClose: vi.fn() });
+    const zoom = screen.getByRole('button', { name: 'Zoom Shell' });
     const dock = screen.getByRole('button', { name: 'Dock Shell' });
-    expect(zoom).toHaveAttribute('aria-pressed', 'true');
     expect(dock).toHaveAttribute('aria-pressed', 'true');
     expect(zoom.parentElement).toBe(dock.parentElement);
     expect(screen.getByRole('button', { name: 'Minimize Shell' }).parentElement)
       .toBe(screen.getByRole('button', { name: 'Close Shell' }).parentElement);
+  });
+
+  it('zoomed: only the lit way back out and close', () => {
+    card({ onZoom: vi.fn(), zoomed: true, onSplitRight: vi.fn(), onFullTab: vi.fn(), onMinimize: vi.fn(), onClose: vi.fn() });
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Unzoom Shell', 'Close Shell']);
+    expect(screen.getByRole('button', { name: 'Unzoom Shell' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('nothing is lit while docked and unzoomed', () => {

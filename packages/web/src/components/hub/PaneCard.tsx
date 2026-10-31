@@ -75,6 +75,13 @@ export function PaneCard({
           </>
         )}
         {subtitle && <span className="min-w-0 truncate text-xs text-zinc-500">{subtitle}</span>}
+        {zoomed && onZoom ? (
+          // Zoomed: just the way back out, lit, and close.
+          <span className="ml-auto flex shrink-0 items-center gap-0.5">
+            <PaneButton label={`Unzoom ${title}`} active onClick={onZoom}><UnzoomIcon /></PaneButton>
+            {onClose && <PaneButton label={`Close ${title}`} onClick={onClose}><CloseIcon size={13} /></PaneButton>}
+          </span>
+        ) : (
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
           {/* Layout | how it's shown (zoom, float: lit while on) | the window itself. */}
           {(onSplitRight || onSplitDown || onFullTab) && (
@@ -87,7 +94,7 @@ export function PaneCard({
           {(onZoom || onFloat || onDock) && (
             <span data-pane-view-group className="flex items-center gap-0.5">
               {(onSplitRight || onSplitDown || onFullTab) && <GroupGap />}
-              {onZoom && <PaneButton label={zoomed ? `Unzoom ${title}` : `Zoom ${title}`} active={zoomed} onClick={onZoom}><ZoomInIcon /></PaneButton>}
+              {onZoom && <PaneButton label={`Zoom ${title}`} active={false} onClick={onZoom}><ZoomInIcon /></PaneButton>}
               {onFloat && <PaneButton label={`Float ${title}`} active={false} onClick={onFloat}><FloatIcon /></PaneButton>}
               {onDock && <PaneButton label={`Dock ${title}`} active onClick={onDock}><FloatIcon /></PaneButton>}
             </span>
@@ -100,6 +107,7 @@ export function PaneCard({
             </span>
           )}
         </span>
+        )}
       </div>
       <div className="min-h-0 flex-1 px-1 pb-1">
         <div ref={bodyRef} data-testid="pane-body" className="h-full w-full">{children}</div>
@@ -152,6 +160,10 @@ function MinimizeIcon() {
 }
 function MoveIcon() {
   return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><path d="M8 1.75v12.5M1.75 8h12.5M6.25 3.5 8 1.75 9.75 3.5M6.25 12.5 8 14.25l1.75-1.75M3.5 6.25 1.75 8 3.5 9.75M12.5 6.25 14.25 8 12.5 9.75" /></svg>;
+}
+// Two arrows drawn in from the corners: back to the layout.
+function UnzoomIcon() {
+  return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><path d="M2 2 7 7M7 3.25V7H3.25M14 14 9 9M9 12.75V9h3.75" /></svg>;
 }
 function ZoomInIcon() {
   return <svg {...ICON} strokeLinecap="round"><circle cx="7" cy="7" r="4.25" /><path d="M10.2 10.2 13.5 13.5M5.25 7h3.5M7 5.25v3.5" /></svg>;
