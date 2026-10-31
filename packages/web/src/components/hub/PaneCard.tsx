@@ -57,8 +57,12 @@ export function PaneCard({
           // A floating pane's name is its dock handle: drag it onto a pane to
           // dock there. The rest of the header just moves the card.
           <span data-dock-handle title={`Drag ${title} onto a pane to dock it`}
-            className="-ml-1.5 flex min-w-0 cursor-grab items-center gap-2 rounded-md py-1 pl-1.5 pr-2 hover:bg-white/[0.06] active:cursor-grabbing">
-            <span className="flex shrink-0 items-center">{icon}</span>
+            className="group/handle -ml-1.5 flex min-w-0 cursor-grab items-center gap-2 rounded-md py-1 pl-1.5 pr-2 hover:bg-white/[0.06] active:cursor-grabbing">
+            {/* On hover the icon turns into a move glyph: this part docks, the rest of the header moves. */}
+            <span className="relative flex shrink-0 items-center">
+              <span className="flex items-center transition-opacity group-hover/handle:opacity-0">{icon}</span>
+              <span data-move-glyph className="absolute inset-0 flex items-center justify-center text-zinc-200 opacity-0 transition-opacity group-hover/handle:opacity-100"><MoveIcon /></span>
+            </span>
             <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-200">{title}</span>
           </span>
         ) : (
@@ -120,4 +124,7 @@ function DockIcon() {
 }
 function MinimizeIcon() {
   return <svg {...ICON} strokeLinecap="round"><path d="M4 11.5h8" /></svg>;
+}
+function MoveIcon() {
+  return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><path d="M8 1.75v12.5M1.75 8h12.5M6.25 3.5 8 1.75 9.75 3.5M6.25 12.5 8 14.25l1.75-1.75M3.5 6.25 1.75 8 3.5 9.75M12.5 6.25 14.25 8 12.5 9.75" /></svg>;
 }

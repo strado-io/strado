@@ -2438,13 +2438,16 @@ export function TerminalView({
         card.style.height = `${Math.max(FLOAT_MIN.h, startPx.h + dy)}px`;
       }
     };
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
       if (mode === 'dock') {
         chip?.remove();
         setPaneDrop(null);
+        // Where it's let go, not the last preview: the final move can be
+        // coalesced away, and a cancelled gesture docks nowhere.
+        drop = chip && ev.type === 'pointerup' ? paneDropAt(key, ev.clientX, ev.clientY) : null;
         if (drop) {
           dockFloat(key);
           dockAt(drop);
