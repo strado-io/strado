@@ -97,3 +97,38 @@ export function animatePaneOut(leaf: HTMLElement | null | undefined, surface?: H
   const undo = () => { a.cancel(); fades.forEach((f) => f.cancel()); };
   return a.finished.then(() => undo, () => undo);
 }
+
+/** Zoom: every split above the pane gives it the whole room — its side grows
+ * to all of it, the other shrinks and fades (with the live surfaces drawn over
+ * its cards) — then the caller swaps the tree for the pane alone. Resolves
+ * with an undo for the fades, to run once that swap has committed; null when
+ * it isn't in a split or can't animate. */
+export function animatePaneZoom(leaf: HTMLElement | null | undefined): Promise<() => void> | null {
+  if (!leaf || typeof leaf.animate !== 'function' || reducedMotion()) return null;
+  const ms = PANE_CLOSE_MS + 40;
+  const anims: Animation[] = [];
+  const fade = (el: HTMLElement) => anims.push(el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: EASE, fill: 'forwards' }));
+  let el: HTMLElement | null = leaf;
+  while (el) {
+    const side: HTMLElement | null = el.closest<HTMLElement>('[data-pane-side]');
+    const split: HTMLElement | null | undefined = side?.parentElement;
+    const first = split?.querySelector<HTMLElement>(':scope > [data-pane-side="a"]');
+    const other = split?.querySelector<HTMLElement>(`:scope > [data-pane-side="${side?.dataset.paneSide === 'a' ? 'b' : 'a'}"]`);
+    if (!side || !split || !first) break;
+    anims.push(first.animate(
+      [{ flexBasis: getComputedStyle(first).flexBasis }, { flexBasis: side === first ? '100%' : '0%' }],
+      { duration: ms, easing: EASE, fill: 'forwards' },
+    ));
+    if (other) {
+      fade(other);
+      for (const card of other.querySelectorAll<HTMLElement>('[data-pane-key]')) {
+        for (const s of document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(card.dataset.paneKey ?? '')}"]`)) fade(s);
+      }
+    }
+    el = split;
+  }
+  if (!anims.length) return null;
+  beginLayoutMotion(ms);
+  const undo = () => anims.forEach((a) => a.cancel());
+  return Promise.all(anims.map((a) => a.finished)).then(() => undo, () => undo);
+}

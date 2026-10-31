@@ -8,14 +8,17 @@
 let until = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 const settledListeners = new Set<() => void>();
+const startListeners = new Set<() => void>();
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /** A layout animation starts now and lasts `ms`; overlapping ones extend it. */
 export function beginLayoutMotion(ms: number): void {
+  const starting = !isLayoutMoving();
   until = Math.max(until, now() + ms);
   if (timer) clearTimeout(timer);
   timer = setTimeout(settle, Math.max(0, until - now()));
+  if (starting) for (const cb of [...startListeners]) cb();
 }
 
 function settle(): void {
@@ -31,6 +34,12 @@ export const isLayoutMoving = (): boolean => now() < until;
 export function onLayoutSettled(cb: () => void): () => void {
   settledListeners.add(cb);
   return () => { settledListeners.delete(cb); };
+}
+
+/** Called each time a layout motion starts (not when one is extended); returns the unsubscribe. */
+export function onLayoutMotion(cb: () => void): () => void {
+  startListeners.add(cb);
+  return () => { startListeners.delete(cb); };
 }
 
 let jumpAt = -Infinity;

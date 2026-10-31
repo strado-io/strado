@@ -65,8 +65,8 @@ import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
 import { PaneCard } from '../components/hub/PaneCard';
 import { FLOAT_MIN, clampFloat, nextFloatBox, readPaneFloats, rememberPaneFloats, type PaneFloat } from '../hooks/paneFloats';
 import { KIND_ICON } from '../components/hub/TabTile';
-import { PaneLayout, animatePaneOut } from '../components/hub/PaneLayout';
-import { isLayoutMoving, onLayoutSettled } from '../lib/layoutMotion';
+import { PaneLayout, animatePaneOut, animatePaneZoom } from '../components/hub/PaneLayout';
+import { beginLayoutMotion, isLayoutMoving, onLayoutMotion, onLayoutSettled } from '../lib/layoutMotion';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
@@ -1556,7 +1556,13 @@ export function TerminalView({
     ? layouts.findIndex((candidate) => hasLeaf(candidate, pending.placeholder)) : -1;
   const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]!
     : pendingIndex >= 0 ? replaceLeaf(layouts[pendingIndex]!, pending!.placeholder, activePaneKey) : null;
-  const paneTree: PaneNode = layout ?? { kind: 'leaf', key: activePaneKey };
+  // Zoom: one pane of a split (or a float) fills the whole area for now; the
+  // layout itself is untouched, so unzooming brings everything back as it was.
+  const [zoomKey, setZoomKey] = useState<string | null>(null);
+  const zoomed = zoomKey && tabs.some((t) => tabKeyOf(t.tab) === zoomKey) ? zoomKey : null;
+  const paneTree: PaneNode = zoomed && layout && hasLeaf(layout, zoomed)
+    ? { kind: 'leaf', key: zoomed }
+    : layout ?? { kind: 'leaf', key: activePaneKey };
   // Mount a PTY surface the first time its tab/group is shown, then retain it
   // until the tab closes. The flat persistent layer below prevents switching
   // groups from tearing down xterm and reconnecting its WebSocket.
@@ -1650,6 +1656,8 @@ export function TerminalView({
   }>>({});
   const paneRectsRef = useRef(paneRects);
   paneRectsRef.current = paneRects;
+  // The boxes last measured, ahead of state while panes move.
+  const liveRectsRef = useRef(paneRects);
 
   const openPaneAsFullTab = (tab: Tab) => {
     const current = paneLayoutsRef.current[worktree.path] ?? [];
@@ -1801,6 +1809,8 @@ export function TerminalView({
         onFloat={canSplit ? () => floatPane(tab) : undefined}
         onDock={floating ? () => unfloat(key) : undefined}
         onMinimize={floating ? () => minimizeFloat(key) : undefined}
+        onZoom={docked || floating || zoomed === key ? () => toggleZoom(key) : undefined}
+        zoomed={zoomed === key}
         onHeaderPointerDown={floating ? (e) => startFloatDrag(e, key, 'move') : undefined}
         onClose={() => { void requestCloseTab(tab); }}
       />
@@ -1820,12 +1830,18 @@ export function TerminalView({
       setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
+    // A float mid pop or minimize is scaled by a transform its surface
+    // carries too: measured, the surface would shrink twice. It keeps its box.
+    const transformed = (key: string) => !!document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`)
+      ?.getAnimations?.().some((a) => a.playState !== 'idle' && (a.effect as KeyframeEffect | null)?.getKeyframes?.().some((k) => 'transform' in k));
     const apply = () => {
       const outer = surface.getBoundingClientRect();
       const next: typeof paneRects = {};
       for (const key of viewKeys) {
         const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
         if (!el) continue;
+        const kept = liveRectsRef.current[key] ?? paneRectsRef.current[key];
+        if (kept && transformed(key)) { next[key] = kept; continue; }
         const rect = el.getBoundingClientRect();
         next[key] = {
           left: rect.left - outer.left,
@@ -1837,10 +1853,11 @@ export function TerminalView({
       // While panes animate (a split springing open, one shutting), move the
       // live surfaces straight on the DOM: setting state here re-rendered the
       // whole hub every frame. The settled layout commits to state once.
+      liveRectsRef.current = next;
       const prevRects = paneRectsRef.current;
       const sameKeys = Object.keys(next).length === Object.keys(prevRects).length && Object.keys(next).every((key) => key in prevRects);
       for (const [key, r] of Object.entries(next)) {
-        if (!(key in prevRects)) continue;
+        if (!(key in prevRects) || r === prevRects[key]) continue;
         for (const el of document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`)) {
           if (el.classList.contains('hidden')) continue;
           el.style.left = `${r.left}px`;
@@ -1870,6 +1887,19 @@ export function TerminalView({
     const sync = () => flushSync(apply);
     remeasureRef.current = sync;
     const offSettled = onLayoutSettled(sync);
+    // A box that only moves (a pane sliding over as its neighbour grows, a
+    // float easing out) never trips the observer: follow it every frame
+    // while the layout is in motion. rAF runs after animations tick, so the
+    // measure reads this frame's boxes.
+    let frame = 0;
+    const follow = () => {
+      frame = 0;
+      if (!isLayoutMoving()) return;
+      apply();
+      frame = requestAnimationFrame(follow);
+    };
+    const offMotion = onLayoutMotion(() => { if (!frame) frame = requestAnimationFrame(follow); });
+    if (isLayoutMoving()) frame = requestAnimationFrame(follow);
     apply();
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
@@ -1881,6 +1911,8 @@ export function TerminalView({
     return () => {
       ro.disconnect();
       offSettled();
+      offMotion();
+      cancelAnimationFrame(frame);
       window.removeEventListener('resize', sync);
     };
     // paneTreeSignature captures leaf membership, nesting and live ratios.
@@ -2266,7 +2298,36 @@ export function TerminalView({
     floatPopRef.current = key;
     setActive(tab);
   };
+  // A float zooms by easing its box out to the whole area (and back).
+  const [floatZoomAnim, setFloatZoomAnim] = useState<string | null>(null);
+  const easeFloatBox = (key: string) => {
+    setFloatZoomAnim(key);
+    beginLayoutMotion(260);
+    window.setTimeout(() => setFloatZoomAnim((k) => (k === key ? null : k)), 300);
+  };
+  const toggleZoom = (key: string) => {
+    if (minimizing === key) return;
+    const tab = keyToTab(worktree.path, key);
+    if (tab && !sameTab(active, tab)) setActive(tab);
+    const floating = floatKeys.has(key);
+    if (zoomed === key) {
+      if (floating) easeFloatBox(key);
+      setZoomKey(null);
+      return;
+    }
+    if (floating) {
+      easeFloatBox(key);
+      setZoomKey(key);
+      return;
+    }
+    const going = animatePaneZoom(paneLeafElsRef.current.get(key));
+    // The swap commits before the fades are dropped: undone first, the
+    // hidden panes' terminals showed for a frame.
+    if (going) void going.then((undo) => { flushSync(() => setZoomKey(key)); undo(); });
+    else setZoomKey(key);
+  };
   const dockFloat = (key: string) => {
+    if (minimizing === key) unminimizeRef.current?.(true);
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
   };
   // Dock: back where it floated from — beside the same pane, same side — or,
@@ -2287,6 +2348,9 @@ export function TerminalView({
   // and its surface fly into exactly that box; then the pill shows and the
   // keyboard goes back to the tiled pane.
   const minimizeFloat = (key: string) => setMinimizing(key);
+  // Brought back while still flying into its pill: the flight plays backwards.
+  // `snap`: docked or closed mid-flight, so no way back to play: drop it at once.
+  const unminimizeRef = useRef<((snap?: boolean) => void) | null>(null);
   useLayoutEffect(() => {
     const key = minimizing;
     if (!key) return;
@@ -2333,14 +2397,38 @@ export function TerminalView({
         { duration: 240, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' },
       );
     });
+    let undone = false;
+    unminimizeRef.current = (snap) => {
+      undone = true;
+      unminimizeRef.current = null;
+      setMinimizing(null);
+      if (snap) { anims.forEach((a) => a.cancel()); return; }
+      anims.forEach((a) => a.reverse());
+      // Back where it started: from however faded it was, up to full.
+      void Promise.all(anims.map((a) => a.finished)).then(() => {
+        // Played back to its start, it's as faded as when the minimize began.
+        const ops = start;
+        anims.forEach((a) => a.cancel());
+        els.forEach((el, i) => { if (ops[i]! < 0.99) el.animate([{ opacity: ops[i] }, { opacity: 1 }], { duration: 140, easing: 'cubic-bezier(0.2, 0, 0, 1)' }); });
+        remeasureRef.current();
+      }, () => undefined);
+    };
     void Promise.all(anims.map((a) => a.finished)).then(() => {
+      if (undone) return;
+      unminimizeRef.current = null;
       done();
       // Drawn hidden now; drop the end state so a restore starts clean.
       requestAnimationFrame(() => anims.forEach((a) => a.cancel()));
-    }, done);
+    }, () => { if (!undone) { unminimizeRef.current = null; done(); } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minimizing]);
   const restoreFloat = (key: string) => {
+    if (minimizing === key && unminimizeRef.current) {
+      unminimizeRef.current();
+      const tab = keyToTab(worktree.path, key);
+      if (tab) setActive(tab);
+      return;
+    }
     setMin(key, false);
     floatPopRef.current = key;
     const tab = keyToTab(worktree.path, key);
@@ -2360,12 +2448,20 @@ export function TerminalView({
     ];
     for (const el of els) if (el) el.style.opacity = '';
     if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    for (const el of els) {
-      el?.animate?.(
-        [{ opacity: 0, transform: 'translateY(10px) scale(0.96)' }, { opacity: 1, transform: 'none' }],
+    // All of it pivots on the card's centre, so the surface scales with the
+    // card instead of drifting about its own.
+    const box = els[0]?.getBoundingClientRect();
+    const pops = els.map((el) => {
+      if (!el?.animate) return null;
+      const r = el.getBoundingClientRect();
+      const transformOrigin = box ? `${box.left + box.width / 2 - r.left}px ${box.top + box.height / 2 - r.top}px` : 'center';
+      return el.animate(
+        [{ transformOrigin, opacity: 0, transform: 'translateY(10px) scale(0.96)' }, { transformOrigin, opacity: 1, transform: 'none' }],
         { duration: 260, easing: 'linear(0, 0.2 6%, 0.51 13%, 0.78 21%, 0.95 29%, 1.03 37%, 1.04 44%, 1.025 52%, 1.008 62%, 0.999 74%, 1)' },
       );
-    }
+    }).filter((a): a is Animation => !!a);
+    // Measured while it scaled, its surface kept its box: take its own now.
+    void Promise.all(pops.map((a) => a.finished)).then(() => remeasureRef.current(), () => undefined);
   }, [paneRects]);
   const popStyle = (key: string, style: React.CSSProperties | undefined): React.CSSProperties | undefined =>
     style && floatPopRef.current === key ? { ...style, opacity: 0 } : style;
@@ -4248,7 +4344,13 @@ export function TerminalView({
               key={`float:${f.key}`}
               data-float-key={f.key}
               className="absolute"
-              style={popStyle(f.key, { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, zIndex: floatZ(f.key) ?? 20 })}
+              style={popStyle(f.key, {
+                ...(zoomed === f.key
+                  ? { left: 0, top: 0, width: '100%', height: '100%' }
+                  : { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` }),
+                zIndex: floatZ(f.key) ?? 20,
+                ...(floatZoomAnim === f.key ? { transition: 'left 240ms cubic-bezier(0.2,0,0,1), top 240ms cubic-bezier(0.2,0,0,1), width 240ms cubic-bezier(0.2,0,0,1), height 240ms cubic-bezier(0.2,0,0,1)' } : {}),
+              })}
             >
               {renderLeaf(f.key, true)}
             </div>
@@ -4257,6 +4359,7 @@ export function TerminalView({
           {drawnFloats.map((f) => (
             <div
               key={`float-grip:${f.key}`}
+              hidden={zoomed === f.key}
               data-float-grip={f.key}
               aria-label="Resize floating pane"
               onPointerDown={(e) => startFloatDrag(e, f.key, 'resize')}

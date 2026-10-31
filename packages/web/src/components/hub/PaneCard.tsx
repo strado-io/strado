@@ -7,7 +7,7 @@ import { CloseIcon } from './icons';
 // positions it over the body element, so moving panes never remounts it.
 export function PaneCard({
   paneKey, title, icon, subtitle, focused, docked, floating = false, hostRef, bodyRef, onActivate, onHeaderPointerDown,
-  onSplitRight, onSplitDown, onFullTab, onFloat, onDock, onMinimize, onClose, children,
+  onSplitRight, onSplitDown, onFullTab, onFloat, onDock, onMinimize, onZoom, zoomed = false, onClose, children,
 }: {
   paneKey: string;
   title: string;
@@ -35,6 +35,9 @@ export function PaneCard({
   onDock?: () => void;
   /** Tuck a floating pane away into a pill in the corner. */
   onMinimize?: () => void;
+  /** Fill the whole pane area for now (the layout stays as it is); again to go back. */
+  onZoom?: () => void;
+  zoomed?: boolean;
   onClose?: () => void;
   /** Drawn in the body, for a pane with no live surface (the empty "New pane"). */
   children?: React.ReactNode;
@@ -73,6 +76,7 @@ export function PaneCard({
         )}
         {subtitle && <span className="min-w-0 truncate text-xs text-zinc-500">{subtitle}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+          {onZoom && <PaneButton label={zoomed ? `Unzoom ${title}` : `Zoom ${title}`} onClick={onZoom}>{zoomed ? <ZoomOutIcon /> : <ZoomInIcon />}</PaneButton>}
           {onSplitRight && <PaneButton label={`Split ${title} right`} onClick={onSplitRight}><SplitRightIcon /></PaneButton>}
           {onSplitDown && <PaneButton label={`Split ${title} down`} onClick={onSplitDown}><SplitDownIcon /></PaneButton>}
           {onFullTab && <PaneButton label={`Open ${title} as full tab`} onClick={onFullTab}><MaximizeIcon /></PaneButton>}
@@ -127,4 +131,10 @@ function MinimizeIcon() {
 }
 function MoveIcon() {
   return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><path d="M8 1.75v12.5M1.75 8h12.5M6.25 3.5 8 1.75 9.75 3.5M6.25 12.5 8 14.25l1.75-1.75M3.5 6.25 1.75 8 3.5 9.75M12.5 6.25 14.25 8 12.5 9.75" /></svg>;
+}
+function ZoomInIcon() {
+  return <svg {...ICON} strokeLinecap="round"><circle cx="7" cy="7" r="4.25" /><path d="M10.2 10.2 13.5 13.5M5.25 7h3.5M7 5.25v3.5" /></svg>;
+}
+function ZoomOutIcon() {
+  return <svg {...ICON} strokeLinecap="round"><circle cx="7" cy="7" r="4.25" /><path d="M10.2 10.2 13.5 13.5M5.25 7h3.5" /></svg>;
 }
