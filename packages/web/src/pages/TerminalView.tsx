@@ -64,7 +64,7 @@ import {
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
 import { PaneCard } from '../components/hub/PaneCard';
 import { KIND_ICON } from '../components/hub/TabTile';
-import { PaneLayout } from '../components/hub/PaneLayout';
+import { PaneLayout, animatePaneOut } from '../components/hub/PaneLayout';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
@@ -2924,11 +2924,12 @@ export function TerminalView({
       const label = SHELL_HOST_LABEL[tab.mode];
       if (status === 'working' && !confirm(`${label} is still working. Close it anyway?`)) return;
     }
-    const leaving = animateTabOut(tabKeyOf(tab));
-    const undo = leaving ? await leaving : null;
+    // Its tab shrinks out of the strip and, in a split, its pane shuts as the neighbour grows.
+    const leaving = [animateTabOut(tabKeyOf(tab)), animatePaneOut(paneLeafElsRef.current.get(tabKeyOf(tab)))].filter((p) => !!p);
+    const undos = leaving.length ? await Promise.all(leaving) : [];
     closeTab(tab);
     // Gone by now; if it stayed after all, it shows again.
-    if (undo) requestAnimationFrame(undo);
+    if (undos.length) requestAnimationFrame(() => undos.forEach((undo) => undo()));
   };
   closeActiveTabRef.current = () => {
     void requestCloseTab(activeRef.current);
