@@ -1491,13 +1491,15 @@ export function TerminalView({
     tabs: tabs.filter((entry) => hasLeaf(node, tabKeyOf(entry.tab))),
   }));
   const splitTabKeys = new Set(splitGroups.flatMap((group) => group.tabs.map((entry) => tabKeyOf(entry.tab))));
-  // Each layout is one conceptual tab group. Keep every group's members
-  // contiguous, then show normal full-size tabs after the grouped segments.
+  // Each layout is one conceptual tab group, its members kept together where
+  // its first one already sat: splitting never moves tabs around the strip.
   const displayedTabs = layouts.length > 0
-    ? [
-        ...splitGroups.flatMap((group) => group.tabs),
-        ...tabs.filter((entry) => !splitTabKeys.has(tabKeyOf(entry.tab))),
-      ]
+    ? tabs.flatMap((entry) => {
+        const key = tabKeyOf(entry.tab);
+        if (!splitTabKeys.has(key)) return [entry];
+        const group = splitGroups.find((g) => g.tabs.some((t) => tabKeyOf(t.tab) === key))!;
+        return tabKeyOf(group.tabs[0]!.tab) === key ? group.tabs : [];
+      })
     : tabs;
   // The rendered tree: an explicit split layout when its tab group is active,
   // or the active dockable tab as an implicit single pane. A tab removed from a
