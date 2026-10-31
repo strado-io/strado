@@ -2932,11 +2932,15 @@ export function TerminalView({
       if (status === 'working' && !confirm(`${label} is still working. Close it anyway?`)) return;
     }
     // Its tab shrinks out of the strip and, in a split, its pane shuts as the neighbour grows.
-    const leaving = [animateTabOut(tabKeyOf(tab)), animatePaneOut(paneLeafElsRef.current.get(tabKeyOf(tab)))].filter((p) => !!p);
+    const key = tabKeyOf(tab);
+    const surface = document.querySelector<HTMLElement>(`[data-testid="terminal-surface-${CSS.escape(key)}"]`);
+    const leaving = [animateTabOut(key), animatePaneOut(paneLeafElsRef.current.get(key), surface)].filter((p) => !!p);
     const undos = leaving.length ? await Promise.all(leaving) : [];
     closeTab(tab);
-    // Gone by now; if it stayed after all, it shows again.
-    if (undos.length) requestAnimationFrame(() => undos.forEach((undo) => undo()));
+    // The commit that removes it drops the animations (PaneLayout); this is
+    // only for a tab that stayed after all. Not sooner: undone before React
+    // removes it, the pane flashes back for a frame.
+    if (undos.length) window.setTimeout(() => undos.forEach((undo) => undo()), 500);
   };
   closeActiveTabRef.current = () => {
     void requestCloseTab(activeRef.current);

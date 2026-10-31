@@ -27,8 +27,18 @@ export function PaneLayout({ node, addr = [], renderLeaf, onDividerPointerDown }
   // A pane that was one leaf and is now split: the new side grows out of the
   // old one instead of appearing at full size.
   const firstRef = useRef<HTMLDivElement>(null);
+  const secondRef = useRef<HTMLDivElement>(null);
   const prevLeaf = useRef<string | null>(node.kind === 'leaf' ? node.key : null);
+  const prevShape = useRef(shapeOf(node));
   useLayoutEffect(() => {
+    // A close left its pane shrunk shut (fill: forwards). The commit that
+    // removes the pane drops that, before paint: these wrappers may now hold
+    // a different pane, and undone a frame later the old one flashed back.
+    const shape = shapeOf(node);
+    if (shape !== prevShape.current) {
+      prevShape.current = shape;
+      for (const el of [firstRef.current, secondRef.current]) el?.getAnimations().forEach((a) => a.cancel());
+    }
     const was = prevLeaf.current;
     prevLeaf.current = node.kind === 'leaf' ? node.key : null;
     const el = firstRef.current;
@@ -59,15 +69,21 @@ export function PaneLayout({ node, addr = [], renderLeaf, onDividerPointerDown }
       >
         <div className={`rounded-full bg-transparent transition-colors group-hover/sep:bg-sky-500/60 ${row ? 'h-full max-h-24 w-0.5' : 'h-0.5 w-full max-w-24'}`} />
       </div>
-      <div data-pane-side="b" className="min-h-0 min-w-0 flex-1 overflow-hidden">{child(node.b, 1)}</div>
+      <div ref={secondRef} data-pane-side="b" className="min-h-0 min-w-0 flex-1 overflow-hidden">{child(node.b, 1)}</div>
     </div>
   );
 }
 
+// The tree's structure (which panes, how nested), not its ratios.
+function shapeOf(node: PaneNode): string {
+  return node.kind === 'leaf' ? node.key : `(${shapeOf(node.a)}${node.dir === 'row' ? '|' : '-'}${shapeOf(node.b)})`;
+}
+
 /** A pane about to close shrinks shut and its neighbour grows over the room.
- * `leaf` is the closing pane's element. Resolves with an undo (for a pane that
- * stayed after all) once done; null when it isn't in a split or can't animate. */
-export function animatePaneOut(leaf: HTMLElement | null | undefined): Promise<() => void> | null {
+ * `leaf` is the closing pane's element, `surface` its live terminal (drawn in
+ * a layer above the card, so it fades too). Resolves with an undo (for a pane
+ * that stayed after all) once done; null when it isn't in a split or can't animate. */
+export function animatePaneOut(leaf: HTMLElement | null | undefined, surface?: HTMLElement | null): Promise<() => void> | null {
   const side = leaf?.closest<HTMLElement>('[data-pane-side]');
   const first = side?.dataset.paneSide === 'a' ? side : side?.parentElement?.querySelector<HTMLElement>(':scope > [data-pane-side="a"]');
   if (!side || !first || typeof first.animate !== 'function' || reducedMotion()) return null;
@@ -76,7 +92,8 @@ export function animatePaneOut(leaf: HTMLElement | null | undefined): Promise<()
     [{ flexBasis: getComputedStyle(first).flexBasis }, { flexBasis: side === first ? '0%' : '100%' }],
     { duration: PANE_CLOSE_MS, easing: EASE, fill: 'forwards' },
   );
-  const fade = side.animate([{ opacity: 1 }, { opacity: 0 }], { duration: PANE_CLOSE_MS, easing: EASE, fill: 'forwards' });
-  const undo = () => { a.cancel(); fade.cancel(); };
+  const fades = [side, surface].filter((el): el is HTMLElement => !!el).map((el) =>
+    el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: PANE_CLOSE_MS, easing: EASE, fill: 'forwards' }));
+  const undo = () => { a.cancel(); fades.forEach((f) => f.cancel()); };
   return a.finished.then(() => undo, () => undo);
 }
