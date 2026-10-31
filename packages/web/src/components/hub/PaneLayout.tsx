@@ -37,7 +37,7 @@ export function PaneLayout({ node, addr = [], renderLeaf, onDividerPointerDown }
     const shape = shapeOf(node);
     if (shape !== prevShape.current) {
       prevShape.current = shape;
-      for (const el of [firstRef.current, secondRef.current]) el?.getAnimations().forEach((a) => a.cancel());
+      for (const el of [firstRef.current, secondRef.current]) el?.getAnimations?.().forEach((a) => a.cancel());
     }
     const was = prevLeaf.current;
     prevLeaf.current = node.kind === 'leaf' ? node.key : null;
