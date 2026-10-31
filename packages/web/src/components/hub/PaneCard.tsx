@@ -6,8 +6,8 @@ import { CloseIcon } from './icons';
 // iframe, browser view) is not a child: TerminalView's persistent layer
 // positions it over the body element, so moving panes never remounts it.
 export function PaneCard({
-  paneKey, title, icon, subtitle, focused, docked, hostRef, bodyRef, onActivate,
-  onSplitRight, onSplitDown, onFullTab, onClose, children,
+  paneKey, title, icon, subtitle, focused, docked, floating = false, hostRef, bodyRef, onActivate, onHeaderPointerDown,
+  onSplitRight, onSplitDown, onFullTab, onFloat, onDock, onClose, children,
 }: {
   paneKey: string;
   title: string;
@@ -16,15 +16,23 @@ export function PaneCard({
   focused: boolean;
   /** In a split (not the lone full tab): only then is focus drawn. */
   docked: boolean;
+  /** Lifted out of the layout into a card over it: a raised look, and the header drags it. */
+  floating?: boolean;
   /** The whole card (drop targets measure it). */
   hostRef: (el: HTMLDivElement | null) => void;
   /** The body under the header (the live surface is placed over it). */
   bodyRef: (el: HTMLDivElement | null) => void;
   onActivate: () => void;
+  /** A floating pane moves by its header. */
+  onHeaderPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
   /** Each split gets the button it was asked from (its menu anchors there). */
   onSplitRight?: (anchor: HTMLElement) => void;
   onSplitDown?: (anchor: HTMLElement) => void;
   onFullTab?: () => void;
+  /** Lift this pane out into a floating card. */
+  onFloat?: () => void;
+  /** Put a floating pane back as a tab. */
+  onDock?: () => void;
   onClose?: () => void;
   /** Drawn in the body, for a pane with no live surface (the empty "New pane"). */
   children?: React.ReactNode;
@@ -34,13 +42,14 @@ export function PaneCard({
       ref={hostRef}
       data-testid="pane-host"
       data-pane-key={paneKey}
-      data-focused={docked && focused ? 'true' : undefined}
-      className="glass pane-card group flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden"
+      data-focused={(docked || floating) && focused ? 'true' : undefined}
+      data-floating={floating || undefined}
+      className={`glass pane-card group flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden ${floating ? 'pane-floating' : ''}`}
     >
       <div
         data-testid="pane-header"
-        onPointerDown={onActivate}
-        className="flex h-9 shrink-0 items-center gap-2 pl-3 pr-1.5"
+        onPointerDown={(e) => { onActivate(); onHeaderPointerDown?.(e); }}
+        className={`flex h-9 shrink-0 items-center gap-2 pl-3 pr-1.5 ${floating ? 'cursor-grab active:cursor-grabbing' : ''}`}
       >
         <span className="flex shrink-0 items-center">{icon}</span>
         <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-200">{title}</span>
@@ -49,6 +58,8 @@ export function PaneCard({
           {onSplitRight && <PaneButton label={`Split ${title} right`} onClick={onSplitRight}><SplitRightIcon /></PaneButton>}
           {onSplitDown && <PaneButton label={`Split ${title} down`} onClick={onSplitDown}><SplitDownIcon /></PaneButton>}
           {onFullTab && <PaneButton label={`Open ${title} as full tab`} onClick={onFullTab}><MaximizeIcon /></PaneButton>}
+          {onFloat && <PaneButton label={`Float ${title}`} onClick={onFloat}><FloatIcon /></PaneButton>}
+          {onDock && <PaneButton label={`Dock ${title}`} onClick={onDock}><DockIcon /></PaneButton>}
           {onClose && <PaneButton label={`Close ${title}`} onClick={onClose}><CloseIcon size={13} /></PaneButton>}
         </span>
       </div>
@@ -83,4 +94,10 @@ function SplitDownIcon() {
 }
 function MaximizeIcon() {
   return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" /></svg>;
+}
+function FloatIcon() {
+  return <svg {...ICON} strokeLinejoin="round"><rect x="2" y="4.5" width="9" height="7" rx="1.5" /><rect x="6.5" y="2" width="7.5" height="6" rx="1.2" fill="currentColor" fillOpacity="0.15" /></svg>;
+}
+function DockIcon() {
+  return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M5.5 10.5h5M8 5.5v4.5M6 8l2 2 2-2" /></svg>;
 }

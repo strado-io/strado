@@ -63,6 +63,7 @@ import {
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
 import { PaneCard } from '../components/hub/PaneCard';
+import { FLOAT_MIN, clampFloat, nextFloatBox, readPaneFloats, rememberPaneFloats, type PaneFloat } from '../hooks/paneFloats';
 import { KIND_ICON } from '../components/hub/TabTile';
 import { PaneLayout, animatePaneOut } from '../components/hub/PaneLayout';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
@@ -668,6 +669,20 @@ export function TerminalView({
       return next;
     });
     rememberPaneLayouts(path, splits);
+  };
+  // Floating panes, per worktree: tabs lifted out of the layout into cards over it.
+  const [paneFloats, setPaneFloats] = useState<Record<string, PaneFloat[]>>(readPaneFloats);
+  const paneFloatsRef = useRef(paneFloats);
+  paneFloatsRef.current = paneFloats;
+  const setFloats = (path: string, list: PaneFloat[]) => {
+    paneFloatsRef.current = { ...paneFloatsRef.current, [path]: list };
+    setPaneFloats((prev) => {
+      const next = { ...prev };
+      if (list.length > 0) next[path] = list;
+      else delete next[path];
+      return next;
+    });
+    rememberPaneFloats(path, list);
   };
 
   useEffect(() => {
@@ -1505,7 +1520,17 @@ export function TerminalView({
   // or the active dockable tab as an implicit single pane. A tab removed from a
   // split is deliberately outside `layout`, so selecting it gives it the full
   // surface while the remaining tiled layout stays available from its tabs.
-  const activePaneKey = tabKeyOf(active);
+  // Floating tabs draw over the tiled area; when the active tab is one, the
+  // tiled area keeps showing what was under it (the last tiled tab you were on).
+  const floats = (paneFloats[worktree.path] ?? []).filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
+  const floatKeys = new Set(floats.map((f) => f.key));
+  const focusedKey = tabKeyOf(active);
+  const lastTiledRef = useRef<string | null>(null);
+  const tiledOk = (key: string | null): key is string => !!key && !floatKeys.has(key) && tabs.some((t) => tabKeyOf(t.tab) === key);
+  const activePaneKey = !floatKeys.has(focusedKey) ? focusedKey
+    : tiledOk(lastTiledRef.current) ? lastTiledRef.current
+    : tabs.map((t) => tabKeyOf(t.tab)).find((key) => !floatKeys.has(key)) ?? '';
+  if (!floatKeys.has(focusedKey)) lastTiledRef.current = focusedKey;
   const activeLayoutIndex = layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey));
   // A choice made in an empty pane: until the layout effect below swaps the new
   // tab in, draw it there already. Otherwise it renders full-size for a frame
@@ -1526,7 +1551,10 @@ export function TerminalView({
   for (const key of mountedPtyKeysRef.current) {
     if (!livePtyKeys.has(key)) mountedPtyKeysRef.current.delete(key);
   }
-  for (const key of leafKeys(paneTree)) {
+  // Every pane on screen: the tiled tree's, then the floating ones.
+  const viewKeys = [...leafKeys(paneTree), ...floatKeys];
+  const inView = (key: string) => hasLeaf(paneTree, key) || floatKeys.has(key);
+  for (const key of viewKeys) {
     const tab = keyToTab(worktree.path, key);
     if (tab && isPtyMode(tab.mode)) mountedPtyKeysRef.current.add(key);
   }
@@ -1691,7 +1719,7 @@ export function TerminalView({
     for (const tab of members) await requestCloseTabRef.current(tab);
   };
 
-  const renderLeaf = (key: string): React.ReactNode => {
+  const renderLeaf = (key: string, floating = false): React.ReactNode => {
     if (key === newPaneKey) {
       return (
         <PaneCard
@@ -1726,8 +1754,8 @@ export function TerminalView({
     if (!tab) return null;
     const entry = tabs.find((t) => tabKeyOf(t.tab) === key);
     const label = entry?.label ?? key;
-    const docked = !!layout && hasLeaf(layout, key);
-    const canSplit = tab.path === worktree.path;
+    const docked = !floating && !!layout && hasLeaf(layout, key);
+    const canSplit = !floating && tab.path === worktree.path;
     return (
       <PaneCard
         key={key}
@@ -1739,6 +1767,7 @@ export function TerminalView({
         icon={<TabTile mode={tab.mode} icon={entry?.icon} />}
         focused={!newPaneKey && sameTab(active, tab)}
         docked={docked}
+        floating={floating}
         hostRef={(el) => {
           if (el) paneLeafElsRef.current.set(key, el);
           else paneLeafElsRef.current.delete(key);
@@ -1751,6 +1780,9 @@ export function TerminalView({
         onSplitRight={canSplit ? () => openEmptyPane(tab, 'row') : undefined}
         onSplitDown={canSplit ? () => openEmptyPane(tab, 'col') : undefined}
         onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
+        onFloat={canSplit ? () => floatPane(tab) : undefined}
+        onDock={floating ? () => dockFloat(key) : undefined}
+        onHeaderPointerDown={floating ? (e) => startFloatDrag(e, key, 'move') : undefined}
         onClose={() => { void requestCloseTab(tab); }}
       />
     );
@@ -1760,7 +1792,9 @@ export function TerminalView({
   // layer, then align over their tree leaf. This is essential for Browser's
   // native WebContentsView bounds and prevents the KB's selected document,
   // filter and scroll state from resetting whenever layout focus changes.
-  const paneTreeSignature = JSON.stringify(paneTree);
+  const paneTreeSignature = JSON.stringify([paneTree, floats]);
+  // Re-measure now (a floating pane let go after a drag moved it).
+  const remeasureRef = useRef<() => void>(() => {});
   useEffect(() => {
     const surface = paneSurfaceRef.current;
     if (!surface) {
@@ -1770,7 +1804,7 @@ export function TerminalView({
     const apply = () => {
       const outer = surface.getBoundingClientRect();
       const next: typeof paneRects = {};
-      for (const key of leafKeys(paneTree)) {
+      for (const key of viewKeys) {
         const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
         if (!el) continue;
         const rect = el.getBoundingClientRect();
@@ -1799,10 +1833,11 @@ export function TerminalView({
     // panes on their slots. Deferred a frame, they trailed every resize (the
     // sidebar sliding shook the Changes pane, then it snapped into place).
     const sync = () => flushSync(apply);
+    remeasureRef.current = sync;
     apply();
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
-    for (const key of leafKeys(paneTree)) {
+    for (const key of viewKeys) {
       const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
       if (el) ro.observe(el);
     }
@@ -2123,6 +2158,7 @@ export function TerminalView({
     const dragged = keyToTab(worktree.path, draggedKey);
     if (!dragged) return null;
     for (const [targetKey, el] of paneLeafElsRef.current) {
+      if (targetKey === draggedKey || floatKeys.has(targetKey)) continue;
       const rect = el.getBoundingClientRect();
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
       const distances: Array<[PaneDockSide, number]> = [
@@ -2141,6 +2177,149 @@ export function TerminalView({
     }
     return null;
   };
+
+  // Docks a dragged tab (or floating pane) on a side of the pane under it.
+  const dockAt = (drop: NonNullable<ReturnType<typeof paneDropAt>>) => {
+    const current = paneLayoutsRef.current[worktree.path] ?? [];
+    const targetIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.targetKey));
+    const sourceIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.draggedKey));
+    const targetBase = targetIndex >= 0
+      ? current[targetIndex]!
+      : { kind: 'leaf', key: drop.targetKey } satisfies PaneNode;
+    const docked = dockLeaf(targetBase, drop.draggedKey, drop.targetKey, drop.side);
+    if (docked === targetBase) return;
+    const next: PaneNode[] = [];
+    current.forEach((candidate, index) => {
+      if (index === targetIndex) next.push(docked);
+      else if (index === sourceIndex) {
+        const pruned = removeLeaf(candidate, drop.draggedKey);
+        if (pruned?.kind === 'split') next.push(pruned);
+      } else next.push(candidate);
+    });
+    if (targetIndex < 0) next.push(docked);
+    setLayouts(worktree.path, next);
+    const tab = keyToTab(worktree.path, drop.draggedKey);
+    if (tab) setActive(tab);
+  };
+
+  // ── Floating panes ──────────────────────────────────────────────────────
+  const floatPopRef = useRef<string | null>(null);
+  const floatPane = (tab: Tab) => {
+    const key = tabKeyOf(tab);
+    const current = paneLayoutsRef.current[worktree.path] ?? [];
+    const index = current.findIndex((l) => hasLeaf(l, key));
+    if (index >= 0) {
+      // What stays tiled is what the area shows: the pane beside it.
+      const rest = removeLeaf(current[index]!, key);
+      if (rest) lastTiledRef.current = leafKeys(rest)[0] ?? null;
+      setLayouts(worktree.path, withoutLeaf(current, key));
+    } else if (lastTiledRef.current === key) {
+      lastTiledRef.current = null;
+    }
+    const list = (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key);
+    setFloats(worktree.path, [...list, nextFloatBox(key, list)]);
+    floatPopRef.current = key;
+    setActive(tab);
+  };
+  const dockFloat = (key: string) => {
+    setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
+  };
+  // A floating pane just appeared: it rises into place, card and live surface together.
+  useEffect(() => {
+    const key = floatPopRef.current;
+    if (!key || !paneRects[key]) return;
+    floatPopRef.current = null;
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const els = [
+      document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`),
+      ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`),
+    ];
+    for (const el of els) {
+      el?.animate?.(
+        [{ opacity: 0, transform: 'translateY(10px) scale(0.96)' }, { opacity: 1, transform: 'none' }],
+        { duration: 260, easing: 'linear(0, 0.2 6%, 0.51 13%, 0.78 21%, 0.95 29%, 1.03 37%, 1.04 44%, 1.025 52%, 1.008 62%, 0.999 74%, 1)' },
+      );
+    }
+  }, [paneRects]);
+  // Move a floating pane by its header, or resize it by its corner. The card
+  // and its live surface move together by transform (no re-render per frame);
+  // the box is committed on release. Over another pane, the dock preview shows
+  // and letting go docks it there.
+  const startFloatDrag = (e: React.PointerEvent<HTMLElement>, key: string, mode: 'move' | 'resize') => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+    const area = card?.parentElement?.getBoundingClientRect();
+    const box = (paneFloatsRef.current[worktree.path] ?? []).find((f) => f.key === key);
+    if (!card || !area || !box) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    try { handle.setPointerCapture(e.pointerId); } catch { /* pointer gone */ }
+    const surfaces = [
+      ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`),
+      ...document.querySelectorAll<HTMLElement>(`[data-float-grip="${CSS.escape(key)}"]`),
+    ];
+    const start = { x: e.clientX, y: e.clientY };
+    const startPx = { w: box.w * area.width, h: box.h * area.height };
+    // React owns the card's width/height (percentages): put back exactly what was there.
+    const own = { w: card.style.width, h: card.style.height };
+    let drop: ReturnType<typeof paneDropAt> = null;
+    let dx = 0;
+    let dy = 0;
+    const onMove = (ev: PointerEvent) => {
+      dx = ev.clientX - start.x;
+      dy = ev.clientY - start.y;
+      if (mode === 'move') {
+        for (const el of [card, ...surfaces]) el.style.transform = `translate(${dx}px, ${dy}px)`;
+        // Docks only near a pane's edge: a floating pane always sits over
+        // some pane, and moving it must not dock it.
+        const hit = paneDropAt(key, ev.clientX, ev.clientY);
+        const r = hit?.rect;
+        const edge = !r ? Infinity
+          : hit.side === 'left' ? ev.clientX - r.left : hit.side === 'right' ? r.left + r.width - ev.clientX
+          : hit.side === 'top' ? ev.clientY - r.top : r.top + r.height - ev.clientY;
+        const span = hit && (hit.side === 'left' || hit.side === 'right') ? r!.width : r?.height ?? 0;
+        const next = edge <= Math.min(72, span * 0.22) ? hit : null;
+        if (next?.targetKey !== drop?.targetKey || next?.side !== drop?.side) {
+          drop = next;
+          setPaneDrop(next);
+        }
+      } else {
+        card.style.width = `${Math.max(FLOAT_MIN.w, startPx.w + dx)}px`;
+        card.style.height = `${Math.max(FLOAT_MIN.h, startPx.h + dy)}px`;
+      }
+    };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      for (const el of [card, ...surfaces]) el.style.transform = '';
+      card.style.width = own.w;
+      card.style.height = own.h;
+      setPaneDrop(null);
+      if (mode === 'move' && drop) {
+        dockFloat(key);
+        dockAt(drop);
+        return;
+      }
+      const list = paneFloatsRef.current[worktree.path] ?? [];
+      const moved = mode === 'move'
+        ? { ...box, x: box.x + dx / area.width, y: box.y + dy / area.height }
+        : { ...box, w: Math.max(FLOAT_MIN.w, startPx.w + dx) / area.width, h: Math.max(FLOAT_MIN.h, startPx.h + dy) / area.height };
+      setFloats(worktree.path, list.map((f) => (f.key === key ? clampFloat(moved) : f)));
+      requestAnimationFrame(() => remeasureRef.current());
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+  // A floating tab that closed takes its float with it.
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    const list = paneFloatsRef.current[worktree.path] ?? [];
+    const live = list.filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
+    if (live.length !== list.length) setFloats(worktree.path, live);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, worktree.path]);
 
   const tabPointerDown = (e: React.PointerEvent<HTMLElement>, tKey: string) => {
     if (e.button !== 0 || !activeGroup) return;
@@ -2226,28 +2405,7 @@ export function TerminalView({
     setPaneDrop(null);
     setTabDragging(false);
     if (drop) {
-      const current = paneLayoutsRef.current[worktree.path] ?? [];
-      const targetIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.targetKey));
-      const sourceIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.draggedKey));
-      const targetBase = targetIndex >= 0
-        ? current[targetIndex]!
-        : { kind: 'leaf', key: drop.targetKey } satisfies PaneNode;
-      const docked = dockLeaf(targetBase, drop.draggedKey, drop.targetKey, drop.side);
-
-      if (docked !== targetBase) {
-        const next: PaneNode[] = [];
-        current.forEach((candidate, index) => {
-          if (index === targetIndex) next.push(docked);
-          else if (index === sourceIndex) {
-            const pruned = removeLeaf(candidate, drop.draggedKey);
-            if (pruned?.kind === 'split') next.push(pruned);
-          } else next.push(candidate);
-        });
-        if (targetIndex < 0) next.push(docked);
-        setLayouts(worktree.path, next);
-        const tab = keyToTab(worktree.path, drop.draggedKey);
-        if (tab) setActive(tab);
-      }
+      dockAt(drop);
       clearTabDragStyles(d);
       bumpTabOrder();
       return;
@@ -3599,7 +3757,7 @@ export function TerminalView({
             .filter(({ tab }) => isPtyMode(tab.mode) && mountedPtyKeysRef.current.has(tabKeyOf(tab)))
             .map(({ tab }) => {
               const paneKey = tabKeyOf(tab);
-              const shown = hasLeaf(paneTree, paneKey);
+              const shown = inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               const focused = placed && sameTab(active, tab);
@@ -3607,7 +3765,8 @@ export function TerminalView({
                 <div
                   key={`pty:${paneKey}`}
                   data-testid={`terminal-surface-${paneKey}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
                   style={placement}
                 >
                   <XtermPane
@@ -3632,7 +3791,7 @@ export function TerminalView({
               .map(({ g, bid }) => {
                 const pk = previewKey(g.path, bid);
                 const paneKey = tabKeyOf({ mode: 'browser', id: bid });
-                const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+                const shown = g.path === worktree.path && inView(paneKey);
                 const placement = dockedSurfaceStyle(paneKey);
                 const placed = shown && !!placement;
                 const url = resolvedBrowserUrl(pk, g.path);
@@ -3664,7 +3823,8 @@ export function TerminalView({
                   <div
                     key={`bw:${pk}`}
                     data-testid={`browser-pane-${bid}`}
-                    className={placed ? 'z-10 flex flex-col overflow-hidden bg-pane-card' : 'hidden'}
+                    data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} flex flex-col overflow-hidden bg-pane-card` : 'hidden'}
                     style={placement}
                     onPointerDownCapture={() => {
                       if (!sameTab(active, { path: g.path, mode: 'browser', id: bid })) {
@@ -3818,7 +3978,7 @@ export function TerminalView({
             .flatMap((g) => [...(g.kbOpen ? ['1'] : []), ...g.kbIds.filter((id) => id !== '1')].map((id) => ({ g, id })))
             .map(({ g, id }) => {
               const paneKey = tabKeyOf({ mode: 'kb', id });
-              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted so the selected doc and scroll position survive
@@ -3827,7 +3987,8 @@ export function TerminalView({
                 <div
                   key={`kb-${g.path}-${id}`}
                   data-testid={id === '1' ? `kb-pane-${g.path}` : `kb-pane-${g.path}-${id}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
                   style={placement}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'kb', id })) {
@@ -3861,7 +4022,7 @@ export function TerminalView({
             .filter((g) => g.diffOpen && !g.remote)
             .map((g) => {
               const paneKey = tabKeyOf({ mode: 'diff', id: '1' });
-              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted like the KB: the selected file and scroll survive tab switches.
@@ -3869,7 +4030,8 @@ export function TerminalView({
                 <div
                   key={`diff-${g.path}`}
                   data-testid={`diff-pane-${g.path}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
                   style={placement}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'diff', id: '1' })) setActive({ path: g.path, mode: 'diff', id: '1' });
@@ -3888,7 +4050,7 @@ export function TerminalView({
             .filter((g) => g.filesOpen)
             .map((g) => {
               const paneKey = tabKeyOf({ mode: 'files', id: '1' });
-              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted like Changes: the open folders, file and scroll survive tab switches.
@@ -3896,7 +4058,8 @@ export function TerminalView({
                 <div
                   key={`files-${g.path}`}
                   data-testid={`files-pane-${g.path}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
                   style={placement}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'files', id: '1' })) setActive({ path: g.path, mode: 'files', id: '1' });
@@ -3916,6 +4079,27 @@ export function TerminalView({
             })}
         <div data-testid="xterm-pane" className="relative h-full w-full p-2">
           <PaneLayout node={paneTree} renderLeaf={renderLeaf} onDividerPointerDown={startDividerDrag} />
+          {floats.map((f) => (
+            <div
+              key={`float:${f.key}`}
+              data-float-key={f.key}
+              className="absolute z-20"
+              style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` }}
+            >
+              {renderLeaf(f.key, true)}
+            </div>
+          ))}
+          {/* Each float's resize corner, above its live surface (which sits over the card). */}
+          {floats.map((f) => (
+            <div
+              key={`float-grip:${f.key}`}
+              data-float-grip={f.key}
+              aria-label="Resize floating pane"
+              onPointerDown={(e) => startFloatDrag(e, f.key, 'resize')}
+              className="absolute z-40 -ml-4 -mt-4 h-4 w-4 cursor-nwse-resize"
+              style={{ left: `${(f.x + f.w) * 100}%`, top: `${(f.y + f.h) * 100}%` }}
+            />
+          ))}
         </div>
         </div>
       </div>
