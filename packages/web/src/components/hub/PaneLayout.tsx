@@ -3,11 +3,14 @@ import type React from 'react';
 import { leafKeys, type PaneNode } from '../../hooks/paneLayout';
 import { beginLayoutMotion } from '../../lib/layoutMotion';
 
-/** How long a pane takes to grow open or shrink shut. */
-export const PANE_MOTION_MS = 220;
+/** How long a pane takes to grow open (a spring, settling with a small overshoot). */
+export const PANE_MOTION_MS = 320;
 /** Closing is quicker than opening: you're done with it. */
 const PANE_CLOSE_MS = 130;
 const EASE = 'cubic-bezier(0.2, 0, 0, 1)';
+// A stiff, well-damped spring (about 4% overshoot): quick out of the gate, a
+// small bounce past the mark, settled well before the end. As macOS moves windows.
+const SPRING = 'linear(0, 0.2 6%, 0.51 13%, 0.78 21%, 0.95 29%, 1.03 37%, 1.04 44%, 1.025 52%, 1.008 62%, 0.999 74%, 1)';
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -33,7 +36,7 @@ export function PaneLayout({ node, addr = [], renderLeaf, onDividerPointerDown }
     const inA = leafKeys(node.a).includes(was);
     if (!inA && !leafKeys(node.b).includes(was)) return;
     beginLayoutMotion(PANE_MOTION_MS);
-    el.animate([{ flexBasis: inA ? '100%' : '0%' }, { flexBasis: `${node.ratio * 100}%` }], { duration: PANE_MOTION_MS, easing: EASE });
+    el.animate([{ flexBasis: inA ? '100%' : '0%' }, { flexBasis: `${node.ratio * 100}%` }], { duration: PANE_MOTION_MS, easing: SPRING });
   });
   if (node.kind === 'leaf') return <>{renderLeaf(node.key)}</>;
   const row = node.dir === 'row';

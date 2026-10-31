@@ -1481,6 +1481,9 @@ export function TerminalView({
     path === worktree.path
       ? tabs.find((entry) => tabKeyOf(entry.tab) === key)?.tab ?? null
       : null;
+  const [newPaneKey, setNewPaneKey] = useState<string | null>(null);
+  const newPaneSeqRef = useRef(0);
+  const pendingSurfaceRef = useRef<{ placeholder: string; path: string } | null>(null);
   const layouts = paneLayouts[worktree.path] ?? [];
   const splitGroups = layouts.map((node, layoutIndex) => ({
     node,
@@ -1502,7 +1505,14 @@ export function TerminalView({
   // surface while the remaining tiled layout stays available from its tabs.
   const activePaneKey = tabKeyOf(active);
   const activeLayoutIndex = layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey));
-  const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]! : null;
+  // A choice made in an empty pane: until the layout effect below swaps the new
+  // tab in, draw it there already. Otherwise it renders full-size for a frame
+  // (a whole-surface terminal, then the split animating in all over again).
+  const pending = pendingSurfaceRef.current;
+  const pendingIndex = activeLayoutIndex < 0 && pending?.path === worktree.path && active.path === worktree.path
+    ? layouts.findIndex((candidate) => hasLeaf(candidate, pending.placeholder)) : -1;
+  const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]!
+    : pendingIndex >= 0 ? replaceLeaf(layouts[pendingIndex]!, pending!.placeholder, activePaneKey) : null;
   const paneTree: PaneNode = layout ?? { kind: 'leaf', key: activePaneKey };
   // Mount a PTY surface the first time its tab/group is shown, then retain it
   // until the tab closes. The flat persistent layer below prevents switching
@@ -1606,9 +1616,6 @@ export function TerminalView({
   // `new:` placeholder leaf) holding "Open a surface", the + menu's kinds.
   // A choice runs exactly as the + menu would; the tab it makes active then
   // takes the placeholder's place. Esc / ✕ / focus leaving drop the pane.
-  const [newPaneKey, setNewPaneKey] = useState<string | null>(null);
-  const newPaneSeqRef = useRef(0);
-  const pendingSurfaceRef = useRef<{ placeholder: string; path: string } | null>(null);
   const withoutLeaf = (nodes: PaneNode[], key: string) => nodes
     .map((node) => (hasLeaf(node, key) ? removeLeaf(node, key) : node))
     .filter((node): node is PaneNode => node?.kind === 'split');
