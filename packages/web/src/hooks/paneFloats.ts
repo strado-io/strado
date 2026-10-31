@@ -2,8 +2,9 @@
 // Each sits at a box given as fractions of the hub's pane area, so it keeps
 // its place when the window resizes. Remembered per worktree, like layouts.
 
-/** `min`: minimized to a pill in the bottom-right corner; its box is kept for the restore. */
-export type PaneFloat = { key: string; x: number; y: number; w: number; h: number; min?: boolean };
+/** `min`: minimized to a pill in the bottom-right corner (its box kept for
+ * the restore); `minAt` orders the pills, oldest in the corner. */
+export type PaneFloat = { key: string; x: number; y: number; w: number; h: number; min?: boolean; minAt?: number };
 
 const STORAGE_KEY = 'strado:pane-floats';
 /** Smallest a floating pane may be, in px. */

@@ -1528,7 +1528,10 @@ export function TerminalView({
   const shownFloats = floats.filter((f) => !f.min);
   // A float on its way down keeps drawing while its pill holds its place, unseen.
   const [minimizing, setMinimizing] = useState<string | null>(null);
-  const minimized = floats.filter((f) => f.min || f.key === minimizing);
+  // Oldest in the corner; a newly minimized one lines up to its left, so the
+  // pills already there never move.
+  const minimized = floats.filter((f) => f.min || f.key === minimizing)
+    .sort((a, b) => (a.key === minimizing ? Infinity : a.minAt ?? 0) - (b.key === minimizing ? Infinity : b.minAt ?? 0));
   const focusedKey = tabKeyOf(active);
   const lastTiledRef = useRef<string | null>(null);
   const tiledOk = (key: string | null): key is string => !!key && !floatKeys.has(key) && tabs.some((t) => tabKeyOf(t.tab) === key);
@@ -2231,7 +2234,7 @@ export function TerminalView({
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
   };
   const setMin = (key: string, min: boolean) =>
-    setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).map((f) => (f.key === key ? { ...f, min } : f)));
+    setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).map((f) => (f.key === key ? { ...f, min, minAt: min ? Date.now() : undefined } : f)));
   // Minimize: its pill takes its place in the corner (unseen), then the card
   // and its surface fly into exactly that box; then the pill shows and the
   // keyboard goes back to the tiled pane.
@@ -2252,17 +2255,22 @@ export function TerminalView({
     if (!card || !pill || typeof card.animate !== 'function'
       || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
     const to = pill.getBoundingClientRect();
+    const from = card.getBoundingClientRect();
+    const sx = to.width / from.width;
+    const sy = to.height / from.height;
+    const move = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${sx}, ${sy})`;
+    // One transform for the card and everything drawn over it (its live
+    // surface, its grip), each pivoting on the card's corner: they shrink as
+    // one piece. Mapped separately, the terminal drifted off its card.
     const els = [card, ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"], [data-float-grip="${CSS.escape(key)}"]`)];
-    // Each element maps onto the pill's box from its own, so card and surface land together.
     const anims = els.map((el) => {
-      const from = el.getBoundingClientRect();
-      const sx = to.width / from.width;
-      const sy = to.height / from.height;
+      const r = el.getBoundingClientRect();
+      const origin = `${from.left - r.left}px ${from.top - r.top}px`;
       return el.animate(
         [
-          { transformOrigin: 'top left', transform: 'none', opacity: 1 },
-          { transformOrigin: 'top left', opacity: 1, offset: 0.93 },
-          { transformOrigin: 'top left', transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${sx}, ${sy})`, opacity: 0 },
+          { transformOrigin: origin, transform: 'none', opacity: 1 },
+          { transformOrigin: origin, opacity: 1, offset: 0.93 },
+          { transformOrigin: origin, transform: move, opacity: 0 },
         ],
         { duration: 240, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' },
       );
