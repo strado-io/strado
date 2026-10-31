@@ -301,7 +301,7 @@ export function animateTabOut(key: string): Promise<() => void> | null {
   const width = el.getBoundingClientRect().width;
   const a = el.animate(
     [{ maxWidth: `${width}px`, opacity: 1, overflow: 'hidden' }, { maxWidth: '0px', opacity: 0, paddingRight: '0px', overflow: 'hidden' }],
-    { duration: 150, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
+    { duration: 100, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
   );
   const undo = () => a.cancel();
   return a.finished.then(() => undo, () => undo);

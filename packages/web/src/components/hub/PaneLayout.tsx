@@ -5,6 +5,8 @@ import { beginLayoutMotion } from '../../lib/layoutMotion';
 
 /** How long a pane takes to grow open or shrink shut. */
 export const PANE_MOTION_MS = 220;
+/** Closing is quicker than opening: you're done with it. */
+const PANE_CLOSE_MS = 130;
 const EASE = 'cubic-bezier(0.2, 0, 0, 1)';
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -66,12 +68,12 @@ export function animatePaneOut(leaf: HTMLElement | null | undefined): Promise<()
   const side = leaf?.closest<HTMLElement>('[data-pane-side]');
   const first = side?.dataset.paneSide === 'a' ? side : side?.parentElement?.querySelector<HTMLElement>(':scope > [data-pane-side="a"]');
   if (!side || !first || typeof first.animate !== 'function' || reducedMotion()) return null;
-  beginLayoutMotion(PANE_MOTION_MS);
+  beginLayoutMotion(PANE_CLOSE_MS);
   const a = first.animate(
     [{ flexBasis: getComputedStyle(first).flexBasis }, { flexBasis: side === first ? '0%' : '100%' }],
-    { duration: PANE_MOTION_MS, easing: EASE, fill: 'forwards' },
+    { duration: PANE_CLOSE_MS, easing: EASE, fill: 'forwards' },
   );
-  const fade = side.animate([{ opacity: 1 }, { opacity: 0 }], { duration: PANE_MOTION_MS, easing: EASE, fill: 'forwards' });
+  const fade = side.animate([{ opacity: 1 }, { opacity: 0 }], { duration: PANE_CLOSE_MS, easing: EASE, fill: 'forwards' });
   const undo = () => { a.cancel(); fade.cancel(); };
   return a.finished.then(() => undo, () => undo);
 }
