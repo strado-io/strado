@@ -75,15 +75,30 @@ export function PaneCard({
           </>
         )}
         {subtitle && <span className="min-w-0 truncate text-xs text-zinc-500">{subtitle}</span>}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-          {onZoom && <PaneButton label={zoomed ? `Unzoom ${title}` : `Zoom ${title}`} onClick={onZoom}>{zoomed ? <ZoomOutIcon /> : <ZoomInIcon />}</PaneButton>}
-          {onSplitRight && <PaneButton label={`Split ${title} right`} onClick={onSplitRight}><SplitRightIcon /></PaneButton>}
-          {onSplitDown && <PaneButton label={`Split ${title} down`} onClick={onSplitDown}><SplitDownIcon /></PaneButton>}
-          {onFullTab && <PaneButton label={`Open ${title} as full tab`} onClick={onFullTab}><MaximizeIcon /></PaneButton>}
-          {onFloat && <PaneButton label={`Float ${title}`} onClick={onFloat}><FloatIcon /></PaneButton>}
-          {onMinimize && <PaneButton label={`Minimize ${title}`} onClick={onMinimize}><MinimizeIcon /></PaneButton>}
-          {onDock && <PaneButton label={`Dock ${title}`} onClick={onDock}><DockIcon /></PaneButton>}
-          {onClose && <PaneButton label={`Close ${title}`} onClick={onClose}><CloseIcon size={13} /></PaneButton>}
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+          {/* Layout | how it's shown (zoom, float: lit while on) | the window itself. */}
+          {(onSplitRight || onSplitDown || onFullTab) && (
+            <span className="flex items-center gap-0.5">
+              {onSplitRight && <PaneButton label={`Split ${title} right`} onClick={onSplitRight}><SplitRightIcon /></PaneButton>}
+              {onSplitDown && <PaneButton label={`Split ${title} down`} onClick={onSplitDown}><SplitDownIcon /></PaneButton>}
+              {onFullTab && <PaneButton label={`Open ${title} as full tab`} onClick={onFullTab}><MaximizeIcon /></PaneButton>}
+            </span>
+          )}
+          {(onZoom || onFloat || onDock) && (
+            <span data-pane-view-group className="flex items-center gap-0.5">
+              {(onSplitRight || onSplitDown || onFullTab) && <GroupGap />}
+              {onZoom && <PaneButton label={zoomed ? `Unzoom ${title}` : `Zoom ${title}`} active={zoomed} onClick={onZoom}><ZoomInIcon /></PaneButton>}
+              {onFloat && <PaneButton label={`Float ${title}`} active={false} onClick={onFloat}><FloatIcon /></PaneButton>}
+              {onDock && <PaneButton label={`Dock ${title}`} active onClick={onDock}><FloatIcon /></PaneButton>}
+            </span>
+          )}
+          {(onMinimize || onClose) && (
+            <span className="flex items-center gap-0.5">
+              <GroupGap />
+              {onMinimize && <PaneButton label={`Minimize ${title}`} onClick={onMinimize}><MinimizeIcon /></PaneButton>}
+              {onClose && <PaneButton label={`Close ${title}`} onClick={onClose}><CloseIcon size={13} /></PaneButton>}
+            </span>
+          )}
         </span>
       </div>
       <div className="min-h-0 flex-1 px-1 pb-1">
@@ -93,15 +108,25 @@ export function PaneCard({
   );
 }
 
-function PaneButton({ label, onClick, children }: { label: string; onClick: (el: HTMLElement) => void; children: React.ReactNode }) {
+/** A hairline between button groups. */
+function GroupGap() {
+  return <span aria-hidden="true" className="mx-1 h-3.5 w-px bg-zinc-700/70 opacity-60 transition-opacity group-hover:opacity-100" />;
+}
+
+/** `active`: a mode that's on (zoomed, floating), lit; pressed again turns it off. */
+function PaneButton({ label, onClick, active, children }: { label: string; onClick: (el: HTMLElement) => void; active?: boolean; children: React.ReactNode }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
+      aria-pressed={active === undefined ? undefined : active}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => onClick(e.currentTarget)}
-      className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800/70 hover:text-zinc-200"
+      className={`flex h-6 w-6 items-center justify-center rounded-md ${active
+        ? 'bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30 hover:bg-sky-500/25 hover:text-sky-200'
+        // Idle ones stay quiet until the card is hovered; a lit one always shows.
+        : 'text-zinc-500 opacity-60 transition-opacity hover:bg-zinc-800/70 hover:text-zinc-200 group-hover:opacity-100'}`}
     >
       {children}
     </button>
@@ -122,10 +147,6 @@ function MaximizeIcon() {
 function FloatIcon() {
   return <svg {...ICON} strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><rect x="7.5" y="7.5" width="5" height="3.75" rx="0.75" fill="currentColor" stroke="none" /></svg>;
 }
-// The same frame, the small window drawn back in: an arrow from the corner into the frame.
-function DockIcon() {
-  return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M11.5 10.5 6.5 5.5M6.5 8.5v-3h3" /></svg>;
-}
 function MinimizeIcon() {
   return <svg {...ICON} strokeLinecap="round"><path d="M4 11.5h8" /></svg>;
 }
@@ -134,7 +155,4 @@ function MoveIcon() {
 }
 function ZoomInIcon() {
   return <svg {...ICON} strokeLinecap="round"><circle cx="7" cy="7" r="4.25" /><path d="M10.2 10.2 13.5 13.5M5.25 7h3.5M7 5.25v3.5" /></svg>;
-}
-function ZoomOutIcon() {
-  return <svg {...ICON} strokeLinecap="round"><circle cx="7" cy="7" r="4.25" /><path d="M10.2 10.2 13.5 13.5M5.25 7h3.5" /></svg>;
 }

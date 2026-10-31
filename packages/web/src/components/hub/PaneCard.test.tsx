@@ -72,6 +72,25 @@ describe('PaneCard: one pane as its own card', () => {
   });
 });
 
+describe('PaneCard: header buttons', () => {
+  it('zoom and float sit together, lit while on; minimize and close sit together', () => {
+    card({ onZoom: vi.fn(), zoomed: true, onDock: vi.fn(), floating: true, onMinimize: vi.fn(), onClose: vi.fn() });
+    const zoom = screen.getByRole('button', { name: 'Unzoom Shell' });
+    const dock = screen.getByRole('button', { name: 'Dock Shell' });
+    expect(zoom).toHaveAttribute('aria-pressed', 'true');
+    expect(dock).toHaveAttribute('aria-pressed', 'true');
+    expect(zoom.parentElement).toBe(dock.parentElement);
+    expect(screen.getByRole('button', { name: 'Minimize Shell' }).parentElement)
+      .toBe(screen.getByRole('button', { name: 'Close Shell' }).parentElement);
+  });
+
+  it('nothing is lit while docked and unzoomed', () => {
+    card({ onZoom: vi.fn(), onFloat: vi.fn() });
+    expect(screen.getByRole('button', { name: 'Zoom Shell' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Float Shell' })).not.toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
 describe('PaneLayout: cards with gaps, the resize handle lives in the gap', () => {
   it('a split draws both leaves and a handle that is invisible until hover', () => {
     const onDividerPointerDown = vi.fn();
