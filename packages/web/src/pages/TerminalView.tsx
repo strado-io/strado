@@ -2299,21 +2299,31 @@ export function TerminalView({
     if (!card || !pill || typeof card.animate !== 'function'
       || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
     const to = pill.getBoundingClientRect();
-    const from = card.getBoundingClientRect();
-    const sx = to.width / from.width;
-    const sy = to.height / from.height;
-    const move = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${sx}, ${sy})`;
     // One transform for the card and everything drawn over it (its live
     // surface, its grip), each pivoting on the card's corner: they shrink as
     // one piece. Mapped separately, the terminal drifted off its card.
     const els = [card, ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"], [data-float-grip="${CSS.escape(key)}"]`)];
-    const anims = els.map((el) => {
+    // Minimized while still fading in from a restore: carry on from how
+    // visible it is now. Started from fully opaque, it flashed bright first.
+    const start = els.map((el) => Math.min(1, +getComputedStyle(el).opacity || 0));
+    floatPopRef.current = null;
+    for (const el of els) {
+      el.getAnimations?.().forEach((a) => a.cancel());
+      el.style.opacity = '';
+    }
+    // Measured once its fade-in is gone, so the box is the card's own.
+    const from = card.getBoundingClientRect();
+    const sx = to.width / from.width;
+    const sy = to.height / from.height;
+    const move = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${sx}, ${sy})`;
+    const anims = els.map((el, i) => {
       const r = el.getBoundingClientRect();
       const origin = `${from.left - r.left}px ${from.top - r.top}px`;
+      const o = start[i]!;
       return el.animate(
         [
-          { transformOrigin: origin, transform: 'none', opacity: 1 },
-          { transformOrigin: origin, opacity: 1, offset: 0.93 },
+          { transformOrigin: origin, transform: 'none', opacity: o },
+          { transformOrigin: origin, opacity: o, offset: 0.93 },
           { transformOrigin: origin, transform: move, opacity: 0 },
         ],
         { duration: 240, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' },
