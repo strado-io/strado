@@ -497,6 +497,7 @@ function BrowserPreviewPane({
   initialUrl,
   suppressed,
   immediateSuppress = false,
+  covered = false,
   onReady,
 }: {
   path: string;
@@ -504,6 +505,9 @@ function BrowserPreviewPane({
   suppressed: boolean;
   /** Tab drags must park the native view before the pointer crosses it. */
   immediateSuppress?: boolean;
+  /** Something in front overlaps it (a float above, a minimized pill): the
+   *  native page would paint over that, so its snapshot shows instead. */
+  covered?: boolean;
   onReady: (wcId: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -515,7 +519,9 @@ function BrowserPreviewPane({
   // scales and slides with the card. The native view can do none of that.
   const snapRef = useRef<HTMLImageElement>(null);
   const parked = useRef(false);
-  const parkedNow = () => isLayoutMoving() || isNativeHeld();
+  const coveredRef = useRef(covered);
+  coveredRef.current = covered;
+  const parkedNow = () => isLayoutMoving() || isNativeHeld() || coveredRef.current;
   // Always drawn, under the live page (a native view paints above all of
   // the page, so it's never seen until the page parks): shown only when
   // parking, it painted a couple of frames late and the pane flashed empty.
@@ -526,6 +532,8 @@ function BrowserPreviewPane({
     void img.decode?.().catch(() => undefined);
   };
   const showSnap = (src: string | undefined) => loadSnap(src);
+  const coverRef = useRef<(on: boolean) => void>(() => undefined);
+  useEffect(() => { coverRef.current(covered); }, [covered]);
   const grabSnap = () => {
     void window.strado?.preview?.('thumb', path).then((r) => {
       if (typeof r !== 'string' || !r.startsWith('data:')) return;
@@ -603,6 +611,16 @@ function BrowserPreviewPane({
       showSnap(snap);
       void parkPreview(path);
     };
+    // Covered: a fresh snapshot first (the page is still live, so it's a
+    // true one), then park.
+    const cover = () => {
+      if (parked.current) return;
+      void window.strado?.preview?.('thumb', path).then((r) => {
+        if (typeof r === 'string' && r.startsWith('data:')) { browserSnaps.set(path, r); loadSnap(r); }
+        if (coveredRef.current) park();
+      }, () => { if (coveredRef.current) park(); });
+    };
+    coverRef.current = (on: boolean) => (on ? cover() : unpark());
     // Sized while still off screen, then a beat to lay out and paint at that
     // size: brought on screen at a new size straight away, the page showed
     // white until it repainted.
@@ -619,6 +637,7 @@ function BrowserPreviewPane({
         window.setTimeout(() => { if (!parked.current) grabSnap(); }, 350);
       }, 90);
     };
+    if (coveredRef.current) cover();
     const offMotion = onLayoutMotion(park);
     const offSettled = onLayoutSettled(unpark);
     const offHold = onNativeHold((held) => (held ? park() : unpark()));
@@ -631,6 +650,7 @@ function BrowserPreviewPane({
       offMotion();
       offSettled();
       offHold();
+      coverRef.current = () => undefined;
       window.clearTimeout(settling);
       window.clearTimeout(first);
       window.clearInterval(iv);
@@ -2622,6 +2642,24 @@ export function TerminalView({
     const i = shownFloats.findIndex((f) => f.key === key);
     return i < 0 ? null : 20 + 2 * i;
   };
+  // Browser panes something in front overlaps (a float stacked above it, a
+  // minimized pill): their native page would paint over it. Measured after
+  // every layout; it changes rarely, so state only moves when the set does.
+  const [coveredKeys, setCoveredKeys] = useState<ReadonlySet<string>>(() => new Set());
+  useLayoutEffect(() => {
+    const over = (a: DOMRect, b: DOMRect | undefined) =>
+      !!b && b.width > 0 && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const next = viewKeys.filter((key) => {
+      if (!key.startsWith('browser:')) return false;
+      const r = (paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key))?.getBoundingClientRect();
+      if (!r) return false;
+      const mine = floatZ(key) ?? 0;
+      return shownFloats.some((f) => f.key !== key && (floatZ(f.key) ?? 0) > mine
+          && over(r, document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(f.key)}"]`)?.getBoundingClientRect()))
+        || [...document.querySelectorAll<HTMLElement>('[data-float-pill]')].some((p) => over(r, p.getBoundingClientRect()));
+    });
+    setCoveredKeys((prev) => (next.length === prev.size && next.every((k) => prev.has(k)) ? prev : new Set(next)));
+  });
   const surfaceStyle = (key: string, style: React.CSSProperties | undefined) => {
     const z = floatZ(key);
     return popStyle(key, style && z !== null ? { ...style, zIndex: z + 1 } : style);
@@ -4341,6 +4379,7 @@ export function TerminalView({
                           initialUrl={url}
                           suppressed={overlayUp}
                           immediateSuppress={tabDragging}
+                          covered={coveredKeys.has(paneKey) && !sameTab(active, { path: g.path, mode: 'browser', id: bid })}
                           onReady={(wcId) => setPreviewIds((prev) => ({ ...prev, [pk]: wcId }))}
                         />
                       )}
