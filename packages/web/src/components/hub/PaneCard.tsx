@@ -95,9 +95,11 @@ function SplitDownIcon() {
 function MaximizeIcon() {
   return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" /></svg>;
 }
+// Picture-in-picture, on the split icons' frame: a small window in the corner.
 function FloatIcon() {
-  return <svg {...ICON} strokeLinejoin="round"><rect x="2" y="4.5" width="9" height="7" rx="1.5" /><rect x="6.5" y="2" width="7.5" height="6" rx="1.2" fill="currentColor" fillOpacity="0.15" /></svg>;
+  return <svg {...ICON} strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><rect x="7.5" y="7.5" width="5" height="3.75" rx="0.75" fill="currentColor" stroke="none" /></svg>;
 }
+// The same frame, the small window drawn back in: an arrow from the corner into the frame.
 function DockIcon() {
-  return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M5.5 10.5h5M8 5.5v4.5M6 8l2 2 2-2" /></svg>;
+  return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M11.5 10.5 6.5 5.5M6.5 8.5v-3h3" /></svg>;
 }
