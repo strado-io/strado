@@ -2280,16 +2280,20 @@ export function TerminalView({
     const tab = keyToTab(worktree.path, key);
     if (tab) setActive(tab);
   };
-  // A floating pane just appeared: it rises into place, card and live surface together.
-  useEffect(() => {
+  // A floating pane just appeared: it rises into place, card and live surface
+  // together. Both are drawn transparent until then (see popStyle): the
+  // surface is placed a render after the card, and the card alone for that
+  // frame was an empty flash.
+  useLayoutEffect(() => {
     const key = floatPopRef.current;
     if (!key || !paneRects[key]) return;
     floatPopRef.current = null;
-    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const els = [
       document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`),
       ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`),
     ];
+    for (const el of els) if (el) el.style.opacity = '';
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     for (const el of els) {
       el?.animate?.(
         [{ opacity: 0, transform: 'translateY(10px) scale(0.96)' }, { opacity: 1, transform: 'none' }],
@@ -2297,6 +2301,8 @@ export function TerminalView({
       );
     }
   }, [paneRects]);
+  const popStyle = (key: string, style: React.CSSProperties | undefined): React.CSSProperties | undefined =>
+    style && floatPopRef.current === key ? { ...style, opacity: 0 } : style;
   // Move a floating pane by its header, or resize it by its corner. The card
   // and its live surface move together by transform (no re-render per frame);
   // the box is committed on release. Over another pane, the dock preview shows
@@ -3823,7 +3829,7 @@ export function TerminalView({
                   data-testid={`terminal-surface-${paneKey}`}
                   data-surface-key={paneKey}
                   className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={placement}
+                  style={popStyle(paneKey, placement)}
                 >
                   <XtermPane
                     wsId={wsId}
@@ -3881,7 +3887,7 @@ export function TerminalView({
                     data-testid={`browser-pane-${bid}`}
                     data-surface-key={paneKey}
                   className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} flex flex-col overflow-hidden bg-pane-card` : 'hidden'}
-                    style={placement}
+                    style={popStyle(paneKey, placement)}
                     onPointerDownCapture={() => {
                       if (!sameTab(active, { path: g.path, mode: 'browser', id: bid })) {
                         setActive({ path: g.path, mode: 'browser', id: bid });
@@ -4045,7 +4051,7 @@ export function TerminalView({
                   data-testid={id === '1' ? `kb-pane-${g.path}` : `kb-pane-${g.path}-${id}`}
                   data-surface-key={paneKey}
                   className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={placement}
+                  style={popStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'kb', id })) {
                       setActive({ path: g.path, mode: 'kb', id });
@@ -4088,7 +4094,7 @@ export function TerminalView({
                   data-testid={`diff-pane-${g.path}`}
                   data-surface-key={paneKey}
                   className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={placement}
+                  style={popStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'diff', id: '1' })) setActive({ path: g.path, mode: 'diff', id: '1' });
                   }}
@@ -4116,7 +4122,7 @@ export function TerminalView({
                   data-testid={`files-pane-${g.path}`}
                   data-surface-key={paneKey}
                   className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={placement}
+                  style={popStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'files', id: '1' })) setActive({ path: g.path, mode: 'files', id: '1' });
                   }}
@@ -4140,7 +4146,7 @@ export function TerminalView({
               key={`float:${f.key}`}
               data-float-key={f.key}
               className="absolute z-20"
-              style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` }}
+              style={popStyle(f.key, { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` })}
             >
               {renderLeaf(f.key, true)}
             </div>
