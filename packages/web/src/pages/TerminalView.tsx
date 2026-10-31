@@ -1526,7 +1526,9 @@ export function TerminalView({
   const floatKeys = new Set(floats.map((f) => f.key));
   // Minimized ones are pills in the corner: out of the tiled area and not drawn.
   const shownFloats = floats.filter((f) => !f.min);
-  const minimized = floats.filter((f) => f.min);
+  // A float on its way down keeps drawing while its pill holds its place, unseen.
+  const [minimizing, setMinimizing] = useState<string | null>(null);
+  const minimized = floats.filter((f) => f.min || f.key === minimizing);
   const focusedKey = tabKeyOf(active);
   const lastTiledRef = useRef<string | null>(null);
   const tiledOk = (key: string | null): key is string => !!key && !floatKeys.has(key) && tabs.some((t) => tabKeyOf(t.tab) === key);
@@ -2230,34 +2232,48 @@ export function TerminalView({
   };
   const setMin = (key: string, min: boolean) =>
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).map((f) => (f.key === key ? { ...f, min } : f)));
-  // Minimize: the card and its surface shrink off toward the corner, then it
-  // becomes a pill there, and the keyboard goes back to the tiled pane.
-  const minimizeFloat = (key: string) => {
-    const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
-    const area = card?.parentElement?.getBoundingClientRect();
-    const box = card?.getBoundingClientRect();
+  // Minimize: its pill takes its place in the corner (unseen), then the card
+  // and its surface fly into exactly that box; then the pill shows and the
+  // keyboard goes back to the tiled pane.
+  const minimizeFloat = (key: string) => setMinimizing(key);
+  useLayoutEffect(() => {
+    const key = minimizing;
+    if (!key) return;
     const done = () => {
+      setMinimizing(null);
       setMin(key, true);
       if (focusedKey === key) {
         const under = keyToTab(worktree.path, activePaneKey);
         if (under) setActive(under);
       }
     };
-    if (!card || !area || !box || typeof card.animate !== 'function'
+    const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+    const pill = document.querySelector<HTMLElement>(`[data-float-pill="${CSS.escape(key)}"]`);
+    if (!card || !pill || typeof card.animate !== 'function'
       || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
-    const dx = area.right - 24 - (box.left + box.width / 2);
-    const dy = area.bottom - 24 - (box.top + box.height / 2);
+    const to = pill.getBoundingClientRect();
     const els = [card, ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"], [data-float-grip="${CSS.escape(key)}"]`)];
-    const anims = els.map((el) => el.animate(
-      [{ transform: 'none', opacity: 1 }, { transform: `translate(${dx}px, ${dy}px) scale(0.08)`, opacity: 0 }],
-      { duration: 200, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
-    ));
+    // Each element maps onto the pill's box from its own, so card and surface land together.
+    const anims = els.map((el) => {
+      const from = el.getBoundingClientRect();
+      const sx = to.width / from.width;
+      const sy = to.height / from.height;
+      return el.animate(
+        [
+          { transformOrigin: 'top left', transform: 'none', opacity: 1 },
+          { transformOrigin: 'top left', opacity: 1, offset: 0.93 },
+          { transformOrigin: 'top left', transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${sx}, ${sy})`, opacity: 0 },
+        ],
+        { duration: 240, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' },
+      );
+    });
     void Promise.all(anims.map((a) => a.finished)).then(() => {
       done();
       // Drawn hidden now; drop the end state so a restore starts clean.
       requestAnimationFrame(() => anims.forEach((a) => a.cancel()));
     }, done);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minimizing]);
   const restoreFloat = (key: string) => {
     setMin(key, false);
     floatPopRef.current = key;
@@ -4152,9 +4168,10 @@ export function TerminalView({
                     type="button"
                     data-float-pill={f.key}
                     onClick={() => restoreFloat(f.key)}
+                    style={f.key === minimizing ? { visibility: 'hidden' } : undefined}
                     title={`Restore ${entry.label}`}
                     aria-label={`Restore ${entry.label}`}
-                    className="pane-floating float-pill glass flex h-9 items-center gap-2 rounded-xl pl-2 pr-3 text-[13px] font-medium text-zinc-200 hover:text-zinc-50"
+                    className="pane-floating glass flex h-9 items-center gap-2 rounded-xl pl-2 pr-3 text-[13px] font-medium text-zinc-200 hover:text-zinc-50"
                   >
                     <TabTile mode={entry.tab.mode} icon={entry.icon} />
                     {entry.label}
