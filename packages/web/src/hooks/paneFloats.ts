@@ -4,7 +4,11 @@
 
 /** `min`: minimized to a pill in the bottom-right corner (its box kept for
  * the restore); `minAt` orders the pills, oldest in the corner. */
-export type PaneFloat = { key: string; x: number; y: number; w: number; h: number; min?: boolean; minAt?: number };
+export type PaneFloat = {
+  key: string; x: number; y: number; w: number; h: number; min?: boolean; minAt?: number;
+  /** Where it was docked before it floated (beside `target`, on `side`): Dock puts it back there. */
+  home?: { target: string; side: 'left' | 'right' | 'top' | 'bottom' };
+};
 
 const STORAGE_KEY = 'strado:pane-floats';
 /** Smallest a floating pane may be, in px. */

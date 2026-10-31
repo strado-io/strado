@@ -58,7 +58,7 @@ import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
 import { agentTabStatus, shellHostedAgent } from '../hooks/agentTabStatus';
 import {
-  dockLeaf, hasLeaf, leafKeys, placeLeaf, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
+  dockLeaf, hasLeaf, homeOf, leafKeys, placeLeaf, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
   removeLeaf, replaceLeaf, splitLeaf, withRatio, carryNames, groupName, withGroupName, type PaneDockSide, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
@@ -66,6 +66,7 @@ import { PaneCard } from '../components/hub/PaneCard';
 import { FLOAT_MIN, clampFloat, nextFloatBox, readPaneFloats, rememberPaneFloats, type PaneFloat } from '../hooks/paneFloats';
 import { KIND_ICON } from '../components/hub/TabTile';
 import { PaneLayout, animatePaneOut } from '../components/hub/PaneLayout';
+import { isLayoutMoving, onLayoutSettled } from '../lib/layoutMotion';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
@@ -1508,22 +1509,25 @@ export function TerminalView({
   const splitTabKeys = new Set(splitGroups.flatMap((group) => group.tabs.map((entry) => tabKeyOf(entry.tab))));
   // Each layout is one conceptual tab group, its members kept together where
   // its first one already sat: splitting never moves tabs around the strip.
+  // Floating tabs: lifted out of the layout into cards over it (see paneFloats).
+  const floats = (paneFloats[worktree.path] ?? []).filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
+  const floatKeys = new Set(floats.map((f) => f.key));
+  // A floating tab lives only as its card (or pill); docked back, it returns to its place.
+  const stripTabs = tabs.filter((entry) => !floatKeys.has(tabKeyOf(entry.tab)));
   const displayedTabs = layouts.length > 0
-    ? tabs.flatMap((entry) => {
+    ? stripTabs.flatMap((entry) => {
         const key = tabKeyOf(entry.tab);
         if (!splitTabKeys.has(key)) return [entry];
         const group = splitGroups.find((g) => g.tabs.some((t) => tabKeyOf(t.tab) === key))!;
         return tabKeyOf(group.tabs[0]!.tab) === key ? group.tabs : [];
       })
-    : tabs;
+    : stripTabs;
   // The rendered tree: an explicit split layout when its tab group is active,
   // or the active dockable tab as an implicit single pane. A tab removed from a
   // split is deliberately outside `layout`, so selecting it gives it the full
   // surface while the remaining tiled layout stays available from its tabs.
   // Floating tabs draw over the tiled area; when the active tab is one, the
   // tiled area keeps showing what was under it (the last tiled tab you were on).
-  const floats = (paneFloats[worktree.path] ?? []).filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
-  const floatKeys = new Set(floats.map((f) => f.key));
   // Minimized ones are pills in the corner: out of the tiled area and not drawn.
   const shownFloats = floats.filter((f) => !f.min);
   // A float on its way down keeps drawing while its pill holds its place, unseen.
@@ -1640,6 +1644,8 @@ export function TerminalView({
     width: number;
     height: number;
   }>>({});
+  const paneRectsRef = useRef(paneRects);
+  paneRectsRef.current = paneRects;
 
   const openPaneAsFullTab = (tab: Tab) => {
     const current = paneLayoutsRef.current[worktree.path] ?? [];
@@ -1789,7 +1795,7 @@ export function TerminalView({
         onSplitDown={canSplit ? () => openEmptyPane(tab, 'col') : undefined}
         onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
         onFloat={canSplit ? () => floatPane(tab) : undefined}
-        onDock={floating ? () => dockFloat(key) : undefined}
+        onDock={floating ? () => unfloat(key) : undefined}
         onMinimize={floating ? () => minimizeFloat(key) : undefined}
         onHeaderPointerDown={floating ? (e) => startFloatDrag(e, key, 'move') : undefined}
         onClose={() => { void requestCloseTab(tab); }}
@@ -1824,6 +1830,22 @@ export function TerminalView({
           height: rect.height,
         };
       }
+      // While panes animate (a split springing open, one shutting), move the
+      // live surfaces straight on the DOM: setting state here re-rendered the
+      // whole hub every frame. The settled layout commits to state once.
+      const prevRects = paneRectsRef.current;
+      const sameKeys = Object.keys(next).length === Object.keys(prevRects).length && Object.keys(next).every((key) => key in prevRects);
+      for (const [key, r] of Object.entries(next)) {
+        if (!(key in prevRects)) continue;
+        for (const el of document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`)) {
+          if (el.classList.contains('hidden')) continue;
+          el.style.left = `${r.left}px`;
+          el.style.top = `${r.top}px`;
+          el.style.width = `${r.width}px`;
+          el.style.height = `${r.height}px`;
+        }
+      }
+      if (sameKeys && isLayoutMoving()) return;
       setPaneRects((prev) => {
         const keys = Object.keys(next);
         if (
@@ -1843,6 +1865,7 @@ export function TerminalView({
     // sidebar sliding shook the Changes pane, then it snapped into place).
     const sync = () => flushSync(apply);
     remeasureRef.current = sync;
+    const offSettled = onLayoutSettled(sync);
     apply();
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
@@ -1853,6 +1876,7 @@ export function TerminalView({
     window.addEventListener('resize', sync);
     return () => {
       ro.disconnect();
+      offSettled();
       window.removeEventListener('resize', sync);
     };
     // paneTreeSignature captures leaf membership, nesting and live ratios.
@@ -2217,6 +2241,14 @@ export function TerminalView({
     const key = tabKeyOf(tab);
     const current = paneLayoutsRef.current[worktree.path] ?? [];
     const index = current.findIndex((l) => hasLeaf(l, key));
+    const home = index >= 0 ? homeOf(current[index]!, key) ?? undefined : undefined;
+    // Its old (tiled) box would place the surface there for a frame: wait for the float's.
+    setPaneRects((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     if (index >= 0) {
       // What stays tiled is what the area shows: the pane beside it.
       const rest = removeLeaf(current[index]!, key);
@@ -2226,12 +2258,24 @@ export function TerminalView({
       lastTiledRef.current = null;
     }
     const list = (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key);
-    setFloats(worktree.path, [...list, nextFloatBox(key, list)]);
+    setFloats(worktree.path, [...list, { ...nextFloatBox(key, list), home }]);
     floatPopRef.current = key;
     setActive(tab);
   };
   const dockFloat = (key: string) => {
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
+  };
+  // Dock: back where it floated from — beside the same pane, same side — or,
+  // if that pane is gone (or it was a full tab), back as a tab in its old place.
+  const unfloat = (key: string) => {
+    const home = (paneFloatsRef.current[worktree.path] ?? []).find((f) => f.key === key)?.home;
+    dockFloat(key);
+    if (home && !floatKeys.has(home.target) && keyToTab(worktree.path, home.target)) {
+      dockAt({ draggedKey: key, targetKey: home.target, side: home.side, rect: { left: 0, top: 0, width: 0, height: 0 } });
+      return;
+    }
+    const tab = keyToTab(worktree.path, key);
+    if (tab) setActive(tab);
   };
   const setMin = (key: string, min: boolean) =>
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).map((f) => (f.key === key ? { ...f, min, minAt: min ? Date.now() : undefined } : f)));
@@ -2311,6 +2355,17 @@ export function TerminalView({
   }, [paneRects]);
   const popStyle = (key: string, style: React.CSSProperties | undefined): React.CSSProperties | undefined =>
     style && floatPopRef.current === key ? { ...style, opacity: 0 } : style;
+  // Floats stack in list order (the last one you were on is last, on top).
+  // Each gets its own pair of layers, its card and just above it its live
+  // surface, so a float's surface never covers another float's card.
+  const floatZ = (key: string) => {
+    const i = shownFloats.findIndex((f) => f.key === key);
+    return i < 0 ? null : 20 + 2 * i;
+  };
+  const surfaceStyle = (key: string, style: React.CSSProperties | undefined) => {
+    const z = floatZ(key);
+    return popStyle(key, style && z !== null ? { ...style, zIndex: z + 1 } : style);
+  };
   // Move a floating pane by its header, or resize it by its corner. The card
   // and its live surface move together by transform (no re-render per frame);
   // the box is committed on release. Over another pane, the dock preview shows
@@ -2382,6 +2437,14 @@ export function TerminalView({
     handle.addEventListener('pointerup', onUp);
     handle.addEventListener('pointercancel', onUp);
   };
+  // The float you're on comes to the front.
+  useEffect(() => {
+    const list = paneFloatsRef.current[worktree.path] ?? [];
+    const i = list.findIndex((f) => f.key === focusedKey);
+    if (i < 0 || i === list.length - 1) return;
+    setFloats(worktree.path, [...list.slice(0, i), ...list.slice(i + 1), list[i]!]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedKey, worktree.path]);
   // A floating tab that closed takes its float with it.
   useEffect(() => {
     if (tabs.length === 0) return;
@@ -3836,8 +3899,8 @@ export function TerminalView({
                   key={`pty:${paneKey}`}
                   data-testid={`terminal-surface-${paneKey}`}
                   data-surface-key={paneKey}
-                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={popStyle(paneKey, placement)}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                 >
                   <XtermPane
                     wsId={wsId}
@@ -3894,8 +3957,8 @@ export function TerminalView({
                     key={`bw:${pk}`}
                     data-testid={`browser-pane-${bid}`}
                     data-surface-key={paneKey}
-                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} flex flex-col overflow-hidden bg-pane-card` : 'hidden'}
-                    style={popStyle(paneKey, placement)}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} flex flex-col overflow-hidden bg-pane-card` : 'hidden'}
+                    style={surfaceStyle(paneKey, placement)}
                     onPointerDownCapture={() => {
                       if (!sameTab(active, { path: g.path, mode: 'browser', id: bid })) {
                         setActive({ path: g.path, mode: 'browser', id: bid });
@@ -4058,8 +4121,8 @@ export function TerminalView({
                   key={`kb-${g.path}-${id}`}
                   data-testid={id === '1' ? `kb-pane-${g.path}` : `kb-pane-${g.path}-${id}`}
                   data-surface-key={paneKey}
-                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={popStyle(paneKey, placement)}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'kb', id })) {
                       setActive({ path: g.path, mode: 'kb', id });
@@ -4101,8 +4164,8 @@ export function TerminalView({
                   key={`diff-${g.path}`}
                   data-testid={`diff-pane-${g.path}`}
                   data-surface-key={paneKey}
-                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={popStyle(paneKey, placement)}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'diff', id: '1' })) setActive({ path: g.path, mode: 'diff', id: '1' });
                   }}
@@ -4129,8 +4192,8 @@ export function TerminalView({
                   key={`files-${g.path}`}
                   data-testid={`files-pane-${g.path}`}
                   data-surface-key={paneKey}
-                  className={placed ? `${floatKeys.has(paneKey) ? 'z-30' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
-                  style={popStyle(paneKey, placement)}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'files', id: '1' })) setActive({ path: g.path, mode: 'files', id: '1' });
                   }}
@@ -4153,8 +4216,8 @@ export function TerminalView({
             <div
               key={`float:${f.key}`}
               data-float-key={f.key}
-              className="absolute z-20"
-              style={popStyle(f.key, { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` })}
+              className="absolute"
+              style={popStyle(f.key, { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, zIndex: floatZ(f.key) ?? 20 })}
             >
               {renderLeaf(f.key, true)}
             </div>
@@ -4166,13 +4229,13 @@ export function TerminalView({
               data-float-grip={f.key}
               aria-label="Resize floating pane"
               onPointerDown={(e) => startFloatDrag(e, f.key, 'resize')}
-              className="absolute z-40 -ml-4 -mt-4 h-4 w-4 cursor-nwse-resize"
-              style={{ left: `${(f.x + f.w) * 100}%`, top: `${(f.y + f.h) * 100}%` }}
+              className="absolute -ml-4 -mt-4 h-4 w-4 cursor-nwse-resize"
+              style={{ left: `${(f.x + f.w) * 100}%`, top: `${(f.y + f.h) * 100}%`, zIndex: (floatZ(f.key) ?? 20) + 1 }}
             />
           ))}
           {/* Minimized floats: a pill each in the bottom-right corner; a click brings it back. */}
           {minimized.length > 0 && (
-            <div className="absolute bottom-4 right-4 z-40 flex flex-row-reverse gap-2">
+            <div className="absolute bottom-4 right-4 z-[200] flex flex-row-reverse gap-2">
               {minimized.map((f) => {
                 const entry = tabs.find((t) => tabKeyOf(t.tab) === f.key);
                 if (!entry) return null;

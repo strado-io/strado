@@ -199,3 +199,18 @@ export function placeLeaf(layouts: PaneNode[], newKey: string, anchorKey: string
   if (at >= 0) return lifted.map((node, i) => (i === at ? splitLeaf(node, anchorKey, newKey, dir) : node));
   return [...lifted, splitLeaf({ kind: 'leaf', key: anchorKey }, anchorKey, newKey, dir)];
 }
+
+/** Where a leaf sits, as a place to dock it back: beside the nearest leaf of
+ * its sibling, on its own side. Null when it isn't in a split. */
+export function homeOf(node: PaneNode, key: string): { target: string; side: PaneDockSide } | null {
+  if (node.kind === 'leaf') return null;
+  const inA = hasLeaf(node.a, key);
+  if (!inA && !hasLeaf(node.b, key)) return null;
+  const mine = inA ? node.a : node.b;
+  if (mine.kind === 'split') return homeOf(mine, key);
+  // The sibling's leaf nearest this one: its first if this was before it, its last if after.
+  const other = leafKeys(inA ? node.b : node.a);
+  const target = inA ? other[0]! : other[other.length - 1]!;
+  const side: PaneDockSide = node.dir === 'row' ? (inA ? 'left' : 'right') : (inA ? 'top' : 'bottom');
+  return { target, side };
+}
