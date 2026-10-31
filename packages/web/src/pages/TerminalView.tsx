@@ -66,7 +66,7 @@ import { PaneCard } from '../components/hub/PaneCard';
 import { FLOAT_MIN, clampFloat, nextFloatBox, readPaneFloats, rememberPaneFloats, type PaneFloat } from '../hooks/paneFloats';
 import { KIND_ICON } from '../components/hub/TabTile';
 import { PaneLayout, animatePaneOut, animatePaneZoom } from '../components/hub/PaneLayout';
-import { beginLayoutMotion, isLayoutMoving, onLayoutMotion, onLayoutSettled } from '../lib/layoutMotion';
+import { beginLayoutMotion, holdNativeViews, isLayoutMoving, isNativeHeld, onLayoutMotion, onLayoutSettled, onNativeHold } from '../lib/layoutMotion';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
@@ -465,6 +465,29 @@ function DevtoolsDockPane({
   );
 }
 
+// Each preview's latest snapshot, kept across remounts (a float minimized
+// and back): it stands in for the live page while the card moves.
+const browserSnaps = new Map<string, string>();
+// How far up a parked page is put when the desktop can't park it in place
+// (an older desktop build, without the park action).
+const PARK_Y = 20000;
+// Park in place (hidden where it is, keeping its last frame) or, on an
+// older desktop, hide it off the window. Resolves true when parked in place.
+let parkInPlace: boolean | null = null;
+const parkPreview = async (path: string): Promise<boolean> => {
+  const bridge = window.strado;
+  if (!bridge?.preview) return false;
+  if (parkInPlace !== false) {
+    const ok = await bridge.preview('park', path);
+    parkInPlace = ok === true;
+    if (parkInPlace) return true;
+  }
+  await bridge.preview('hide', path);
+  return false;
+};
+const unparkPreview = (path: string, bounds: StradoBounds) =>
+  parkInPlace ? window.strado?.preview?.('unpark', path, { bounds }) : window.strado?.preview?.('open', path, { bounds });
+
 // Placeholder for a Browser preview: the page itself renders in a
 // main-process WebContentsView (see main.cjs for why a <webview> cannot do
 // this job). Mounted only while its tab is visible; the view survives
@@ -487,15 +510,48 @@ function BrowserPreviewPane({
   // frozen frame shown while the native view is detached (menus/tooltips
   // paint above the placeholder) — otherwise the pane goes black
   const [freeze, setFreeze] = useState<string | null>(null);
+  // While its card animates or is dragged (see holdNativeViews), the live
+  // page is parked and its last snapshot stands in: plain DOM, so it fades,
+  // scales and slides with the card. The native view can do none of that.
+  const snapRef = useRef<HTMLImageElement>(null);
+  const parked = useRef(false);
+  const parkedNow = () => isLayoutMoving() || isNativeHeld();
+  // Always drawn, under the live page (a native view paints above all of
+  // the page, so it's never seen until the page parks): shown only when
+  // parking, it painted a couple of frames late and the pane flashed empty.
+  const loadSnap = (src: string | undefined) => {
+    const img = snapRef.current;
+    if (!img || !src || img.getAttribute('src') === src) return;
+    img.src = src;
+    void img.decode?.().catch(() => undefined);
+  };
+  const showSnap = (src: string | undefined) => loadSnap(src);
+  const grabSnap = () => {
+    void window.strado?.preview?.('thumb', path).then((r) => {
+      if (typeof r !== 'string' || !r.startsWith('data:')) return;
+      browserSnaps.set(path, r);
+      if (parked.current) showSnap(r);
+      else loadSnap(r);
+    }, () => undefined);
+  };
   useEffect(() => {
     const el = ref.current;
     const bridge = window.strado;
     if (!el || !bridge?.preview) return;
+    // Mounting mid-motion (a float coming back): the page opens parked
+    // offscreen and its snapshot shows until the card is in place.
+    parked.current = parkedNow();
+    const at = elementBounds(el);
+    if (parked.current) {
+      showSnap(browserSnaps.get(path));
+      grabSnap();
+    }
     void bridge
-      .preview('open', path, { url: initialUrl, bounds: elementBounds(el) })
+      .preview('open', path, { url: initialUrl, parked: parked.current, bounds: parked.current && parkInPlace === false ? { ...at, y: at.y - PARK_Y } : at })
       .then((wcId) => {
         if (typeof wcId === 'number') onReady(wcId);
       });
+    if (parked.current) void parkPreview(path);
     return () => {
       void bridge.preview?.('hide', path);
     };
@@ -526,12 +582,61 @@ function BrowserPreviewPane({
         });
     } else {
       setFreeze(null);
-      void bridge.preview('open', path, { bounds: elementBounds(el) });
+      if (!parked.current) void bridge.preview('open', path, { bounds: elementBounds(el) });
     }
     return () => {
       stale = true;
     };
   }, [suppressed, immediateSuppress, path]);
+  // Park for a motion or a hold; back, at the exact box, once it's over. The
+  // snapshot goes a couple of frames after the page is back on screen, so
+  // there's never a gap between them.
+  useEffect(() => {
+    const el = ref.current;
+    const bridge = window.strado;
+    if (!el || !bridge?.preview || suppressed) return;
+    const park = () => {
+      if (parked.current) return;
+      const snap = browserSnaps.get(path);
+      if (!snap) return; // nothing to stand in: the live page stays, as before
+      parked.current = true;
+      showSnap(snap);
+      void parkPreview(path);
+    };
+    // Sized while still off screen, then a beat to lay out and paint at that
+    // size: brought on screen at a new size straight away, the page showed
+    // white until it repainted.
+    let settling = 0;
+    const unpark = () => {
+      if (!parked.current || parkedNow()) return;
+      window.clearTimeout(settling);
+      void bridge.preview?.('bounds', path, elementBounds(el));
+      settling = window.setTimeout(() => {
+        if (!parked.current || parkedNow()) return;
+        parked.current = false;
+        void unparkPreview(path, elementBounds(el));
+        // The next motion starts from how it looks now (zoomed, resized).
+        window.setTimeout(() => { if (!parked.current) grabSnap(); }, 350);
+      }, 90);
+    };
+    const offMotion = onLayoutMotion(park);
+    const offSettled = onLayoutSettled(unpark);
+    const offHold = onNativeHold((held) => (held ? park() : unpark()));
+    if (parked.current) unpark(); // mounted parked, and it's already over
+    // A fresh snapshot now and then, while the page is on screen.
+    loadSnap(browserSnaps.get(path));
+    const first = window.setTimeout(() => { if (!parked.current) grabSnap(); }, 700);
+    const iv = window.setInterval(() => { if (!parked.current) grabSnap(); }, 4000);
+    return () => {
+      offMotion();
+      offSettled();
+      offHold();
+      window.clearTimeout(settling);
+      window.clearTimeout(first);
+      window.clearInterval(iv);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suppressed, path]);
   // self-healing: whatever detaches the view without our knowledge, the
   // heartbeat re-asserts attachment (idempotent in main) within ~2s
   useEffect(() => {
@@ -540,13 +645,14 @@ function BrowserPreviewPane({
     const bridge = window.strado;
     if (!el || !bridge?.preview) return;
     const iv = window.setInterval(() => {
-      void bridge.preview?.('open', path, { bounds: elementBounds(el) });
+      if (!parked.current) void bridge.preview?.('open', path, { bounds: elementBounds(el) });
     }, 2000);
     return () => window.clearInterval(iv);
   }, [suppressed, path]);
-  useBoundsSync(ref, (b) => void window.strado?.preview?.('bounds', path, b));
+  useBoundsSync(ref, (b) => { if (!parked.current) void window.strado?.preview?.('bounds', path, b); });
   return (
     <div ref={ref} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-zinc-950">
+      <img ref={snapRef} alt="" decoding="sync" data-preview-snap className={`pointer-events-none absolute inset-0 h-full w-full object-cover object-top ${suppressed && freeze ? 'invisible' : ''}`} />
       {suppressed && freeze && (
         <img src={freeze} alt="" className="h-full w-full object-cover object-top" />
       )}
@@ -1656,8 +1762,6 @@ export function TerminalView({
   }>>({});
   const paneRectsRef = useRef(paneRects);
   paneRectsRef.current = paneRects;
-  // The boxes last measured, ahead of state while panes move.
-  const liveRectsRef = useRef(paneRects);
 
   const openPaneAsFullTab = (tab: Tab) => {
     const current = paneLayoutsRef.current[worktree.path] ?? [];
@@ -1806,8 +1910,8 @@ export function TerminalView({
         onSplitRight={canSplit ? () => openEmptyPane(tab, 'row') : undefined}
         onSplitDown={canSplit ? () => openEmptyPane(tab, 'col') : undefined}
         onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
-        onFloat={canSplit ? () => floatPane(tab) : undefined}
-        onDock={floating ? () => unfloat(key) : undefined}
+        onFloat={canSplit && zoomed !== key ? () => floatPane(tab) : undefined}
+        onDock={floating && zoomed !== key ? () => unfloat(key) : undefined}
         onMinimize={floating ? () => minimizeFloat(key) : undefined}
         onZoom={docked || floating || zoomed === key ? () => toggleZoom(key) : undefined}
         zoomed={zoomed === key}
@@ -1830,19 +1934,38 @@ export function TerminalView({
       setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
-    // A float mid pop or minimize is scaled by a transform its surface
-    // carries too: measured, the surface would shrink twice. It keeps its box.
-    const transformed = (key: string) => !!document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`)
-      ?.getAnimations?.().some((a) => a.playState !== 'idle' && (a.effect as KeyframeEffect | null)?.getKeyframes?.().some((k) => 'transform' in k));
+    // A float mid pop, minimize or drag is moved by a transform its surface
+    // carries too: measured as drawn, the surface would move twice. Its box
+    // comes from layout instead (offsets don't see transforms), so the
+    // surface still follows the card if the box itself changes meanwhile.
+    const transformedCard = (key: string) => {
+      const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+      return card && (card.style.transform || card.getAnimations?.().some((a) => a.playState !== 'idle'
+        && (a.effect as KeyframeEffect | null)?.getKeyframes?.().some((k) => 'transform' in k))) ? card : null;
+    };
+    const layoutRect = (el: HTMLElement, card: HTMLElement) => {
+      const stop = card.offsetParent as HTMLElement | null;
+      if (!stop) return null;
+      let x = 0;
+      let y = 0;
+      for (let n: HTMLElement | null = el; n && n !== stop; ) {
+        x += n.offsetLeft;
+        y += n.offsetTop;
+        const p = n.offsetParent as HTMLElement | null;
+        if (p && p !== stop) { x += p.clientLeft; y += p.clientTop; }
+        n = p;
+      }
+      const base = stop.getBoundingClientRect();
+      return { left: base.left + stop.clientLeft + x, top: base.top + stop.clientTop + y, width: el.offsetWidth, height: el.offsetHeight };
+    };
     const apply = () => {
       const outer = surface.getBoundingClientRect();
       const next: typeof paneRects = {};
       for (const key of viewKeys) {
         const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
         if (!el) continue;
-        const kept = liveRectsRef.current[key] ?? paneRectsRef.current[key];
-        if (kept && transformed(key)) { next[key] = kept; continue; }
-        const rect = el.getBoundingClientRect();
+        const card = transformedCard(key);
+        const rect = (card && layoutRect(el, card)) ?? el.getBoundingClientRect();
         next[key] = {
           left: rect.left - outer.left,
           top: rect.top - outer.top,
@@ -1853,7 +1976,6 @@ export function TerminalView({
       // While panes animate (a split springing open, one shutting), move the
       // live surfaces straight on the DOM: setting state here re-rendered the
       // whole hub every frame. The settled layout commits to state once.
-      liveRectsRef.current = next;
       const prevRects = paneRectsRef.current;
       const sameKeys = Object.keys(next).length === Object.keys(prevRects).length && Object.keys(next).every((key) => key in prevRects);
       for (const [key, r] of Object.entries(next)) {
@@ -2273,6 +2395,16 @@ export function TerminalView({
 
   // ── Floating panes ──────────────────────────────────────────────────────
   const floatPopRef = useRef<string | null>(null);
+  // A float about to pop in (floated, restored): native views hold until the
+  // pop is done (released there, or after a beat if it never runs).
+  const popHoldRef = useRef(new Map<string, () => void>());
+  const holdForPop = (key: string) => {
+    popHoldRef.current.get(key)?.();
+    const release = holdNativeViews();
+    const done = () => { release(); if (popHoldRef.current.get(key) === done) popHoldRef.current.delete(key); };
+    popHoldRef.current.set(key, done);
+    window.setTimeout(done, 900);
+  };
   const floatPane = (tab: Tab) => {
     const key = tabKeyOf(tab);
     const current = paneLayoutsRef.current[worktree.path] ?? [];
@@ -2295,6 +2427,7 @@ export function TerminalView({
     }
     const list = (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key);
     setFloats(worktree.path, [...list, { ...nextFloatBox(key, list), home }]);
+    holdForPop(key);
     floatPopRef.current = key;
     setActive(tab);
   };
@@ -2328,6 +2461,8 @@ export function TerminalView({
   };
   const dockFloat = (key: string) => {
     if (minimizing === key) unminimizeRef.current?.(true);
+    // Its surface stays as the tiled pane: no float pop left on it.
+    for (const el of document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`)) el.getAnimations?.().forEach((a) => a.cancel());
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
   };
   // Dock: back where it floated from — beside the same pane, same side — or,
@@ -2366,6 +2501,13 @@ export function TerminalView({
     const pill = document.querySelector<HTMLElement>(`[data-float-pill="${CSS.escape(key)}"]`);
     if (!card || !pill || typeof card.animate !== 'function'
       || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
+    // Minimized mid zoom-ease: land the box first. Left running under the
+    // flight, the card slid on while its surface stayed put.
+    const easing = card.getAnimations?.().filter((a) => typeof CSSTransition !== 'undefined' && a instanceof CSSTransition) ?? [];
+    if (easing.length) {
+      easing.forEach((a) => a.finish());
+      remeasureRef.current();
+    }
     const to = pill.getBoundingClientRect();
     // One transform for the card and everything drawn over it (its live
     // surface, its grip), each pivoting on the card's corner: they shrink as
@@ -2379,6 +2521,8 @@ export function TerminalView({
       el.getAnimations?.().forEach((a) => a.cancel());
       el.style.opacity = '';
     }
+    // A native page on it (the Browser) can't shrink with it: a snapshot flies instead.
+    const releaseHold = holdNativeViews();
     // Measured once its fade-in is gone, so the box is the card's own.
     const from = card.getBoundingClientRect();
     const sx = to.width / from.width;
@@ -2402,7 +2546,7 @@ export function TerminalView({
       undone = true;
       unminimizeRef.current = null;
       setMinimizing(null);
-      if (snap) { anims.forEach((a) => a.cancel()); return; }
+      if (snap) { anims.forEach((a) => a.cancel()); releaseHold(); return; }
       anims.forEach((a) => a.reverse());
       // Back where it started: from however faded it was, up to full.
       void Promise.all(anims.map((a) => a.finished)).then(() => {
@@ -2411,15 +2555,19 @@ export function TerminalView({
         anims.forEach((a) => a.cancel());
         els.forEach((el, i) => { if (ops[i]! < 0.99) el.animate([{ opacity: ops[i] }, { opacity: 1 }], { duration: 140, easing: 'cubic-bezier(0.2, 0, 0, 1)' }); });
         remeasureRef.current();
-      }, () => undefined);
+        releaseHold();
+      }, releaseHold);
     };
     void Promise.all(anims.map((a) => a.finished)).then(() => {
       if (undone) return;
       unminimizeRef.current = null;
       done();
+      // After the pane is gone: let go now and the live page came back for
+      // a moment at the pill's size.
+      requestAnimationFrame(() => requestAnimationFrame(releaseHold));
       // Drawn hidden now; drop the end state so a restore starts clean.
       requestAnimationFrame(() => anims.forEach((a) => a.cancel()));
-    }, () => { if (!undone) { unminimizeRef.current = null; done(); } });
+    }, () => { if (!undone) { unminimizeRef.current = null; done(); releaseHold(); } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minimizing]);
   const restoreFloat = (key: string) => {
@@ -2429,6 +2577,7 @@ export function TerminalView({
       if (tab) setActive(tab);
       return;
     }
+    holdForPop(key);
     setMin(key, false);
     floatPopRef.current = key;
     const tab = keyToTab(worktree.path, key);
@@ -2447,7 +2596,8 @@ export function TerminalView({
       ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`),
     ];
     for (const el of els) if (el) el.style.opacity = '';
-    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const releaseHold = () => popHoldRef.current.get(key)?.();
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return releaseHold();
     // All of it pivots on the card's centre, so the surface scales with the
     // card instead of drifting about its own.
     const box = els[0]?.getBoundingClientRect();
@@ -2461,7 +2611,7 @@ export function TerminalView({
       );
     }).filter((a): a is Animation => !!a);
     // Measured while it scaled, its surface kept its box: take its own now.
-    void Promise.all(pops.map((a) => a.finished)).then(() => remeasureRef.current(), () => undefined);
+    void Promise.all(pops.map((a) => a.finished)).then(() => { remeasureRef.current(); releaseHold(); }, releaseHold);
   }, [paneRects]);
   const popStyle = (key: string, style: React.CSSProperties | undefined): React.CSSProperties | undefined =>
     style && floatPopRef.current === key ? { ...style, opacity: 0 } : style;
@@ -2505,11 +2655,14 @@ export function TerminalView({
     const own = { w: card.style.width, h: card.style.height };
     let drop: ReturnType<typeof paneDropAt> = null;
     let chip: HTMLElement | null = null;
+    // Moved or resized, a native page on it is held: a snapshot travels with the card.
+    let releaseHold: (() => void) | null = null;
     let dx = 0;
     let dy = 0;
     const onMove = (ev: PointerEvent) => {
       dx = ev.clientX - start.x;
       dy = ev.clientY - start.y;
+      if (mode !== 'dock' && !releaseHold && Math.hypot(dx, dy) >= 2) releaseHold = holdNativeViews();
       if (mode === 'move') {
         for (const el of [card, ...surfaces]) el.style.transform = `translate(${dx}px, ${dy}px)`;
       } else if (mode === 'dock') {
@@ -2538,6 +2691,8 @@ export function TerminalView({
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
+      // Let go after the box below has committed and been measured.
+      if (releaseHold) { const r = releaseHold; requestAnimationFrame(() => requestAnimationFrame(r)); }
       if (mode === 'dock') {
         chip?.remove();
         setPaneDrop(null);

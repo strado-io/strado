@@ -47,9 +47,9 @@ interface Window {
       action:
         | 'open' | 'bounds' | 'hide' | 'navigate' | 'reload' | 'close'
         | 'back' | 'forward' | 'hard-reload' | 'screenshot' | 'thumb'
-        | 'open-external' | 'clear-history' | 'clear-cookies' | 'clear-data',
+        | 'open-external' | 'clear-history' | 'clear-cookies' | 'clear-data' | 'park' | 'unpark',
       key: string,
-      payload?: { url?: string; bounds?: StradoBounds } | StradoBounds,
+      payload?: { url?: string; bounds?: StradoBounds; parked?: boolean } | StradoBounds,
     ) => Promise<number | boolean | string>;
     onPreviewEvent?: (cb: (ev: StradoPreviewEvent) => void) => () => void;
     // live DevTools resize driven from main (cursor crosses the native views);

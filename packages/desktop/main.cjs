@@ -894,6 +894,9 @@ if (!gotLock) {
         // network, screenshots) while the user is on another hub tab
         wc.setBackgroundThrottling(false);
         wireEmbedHotkeys(wc, win);
+        // Opened parked (its card is still animating in): in place, unseen.
+        entry.parked = !!payload.parked;
+        view.setVisible(!entry.parked);
         win.contentView.addChildView(view);
         entry.shown = true;
         view.setBounds(paneBounds(payload.bounds, zoom));
@@ -904,6 +907,8 @@ if (!gotLock) {
         // The renderer heartbeats this action to self-heal stray detaches,
         // so repaint/snapshot work only runs on a real hidden->shown edge.
         const wasShown = entry.shown === true;
+        entry.parked = !!payload.parked;
+        entry.view.setVisible(!entry.parked);
         win.contentView.addChildView(entry.view);
         entry.shown = true;
         entry.view.setBounds(paneBounds(payload.bounds, zoom));
@@ -936,6 +941,26 @@ if (!gotLock) {
       const b = paneBounds(payload, zoom);
       if (!entry.shown) b.y += OFFSCREEN_Y;
       entry.view.setBounds(b);
+      return true;
+    }
+    // Parked: hidden where it is while its card animates (the renderer shows
+    // a snapshot that moves with the card). Unlike a hide (moved off the
+    // window), the page keeps its last frame, so it comes back at once
+    // instead of as a blank sheet.
+    if (action === 'park') {
+      if (!entry.win.isDestroyed() && entry.view.webContents.isFocused()) entry.win.webContents.focus();
+      entry.parked = true;
+      entry.view.setVisible(false);
+      return true;
+    }
+    if (action === 'unpark') {
+      entry.parked = false;
+      if (payload?.bounds) {
+        const b = paneBounds(payload.bounds, zoom);
+        if (!entry.shown) b.y += OFFSCREEN_Y;
+        entry.view.setBounds(b);
+      }
+      entry.view.setVisible(true);
       return true;
     }
     if (action === 'hide') {

@@ -124,7 +124,7 @@ function PaneButton({ label, onClick, active, children }: { label: string; onCli
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => onClick(e.currentTarget)}
       className={`flex h-6 w-6 items-center justify-center rounded-md ${active
-        ? 'bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30 hover:bg-sky-500/25 hover:text-sky-200'
+        ? 'text-sky-400 hover:bg-zinc-800/70 hover:text-sky-300'
         // Idle ones stay quiet until the card is hovered; a lit one always shows.
         : 'text-zinc-500 opacity-60 transition-opacity hover:bg-zinc-800/70 hover:text-zinc-200 group-hover:opacity-100'}`}
     >
