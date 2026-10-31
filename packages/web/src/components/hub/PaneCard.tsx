@@ -53,8 +53,20 @@ export function PaneCard({
         onPointerDown={(e) => { onActivate(); onHeaderPointerDown?.(e); }}
         className={`flex h-9 shrink-0 items-center gap-2 pl-3 pr-1.5 ${floating ? 'cursor-grab active:cursor-grabbing' : ''}`}
       >
-        <span className="flex shrink-0 items-center">{icon}</span>
-        <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-200">{title}</span>
+        {floating ? (
+          // A floating pane's name is its dock handle: drag it onto a pane to
+          // dock there. The rest of the header just moves the card.
+          <span data-dock-handle title={`Drag ${title} onto a pane to dock it`}
+            className="-ml-1.5 flex min-w-0 cursor-grab items-center gap-2 rounded-md py-1 pl-1.5 pr-2 hover:bg-white/[0.06] active:cursor-grabbing">
+            <span className="flex shrink-0 items-center">{icon}</span>
+            <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-200">{title}</span>
+          </span>
+        ) : (
+          <>
+            <span className="flex shrink-0 items-center">{icon}</span>
+            <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-200">{title}</span>
+          </>
+        )}
         {subtitle && <span className="min-w-0 truncate text-xs text-zinc-500">{subtitle}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
           {onSplitRight && <PaneButton label={`Split ${title} right`} onClick={onSplitRight}><SplitRightIcon /></PaneButton>}

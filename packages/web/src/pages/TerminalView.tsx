@@ -1530,6 +1530,10 @@ export function TerminalView({
   // tiled area keeps showing what was under it (the last tiled tab you were on).
   // Minimized ones are pills in the corner: out of the tiled area and not drawn.
   const shownFloats = floats.filter((f) => !f.min);
+  // Drawn in a fixed order: bringing one to the front changes only its
+  // z-index. Re-ordering the elements moved the one under the pointer in the
+  // DOM, which drops its pointer capture mid-drag.
+  const drawnFloats = [...shownFloats].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   // A float on its way down keeps drawing while its pill holds its place, unseen.
   const [minimizing, setMinimizing] = useState<string | null>(null);
   // Oldest in the corner; a newly minimized one lines up to its left, so the
@@ -2380,12 +2384,18 @@ export function TerminalView({
   // and its live surface move together by transform (no re-render per frame);
   // the box is committed on release. Over another pane, the dock preview shows
   // and letting go docks it there.
-  const startFloatDrag = (e: React.PointerEvent<HTMLElement>, key: string, mode: 'move' | 'resize') => {
+  const startFloatDrag = (e: React.PointerEvent<HTMLElement>, key: string, grab: 'move' | 'resize') => {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
     const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
     const area = card?.parentElement?.getBoundingClientRect();
     const box = (paneFloatsRef.current[worktree.path] ?? []).find((f) => f.key === key);
     if (!card || !area || !box) return;
+    // Three gestures: the header moves the card (never docks); its name (the
+    // dock handle) picks the pane up to dock it, the card staying put while a
+    // chip of its name follows the pointer and the dock preview shows; the
+    // corner resizes.
+    const dockHandle = grab === 'move' ? (e.target as HTMLElement).closest<HTMLElement>('[data-dock-handle]') : null;
+    const mode: 'move' | 'resize' | 'dock' = dockHandle ? 'dock' : grab;
     e.preventDefault();
     const handle = e.currentTarget;
     try { handle.setPointerCapture(e.pointerId); } catch { /* pointer gone */ }
@@ -2398,6 +2408,7 @@ export function TerminalView({
     // React owns the card's width/height (percentages): put back exactly what was there.
     const own = { w: card.style.width, h: card.style.height };
     let drop: ReturnType<typeof paneDropAt> = null;
+    let chip: HTMLElement | null = null;
     let dx = 0;
     let dy = 0;
     const onMove = (ev: PointerEvent) => {
@@ -2405,15 +2416,19 @@ export function TerminalView({
       dy = ev.clientY - start.y;
       if (mode === 'move') {
         for (const el of [card, ...surfaces]) el.style.transform = `translate(${dx}px, ${dy}px)`;
-        // Docks only near a pane's edge: a floating pane always sits over
-        // some pane, and moving it must not dock it.
-        const hit = paneDropAt(key, ev.clientX, ev.clientY);
-        const r = hit?.rect;
-        const edge = !r ? Infinity
-          : hit.side === 'left' ? ev.clientX - r.left : hit.side === 'right' ? r.left + r.width - ev.clientX
-          : hit.side === 'top' ? ev.clientY - r.top : r.top + r.height - ev.clientY;
-        const span = hit && (hit.side === 'left' || hit.side === 'right') ? r!.width : r?.height ?? 0;
-        const next = edge <= Math.min(72, span * 0.22) ? hit : null;
+      } else if (mode === 'dock') {
+        if (!chip) {
+          if (Math.hypot(dx, dy) < 4) return; // a click on the name, not a drag
+          // The pane's name, lifted: a small chip under the pointer (plain DOM, no re-render per move).
+          chip = document.createElement('div');
+          chip.className = 'pane-floating glass pointer-events-none fixed z-[300] flex h-8 items-center gap-2 rounded-lg pl-2 pr-3 text-[12.5px] font-semibold text-zinc-200';
+          chip.innerHTML = dockHandle!.innerHTML;
+          document.body.appendChild(chip);
+          chip.animate?.([{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }], { duration: 120, easing: 'ease-out' });
+        }
+        chip.style.left = `${ev.clientX + 10}px`;
+        chip.style.top = `${ev.clientY + 12}px`;
+        const next = paneDropAt(key, ev.clientX, ev.clientY);
         if (next?.targetKey !== drop?.targetKey || next?.side !== drop?.side) {
           drop = next;
           setPaneDrop(next);
@@ -2427,15 +2442,18 @@ export function TerminalView({
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
+      if (mode === 'dock') {
+        chip?.remove();
+        setPaneDrop(null);
+        if (drop) {
+          dockFloat(key);
+          dockAt(drop);
+        }
+        return;
+      }
       for (const el of [card, ...surfaces]) el.style.transform = '';
       card.style.width = own.w;
       card.style.height = own.h;
-      setPaneDrop(null);
-      if (mode === 'move' && drop) {
-        dockFloat(key);
-        dockAt(drop);
-        return;
-      }
       const list = paneFloatsRef.current[worktree.path] ?? [];
       const moved = mode === 'move'
         ? { ...box, x: box.x + dx / area.width, y: box.y + dy / area.height }
@@ -4222,7 +4240,7 @@ export function TerminalView({
             })}
         <div data-testid="xterm-pane" className="relative h-full w-full p-2">
           <PaneLayout node={paneTree} renderLeaf={renderLeaf} onDividerPointerDown={startDividerDrag} />
-          {shownFloats.map((f) => (
+          {drawnFloats.map((f) => (
             <div
               key={`float:${f.key}`}
               data-float-key={f.key}
@@ -4233,7 +4251,7 @@ export function TerminalView({
             </div>
           ))}
           {/* Each float's resize corner, above its live surface (which sits over the card). */}
-          {shownFloats.map((f) => (
+          {drawnFloats.map((f) => (
             <div
               key={`float-grip:${f.key}`}
               data-float-grip={f.key}
