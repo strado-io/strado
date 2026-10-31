@@ -627,3 +627,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .jarvis-shimmer { animation: none; color: rgb(161 161 170); background: none; }
 }
+
+/* A newly opened terminal pane fades in. */
+.pane-enter { animation: pane-enter 160ms ease-out; }
+@keyframes pane-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-enter { animation: none; }
+}

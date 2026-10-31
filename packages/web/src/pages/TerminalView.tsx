@@ -52,7 +52,7 @@ import {
   PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
-import { TabStrip, TabTile } from '../components/hub/TabStrip';
+import { TabStrip, TabTile, animateTabOut } from '../components/hub/TabStrip';
 import { stateOf as stationState } from '../lib/dock/stations';
 import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
@@ -2924,7 +2924,11 @@ export function TerminalView({
       const label = SHELL_HOST_LABEL[tab.mode];
       if (status === 'working' && !confirm(`${label} is still working. Close it anyway?`)) return;
     }
+    const leaving = animateTabOut(tabKeyOf(tab));
+    const undo = leaving ? await leaving : null;
     closeTab(tab);
+    // Gone by now; if it stayed after all, it shows again.
+    if (undo) requestAnimationFrame(undo);
   };
   closeActiveTabRef.current = () => {
     void requestCloseTab(activeRef.current);

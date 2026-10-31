@@ -782,7 +782,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
   return (
     <div
       data-testid={visible ? 'pane-leaf' : undefined}
-      className="relative h-full w-full min-h-0 min-w-0 bg-pane-card"
+      // pane-enter: a new terminal fades in rather than popping.
+      className="pane-enter relative h-full w-full min-h-0 min-w-0 bg-pane-card"
       onPointerDownCapture={onFocus}
       // Drop-to-attach uploads into the LOCAL worktree and types that path, so
       // on a remote pane it would hand the agent a path its machine cannot see.
