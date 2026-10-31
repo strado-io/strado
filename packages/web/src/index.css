@@ -610,3 +610,35 @@ body {
   .surface-pop, .menu-solid, [role='menu'], [role='listbox'], [role='tooltip'], [role='dialog'],
   .fixed.inset-0[class*='bg-black/'], .fixed.inset-0[class*='bg-black/'] > * { transition: none; }
 }
+
+/* Jarvis: a step that's running, and "Thinking…", shimmer like other agents' do. */
+.jarvis-shimmer {
+  background: linear-gradient(90deg, rgb(113 113 122) 0%, rgb(228 228 231) 45%, rgb(113 113 122) 90%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: jarvis-shimmer 1.8s linear infinite;
+}
+@keyframes jarvis-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-shimmer { animation: none; color: rgb(161 161 170); background: none; }
+}
+
+/* A newly opened terminal pane fades in. */
+.pane-enter { animation: pane-enter 160ms ease-out; }
+@keyframes pane-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-enter { animation: none; }
+}
+
+/* A floating pane: raised over the tiled layout. */
+.pane-floating {
+  box-shadow: 0 18px 50px -12px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(var(--pane-edge) / 0.1);
+}

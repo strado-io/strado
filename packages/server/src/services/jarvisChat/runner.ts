@@ -19,7 +19,8 @@ import { envAllowed } from '../lsp/manager.js';
 import type { HeadlessEvent, HeadlessOpts } from './claudeHeadless.js';
 import type { ApprovalArgs } from './approvalArgs.js';
 import { chatTabs, JARVIS_CHAT_SYSTEM, turnPrompt, type ChatTab, type TurnInput } from './prompt.js';
-import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisContext, type JarvisUiActionResult, type TabCardRef } from './types.js';
+import { JARVIS_LIMITS, JARVIS_TOKEN_ENV, type ChatEntry, type JarvisAgent, type JarvisContext, type JarvisUiActionResult, type TabCardRef } from './types.js';
+import { AGENT_AUTH_ENV } from './headless.js';
 
 export type TurnRef = { ws: string; focusId: string; turnId: string; windowId: string; wake: boolean };
 
@@ -48,7 +49,8 @@ export type JarvisRunnerDeps = {
   /** Strado's home (STRADO_HOME or ~/.strado); Jarvis works in <home>/jarvis/<focusId>. */
   home?: string;
   /** The agent's env: the person's, minus Strado's identity and anything credential-shaped. */
-  env?: () => Promise<Record<string, string>>;
+  /** The turn's env, for the agent that runs it. */
+  env?: (agent?: JarvisAgent) => Promise<Record<string, string>>;
   /** How the MCP server reaches this server (what tabs get). */
   serverEnv?: () => Record<string, string>;
   /** Runs an approved action; wired to the tool gateway by app.ts. */
@@ -75,8 +77,10 @@ const CLAUDE_AUTH = /^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|MODEL)|CLAUDE_CODE
 const BEDROCK = /^AWS_[A-Z0-9_]+$/;
 const VERTEX = /^(GOOGLE_[A-Z0-9_]+|CLOUD_ML_[A-Z0-9_]+)$/;
 
-/** The LSP scrub (no Strado identity, nothing credential-shaped), except Claude's own login. */
-export function jarvisEnvAllowed(name: string, value = '', env: NodeJS.ProcessEnv = process.env): boolean {
+/** The LSP scrub (no Strado identity, nothing credential-shaped), except the
+ *  turn's agent's own login: Claude's (with its cloud), or another CLI's. */
+export function jarvisEnvAllowed(name: string, value = '', env: NodeJS.ProcessEnv = process.env, agent: JarvisAgent = 'claude'): boolean {
+  if (agent !== 'claude') return !!AGENT_AUTH_ENV[agent]?.test(name) || envAllowed(name, value);
   const on = (v: string | undefined) => !!v && v !== '0' && v.toLowerCase() !== 'false';
   return CLAUDE_AUTH.test(name)
     || (BEDROCK.test(name) && on(env.CLAUDE_CODE_USE_BEDROCK))
@@ -84,11 +88,11 @@ export function jarvisEnvAllowed(name: string, value = '', env: NodeJS.ProcessEn
     || envAllowed(name, value);
 }
 
-function defaultEnv(): () => Promise<Record<string, string>> {
+function defaultEnv(): (agent?: JarvisAgent) => Promise<Record<string, string>> {
   const detect = createDetect();
-  return async () => {
+  return async (agent = 'claude') => {
     const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && jarvisEnvAllowed(k, v)) out[k] = v;
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && jarvisEnvAllowed(k, v, process.env, agent)) out[k] = v;
     out.PATH = (await detect.dirs()).join(':');
     return out;
   };
@@ -174,8 +178,8 @@ export function createJarvisRunner(deps: JarvisRunnerDeps): JarvisRunner {
       const meta = await st.meta(focusId);
       // Stopped before it started: no process at all.
       if (!abort.signal.aborted) for await (const e of deps.spawnHeadless({
-        cwd, prompt: turnPrompt(job.input, await tabsOf(ws, focusId, job.input)), resume: meta.sessionId, systemPrompt: JARVIS_CHAT_SYSTEM,
-        mcpConfigPath: mcpFile, env: await env(), signal: abort.signal,
+        agent: meta.agent, cwd, prompt: turnPrompt(job.input, await tabsOf(ws, focusId, job.input)), resume: meta.sessionId, systemPrompt: JARVIS_CHAT_SYSTEM,
+        mcpConfigPath: mcpFile, mcp: { ...claudeMcpEntry(), env: { ...serverEnv(), [JARVIS_TOKEN_ENV]: token } }, model: meta.model, effort: meta.effort, env: await env(meta.agent), signal: abort.signal,
       })) {
         if (e.type === 'session' && e.sessionId !== meta.sessionId) await st.setMeta(focusId, { sessionId: e.sessionId });
         else if (e.type === 'text') { reply += e.delta; await writeReply(false); }

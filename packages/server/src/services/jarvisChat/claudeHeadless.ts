@@ -13,7 +13,7 @@
 // - Errors are fixed strings: nothing Claude printed reaches the chat as an
 //   error, so nothing in it can leak.
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { jarvisAllowedTools } from './types.js';
+import { jarvisAllowedTools, type JarvisAgent } from './types.js';
 
 export type HeadlessEvent =
   | { type: 'session'; sessionId: string }
@@ -22,11 +22,20 @@ export type HeadlessEvent =
   | { type: 'error'; message: string; fix?: string };
 
 export type HeadlessOpts = {
+  /** Which CLI runs the turn (app.ts picks the adapter by it). */
+  agent: JarvisAgent;
   cwd: string;
   prompt: string;
   resume: string | null;
   systemPrompt: string;
+  /** Claude Code's --mcp-config file (in `cwd`, 0600). */
   mcpConfigPath: string;
+  /** The same `strado` MCP server, for CLIs that take it another way: run
+   *  `command args` with `env` (which carries the turn's token: never argv). */
+  mcp: { command: string; args: string[]; env: Record<string, string> };
+  /** Null (or absent): Claude Code's own default. */
+  model?: string | null;
+  effort?: string | null;
   env: Record<string, string>;
   signal: AbortSignal;
 };
@@ -45,7 +54,7 @@ const API_ERRORS: Record<string, HeadlessEvent> = {
   rate_limit: { type: 'error', message: 'Claude Code hit its usage limit', fix: 'Try again later, or pick another agent' },
 };
 
-export function claudeArgv(o: Pick<HeadlessOpts, 'resume' | 'systemPrompt' | 'mcpConfigPath'>): string[] {
+export function claudeArgv(o: Pick<HeadlessOpts, 'resume' | 'systemPrompt' | 'mcpConfigPath' | 'model' | 'effort'>): string[] {
   return [
     '-p',
     '--output-format', 'stream-json', '--verbose',
@@ -56,6 +65,8 @@ export function claudeArgv(o: Pick<HeadlessOpts, 'resume' | 'systemPrompt' | 'mc
     '--permission-mode', 'dontAsk',
     '--append-system-prompt', o.systemPrompt,
     ...(o.resume ? ['--resume', o.resume] : []),
+    ...(o.model ? ['--model', o.model] : []),
+    ...(o.effort ? ['--effort', o.effort] : []),
   ];
 }
 

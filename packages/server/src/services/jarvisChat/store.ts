@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors.js';
 import { redact } from '../hostTabs/redact.js';
-import { JARVIS_LIMITS, type ChatEntry, type JarvisAgent, type JarvisMeta, type NewChatEntry } from './types.js';
+import { JARVIS_AGENTS, JARVIS_EFFORTS, JARVIS_LIMITS, JARVIS_MODEL_RE, type ChatEntry, type JarvisAgent, type JarvisEffort, type JarvisMeta, type NewChatEntry } from './types.js';
 
 /** `removed`: the Focus's chat is gone (the Focus was deleted); streams end. */
 export type JarvisChatChange = { entry?: ChatEntry; meta?: JarvisMeta; removed?: true };
@@ -27,7 +27,7 @@ export type JarvisChatStore = {
   upsert(focusId: string, entry: ChatEntry): Promise<ChatEntry>;
   find(focusId: string, entryId: string): Promise<ChatEntry | null>;
   meta(focusId: string): Promise<JarvisMeta>;
-  setMeta(focusId: string, patch: Partial<Pick<JarvisMeta, 'agent' | 'sessionId' | 'lastActiveAt'>>): Promise<JarvisMeta>;
+  setMeta(focusId: string, patch: Partial<Pick<JarvisMeta, 'agent' | 'sessionId' | 'lastActiveAt' | 'model' | 'effort'>>): Promise<JarvisMeta>;
   remove(focusId: string): Promise<void>;
   onChange(listener: (focusId: string, change: JarvisChatChange) => void): () => void;
   /** How many chats are held in memory (tests). */
@@ -77,7 +77,8 @@ function checkId(focusId: string): void {
 const lineBytes = (e: ChatEntry) => Buffer.byteLength(JSON.stringify(e)) + 1;
 
 type Log = { entries: ChatEntry[]; bytes: number };
-type MetaFile = { agent: JarvisAgent; sessionId: string | null; lastActiveAt: string | null };
+type MetaFile = { agent: JarvisAgent; sessionId: string | null; lastActiveAt: string | null; model: string | null; effort: JarvisEffort | null };
+const FRESH_META = (): MetaFile => ({ agent: 'claude', sessionId: null, lastActiveAt: null, model: null, effort: null });
 
 /** Chats held in memory; the least recently used beyond it are read back
  *  from disk when next needed. */
@@ -182,17 +183,19 @@ export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } =
   }
 
   async function loadMeta(focusId: string): Promise<MetaFile> {
-    if (removed.has(focusId)) return { agent: 'claude', sessionId: null, lastActiveAt: null };
+    if (removed.has(focusId)) return FRESH_META();
     touch(focusId);
     const hit = metas.get(focusId);
     if (hit) return hit;
-    let m: MetaFile = { agent: 'claude', sessionId: null, lastActiveAt: null };
+    let m: MetaFile = FRESH_META();
     try {
       const r = JSON.parse(await fs.readFile(metaPath(focusId), 'utf8')) as Partial<MetaFile>;
       m = {
-        agent: r.agent === 'claude' ? r.agent : 'claude',
+        agent: (JARVIS_AGENTS as readonly string[]).includes(r.agent as string) ? r.agent as JarvisAgent : 'claude',
         sessionId: typeof r.sessionId === 'string' ? r.sessionId : null,
         lastActiveAt: typeof r.lastActiveAt === 'string' ? r.lastActiveAt : null,
+        model: typeof r.model === 'string' && JARVIS_MODEL_RE.test(r.model) ? r.model : null,
+        effort: (JARVIS_EFFORTS as readonly string[]).includes(r.effort as string) ? r.effort as JarvisEffort : null,
       };
     } catch {
       /* none yet, or unreadable: a fresh session */
@@ -240,6 +243,8 @@ export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } =
       focusId,
       agent: m.agent,
       sessionId: m.sessionId,
+      model: m.model,
+      effort: m.effort,
       lastActiveAt: !m.lastActiveAt ? last : !last ? m.lastActiveAt : last > m.lastActiveAt ? last : m.lastActiveAt,
       pendingApprovals: log.entries.filter((e) => e.type === 'approval' && e.state === 'pending').length,
       running: log.entries.some((e) => e.type === 'turn' && e.state === 'running'),
@@ -312,6 +317,8 @@ export function createJarvisChatStore(dir: string, opts: { cacheMax?: number } =
         if (patch.agent !== undefined) m.agent = patch.agent;
         if (patch.sessionId !== undefined) m.sessionId = patch.sessionId;
         if (patch.lastActiveAt !== undefined) m.lastActiveAt = patch.lastActiveAt;
+        if (patch.model !== undefined) m.model = patch.model;
+        if (patch.effort !== undefined) m.effort = patch.effort;
         await writeAtomic(metaPath(focusId), JSON.stringify(m, null, 2));
         metas.set(focusId, m);
         const meta = await metaOf(focusId);

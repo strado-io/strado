@@ -14,9 +14,9 @@ import type { JarvisContext } from '../jarvisModel.js';
 
 export type { JarvisContext };
 
-/** The agent CLI that runs a Focus's Jarvis. Codex, Pi and OpenCode follow. */
-export type JarvisAgent = 'claude';
-export const JARVIS_AGENTS: readonly JarvisAgent[] = ['claude'];
+/** The agent CLI that runs a Focus's Jarvis, headless (each has its adapter). */
+export type JarvisAgent = 'claude' | 'codex' | 'opencode' | 'pi';
+export const JARVIS_AGENTS: readonly JarvisAgent[] = ['claude', 'codex', 'opencode', 'pi'];
 
 export type CardKind = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell' | 'run' | 'browser';
 /** A tab Jarvis opened, as the chat's live card finds it again. `tab` is the
@@ -32,7 +32,13 @@ export type ChatEntry =
   | { id: string; at: string; type: 'user'; text: string; windowId: string }
   /** Streamed: the same id is upserted while `done` is false. */
   | { id: string; at: string; type: 'jarvis'; turnId: string; text: string; done: boolean }
-  | { id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef }
+  | {
+      id: string; at: string; type: 'action'; turnId: string; action: string; summary: string; ok: boolean; error?: string; card?: TabCardRef;
+      /** 'running' while the step runs; absent once it's done (and in logs from before this field). */
+      state?: 'running';
+      /** What the step gave back (a recap, a command's output), capped; the chat shows it on a click. */
+      detail?: string;
+    }
   | {
       id: string; at: string; type: 'approval'; turnId: string; action: string; args: Record<string, unknown>;
       /** Exactly what will happen, for the card ("Stop dev in fleetx-api"). */
@@ -56,10 +62,20 @@ export type JarvisMeta = {
   agent: JarvisAgent;
   /** The agent CLI's own session id, resumed by every later turn. */
   sessionId: string | null;
+  /** The model the agent runs (an alias like "opus" or a full id); null: the agent's default. */
+  model: string | null;
+  /** How hard it thinks; null: the agent's default. */
+  effort: JarvisEffort | null;
   lastActiveAt: string | null;
   pendingApprovals: number;
   running: boolean;
 };
+
+/** Claude Code's --effort levels. */
+export const JARVIS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type JarvisEffort = (typeof JARVIS_EFFORTS)[number];
+/** A model name as the CLI takes it: an alias or a full id, nothing that could be a flag. */
+export const JARVIS_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,119}$/;
 
 export const JARVIS_LIMITS = {
   turnMs: 300_000,

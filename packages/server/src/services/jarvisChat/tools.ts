@@ -6,7 +6,7 @@ import { destructiveCommand } from './safety.js';
 import { JARVIS_TOOLS, WORKTREE_CREATE, type JarvisToolSpec } from './types.js';
 
 const WORKTREE_CREATE_MODEL = {
-  description: 'Propose a new worktree from a repo and add it to this Focus. Always waits for the person\'s approval.',
+  description: 'Make a new worktree from a repo and add it to this Focus. It may wait for the person\'s approval.',
   properties: {
     repo: { type: 'string', description: 'the repo name, exactly as in context.repos' },
     branch: { type: 'string', description: 'a short new branch name, e.g. "fix-login-redirect"' },
@@ -109,17 +109,21 @@ export function summarize(action: string, a: Record<string, unknown>): string {
 
 /** Why this call waits for the person, or null to run it now. `danger`: a
  *  destructive shell line's reason, for the card's red line. */
-export function approvalFor(action: string, a: Record<string, unknown>, o: { wake: boolean }): { danger?: string } | null {
+/** `ask`: the person wants to approve each consequential step (Settings).
+ *  Off, steps just run, but a destructive command still asks (it can't be
+ *  undone), and so does what would let a wake turn loop. */
+export function approvalFor(action: string, a: Record<string, unknown>, o: { wake: boolean; ask: boolean }): { danger?: string } | null {
   const command = action === 'shell.run' || action === 'tab.open' ? (typeof a.command === 'string' ? a.command : null) : null;
   const danger = command ? destructiveCommand(command) ?? undefined : undefined;
   const risk = defOf(action)?.risk;
-  const needs =
+  const consequential =
     risk === 'exec' || risk === 'destructive'
     // A new shell that runs a line is running a shell line.
     || (action === 'tab.open' && !!command)
-    // Adding a worktree widens what Jarvis may act in: the person decides (D1).
-    || (action === 'focus.edit' && (a.op === 'delete' || a.op === 'add'))
-    // A wake turn must not start or question agents on its own: wakes cannot loop.
-    || (o.wake && ((action === 'tab.open' && a.mode !== 'shell') || action === 'agent.ask'));
+    // Adding a worktree widens what Jarvis may act in (D1).
+    || (action === 'focus.edit' && (a.op === 'delete' || a.op === 'add'));
+  // A wake turn must not start or question agents on its own: wakes cannot loop.
+  const loop = o.wake && ((action === 'tab.open' && a.mode !== 'shell') || action === 'agent.ask');
+  const needs = loop || !!danger || (o.ask && consequential);
   return needs ? (danger ? { danger } : {}) : null;
 }

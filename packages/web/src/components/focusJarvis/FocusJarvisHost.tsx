@@ -178,6 +178,7 @@ export const ERRORS = {
   approve: "Couldn't record your answer. The card shows where it stands now.",
   stop: "Couldn't stop Jarvis.",
   older: "Couldn't load earlier messages.",
+  settings: "Couldn't change the model or effort.",
 } as const;
 
 const refuseNav = () => { throw new Error('Jarvis does not move the window'); };
@@ -223,6 +224,7 @@ function MainView({ host, onOpenCard, start }: { host: Host; onOpenCard: OpenCar
       onSend={(text) => report(chat.send(text), ERRORS.send)}
       onStop={() => quiet(report(chat.stop(), ERRORS.stop))}
       onLoadOlder={() => quiet(report(chat.loadOlder(), ERRORS.older))}
+      onSettings={(s) => quiet(report(chat.setSettings(s), ERRORS.settings))}
       agents={host.agents} worktrees={host.worktrees} start={start} />
   );
 }

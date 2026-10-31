@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type React from 'react';
 import { PlusIcon } from './icons';
 import { tabKeyOf } from '../../hooks/tabOrder';
@@ -63,6 +63,19 @@ export function TabStrip<T extends StripTab>({
 }) {
   const [renamingGroup, setRenamingGroup] = useState<{ index: number; value: string } | null>(null);
   const groupOf = (key: string) => splitGroups.find((group) => group.keys.includes(key));
+  // A tab that just opened slides in. Only one added beside tabs already here:
+  // switching worktrees swaps the whole set, and that shouldn't animate.
+  const prevKeys = useRef<Set<string> | null>(null);
+  const keys = new Set(tabs.map((e) => tabKeyOf(e.tab)));
+  const prev = prevKeys.current;
+  const entering = prev && [...prev].some((k) => keys.has(k)) ? new Set([...keys].filter((k) => !prev.has(k))) : new Set<string>();
+  prevKeys.current = keys;
+  const animated = useRef(new Set<string>());
+  const enterRef = (key: string, el: HTMLElement | null) => {
+    if (!el || !entering.has(key) || animated.current.has(key)) return;
+    animated.current.add(key);
+    animateTabIn(el);
+  };
   const byKey = new Map(tabs.map((e) => [tabKeyOf(e.tab), e]));
   // One item per tab, except a drawn group's members: the group, once, where its first member was.
   type Item = { kind: 'tab'; entry: StripEntry<T> } | { kind: 'group'; group: TabGroup; members: StripEntry<T>[] };
@@ -111,7 +124,7 @@ export function TabStrip<T extends StripTab>({
         data-in-split={isInSplit || undefined}
         data-split-group={splitGroup?.layoutIndex}
         data-agent-state={state ?? undefined}
-        ref={(el) => tabEl(tKey, el)}
+        ref={(el) => { tabEl(tKey, el); enterRef(tKey, el); }}
         onPointerDown={(e) => { if (!isRenaming) pointer.down(e, tKey); }}
         onPointerMove={pointer.move}
         onPointerUp={pointer.up}
@@ -264,4 +277,32 @@ export function TabStrip<T extends StripTab>({
       </button>
     </div>
   );
+}
+
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** A new tab grows open from nothing and fades in. */
+function animateTabIn(el: HTMLElement) {
+  if (typeof el.animate !== 'function' || reducedMotion()) return;
+  const width = el.getBoundingClientRect().width;
+  if (!width) return;
+  el.animate(
+    [{ maxWidth: '0px', opacity: 0, overflow: 'hidden' }, { maxWidth: `${width}px`, opacity: 1, overflow: 'hidden' }],
+    { duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' },
+  );
+}
+
+/** A closing tab shrinks to nothing and fades before it's removed, so the tabs
+ * after it slide over instead of jumping. Resolves when done
+ * with an undo, for a tab that turned out to stay; null when it can't animate. */
+export function animateTabOut(key: string): Promise<() => void> | null {
+  const el = typeof document !== 'undefined' ? document.querySelector<HTMLElement>(`[data-tab-key="${CSS.escape(key)}"]`) : null;
+  if (!el || typeof el.animate !== 'function' || reducedMotion()) return null;
+  const width = el.getBoundingClientRect().width;
+  const a = el.animate(
+    [{ maxWidth: `${width}px`, opacity: 1, overflow: 'hidden' }, { maxWidth: '0px', opacity: 0, paddingRight: '0px', overflow: 'hidden' }],
+    { duration: 100, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
+  );
+  const undo = () => a.cancel();
+  return a.finished.then(() => undo, () => undo);
 }

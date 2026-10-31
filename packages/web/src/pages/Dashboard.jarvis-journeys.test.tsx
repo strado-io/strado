@@ -249,6 +249,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   it('home → "open FD-9 and run dev": the worktree opens, its dev server starts, the keyboard stays in the box (now in the Dock)', async () => {
+    localStorage.setItem('strado:show-dock', 'true'); // the bottom bar keeps the keyboard; the ⌘K dialog closes after a run
     const { api } = await import('../api');
     askModel.mockResolvedValueOnce(plan({ action: 'nav.worktree', args: { name: 'FD-9' } }, { action: 'server.start', args: {} }));
     renderDashboard();
@@ -280,6 +281,7 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
   });
 
   it('"open usage": the Usage page shows and the keyboard stays in the box', async () => {
+    localStorage.setItem('strado:show-dock', 'true'); // the bottom bar keeps the keyboard; the ⌘K dialog closes after a run
     askModel.mockResolvedValueOnce(plan({ action: 'nav.page', args: { page: 'usage' } }));
     renderDashboard();
     await home();
@@ -314,14 +316,16 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     expect(await screen.findByTestId('settings-page')).toBeInTheDocument();
     const bar = screen.getByTestId('settings-command-bar');
     expect(bar).toHaveAttribute('data-collapsed', 'true');
-    expect(bar.className).toMatch(/\bh-0\b/);
+    expect(within(bar).getByTestId('dock').className).toMatch(/\bh-0\b/);
   });
 
   it('voice: hold ⌥Space on home, speak, release → the words wait in the box; ⏎ runs them as if typed', async () => {
-    let listener: ((e: StradoVoiceEvent) => void) | null = null;
+    // Every subscriber hears each event, as with the real bridge (ipcRenderer.on).
+    const listeners = new Set<(e: StradoVoiceEvent) => void>();
+    const listener = (e: StradoVoiceEvent) => listeners.forEach((l) => l(e));
     const voice = {
       available: true, start: vi.fn(), stop: vi.fn(), cancel: vi.fn(),
-      onEvent: (cb: (e: StradoVoiceEvent) => void) => { listener = cb; return () => { listener = null; }; },
+      onEvent: (cb: (e: StradoVoiceEvent) => void) => { listeners.add(cb); return () => { listeners.delete(cb); }; },
     };
     (window as unknown as { strado?: unknown }).strado = { voice };
     try {
@@ -331,12 +335,12 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
       fireEvent.keyDown(document.body, { key: ' ', code: 'Space', altKey: true });
       expect(voice.start).toHaveBeenCalledWith(expect.arrayContaining(['FD-9']));
       expect(screen.getByText('Listening…')).toBeInTheDocument();
-      act(() => { listener?.({ type: 'partial', text: 'open' }); });
-      act(() => { listener?.({ type: 'partial', text: 'open FD-9' }); });
+      act(() => { listener({ type: 'partial', text: 'open' }); });
+      act(() => { listener({ type: 'partial', text: 'open FD-9' }); });
       expect(box()).toHaveValue('open FD-9');
       fireEvent.keyUp(window, { key: ' ', code: 'Space' });
       expect(voice.stop).toHaveBeenCalled();
-      act(() => { listener?.({ type: 'final', text: 'open FD-9' }); });
+      act(() => { listener({ type: 'final', text: 'open FD-9' }); });
       expect(box()).toHaveValue('open FD-9');
       // The model may be asked ahead (so ⏎ is quick), but nothing runs until ⏎.
       await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
@@ -626,10 +630,12 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
     });
 
     it('spoken (hold ⌥Space): the answer shows below the big box', async () => {
-      let listener: ((e: StradoVoiceEvent) => void) | null = null;
+      // Every subscriber hears each event, as with the real bridge (ipcRenderer.on).
+      const listeners = new Set<(e: StradoVoiceEvent) => void>();
+      const listener = (e: StradoVoiceEvent) => listeners.forEach((l) => l(e));
       const voice = {
         available: true, start: vi.fn(), stop: vi.fn(), cancel: vi.fn(),
-        onEvent: (cb: (e: StradoVoiceEvent) => void) => { listener = cb; return () => { listener = null; }; },
+        onEvent: (cb: (e: StradoVoiceEvent) => void) => { listeners.add(cb); return () => { listeners.delete(cb); }; },
       };
       (window as unknown as { strado?: unknown }).strado = { voice };
       try {
@@ -637,9 +643,9 @@ describe('Jarvis journeys (the box, end to end against fake ports)', () => {
         renderDashboard();
         await home();
         fireEvent.keyDown(document.body, { key: ' ', code: 'Space', altKey: true });
-        act(() => { listener?.({ type: 'partial', text: 'Can you open the sidebar' }); });
+        act(() => { listener({ type: 'partial', text: 'Can you open the sidebar' }); });
         fireEvent.keyUp(window, { key: ' ', code: 'Space' });
-        act(() => { listener?.({ type: 'final', text: 'Can you open the sidebar' }); });
+        act(() => { listener({ type: 'final', text: 'Can you open the sidebar' }); });
         fireEvent.keyDown(box(), { key: 'Enter' });
         expect(await screen.findByText('The sidebar is the list on the left.')).toBeInTheDocument();
       } finally {

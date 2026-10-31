@@ -38,7 +38,7 @@ function fakeChild(lines: string[], code = 0, opts: { hold?: boolean } = {}) {
   return { child, input: () => input, killed: () => killed };
 }
 
-const base = { cwd: '/j/f1', resume: null, systemPrompt: 'You are Jarvis.', mcpConfigPath: '/j/f1/mcp.json', env: { PATH: '/bin' } };
+const base = { agent: 'claude' as const, mcp: { command: 'node', args: ['/h/strado-mcp.mjs'], env: {} }, cwd: '/j/f1', resume: null, systemPrompt: 'You are Jarvis.', mcpConfigPath: '/j/f1/mcp.json', env: { PATH: '/bin' } };
 
 async function collect(it: AsyncIterable<HeadlessEvent>) {
   const out: HeadlessEvent[] = [];
@@ -88,6 +88,15 @@ describe('runClaudeHeadless', () => {
     expect(argv.slice(i + 1, i + 1 + jarvisAllowedTools().length)).toEqual(jarvisAllowedTools());
     expect(jarvisAllowedTools().every((t) => t.startsWith('mcp__strado__jarvis_'))).toBe(true);
     expect(claudeArgv(base)).not.toContain('--resume');
+  });
+
+  it('argv: the Focus\'s model and effort when set; none of either at the default', () => {
+    const argv = claudeArgv({ ...base, model: 'opus', effort: 'high' });
+    expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+    expect(argv[argv.indexOf('--effort') + 1]).toBe('high');
+    const plain = claudeArgv({ ...base, model: null, effort: null });
+    expect(plain).not.toContain('--model');
+    expect(plain).not.toContain('--effort');
   });
 
   it('streams the recorded turn and sends the prompt on stdin', async () => {

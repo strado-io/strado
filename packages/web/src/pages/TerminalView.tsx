@@ -52,19 +52,21 @@ import {
   PlayIcon, PlusIcon, ReloadIcon, ScreenIcon, ShellIcon, StopIcon, TrashIcon,
 } from '../components/hub/icons';
 import { PROC_COLOR, type ProcState } from '../components/hub/shared';
-import { TabStrip, TabTile } from '../components/hub/TabStrip';
+import { TabStrip, TabTile, animateTabOut } from '../components/hub/TabStrip';
 import { stateOf as stationState } from '../lib/dock/stations';
 import { useTickets, ticketRef } from '../hooks/tickets';
 import { applyTabOrder, readActiveTab, readTabOrder, rememberActiveTab, rememberTabOrder, tabKeyOf } from '../hooks/tabOrder';
 import { agentTabStatus, shellHostedAgent } from '../hooks/agentTabStatus';
 import {
-  dockLeaf, hasLeaf, leafKeys, placeLeaf, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
+  dockLeaf, hasLeaf, homeOf, leafKeys, placeLeaf, pruneLeaves, readPaneLayouts, rememberPaneLayouts,
   removeLeaf, replaceLeaf, splitLeaf, withRatio, carryNames, groupName, withGroupName, type PaneDockSide, type PaneNode,
 } from '../hooks/paneLayout';
 import { localizeRemoteUrl, useRemoteForward } from '../hooks/remoteForward';
 import { PaneCard } from '../components/hub/PaneCard';
+import { FLOAT_MIN, clampFloat, nextFloatBox, readPaneFloats, rememberPaneFloats, type PaneFloat } from '../hooks/paneFloats';
 import { KIND_ICON } from '../components/hub/TabTile';
-import { PaneLayout } from '../components/hub/PaneLayout';
+import { PaneLayout, animatePaneOut, animatePaneZoom } from '../components/hub/PaneLayout';
+import { beginLayoutMotion, holdNativeViews, isLayoutMoving, isNativeHeld, onLayoutMotion, onLayoutSettled, onNativeHold } from '../lib/layoutMotion';
 import { OpenSurface, type NewSessionOption } from '../components/hub/OpenSurface';
 import { useHubDisplayPreferences } from '../hooks/useHubDisplayPreferences';
 import { XtermPane, type PtyTab, type RemoteTarget } from '../components/XtermPane';
@@ -463,6 +465,29 @@ function DevtoolsDockPane({
   );
 }
 
+// Each preview's latest snapshot, kept across remounts (a float minimized
+// and back): it stands in for the live page while the card moves.
+const browserSnaps = new Map<string, string>();
+// How far up a parked page is put when the desktop can't park it in place
+// (an older desktop build, without the park action).
+const PARK_Y = 20000;
+// Park in place (hidden where it is, keeping its last frame) or, on an
+// older desktop, hide it off the window. Resolves true when parked in place.
+let parkInPlace: boolean | null = null;
+const parkPreview = async (path: string): Promise<boolean> => {
+  const bridge = window.strado;
+  if (!bridge?.preview) return false;
+  if (parkInPlace !== false) {
+    const ok = await bridge.preview('park', path);
+    parkInPlace = ok === true;
+    if (parkInPlace) return true;
+  }
+  await bridge.preview('hide', path);
+  return false;
+};
+const unparkPreview = (path: string, bounds: StradoBounds) =>
+  parkInPlace ? window.strado?.preview?.('unpark', path, { bounds }) : window.strado?.preview?.('open', path, { bounds });
+
 // Placeholder for a Browser preview: the page itself renders in a
 // main-process WebContentsView (see main.cjs for why a <webview> cannot do
 // this job). Mounted only while its tab is visible; the view survives
@@ -472,6 +497,7 @@ function BrowserPreviewPane({
   initialUrl,
   suppressed,
   immediateSuppress = false,
+  covered = false,
   onReady,
 }: {
   path: string;
@@ -479,21 +505,61 @@ function BrowserPreviewPane({
   suppressed: boolean;
   /** Tab drags must park the native view before the pointer crosses it. */
   immediateSuppress?: boolean;
+  /** Something in front overlaps it (a float above, a minimized pill): the
+   *  native page would paint over that, so its snapshot shows instead. */
+  covered?: boolean;
   onReady: (wcId: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // frozen frame shown while the native view is detached (menus/tooltips
   // paint above the placeholder) — otherwise the pane goes black
   const [freeze, setFreeze] = useState<string | null>(null);
+  // While its card animates or is dragged (see holdNativeViews), the live
+  // page is parked and its last snapshot stands in: plain DOM, so it fades,
+  // scales and slides with the card. The native view can do none of that.
+  const snapRef = useRef<HTMLImageElement>(null);
+  const parked = useRef(false);
+  const coveredRef = useRef(covered);
+  coveredRef.current = covered;
+  const parkedNow = () => isLayoutMoving() || isNativeHeld() || coveredRef.current;
+  // Always drawn, under the live page (a native view paints above all of
+  // the page, so it's never seen until the page parks): shown only when
+  // parking, it painted a couple of frames late and the pane flashed empty.
+  const loadSnap = (src: string | undefined) => {
+    const img = snapRef.current;
+    if (!img || !src || img.getAttribute('src') === src) return;
+    img.src = src;
+    void img.decode?.().catch(() => undefined);
+  };
+  const showSnap = (src: string | undefined) => loadSnap(src);
+  const coverRef = useRef<(on: boolean) => void>(() => undefined);
+  useEffect(() => { coverRef.current(covered); }, [covered]);
+  const grabSnap = () => {
+    void window.strado?.preview?.('thumb', path).then((r) => {
+      if (typeof r !== 'string' || !r.startsWith('data:')) return;
+      browserSnaps.set(path, r);
+      if (parked.current) showSnap(r);
+      else loadSnap(r);
+    }, () => undefined);
+  };
   useEffect(() => {
     const el = ref.current;
     const bridge = window.strado;
     if (!el || !bridge?.preview) return;
+    // Mounting mid-motion (a float coming back): the page opens parked
+    // offscreen and its snapshot shows until the card is in place.
+    parked.current = parkedNow();
+    const at = elementBounds(el);
+    if (parked.current) {
+      showSnap(browserSnaps.get(path));
+      grabSnap();
+    }
     void bridge
-      .preview('open', path, { url: initialUrl, bounds: elementBounds(el) })
+      .preview('open', path, { url: initialUrl, parked: parked.current, bounds: parked.current && parkInPlace === false ? { ...at, y: at.y - PARK_Y } : at })
       .then((wcId) => {
         if (typeof wcId === 'number') onReady(wcId);
       });
+    if (parked.current) void parkPreview(path);
     return () => {
       void bridge.preview?.('hide', path);
     };
@@ -524,12 +590,73 @@ function BrowserPreviewPane({
         });
     } else {
       setFreeze(null);
-      void bridge.preview('open', path, { bounds: elementBounds(el) });
+      if (!parked.current) void bridge.preview('open', path, { bounds: elementBounds(el) });
     }
     return () => {
       stale = true;
     };
   }, [suppressed, immediateSuppress, path]);
+  // Park for a motion or a hold; back, at the exact box, once it's over. The
+  // snapshot goes a couple of frames after the page is back on screen, so
+  // there's never a gap between them.
+  useEffect(() => {
+    const el = ref.current;
+    const bridge = window.strado;
+    if (!el || !bridge?.preview || suppressed) return;
+    const park = () => {
+      if (parked.current) return;
+      const snap = browserSnaps.get(path);
+      if (!snap) return; // nothing to stand in: the live page stays, as before
+      parked.current = true;
+      showSnap(snap);
+      void parkPreview(path);
+    };
+    // Covered: a fresh snapshot first (the page is still live, so it's a
+    // true one), then park.
+    const cover = () => {
+      if (parked.current) return;
+      void window.strado?.preview?.('thumb', path).then((r) => {
+        if (typeof r === 'string' && r.startsWith('data:')) { browserSnaps.set(path, r); loadSnap(r); }
+        if (coveredRef.current) park();
+      }, () => { if (coveredRef.current) park(); });
+    };
+    coverRef.current = (on: boolean) => (on ? cover() : unpark());
+    // Sized while still off screen, then a beat to lay out and paint at that
+    // size: brought on screen at a new size straight away, the page showed
+    // white until it repainted.
+    let settling = 0;
+    const unpark = () => {
+      if (!parked.current || parkedNow()) return;
+      window.clearTimeout(settling);
+      void bridge.preview?.('bounds', path, elementBounds(el));
+      settling = window.setTimeout(() => {
+        if (!parked.current || parkedNow()) return;
+        parked.current = false;
+        void unparkPreview(path, elementBounds(el));
+        // The next motion starts from how it looks now (zoomed, resized).
+        window.setTimeout(() => { if (!parked.current) grabSnap(); }, 350);
+      }, 90);
+    };
+    if (coveredRef.current) cover();
+    const offMotion = onLayoutMotion(park);
+    const offSettled = onLayoutSettled(unpark);
+    const offHold = onNativeHold((held) => (held ? park() : unpark()));
+    if (parked.current) unpark(); // mounted parked, and it's already over
+    // A fresh snapshot now and then, while the page is on screen.
+    loadSnap(browserSnaps.get(path));
+    const first = window.setTimeout(() => { if (!parked.current) grabSnap(); }, 700);
+    const iv = window.setInterval(() => { if (!parked.current) grabSnap(); }, 4000);
+    return () => {
+      offMotion();
+      offSettled();
+      offHold();
+      coverRef.current = () => undefined;
+      window.clearTimeout(settling);
+      window.clearTimeout(first);
+      window.clearInterval(iv);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suppressed, path]);
   // self-healing: whatever detaches the view without our knowledge, the
   // heartbeat re-asserts attachment (idempotent in main) within ~2s
   useEffect(() => {
@@ -538,13 +665,14 @@ function BrowserPreviewPane({
     const bridge = window.strado;
     if (!el || !bridge?.preview) return;
     const iv = window.setInterval(() => {
-      void bridge.preview?.('open', path, { bounds: elementBounds(el) });
+      if (!parked.current) void bridge.preview?.('open', path, { bounds: elementBounds(el) });
     }, 2000);
     return () => window.clearInterval(iv);
   }, [suppressed, path]);
-  useBoundsSync(ref, (b) => void window.strado?.preview?.('bounds', path, b));
+  useBoundsSync(ref, (b) => { if (!parked.current) void window.strado?.preview?.('bounds', path, b); });
   return (
     <div ref={ref} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-zinc-950">
+      <img ref={snapRef} alt="" decoding="sync" data-preview-snap className={`pointer-events-none absolute inset-0 h-full w-full object-cover object-top ${suppressed && freeze ? 'invisible' : ''}`} />
       {suppressed && freeze && (
         <img src={freeze} alt="" className="h-full w-full object-cover object-top" />
       )}
@@ -668,6 +796,20 @@ export function TerminalView({
       return next;
     });
     rememberPaneLayouts(path, splits);
+  };
+  // Floating panes, per worktree: tabs lifted out of the layout into cards over it.
+  const [paneFloats, setPaneFloats] = useState<Record<string, PaneFloat[]>>(readPaneFloats);
+  const paneFloatsRef = useRef(paneFloats);
+  paneFloatsRef.current = paneFloats;
+  const setFloats = (path: string, list: PaneFloat[]) => {
+    paneFloatsRef.current = { ...paneFloatsRef.current, [path]: list };
+    setPaneFloats((prev) => {
+      const next = { ...prev };
+      if (list.length > 0) next[path] = list;
+      else delete next[path];
+      return next;
+    });
+    rememberPaneFloats(path, list);
   };
 
   useEffect(() => {
@@ -1481,6 +1623,9 @@ export function TerminalView({
     path === worktree.path
       ? tabs.find((entry) => tabKeyOf(entry.tab) === key)?.tab ?? null
       : null;
+  const [newPaneKey, setNewPaneKey] = useState<string | null>(null);
+  const newPaneSeqRef = useRef(0);
+  const pendingSurfaceRef = useRef<{ placeholder: string; path: string } | null>(null);
   const layouts = paneLayouts[worktree.path] ?? [];
   const splitGroups = layouts.map((node, layoutIndex) => ({
     node,
@@ -1488,22 +1633,62 @@ export function TerminalView({
     tabs: tabs.filter((entry) => hasLeaf(node, tabKeyOf(entry.tab))),
   }));
   const splitTabKeys = new Set(splitGroups.flatMap((group) => group.tabs.map((entry) => tabKeyOf(entry.tab))));
-  // Each layout is one conceptual tab group. Keep every group's members
-  // contiguous, then show normal full-size tabs after the grouped segments.
+  // Each layout is one conceptual tab group, its members kept together where
+  // its first one already sat: splitting never moves tabs around the strip.
+  // Floating tabs: lifted out of the layout into cards over it (see paneFloats).
+  const floats = (paneFloats[worktree.path] ?? []).filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
+  const floatKeys = new Set(floats.map((f) => f.key));
+  // A floating tab lives only as its card (or pill); docked back, it returns to its place.
+  const stripTabs = tabs.filter((entry) => !floatKeys.has(tabKeyOf(entry.tab)));
   const displayedTabs = layouts.length > 0
-    ? [
-        ...splitGroups.flatMap((group) => group.tabs),
-        ...tabs.filter((entry) => !splitTabKeys.has(tabKeyOf(entry.tab))),
-      ]
-    : tabs;
+    ? stripTabs.flatMap((entry) => {
+        const key = tabKeyOf(entry.tab);
+        if (!splitTabKeys.has(key)) return [entry];
+        const group = splitGroups.find((g) => g.tabs.some((t) => tabKeyOf(t.tab) === key))!;
+        return tabKeyOf(group.tabs[0]!.tab) === key ? group.tabs : [];
+      })
+    : stripTabs;
   // The rendered tree: an explicit split layout when its tab group is active,
   // or the active dockable tab as an implicit single pane. A tab removed from a
   // split is deliberately outside `layout`, so selecting it gives it the full
   // surface while the remaining tiled layout stays available from its tabs.
-  const activePaneKey = tabKeyOf(active);
+  // Floating tabs draw over the tiled area; when the active tab is one, the
+  // tiled area keeps showing what was under it (the last tiled tab you were on).
+  // Minimized ones are pills in the corner: out of the tiled area and not drawn.
+  const shownFloats = floats.filter((f) => !f.min);
+  // Drawn in a fixed order: bringing one to the front changes only its
+  // z-index. Re-ordering the elements moved the one under the pointer in the
+  // DOM, which drops its pointer capture mid-drag.
+  const drawnFloats = [...shownFloats].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  // A float on its way down keeps drawing while its pill holds its place, unseen.
+  const [minimizing, setMinimizing] = useState<string | null>(null);
+  // Oldest in the corner; a newly minimized one lines up to its left, so the
+  // pills already there never move.
+  const minimized = floats.filter((f) => f.min || f.key === minimizing)
+    .sort((a, b) => (a.key === minimizing ? Infinity : a.minAt ?? 0) - (b.key === minimizing ? Infinity : b.minAt ?? 0));
+  const focusedKey = tabKeyOf(active);
+  const lastTiledRef = useRef<string | null>(null);
+  const tiledOk = (key: string | null): key is string => !!key && !floatKeys.has(key) && tabs.some((t) => tabKeyOf(t.tab) === key);
+  const activePaneKey = !floatKeys.has(focusedKey) ? focusedKey
+    : tiledOk(lastTiledRef.current) ? lastTiledRef.current
+    : nearestTiled(tabs.map((t) => tabKeyOf(t.tab)), focusedKey, floatKeys);
+  if (!floatKeys.has(focusedKey)) lastTiledRef.current = focusedKey;
   const activeLayoutIndex = layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey));
-  const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]! : null;
-  const paneTree: PaneNode = layout ?? { kind: 'leaf', key: activePaneKey };
+  // A choice made in an empty pane: until the layout effect below swaps the new
+  // tab in, draw it there already. Otherwise it renders full-size for a frame
+  // (a whole-surface terminal, then the split animating in all over again).
+  const pending = pendingSurfaceRef.current;
+  const pendingIndex = activeLayoutIndex < 0 && pending?.path === worktree.path && active.path === worktree.path
+    ? layouts.findIndex((candidate) => hasLeaf(candidate, pending.placeholder)) : -1;
+  const layout = activeLayoutIndex >= 0 ? layouts[activeLayoutIndex]!
+    : pendingIndex >= 0 ? replaceLeaf(layouts[pendingIndex]!, pending!.placeholder, activePaneKey) : null;
+  // Zoom: one pane of a split (or a float) fills the whole area for now; the
+  // layout itself is untouched, so unzooming brings everything back as it was.
+  const [zoomKey, setZoomKey] = useState<string | null>(null);
+  const zoomed = zoomKey && tabs.some((t) => tabKeyOf(t.tab) === zoomKey) ? zoomKey : null;
+  const paneTree: PaneNode = zoomed && layout && hasLeaf(layout, zoomed)
+    ? { kind: 'leaf', key: zoomed }
+    : layout ?? { kind: 'leaf', key: activePaneKey };
   // Mount a PTY surface the first time its tab/group is shown, then retain it
   // until the tab closes. The flat persistent layer below prevents switching
   // groups from tearing down xterm and reconnecting its WebSocket.
@@ -1514,7 +1699,10 @@ export function TerminalView({
   for (const key of mountedPtyKeysRef.current) {
     if (!livePtyKeys.has(key)) mountedPtyKeysRef.current.delete(key);
   }
-  for (const key of leafKeys(paneTree)) {
+  // Every pane on screen: the tiled tree's, then the floating ones.
+  const viewKeys = [...leafKeys(paneTree), ...shownFloats.map((f) => f.key)];
+  const inView = (key: string) => hasLeaf(paneTree, key) || shownFloats.some((f) => f.key === key);
+  for (const key of viewKeys) {
     const tab = keyToTab(worktree.path, key);
     if (tab && isPtyMode(tab.mode)) mountedPtyKeysRef.current.add(key);
   }
@@ -1592,6 +1780,8 @@ export function TerminalView({
     width: number;
     height: number;
   }>>({});
+  const paneRectsRef = useRef(paneRects);
+  paneRectsRef.current = paneRects;
 
   const openPaneAsFullTab = (tab: Tab) => {
     const current = paneLayoutsRef.current[worktree.path] ?? [];
@@ -1606,9 +1796,6 @@ export function TerminalView({
   // `new:` placeholder leaf) holding "Open a surface", the + menu's kinds.
   // A choice runs exactly as the + menu would; the tab it makes active then
   // takes the placeholder's place. Esc / ✕ / focus leaving drop the pane.
-  const [newPaneKey, setNewPaneKey] = useState<string | null>(null);
-  const newPaneSeqRef = useRef(0);
-  const pendingSurfaceRef = useRef<{ placeholder: string; path: string } | null>(null);
   const withoutLeaf = (nodes: PaneNode[], key: string) => nodes
     .map((node) => (hasLeaf(node, key) ? removeLeaf(node, key) : node))
     .filter((node): node is PaneNode => node?.kind === 'split');
@@ -1682,7 +1869,7 @@ export function TerminalView({
     for (const tab of members) await requestCloseTabRef.current(tab);
   };
 
-  const renderLeaf = (key: string): React.ReactNode => {
+  const renderLeaf = (key: string, floating = false): React.ReactNode => {
     if (key === newPaneKey) {
       return (
         <PaneCard
@@ -1717,8 +1904,8 @@ export function TerminalView({
     if (!tab) return null;
     const entry = tabs.find((t) => tabKeyOf(t.tab) === key);
     const label = entry?.label ?? key;
-    const docked = !!layout && hasLeaf(layout, key);
-    const canSplit = tab.path === worktree.path;
+    const docked = !floating && !!layout && hasLeaf(layout, key);
+    const canSplit = !floating && tab.path === worktree.path;
     return (
       <PaneCard
         key={key}
@@ -1730,6 +1917,7 @@ export function TerminalView({
         icon={<TabTile mode={tab.mode} icon={entry?.icon} />}
         focused={!newPaneKey && sameTab(active, tab)}
         docked={docked}
+        floating={floating}
         hostRef={(el) => {
           if (el) paneLeafElsRef.current.set(key, el);
           else paneLeafElsRef.current.delete(key);
@@ -1742,6 +1930,12 @@ export function TerminalView({
         onSplitRight={canSplit ? () => openEmptyPane(tab, 'row') : undefined}
         onSplitDown={canSplit ? () => openEmptyPane(tab, 'col') : undefined}
         onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
+        onFloat={canSplit && zoomed !== key ? () => floatPane(tab) : undefined}
+        onDock={floating && zoomed !== key ? () => unfloat(key) : undefined}
+        onMinimize={floating ? () => minimizeFloat(key) : undefined}
+        onZoom={docked || floating || zoomed === key ? () => toggleZoom(key) : undefined}
+        zoomed={zoomed === key}
+        onHeaderPointerDown={floating ? (e) => startFloatDrag(e, key, 'move') : undefined}
         onClose={() => { void requestCloseTab(tab); }}
       />
     );
@@ -1751,20 +1945,47 @@ export function TerminalView({
   // layer, then align over their tree leaf. This is essential for Browser's
   // native WebContentsView bounds and prevents the KB's selected document,
   // filter and scroll state from resetting whenever layout focus changes.
-  const paneTreeSignature = JSON.stringify(paneTree);
+  const paneTreeSignature = JSON.stringify([paneTree, floats]);
+  // Re-measure now (a floating pane let go after a drag moved it).
+  const remeasureRef = useRef<() => void>(() => {});
   useEffect(() => {
     const surface = paneSurfaceRef.current;
     if (!surface) {
       setPaneRects((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
+    // A float mid pop, minimize or drag is moved by a transform its surface
+    // carries too: measured as drawn, the surface would move twice. Its box
+    // comes from layout instead (offsets don't see transforms), so the
+    // surface still follows the card if the box itself changes meanwhile.
+    const transformedCard = (key: string) => {
+      const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+      return card && (card.style.transform || card.getAnimations?.().some((a) => a.playState !== 'idle'
+        && (a.effect as KeyframeEffect | null)?.getKeyframes?.().some((k) => 'transform' in k))) ? card : null;
+    };
+    const layoutRect = (el: HTMLElement, card: HTMLElement) => {
+      const stop = card.offsetParent as HTMLElement | null;
+      if (!stop) return null;
+      let x = 0;
+      let y = 0;
+      for (let n: HTMLElement | null = el; n && n !== stop; ) {
+        x += n.offsetLeft;
+        y += n.offsetTop;
+        const p = n.offsetParent as HTMLElement | null;
+        if (p && p !== stop) { x += p.clientLeft; y += p.clientTop; }
+        n = p;
+      }
+      const base = stop.getBoundingClientRect();
+      return { left: base.left + stop.clientLeft + x, top: base.top + stop.clientTop + y, width: el.offsetWidth, height: el.offsetHeight };
+    };
     const apply = () => {
       const outer = surface.getBoundingClientRect();
       const next: typeof paneRects = {};
-      for (const key of leafKeys(paneTree)) {
+      for (const key of viewKeys) {
         const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
         if (!el) continue;
-        const rect = el.getBoundingClientRect();
+        const card = transformedCard(key);
+        const rect = (card && layoutRect(el, card)) ?? el.getBoundingClientRect();
         next[key] = {
           left: rect.left - outer.left,
           top: rect.top - outer.top,
@@ -1772,6 +1993,22 @@ export function TerminalView({
           height: rect.height,
         };
       }
+      // While panes animate (a split springing open, one shutting), move the
+      // live surfaces straight on the DOM: setting state here re-rendered the
+      // whole hub every frame. The settled layout commits to state once.
+      const prevRects = paneRectsRef.current;
+      const sameKeys = Object.keys(next).length === Object.keys(prevRects).length && Object.keys(next).every((key) => key in prevRects);
+      for (const [key, r] of Object.entries(next)) {
+        if (!(key in prevRects) || r === prevRects[key]) continue;
+        for (const el of document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`)) {
+          if (el.classList.contains('hidden')) continue;
+          el.style.left = `${r.left}px`;
+          el.style.top = `${r.top}px`;
+          el.style.width = `${r.width}px`;
+          el.style.height = `${r.height}px`;
+        }
+      }
+      if (sameKeys && isLayoutMoving()) return;
       setPaneRects((prev) => {
         const keys = Object.keys(next);
         if (
@@ -1790,16 +2027,34 @@ export function TerminalView({
     // panes on their slots. Deferred a frame, they trailed every resize (the
     // sidebar sliding shook the Changes pane, then it snapped into place).
     const sync = () => flushSync(apply);
+    remeasureRef.current = sync;
+    const offSettled = onLayoutSettled(sync);
+    // A box that only moves (a pane sliding over as its neighbour grows, a
+    // float easing out) never trips the observer: follow it every frame
+    // while the layout is in motion. rAF runs after animations tick, so the
+    // measure reads this frame's boxes.
+    let frame = 0;
+    const follow = () => {
+      frame = 0;
+      if (!isLayoutMoving()) return;
+      apply();
+      frame = requestAnimationFrame(follow);
+    };
+    const offMotion = onLayoutMotion(() => { if (!frame) frame = requestAnimationFrame(follow); });
+    if (isLayoutMoving()) frame = requestAnimationFrame(follow);
     apply();
     const ro = new ResizeObserver(sync);
     ro.observe(surface);
-    for (const key of leafKeys(paneTree)) {
+    for (const key of viewKeys) {
       const el = paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key);
       if (el) ro.observe(el);
     }
     window.addEventListener('resize', sync);
     return () => {
       ro.disconnect();
+      offSettled();
+      offMotion();
+      cancelAnimationFrame(frame);
       window.removeEventListener('resize', sync);
     };
     // paneTreeSignature captures leaf membership, nesting and live ratios.
@@ -2114,6 +2369,7 @@ export function TerminalView({
     const dragged = keyToTab(worktree.path, draggedKey);
     if (!dragged) return null;
     for (const [targetKey, el] of paneLeafElsRef.current) {
+      if (targetKey === draggedKey || floatKeys.has(targetKey)) continue;
       const rect = el.getBoundingClientRect();
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
       const distances: Array<[PaneDockSide, number]> = [
@@ -2132,6 +2388,391 @@ export function TerminalView({
     }
     return null;
   };
+
+  // Docks a dragged tab (or floating pane) on a side of the pane under it.
+  const dockAt = (drop: NonNullable<ReturnType<typeof paneDropAt>>) => {
+    const current = paneLayoutsRef.current[worktree.path] ?? [];
+    const targetIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.targetKey));
+    const sourceIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.draggedKey));
+    const targetBase = targetIndex >= 0
+      ? current[targetIndex]!
+      : { kind: 'leaf', key: drop.targetKey } satisfies PaneNode;
+    const docked = dockLeaf(targetBase, drop.draggedKey, drop.targetKey, drop.side);
+    if (docked === targetBase) return;
+    const next: PaneNode[] = [];
+    current.forEach((candidate, index) => {
+      if (index === targetIndex) next.push(docked);
+      else if (index === sourceIndex) {
+        const pruned = removeLeaf(candidate, drop.draggedKey);
+        if (pruned?.kind === 'split') next.push(pruned);
+      } else next.push(candidate);
+    });
+    if (targetIndex < 0) next.push(docked);
+    setLayouts(worktree.path, next);
+    const tab = keyToTab(worktree.path, drop.draggedKey);
+    if (tab) setActive(tab);
+  };
+
+  // ── Floating panes ──────────────────────────────────────────────────────
+  const floatPopRef = useRef<string | null>(null);
+  // A float about to pop in (floated, restored): native views hold until the
+  // pop is done (released there, or after a beat if it never runs).
+  const popHoldRef = useRef(new Map<string, () => void>());
+  const holdForPop = (key: string) => {
+    popHoldRef.current.get(key)?.();
+    const release = holdNativeViews();
+    const done = () => { release(); if (popHoldRef.current.get(key) === done) popHoldRef.current.delete(key); };
+    popHoldRef.current.set(key, done);
+    window.setTimeout(done, 900);
+  };
+  const floatPane = (tab: Tab) => {
+    const key = tabKeyOf(tab);
+    const current = paneLayoutsRef.current[worktree.path] ?? [];
+    const index = current.findIndex((l) => hasLeaf(l, key));
+    const home = index >= 0 ? homeOf(current[index]!, key) ?? undefined : undefined;
+    // Its old (tiled) box would place the surface there for a frame: wait for the float's.
+    setPaneRects((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (index >= 0) {
+      // What stays tiled is what the area shows: the pane beside it.
+      const rest = removeLeaf(current[index]!, key);
+      if (rest) lastTiledRef.current = leafKeys(rest)[0] ?? null;
+      setLayouts(worktree.path, withoutLeaf(current, key));
+    } else if (lastTiledRef.current === key) {
+      lastTiledRef.current = null;
+    }
+    const list = (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key);
+    setFloats(worktree.path, [...list, { ...nextFloatBox(key, list), home }]);
+    holdForPop(key);
+    floatPopRef.current = key;
+    setActive(tab);
+  };
+  // A float zooms by easing its box out to the whole area (and back).
+  const [floatZoomAnim, setFloatZoomAnim] = useState<string | null>(null);
+  const easeFloatBox = (key: string) => {
+    setFloatZoomAnim(key);
+    beginLayoutMotion(260);
+    window.setTimeout(() => setFloatZoomAnim((k) => (k === key ? null : k)), 300);
+  };
+  const toggleZoom = (key: string) => {
+    if (minimizing === key) return;
+    const tab = keyToTab(worktree.path, key);
+    if (tab && !sameTab(active, tab)) setActive(tab);
+    const floating = floatKeys.has(key);
+    if (zoomed === key) {
+      if (floating) easeFloatBox(key);
+      setZoomKey(null);
+      return;
+    }
+    if (floating) {
+      easeFloatBox(key);
+      setZoomKey(key);
+      return;
+    }
+    const going = animatePaneZoom(paneLeafElsRef.current.get(key));
+    // The swap commits before the fades are dropped: undone first, the
+    // hidden panes' terminals showed for a frame.
+    if (going) void going.then((undo) => { flushSync(() => setZoomKey(key)); undo(); });
+    else setZoomKey(key);
+  };
+  const dockFloat = (key: string) => {
+    if (minimizing === key) unminimizeRef.current?.(true);
+    // Its surface stays as the tiled pane: no float pop left on it.
+    for (const el of document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`)) el.getAnimations?.().forEach((a) => a.cancel());
+    setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
+  };
+  // Dock: back where it floated from — beside the same pane, same side — or,
+  // if that pane is gone (or it was a full tab), back as a tab in its old place.
+  const unfloat = (key: string) => {
+    const home = (paneFloatsRef.current[worktree.path] ?? []).find((f) => f.key === key)?.home;
+    dockFloat(key);
+    if (home && !floatKeys.has(home.target) && keyToTab(worktree.path, home.target)) {
+      dockAt({ draggedKey: key, targetKey: home.target, side: home.side, rect: { left: 0, top: 0, width: 0, height: 0 } });
+      return;
+    }
+    const tab = keyToTab(worktree.path, key);
+    if (tab) setActive(tab);
+  };
+  const setMin = (key: string, min: boolean) =>
+    setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).map((f) => (f.key === key ? { ...f, min, minAt: min ? Date.now() : undefined } : f)));
+  // Minimize: its pill takes its place in the corner (unseen), then the card
+  // and its surface fly into exactly that box; then the pill shows and the
+  // keyboard goes back to the tiled pane.
+  const minimizeFloat = (key: string) => setMinimizing(key);
+  // Brought back while still flying into its pill: the flight plays backwards.
+  // `snap`: docked or closed mid-flight, so no way back to play: drop it at once.
+  const unminimizeRef = useRef<((snap?: boolean) => void) | null>(null);
+  useLayoutEffect(() => {
+    const key = minimizing;
+    if (!key) return;
+    const done = () => {
+      setMinimizing(null);
+      setMin(key, true);
+      if (focusedKey === key) {
+        const under = keyToTab(worktree.path, activePaneKey);
+        if (under) setActive(under);
+      }
+    };
+    const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+    const pill = document.querySelector<HTMLElement>(`[data-float-pill="${CSS.escape(key)}"]`);
+    if (!card || !pill || typeof card.animate !== 'function'
+      || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
+    // Minimized mid zoom-ease: land the box first. Left running under the
+    // flight, the card slid on while its surface stayed put.
+    const easing = card.getAnimations?.().filter((a) => typeof CSSTransition !== 'undefined' && a instanceof CSSTransition) ?? [];
+    if (easing.length) {
+      easing.forEach((a) => a.finish());
+      remeasureRef.current();
+    }
+    const to = pill.getBoundingClientRect();
+    // One transform for the card and everything drawn over it (its live
+    // surface, its grip), each pivoting on the card's corner: they shrink as
+    // one piece. Mapped separately, the terminal drifted off its card.
+    const els = [card, ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"], [data-float-grip="${CSS.escape(key)}"]`)];
+    // Minimized while still fading in from a restore: carry on from how
+    // visible it is now. Started from fully opaque, it flashed bright first.
+    const start = els.map((el) => Math.min(1, +getComputedStyle(el).opacity || 0));
+    floatPopRef.current = null;
+    for (const el of els) {
+      el.getAnimations?.().forEach((a) => a.cancel());
+      el.style.opacity = '';
+    }
+    // A native page on it (the Browser) can't shrink with it: a snapshot flies instead.
+    const releaseHold = holdNativeViews();
+    // Measured once its fade-in is gone, so the box is the card's own.
+    const from = card.getBoundingClientRect();
+    const sx = to.width / from.width;
+    const sy = to.height / from.height;
+    const move = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${sx}, ${sy})`;
+    const anims = els.map((el, i) => {
+      const r = el.getBoundingClientRect();
+      const origin = `${from.left - r.left}px ${from.top - r.top}px`;
+      const o = start[i]!;
+      return el.animate(
+        [
+          { transformOrigin: origin, transform: 'none', opacity: o },
+          { transformOrigin: origin, opacity: o, offset: 0.93 },
+          { transformOrigin: origin, transform: move, opacity: 0 },
+        ],
+        { duration: 240, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' },
+      );
+    });
+    let undone = false;
+    unminimizeRef.current = (snap) => {
+      undone = true;
+      unminimizeRef.current = null;
+      setMinimizing(null);
+      if (snap) { anims.forEach((a) => a.cancel()); releaseHold(); return; }
+      anims.forEach((a) => a.reverse());
+      // Back where it started: from however faded it was, up to full.
+      void Promise.all(anims.map((a) => a.finished)).then(() => {
+        // Played back to its start, it's as faded as when the minimize began.
+        const ops = start;
+        anims.forEach((a) => a.cancel());
+        els.forEach((el, i) => { if (ops[i]! < 0.99) el.animate([{ opacity: ops[i] }, { opacity: 1 }], { duration: 140, easing: 'cubic-bezier(0.2, 0, 0, 1)' }); });
+        remeasureRef.current();
+        releaseHold();
+      }, releaseHold);
+    };
+    void Promise.all(anims.map((a) => a.finished)).then(() => {
+      if (undone) return;
+      unminimizeRef.current = null;
+      done();
+      // After the pane is gone: let go now and the live page came back for
+      // a moment at the pill's size.
+      requestAnimationFrame(() => requestAnimationFrame(releaseHold));
+      // Drawn hidden now; drop the end state so a restore starts clean.
+      requestAnimationFrame(() => anims.forEach((a) => a.cancel()));
+    }, () => { if (!undone) { unminimizeRef.current = null; done(); releaseHold(); } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minimizing]);
+  const restoreFloat = (key: string) => {
+    if (minimizing === key && unminimizeRef.current) {
+      unminimizeRef.current();
+      const tab = keyToTab(worktree.path, key);
+      if (tab) setActive(tab);
+      return;
+    }
+    holdForPop(key);
+    setMin(key, false);
+    floatPopRef.current = key;
+    const tab = keyToTab(worktree.path, key);
+    if (tab) setActive(tab);
+  };
+  // A floating pane just appeared: it rises into place, card and live surface
+  // together. Both are drawn transparent until then (see popStyle): the
+  // surface is placed a render after the card, and the card alone for that
+  // frame was an empty flash.
+  useLayoutEffect(() => {
+    const key = floatPopRef.current;
+    if (!key || !paneRects[key]) return;
+    floatPopRef.current = null;
+    const els = [
+      document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`),
+      ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`),
+    ];
+    for (const el of els) if (el) el.style.opacity = '';
+    const releaseHold = () => popHoldRef.current.get(key)?.();
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return releaseHold();
+    // All of it pivots on the card's centre, so the surface scales with the
+    // card instead of drifting about its own.
+    const box = els[0]?.getBoundingClientRect();
+    const pops = els.map((el) => {
+      if (!el?.animate) return null;
+      const r = el.getBoundingClientRect();
+      const transformOrigin = box ? `${box.left + box.width / 2 - r.left}px ${box.top + box.height / 2 - r.top}px` : 'center';
+      return el.animate(
+        [{ transformOrigin, opacity: 0, transform: 'translateY(10px) scale(0.96)' }, { transformOrigin, opacity: 1, transform: 'none' }],
+        { duration: 260, easing: 'linear(0, 0.2 6%, 0.51 13%, 0.78 21%, 0.95 29%, 1.03 37%, 1.04 44%, 1.025 52%, 1.008 62%, 0.999 74%, 1)' },
+      );
+    }).filter((a): a is Animation => !!a);
+    // Measured while it scaled, its surface kept its box: take its own now.
+    void Promise.all(pops.map((a) => a.finished)).then(() => { remeasureRef.current(); releaseHold(); }, releaseHold);
+  }, [paneRects]);
+  const popStyle = (key: string, style: React.CSSProperties | undefined): React.CSSProperties | undefined =>
+    style && floatPopRef.current === key ? { ...style, opacity: 0 } : style;
+  // Floats stack in list order (the last one you were on is last, on top).
+  // Each gets its own pair of layers, its card and just above it its live
+  // surface, so a float's surface never covers another float's card.
+  const floatZ = (key: string) => {
+    const i = shownFloats.findIndex((f) => f.key === key);
+    return i < 0 ? null : 20 + 2 * i;
+  };
+  // Browser panes something in front overlaps (a float stacked above it, a
+  // minimized pill): their native page would paint over it. Measured after
+  // every layout; it changes rarely, so state only moves when the set does.
+  const [coveredKeys, setCoveredKeys] = useState<ReadonlySet<string>>(() => new Set());
+  useLayoutEffect(() => {
+    const over = (a: DOMRect, b: DOMRect | undefined) =>
+      !!b && b.width > 0 && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const next = viewKeys.filter((key) => {
+      if (!key.startsWith('browser:')) return false;
+      const r = (paneBodyElsRef.current.get(key) ?? paneLeafElsRef.current.get(key))?.getBoundingClientRect();
+      if (!r) return false;
+      const mine = floatZ(key) ?? 0;
+      return shownFloats.some((f) => f.key !== key && (floatZ(f.key) ?? 0) > mine
+          && over(r, document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(f.key)}"]`)?.getBoundingClientRect()))
+        || [...document.querySelectorAll<HTMLElement>('[data-float-pill]')].some((p) => over(r, p.getBoundingClientRect()));
+    });
+    setCoveredKeys((prev) => (next.length === prev.size && next.every((k) => prev.has(k)) ? prev : new Set(next)));
+  });
+  const surfaceStyle = (key: string, style: React.CSSProperties | undefined) => {
+    const z = floatZ(key);
+    return popStyle(key, style && z !== null ? { ...style, zIndex: z + 1 } : style);
+  };
+  // Move a floating pane by its header, or resize it by its corner. The card
+  // and its live surface move together by transform (no re-render per frame);
+  // the box is committed on release. Over another pane, the dock preview shows
+  // and letting go docks it there.
+  const startFloatDrag = (e: React.PointerEvent<HTMLElement>, key: string, grab: 'move' | 'resize') => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+    const area = card?.parentElement?.getBoundingClientRect();
+    const box = (paneFloatsRef.current[worktree.path] ?? []).find((f) => f.key === key);
+    if (!card || !area || !box) return;
+    // Three gestures: the header moves the card (never docks); its name (the
+    // dock handle) picks the pane up to dock it, the card staying put while a
+    // chip of its name follows the pointer and the dock preview shows; the
+    // corner resizes.
+    const dockHandle = grab === 'move' ? (e.target as HTMLElement).closest<HTMLElement>('[data-dock-handle]') : null;
+    const mode: 'move' | 'resize' | 'dock' = dockHandle ? 'dock' : grab;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    try { handle.setPointerCapture(e.pointerId); } catch { /* pointer gone */ }
+    const surfaces = [
+      ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"]`),
+      ...document.querySelectorAll<HTMLElement>(`[data-float-grip="${CSS.escape(key)}"]`),
+    ];
+    const start = { x: e.clientX, y: e.clientY };
+    const startPx = { w: box.w * area.width, h: box.h * area.height };
+    // React owns the card's width/height (percentages): put back exactly what was there.
+    const own = { w: card.style.width, h: card.style.height };
+    let drop: ReturnType<typeof paneDropAt> = null;
+    let chip: HTMLElement | null = null;
+    // Moved or resized, a native page on it is held: a snapshot travels with the card.
+    let releaseHold: (() => void) | null = null;
+    let dx = 0;
+    let dy = 0;
+    const onMove = (ev: PointerEvent) => {
+      dx = ev.clientX - start.x;
+      dy = ev.clientY - start.y;
+      if (mode !== 'dock' && !releaseHold && Math.hypot(dx, dy) >= 2) releaseHold = holdNativeViews();
+      if (mode === 'move') {
+        for (const el of [card, ...surfaces]) el.style.transform = `translate(${dx}px, ${dy}px)`;
+      } else if (mode === 'dock') {
+        if (!chip) {
+          if (Math.hypot(dx, dy) < 4) return; // a click on the name, not a drag
+          // The pane's name, lifted: a small chip under the pointer (plain DOM, no re-render per move).
+          chip = document.createElement('div');
+          chip.className = 'pane-floating glass pointer-events-none fixed z-[300] flex h-8 items-center gap-2 rounded-lg pl-2 pr-3 text-[12.5px] font-semibold text-zinc-200';
+          chip.innerHTML = dockHandle!.innerHTML;
+          document.body.appendChild(chip);
+          chip.animate?.([{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }], { duration: 120, easing: 'ease-out' });
+        }
+        chip.style.left = `${ev.clientX + 10}px`;
+        chip.style.top = `${ev.clientY + 12}px`;
+        const next = paneDropAt(key, ev.clientX, ev.clientY);
+        if (next?.targetKey !== drop?.targetKey || next?.side !== drop?.side) {
+          drop = next;
+          setPaneDrop(next);
+        }
+      } else {
+        card.style.width = `${Math.max(FLOAT_MIN.w, startPx.w + dx)}px`;
+        card.style.height = `${Math.max(FLOAT_MIN.h, startPx.h + dy)}px`;
+      }
+    };
+    const onUp = (ev: PointerEvent) => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      // Let go after the box below has committed and been measured.
+      if (releaseHold) { const r = releaseHold; requestAnimationFrame(() => requestAnimationFrame(r)); }
+      if (mode === 'dock') {
+        chip?.remove();
+        setPaneDrop(null);
+        // Where it's let go, not the last preview: the final move can be
+        // coalesced away, and a cancelled gesture docks nowhere.
+        drop = chip && ev.type === 'pointerup' ? paneDropAt(key, ev.clientX, ev.clientY) : null;
+        if (drop) {
+          dockFloat(key);
+          dockAt(drop);
+        }
+        return;
+      }
+      for (const el of [card, ...surfaces]) el.style.transform = '';
+      card.style.width = own.w;
+      card.style.height = own.h;
+      const list = paneFloatsRef.current[worktree.path] ?? [];
+      const moved = mode === 'move'
+        ? { ...box, x: box.x + dx / area.width, y: box.y + dy / area.height }
+        : { ...box, w: Math.max(FLOAT_MIN.w, startPx.w + dx) / area.width, h: Math.max(FLOAT_MIN.h, startPx.h + dy) / area.height };
+      setFloats(worktree.path, list.map((f) => (f.key === key ? clampFloat(moved) : f)));
+      requestAnimationFrame(() => remeasureRef.current());
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+  // The float you're on comes to the front.
+  useEffect(() => {
+    const list = paneFloatsRef.current[worktree.path] ?? [];
+    const i = list.findIndex((f) => f.key === focusedKey);
+    if (i < 0 || i === list.length - 1) return;
+    setFloats(worktree.path, [...list.slice(0, i), ...list.slice(i + 1), list[i]!]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedKey, worktree.path]);
+  // A floating tab that closed takes its float with it.
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    const list = paneFloatsRef.current[worktree.path] ?? [];
+    const live = list.filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
+    if (live.length !== list.length) setFloats(worktree.path, live);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, worktree.path]);
 
   const tabPointerDown = (e: React.PointerEvent<HTMLElement>, tKey: string) => {
     if (e.button !== 0 || !activeGroup) return;
@@ -2217,28 +2858,7 @@ export function TerminalView({
     setPaneDrop(null);
     setTabDragging(false);
     if (drop) {
-      const current = paneLayoutsRef.current[worktree.path] ?? [];
-      const targetIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.targetKey));
-      const sourceIndex = current.findIndex((candidate) => hasLeaf(candidate, drop.draggedKey));
-      const targetBase = targetIndex >= 0
-        ? current[targetIndex]!
-        : { kind: 'leaf', key: drop.targetKey } satisfies PaneNode;
-      const docked = dockLeaf(targetBase, drop.draggedKey, drop.targetKey, drop.side);
-
-      if (docked !== targetBase) {
-        const next: PaneNode[] = [];
-        current.forEach((candidate, index) => {
-          if (index === targetIndex) next.push(docked);
-          else if (index === sourceIndex) {
-            const pruned = removeLeaf(candidate, drop.draggedKey);
-            if (pruned?.kind === 'split') next.push(pruned);
-          } else next.push(candidate);
-        });
-        if (targetIndex < 0) next.push(docked);
-        setLayouts(worktree.path, next);
-        const tab = keyToTab(worktree.path, drop.draggedKey);
-        if (tab) setActive(tab);
-      }
+      dockAt(drop);
       clearTabDragStyles(d);
       bumpTabOrder();
       return;
@@ -2924,7 +3544,16 @@ export function TerminalView({
       const label = SHELL_HOST_LABEL[tab.mode];
       if (status === 'working' && !confirm(`${label} is still working. Close it anyway?`)) return;
     }
+    // Its tab shrinks out of the strip and, in a split, its pane shuts as the neighbour grows.
+    const key = tabKeyOf(tab);
+    const surface = document.querySelector<HTMLElement>(`[data-testid="terminal-surface-${CSS.escape(key)}"]`);
+    const leaving = [animateTabOut(key), animatePaneOut(paneLeafElsRef.current.get(key), surface)].filter((p) => !!p);
+    const undos = leaving.length ? await Promise.all(leaving) : [];
     closeTab(tab);
+    // The commit that removes it drops the animations (PaneLayout); this is
+    // only for a tab that stayed after all. Not sooner: undone before React
+    // removes it, the pane flashes back for a frame.
+    if (undos.length) window.setTimeout(() => undos.forEach((undo) => undo()), 500);
   };
   closeActiveTabRef.current = () => {
     void requestCloseTab(activeRef.current);
@@ -3581,7 +4210,7 @@ export function TerminalView({
             .filter(({ tab }) => isPtyMode(tab.mode) && mountedPtyKeysRef.current.has(tabKeyOf(tab)))
             .map(({ tab }) => {
               const paneKey = tabKeyOf(tab);
-              const shown = hasLeaf(paneTree, paneKey);
+              const shown = inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               const focused = placed && sameTab(active, tab);
@@ -3589,8 +4218,9 @@ export function TerminalView({
                 <div
                   key={`pty:${paneKey}`}
                   data-testid={`terminal-surface-${paneKey}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
-                  style={placement}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                 >
                   <XtermPane
                     wsId={wsId}
@@ -3614,7 +4244,7 @@ export function TerminalView({
               .map(({ g, bid }) => {
                 const pk = previewKey(g.path, bid);
                 const paneKey = tabKeyOf({ mode: 'browser', id: bid });
-                const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+                const shown = g.path === worktree.path && inView(paneKey);
                 const placement = dockedSurfaceStyle(paneKey);
                 const placed = shown && !!placement;
                 const url = resolvedBrowserUrl(pk, g.path);
@@ -3646,8 +4276,9 @@ export function TerminalView({
                   <div
                     key={`bw:${pk}`}
                     data-testid={`browser-pane-${bid}`}
-                    className={placed ? 'z-10 flex flex-col overflow-hidden bg-pane-card' : 'hidden'}
-                    style={placement}
+                    data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} flex flex-col overflow-hidden bg-pane-card` : 'hidden'}
+                    style={surfaceStyle(paneKey, placement)}
                     onPointerDownCapture={() => {
                       if (!sameTab(active, { path: g.path, mode: 'browser', id: bid })) {
                         setActive({ path: g.path, mode: 'browser', id: bid });
@@ -3748,6 +4379,7 @@ export function TerminalView({
                           initialUrl={url}
                           suppressed={overlayUp}
                           immediateSuppress={tabDragging}
+                          covered={coveredKeys.has(paneKey) && !sameTab(active, { path: g.path, mode: 'browser', id: bid })}
                           onReady={(wcId) => setPreviewIds((prev) => ({ ...prev, [pk]: wcId }))}
                         />
                       )}
@@ -3800,7 +4432,7 @@ export function TerminalView({
             .flatMap((g) => [...(g.kbOpen ? ['1'] : []), ...g.kbIds.filter((id) => id !== '1')].map((id) => ({ g, id })))
             .map(({ g, id }) => {
               const paneKey = tabKeyOf({ mode: 'kb', id });
-              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted so the selected doc and scroll position survive
@@ -3809,8 +4441,9 @@ export function TerminalView({
                 <div
                   key={`kb-${g.path}-${id}`}
                   data-testid={id === '1' ? `kb-pane-${g.path}` : `kb-pane-${g.path}-${id}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
-                  style={placement}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'kb', id })) {
                       setActive({ path: g.path, mode: 'kb', id });
@@ -3843,7 +4476,7 @@ export function TerminalView({
             .filter((g) => g.diffOpen && !g.remote)
             .map((g) => {
               const paneKey = tabKeyOf({ mode: 'diff', id: '1' });
-              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted like the KB: the selected file and scroll survive tab switches.
@@ -3851,8 +4484,9 @@ export function TerminalView({
                 <div
                   key={`diff-${g.path}`}
                   data-testid={`diff-pane-${g.path}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
-                  style={placement}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'diff', id: '1' })) setActive({ path: g.path, mode: 'diff', id: '1' });
                   }}
@@ -3870,7 +4504,7 @@ export function TerminalView({
             .filter((g) => g.filesOpen)
             .map((g) => {
               const paneKey = tabKeyOf({ mode: 'files', id: '1' });
-              const shown = g.path === worktree.path && hasLeaf(paneTree, paneKey);
+              const shown = g.path === worktree.path && inView(paneKey);
               const placement = dockedSurfaceStyle(paneKey);
               const placed = shown && !!placement;
               // Kept mounted like Changes: the open folders, file and scroll survive tab switches.
@@ -3878,8 +4512,9 @@ export function TerminalView({
                 <div
                   key={`files-${g.path}`}
                   data-testid={`files-pane-${g.path}`}
-                  className={placed ? 'z-10 overflow-hidden bg-pane-card' : 'hidden'}
-                  style={placement}
+                  data-surface-key={paneKey}
+                  className={placed ? `${floatKeys.has(paneKey) ? '' : 'z-10'} overflow-hidden bg-pane-card` : 'hidden'}
+                  style={surfaceStyle(paneKey, placement)}
                   onPointerDownCapture={() => {
                     if (!sameTab(active, { path: g.path, mode: 'files', id: '1' })) setActive({ path: g.path, mode: 'files', id: '1' });
                   }}
@@ -3898,6 +4533,58 @@ export function TerminalView({
             })}
         <div data-testid="xterm-pane" className="relative h-full w-full p-2">
           <PaneLayout node={paneTree} renderLeaf={renderLeaf} onDividerPointerDown={startDividerDrag} />
+          {drawnFloats.map((f) => (
+            <div
+              key={`float:${f.key}`}
+              data-float-key={f.key}
+              className="absolute"
+              style={popStyle(f.key, {
+                ...(zoomed === f.key
+                  ? { left: 0, top: 0, width: '100%', height: '100%' }
+                  : { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` }),
+                zIndex: floatZ(f.key) ?? 20,
+                ...(floatZoomAnim === f.key ? { transition: 'left 240ms cubic-bezier(0.2,0,0,1), top 240ms cubic-bezier(0.2,0,0,1), width 240ms cubic-bezier(0.2,0,0,1), height 240ms cubic-bezier(0.2,0,0,1)' } : {}),
+              })}
+            >
+              {renderLeaf(f.key, true)}
+            </div>
+          ))}
+          {/* Each float's resize corner, above its live surface (which sits over the card). */}
+          {drawnFloats.map((f) => (
+            <div
+              key={`float-grip:${f.key}`}
+              hidden={zoomed === f.key}
+              data-float-grip={f.key}
+              aria-label="Resize floating pane"
+              onPointerDown={(e) => startFloatDrag(e, f.key, 'resize')}
+              className="absolute -ml-4 -mt-4 h-4 w-4 cursor-nwse-resize"
+              style={{ left: `${(f.x + f.w) * 100}%`, top: `${(f.y + f.h) * 100}%`, zIndex: (floatZ(f.key) ?? 20) + 1 }}
+            />
+          ))}
+          {/* Minimized floats: a pill each in the bottom-right corner; a click brings it back. */}
+          {minimized.length > 0 && (
+            <div className="absolute bottom-4 right-4 z-[200] flex flex-row-reverse gap-2">
+              {minimized.map((f) => {
+                const entry = tabs.find((t) => tabKeyOf(t.tab) === f.key);
+                if (!entry) return null;
+                return (
+                  <button
+                    key={`float-pill:${f.key}`}
+                    type="button"
+                    data-float-pill={f.key}
+                    onClick={() => restoreFloat(f.key)}
+                    style={f.key === minimizing ? { visibility: 'hidden' } : undefined}
+                    title={`Restore ${entry.label}`}
+                    aria-label={`Restore ${entry.label}`}
+                    className="pane-floating glass flex h-9 items-center gap-2 rounded-xl pl-2 pr-3 text-[13px] font-medium text-zinc-200 hover:text-zinc-50"
+                  >
+                    <TabTile mode={entry.tab.mode} icon={entry.icon} />
+                    {entry.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         </div>
       </div>
@@ -3945,4 +4632,16 @@ export function TerminalView({
     </div>
     </SavePromptProvided.Provider>
   );
+}
+
+/** The tab beside `key` in the strip (left first, then right) that isn't floating; '' if none. */
+function nearestTiled(keys: string[], key: string, floating: Set<string>): string {
+  const at = keys.indexOf(key);
+  for (let d = 1; d < keys.length; d++) {
+    for (const i of [at - d, at + d]) {
+      const k = keys[i];
+      if (k !== undefined && !floating.has(k)) return k;
+    }
+  }
+  return keys.find((k) => !floating.has(k)) ?? '';
 }

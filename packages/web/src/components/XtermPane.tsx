@@ -301,6 +301,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
     let term!: Terminal;
     let fit!: FitAddon;
     let dataSub: { dispose(): void } | undefined;
+    let webglFrame = 0;
 
     const buildTerm = () => {
       term = new Terminal({
@@ -431,13 +432,20 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       // No WebGL (or a lost context: Chromium caps live contexts per page and
       // evicts the oldest once many panes are mounted) falls back to the DOM
       // renderer by disposing the addon.
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => webgl.dispose());
-        term.loadAddon(webgl);
-      } catch (err) {
-        console.warn('[terminal] webgl renderer unavailable, using DOM renderer', err);
-      }
+      // A frame later: the WebGL context and its shaders are the costliest part
+      // of a new terminal, and the frame that shows the pane shouldn't pay for them.
+      const built = term;
+      webglFrame = requestAnimationFrame(() => {
+        webglFrame = 0;
+        if (disposed || built !== term) return;
+        try {
+          const webgl = new WebglAddon();
+          webgl.onContextLoss(() => webgl.dispose());
+          term.loadAddon(webgl);
+        } catch (err) {
+          console.warn('[terminal] webgl renderer unavailable, using DOM renderer', err);
+        }
+      });
       // Reads `ws` at keystroke time, so input forwarding follows reconnects.
       dataSub = term.onData((data) => {
         if (parked && !(ws && ws.readyState === WebSocket.OPEN)) {
@@ -614,6 +622,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
         }
         if (!announced) {
           announced = true;
+          // A size sent during setup may have been dropped: send it again even if unchanged.
+          sentSizeRef.current = null;
           if (fitIfVisible()) sendResize();
         }
       };
@@ -720,6 +730,7 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
       settled();
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       cancelAnimationFrame(raf);
+      if (webglFrame) cancelAnimationFrame(webglFrame);
       ro.disconnect();
       offSettled();
       if (resizeTimer) clearTimeout(resizeTimer);
@@ -780,7 +791,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
   return (
     <div
       data-testid={visible ? 'pane-leaf' : undefined}
-      className="relative h-full w-full min-h-0 min-w-0 bg-pane-card"
+      // pane-enter: a new terminal fades in rather than popping.
+      className="pane-enter relative h-full w-full min-h-0 min-w-0 bg-pane-card"
       onPointerDownCapture={onFocus}
       // Drop-to-attach uploads into the LOCAL worktree and types that path, so
       // on a remote pane it would hand the agent a path its machine cannot see.

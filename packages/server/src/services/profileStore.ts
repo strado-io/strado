@@ -15,11 +15,15 @@ const ProfileSchema = z.object({
   jarvisLocalOnly: z.boolean().default(false),
   // Focus Jarvis speaks up (a short wake turn) when an agent it started finishes.
   jarvisWakes: z.boolean().default(true),
+  // Focus Jarvis asks before running a shell line, closing a tab, stopping a
+  // server or widening the Focus. Off: it just does them (a destructive
+  // command still asks).
+  jarvisAsk: z.boolean().default(false),
 });
 
 export type Profile = z.infer<typeof ProfileSchema>;
 
-const DEFAULTS: Profile = { fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false, jarvisWakes: true };
+const DEFAULTS: Profile = { fullName: '', callMe: '', telemetryOptOut: false, jarvisLocalOnly: false, jarvisWakes: true, jarvisAsk: false };
 
 export function profilePath(): string {
   const home = process.env.STRADO_HOME || path.join(os.homedir(), '.strado');

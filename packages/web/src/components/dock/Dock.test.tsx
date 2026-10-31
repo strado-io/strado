@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Dock } from './Dock';
 
@@ -59,5 +59,30 @@ describe('Dock', () => {
   it('shown by default', () => {
     render(<Dock worktree={null}><span /></Dock>);
     expect(screen.getByTestId('dock')).not.toHaveAttribute('data-collapsed');
+  });
+});
+
+describe('Dock hidden (bottom bar off): ⌘K opens it as a dialog mid-window', () => {
+  it('while the box has the keyboard: centred over a backdrop; a press on the backdrop or a blur closes it', () => {
+    render(<Dock worktree={null} collapsed><input aria-label="box" /></Dock>);
+    const dock = screen.getByTestId('dock');
+    expect(dock).not.toHaveAttribute('data-dialog');
+    expect(screen.queryByTestId('dock-backdrop')).toBeNull();
+    const box = screen.getByLabelText('box');
+    act(() => box.focus());
+    expect(dock).toHaveAttribute('data-dialog', 'true');
+    expect(dock.className).toMatch(/fixed.*left-1\/2.*top-\[14vh\]/);
+    // Just the box: no location line in the dialog.
+    expect(screen.queryByTestId('dock-location')).toBeNull();
+    expect(box).toHaveFocus();
+    fireEvent.mouseDown(screen.getByTestId('dock-backdrop'));
+    expect(box).not.toHaveFocus();
+    expect(dock).not.toHaveAttribute('data-dialog');
+  });
+  it('with the bottom bar on, focus changes nothing: it stays the bottom row', () => {
+    render(<Dock worktree={null}><input aria-label="box" /></Dock>);
+    act(() => screen.getByLabelText('box').focus());
+    expect(screen.getByTestId('dock')).not.toHaveAttribute('data-dialog');
+    expect(screen.queryByTestId('dock-backdrop')).toBeNull();
   });
 });

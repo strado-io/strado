@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { beginLayoutMotion, isLayoutMoving, onLayoutSettled } from './layoutMotion';
+import { beginLayoutMotion, holdNativeViews, isLayoutMoving, isNativeHeld, onLayoutMotion, onLayoutSettled, onNativeHold } from './layoutMotion';
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -22,5 +22,35 @@ describe('layoutMotion', () => {
     beginLayoutMotion(10);
     vi.advanceTimersByTime(20);
     expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells motion listeners when a motion starts, not when one is extended', () => {
+    vi.useFakeTimers();
+    const started = vi.fn();
+    const off = onLayoutMotion(started);
+    beginLayoutMotion(300);
+    beginLayoutMotion(300); // overlapping: the same motion, longer
+    expect(started).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(400);
+    beginLayoutMotion(100);
+    expect(started).toHaveBeenCalledTimes(2);
+    off();
+    vi.advanceTimersByTime(200);
+    beginLayoutMotion(100);
+    expect(started).toHaveBeenCalledTimes(2);
+  });
+
+  it('native views are held while any hold is open; a release counts once', () => {
+    const seen: boolean[] = [];
+    const off = onNativeHold((h) => seen.push(h));
+    const a = holdNativeViews();
+    const b = holdNativeViews();
+    a();
+    a();
+    expect(isNativeHeld()).toBe(true);
+    b();
+    expect(isNativeHeld()).toBe(false);
+    expect(seen).toEqual([true, false]);
+    off();
   });
 });

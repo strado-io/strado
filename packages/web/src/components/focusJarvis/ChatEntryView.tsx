@@ -2,6 +2,8 @@ import type { ChatEntry, TabCardRef } from '../../types';
 import { AnswerText } from '../jarvis/AnswerText';
 import { ApprovalCard } from './ApprovalCard';
 import { TabCard } from './TabCard';
+import { useState } from 'react';
+import { EventLine, ToolLine } from './ToolLine';
 import type { ResolvedCard } from './cards';
 
 export type EntryHandlers = {
@@ -11,41 +13,38 @@ export type EntryHandlers = {
   onApprove: (entryId: string, approve: boolean) => Promise<void>;
 };
 
+/** `live`: the turn is still running (a step marked running really is). */
+type ViewProps = { entry: ChatEntry; live?: boolean } & EntryHandlers;
+
 const quiet = 'text-[12px] text-zinc-500';
 
 /** One line of the chat: the person's bubble on the right, Jarvis's reply as
- * plain text, its work as a compact log line (with the tab it opened), an
- * approval, or a note. */
-export function ChatEntryView({ entry, resolve, onOpenCard, onApprove }: { entry: ChatEntry } & EntryHandlers) {
+ * plain text, each step it took as one line with an icon (and the tab it
+ * opened), an approval, or a note. */
+export function ChatEntryView({ entry, live = false, resolve, onOpenCard, onApprove }: ViewProps) {
   switch (entry.type) {
     case 'user':
-      return (
-        <div className="flex justify-end">
-          <div data-testid="jarvis-user" className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-white/10 px-3.5 py-2 text-[13px] text-zinc-100">{entry.text}</div>
-        </div>
-      );
+      return <UserBubble text={entry.text} />;
     case 'jarvis':
       return (
-        <div className="text-[13px] leading-relaxed text-zinc-200" aria-busy={!entry.done}>
+        <div className="text-[14px] leading-relaxed text-zinc-200" aria-busy={!entry.done}>
           <AnswerText text={entry.text} />
         </div>
       );
     case 'action':
-      return (
-        <div className="flex flex-col gap-1.5">
-          <div className={`flex min-w-0 items-baseline gap-1.5 ${quiet}`} data-testid="jarvis-action">
-            <span aria-hidden className={entry.ok ? 'text-emerald-400' : 'text-red-400'}>{entry.ok ? '✓' : '✗'}</span>
-            <span className="truncate">{entry.summary}{entry.error ? ` — ${entry.error}` : ''}</span>
-          </div>
-          {entry.card && <TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard} />}
-        </div>
-      );
+      // A step that opened a tab is that tab's line ("Shell opened shell-5 · ran …"); a failed one keeps its error.
+      if (entry.card && entry.ok) {
+        return <TabCard card={entry.card} resolved={resolve(entry.card)} onOpen={onOpenCard}
+          command={/running `([^`]+)`/.exec(entry.summary)?.[1]} running={entry.state === 'running' && live} />;
+      }
+      return <ToolLine entry={entry} live={live} />;
     case 'approval':
       return <ApprovalCard entry={entry} onApprove={onApprove} />;
     case 'event':
-      return <div className={`text-center ${quiet}`}>{entry.text}</div>;
+      return <EventLine text={entry.text} />;
     case 'agent':
-      return <div className={`text-center ${quiet}`}>Jarvis now runs on {entry.agent === 'claude' ? 'Claude' : entry.agent}</div>;
+      // Not shown: the model button below already says which agent runs Jarvis.
+      return null;
     case 'turn':
       if (entry.state === 'failed') {
         return (
@@ -60,4 +59,30 @@ export function ChatEntryView({ entry, resolve, onOpenCard, onApprove }: { entry
       }
       return null;
   }
+}
+
+/** A long message folds to its first lines; "Show more" opens it, "Show less" folds it again. */
+const LONG_CHARS = 600;
+const LONG_LINES = 10;
+
+/** Your message: a roomy bubble on the right. */
+function UserBubble({ text }: { text: string }) {
+  const long = text.length > LONG_CHARS || text.split('\n').length > LONG_LINES;
+  const [open, setOpen] = useState(false);
+  const folded = long && !open;
+  return (
+    <div className="flex justify-end">
+      <div className="flex max-w-[85%] flex-col rounded-[20px] bg-white/[0.08] px-5 py-3.5">
+        <div data-testid="jarvis-user"
+          className={`whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-100 ${folded ? 'max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]' : ''}`}>
+          {text}
+        </div>
+        {long && (
+          <button type="button" onClick={() => setOpen((o) => !o)} className="mt-2 self-end text-[12px] text-zinc-500 hover:text-zinc-300">
+            {open ? 'Show less' : 'Show more'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }

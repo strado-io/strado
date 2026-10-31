@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import type { ChatEntry, JarvisMeta } from '../../types';
+import type { ChatEntry, JarvisMeta, JarvisSettings } from '../../types';
 import { ChatEntryView, type EntryHandlers } from './ChatEntryView';
+import { ThinkingLine } from './ToolLine';
 import { JarvisComposer, type AgentChip, type WorktreeChip } from './JarvisComposer';
 import type { RecentWorktree } from '../../lib/home/recent';
 import type { Worktree } from '../../types';
@@ -14,9 +15,10 @@ export type JarvisStart = {
   onNewWorktree: () => void;
 };
 
-/** The log as read: within each run of one turn's entries, Jarvis's text
- * first, then what it did (approvals, actions, cards) in their order. Runs
- * stay where they are, so a later message never moves above a turn. */
+/** The log as read, as agents show it: within each run of one turn's
+ * entries, the steps Jarvis took first (in their order), then its answer, then
+ * anything left to settle (an approval, how the turn ended). Runs stay where
+ * they are, so a later message never moves above a turn. */
 export function displayOrder(entries: ChatEntry[]): ChatEntry[] {
   const out: ChatEntry[] = [];
   const turnOf = (e: ChatEntry) => ('turnId' in e ? e.turnId : null);
@@ -25,7 +27,11 @@ export function displayOrder(entries: ChatEntry[]): ChatEntry[] {
     let j = i + 1;
     if (t !== null) while (j < entries.length && turnOf(entries[j]!) === t) j++;
     const run = entries.slice(i, j);
-    out.push(...run.filter((e) => e.type === 'jarvis'), ...run.filter((e) => e.type !== 'jarvis'));
+    out.push(
+      ...run.filter((e) => e.type === 'action'),
+      ...run.filter((e) => e.type === 'jarvis'),
+      ...run.filter((e) => e.type !== 'action' && e.type !== 'jarvis'),
+    );
     i = j;
   }
   return out;
@@ -33,7 +39,7 @@ export function displayOrder(entries: ChatEntry[]): ChatEntry[] {
 
 /** A Focus's Jarvis in the main area, T3 Code style: one centred column, the
  * chat scrolling above, the composer pinned below. */
-export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onLoadOlder, agents, worktrees, start, ...handlers }: {
+export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = null, onSend, onStop, onSettings, onLoadOlder, agents, worktrees, start, ...handlers }: {
   focusName: string;
   /** The empty chat's starting points (none in tests that don't need them). */
   start?: JarvisStart;
@@ -45,6 +51,8 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
   /** Resolves once the server has the message; rejects to keep the draft. */
   onSend: (text: string) => Promise<void>;
   onStop: () => void;
+  /** A model or effort picked in the composer's menu. */
+  onSettings: (settings: JarvisSettings) => void;
   onLoadOlder: () => void;
   agents: AgentChip[];
   worktrees: WorktreeChip[];
@@ -62,10 +70,22 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
   }, [entries]);
   useEffect(() => { pinned.current = true; }, [focusName]);
 
+  const running = Boolean(meta?.running);
+  // Only the newest turn's steps can still be running; an older one left
+  // "running" was cut off.
+  const lastTurn = [...entries].reverse().find((e) => 'turnId' in e);
+  const lastTurnId = lastTurn && 'turnId' in lastTurn ? lastTurn.turnId : null;
+  const live = (e: ChatEntry) => running && 'turnId' in e && e.turnId === lastTurnId;
+  // "Thinking…" while the turn runs and nothing else shows it: no step is
+  // spinning and no answer is streaming in.
+  const thinking = running && !entries.some((e) => live(e) && (
+    (e.type === 'action' && e.state === 'running') || (e.type === 'jarvis' && !e.done)
+  ));
+
   return (
     <section aria-label="Jarvis" className="flex h-full min-h-0 flex-1 flex-col">
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4 px-4 py-6">
+        <div className="mx-auto flex w-full max-w-[820px] flex-col gap-7 px-4 py-6">
           {hasOlder && (
             <button type="button" onClick={onLoadOlder} className="self-center text-[12px] text-zinc-500 hover:text-zinc-300">Earlier messages</button>
           )}
@@ -77,16 +97,69 @@ export function FocusJarvisView({ focusName, entries, meta, hasOlder, error = nu
               {start && <JarvisStartList start={start} />}
             </div>
           )}
-          {displayOrder(entries).map((e) => <ChatEntryView key={e.id} entry={e} {...handlers} />)}
-          {meta?.running && <div aria-live="polite" className="text-[12px] text-zinc-500"><span className="animate-pulse">Working…</span></div>}
+          {blocks(displayOrder(entries).filter(shown), thinking).map((b) => b.kind === 'user'
+            // Room before each message of yours: every exchange reads on its own.
+            ? <div key={b.entry.id} className="mt-6 first:mt-0"><ChatEntryView entry={b.entry} {...handlers} /></div>
+            : (
+              // One reply: its steps, cards and answer, together under your message.
+              <div key={b.entries[0]?.id ?? 'thinking'} data-testid="jarvis-turn" className="flex min-w-0 flex-col gap-3">
+                {groupSteps(b.entries).map((g) => g.length === 1
+                  ? <ChatEntryView key={g[0]!.id} entry={g[0]!} live={live(g[0]!)} {...handlers} />
+                  : (
+                    // A turn's steps sit together, a line each, like any agent's tool calls.
+                    <div key={g[0]!.id} data-testid="jarvis-steps" className="-my-1 flex flex-col gap-0.5">
+                      {g.map((e) => <ChatEntryView key={e.id} entry={e} live={live(e)} {...handlers} />)}
+                    </div>
+                  ))}
+                {b.thinking && <ThinkingLine />}
+              </div>
+            ))}
         </div>
       </div>
-      <div className="mx-auto w-full max-w-[640px] px-4 pb-4">
+      <div className="mx-auto w-full max-w-[820px] px-4 pb-4">
         {error && <div role="alert" className="mb-2 text-[12px] text-red-300">{error}</div>}
-        <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
+        <JarvisComposer running={Boolean(meta?.running)} agent={meta?.agent ?? 'claude'}
+          model={meta?.model ?? null} effort={meta?.effort ?? null} onSettings={onSettings} onSend={onSend} onStop={onStop} agents={agents} worktrees={worktrees} />
       </div>
     </section>
   );
+}
+
+/** Entries that draw something (a running or finished turn marker and the agent switch don't). */
+const shown = (e: ChatEntry) => e.type !== 'agent' && !(e.type === 'turn' && e.state !== 'failed' && e.state !== 'stopped' && e.state !== 'interrupted');
+
+type Block = { kind: 'user'; entry: ChatEntry } | { kind: 'jarvis'; entries: ChatEntry[]; thinking: boolean };
+/** The chat as exchanges: each message of yours, then everything Jarvis did
+ * until the next one as one reply. "Thinking…" goes in the last reply (a new
+ * one if you just sent). */
+function blocks(list: ChatEntry[], thinking: boolean): Block[] {
+  const out: Block[] = [];
+  for (const e of list) {
+    const last = out[out.length - 1];
+    if (e.type === 'user') out.push({ kind: 'user', entry: e });
+    else if (last?.kind === 'jarvis') last.entries.push(e);
+    else out.push({ kind: 'jarvis', entries: [e], thinking: false });
+  }
+  if (thinking) {
+    const last = out[out.length - 1];
+    if (last?.kind === 'jarvis') last.thinking = true;
+    else out.push({ kind: 'jarvis', entries: [], thinking: true });
+  }
+  return out;
+}
+
+/** Entries drawn as one-line steps: actions, decided approvals, agents' reports. */
+const isStep = (e: ChatEntry) => e.type === 'action' || e.type === 'event' || (e.type === 'approval' && e.state !== 'pending');
+
+/** Consecutive steps as one group; everything else on its own. */
+function groupSteps(list: ChatEntry[]): ChatEntry[][] {
+  const out: ChatEntry[][] = [];
+  for (const e of list) {
+    const prev = out[out.length - 1];
+    if (isStep(e) && prev && isStep(prev[0]!)) prev.push(e);
+    else out.push([e]);
+  }
+  return out;
 }
 
 // The home screen's Recent rows, for this Focus only.

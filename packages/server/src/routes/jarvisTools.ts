@@ -313,11 +313,15 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
   scope: (ws: string, focusId: string) => Promise<FocusScope | null>;
   /** Where an approval's exact args wait for Approve (the log's are redacted). */
   approvalArgs: ApprovalArgs;
+  /** Settings › Jarvis asks before acting (default off). */
+  askFirst?: () => Promise<boolean>;
 }): Promise<void> {
   /** Turns that asked for approval: they may not act again (approvals end the
    *  turn). Kept past any turn's 5-minute cap, then forgotten. */
   const waiting = new Map<string, number>();
   const WAITING_MS = 10 * 60_000;
+  // A step's output kept for the chat's expandable line: enough to read, not a log dump.
+  const DETAIL_MAX = 4000;
 
   const turnOf = (req: FastifyRequest): TurnRef => {
     const t = req.headers[JARVIS_TOKEN_HEADER];
@@ -347,13 +351,15 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
     args = resolved;
     const outside = outsideFocus(action, args, await deps.scope(ref.ws, ref.focusId).catch(() => null));
     if (outside) return { text: outside };
+    // Read before the check below: nothing may await between it and the claim.
+    const ask = deps.askFirst ? await deps.askFirst().catch(() => true) : true;
     const t = Date.now();
     for (const [id, at] of waiting) if (t - at > WAITING_MS) waiting.delete(id);
     if (waiting.has(ref.turnId)) return { text: 'An approval is already waiting. End your turn now.' };
     const target = args.target as TabCardRef | undefined;
     const spec = TAB_ARGS[action];
     const summary = summarize(action, target && spec ? { ...args, [spec.arg]: tabWords(target) } : args);
-    const gate = approvalFor(action, args, { wake: ref.wake });
+    const gate = approvalFor(action, args, { wake: ref.wake, ask });
     // Claimed before any await: two parallel gated calls make one card, not two.
     if (gate) waiting.set(ref.turnId, t);
     if (gate) {
@@ -361,10 +367,21 @@ export async function registerJarvisToolRoutes(app: FastifyInstance, deps: {
       deps.approvalArgs.hold(entry.id, args);
       return { text: waitText(entry.id) };
     }
-    const r = await deps.execute({ ...ref, action, args });
-    await log.append(ref.focusId, {
-      type: 'action', turnId: ref.turnId, action, summary, ok: r.ok,
-      ...(r.ok ? {} : { error: r.text }), ...(r.card ? { card: r.card } : {}),
+    // The step shows in the chat as it starts (a spinner), then becomes its result.
+    const running = await log.append(ref.focusId, { type: 'action', turnId: ref.turnId, action, summary, ok: true, state: 'running' });
+    const settle = (patch: { ok: boolean; error?: string; detail?: string; card?: TabCardRef }) =>
+      log.upsert(ref.focusId, { id: running.id, at: running.at, type: 'action', turnId: ref.turnId, action, summary, ...patch });
+    let r: Awaited<ReturnType<typeof deps.execute>>;
+    try {
+      r = await deps.execute({ ...ref, action, args });
+    } catch (err) {
+      await settle({ ok: false, error: (err as Error).message }).catch(() => undefined);
+      throw err;
+    }
+    await settle({
+      ok: r.ok,
+      ...(r.ok ? (r.text ? { detail: r.text.slice(0, DETAIL_MAX) } : {}) : { error: r.text }),
+      ...(r.card ? { card: r.card } : {}),
     });
     // What comes back (an agent's recap, a window's words) is redacted like the prompt.
     return { text: redactChat(r.ok ? r.text || `Done: ${summary}` : `Failed: ${r.text}`) };

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChatEntry } from '../../types';
+import { Mono, StepIcon, StepRow } from './ToolLine';
 
 type Approval = Extract<ChatEntry, { type: 'approval' }>;
 const SETTLED: Record<Approval['state'], string> = { pending: 'Waiting', approved: 'Approved', declined: 'Declined', superseded: 'Skipped' };
@@ -17,21 +18,27 @@ export function ApprovalCard({ entry, onApprove }: { entry: Approval; onApprove:
     setSending(true);
     onApprove(entry.id, yes).catch(() => setSending(false));
   };
+  // Decided: no longer a question, so it reads like any other step, one line.
+  if (!pending) {
+    const failed = /^it failed/i.test(entry.result ?? '');
+    return (
+      <StepRow testId="approval-card" state={entry.state} icon={<StepIcon action={entry.action} />} summary={entry.summary}
+        tone={failed ? 'failed' : entry.state === 'approved' ? 'done' : 'muted'}
+        status={failed ? `${SETTLED[entry.state]} · failed` : SETTLED[entry.state]}
+        body={entry.result ? <Mono text={entry.result} failed={failed} /> : undefined} />
+    );
+  }
   return (
     <div data-testid="approval-card" data-danger={danger}
       className={`rounded-xl border px-3 py-2.5 ${danger ? 'border-red-500/40 bg-red-500/10' : 'glass pane-card'}`}>
       <div className="text-[13px] text-zinc-100">{entry.summary}</div>
       {entry.danger && <div className="mt-0.5 text-[12px] text-red-300">{entry.danger}</div>}
-      {pending ? (
+      {(
         <div className="mt-2 flex gap-2">
           <button type="button" onClick={() => answer(true)} disabled={sending}
             className={`rounded-md px-3 py-1 text-[12px] font-medium ${danger ? 'bg-red-500/80 text-white hover:bg-red-500' : 'bg-zinc-100 text-zinc-900 hover:bg-white'}`}>Approve</button>
           <button type="button" onClick={() => answer(false)} disabled={sending}
             className="rounded-md px-3 py-1 text-[12px] text-zinc-300 hover:bg-white/10">No</button>
-        </div>
-      ) : (
-        <div className="mt-1 text-[12px] text-zinc-500">
-          {SETTLED[entry.state]}{entry.result ? ` · ${entry.result}` : ''}
         </div>
       )}
     </div>
