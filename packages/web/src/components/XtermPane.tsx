@@ -614,6 +614,8 @@ export function XtermPane({ wsId, tab, focused, visible = true, onFocus, onOpenF
         }
         if (!announced) {
           announced = true;
+          // A size sent during setup may have been dropped: send it again even if unchanged.
+          sentSizeRef.current = null;
           if (fitIfVisible()) sendResize();
         }
       };
