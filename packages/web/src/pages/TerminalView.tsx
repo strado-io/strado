@@ -1524,12 +1524,15 @@ export function TerminalView({
   // tiled area keeps showing what was under it (the last tiled tab you were on).
   const floats = (paneFloats[worktree.path] ?? []).filter((f) => tabs.some((t) => tabKeyOf(t.tab) === f.key));
   const floatKeys = new Set(floats.map((f) => f.key));
+  // Minimized ones are pills in the corner: out of the tiled area and not drawn.
+  const shownFloats = floats.filter((f) => !f.min);
+  const minimized = floats.filter((f) => f.min);
   const focusedKey = tabKeyOf(active);
   const lastTiledRef = useRef<string | null>(null);
   const tiledOk = (key: string | null): key is string => !!key && !floatKeys.has(key) && tabs.some((t) => tabKeyOf(t.tab) === key);
   const activePaneKey = !floatKeys.has(focusedKey) ? focusedKey
     : tiledOk(lastTiledRef.current) ? lastTiledRef.current
-    : tabs.map((t) => tabKeyOf(t.tab)).find((key) => !floatKeys.has(key)) ?? '';
+    : nearestTiled(tabs.map((t) => tabKeyOf(t.tab)), focusedKey, floatKeys);
   if (!floatKeys.has(focusedKey)) lastTiledRef.current = focusedKey;
   const activeLayoutIndex = layouts.findIndex((candidate) => hasLeaf(candidate, activePaneKey));
   // A choice made in an empty pane: until the layout effect below swaps the new
@@ -1552,8 +1555,8 @@ export function TerminalView({
     if (!livePtyKeys.has(key)) mountedPtyKeysRef.current.delete(key);
   }
   // Every pane on screen: the tiled tree's, then the floating ones.
-  const viewKeys = [...leafKeys(paneTree), ...floatKeys];
-  const inView = (key: string) => hasLeaf(paneTree, key) || floatKeys.has(key);
+  const viewKeys = [...leafKeys(paneTree), ...shownFloats.map((f) => f.key)];
+  const inView = (key: string) => hasLeaf(paneTree, key) || shownFloats.some((f) => f.key === key);
   for (const key of viewKeys) {
     const tab = keyToTab(worktree.path, key);
     if (tab && isPtyMode(tab.mode)) mountedPtyKeysRef.current.add(key);
@@ -1782,6 +1785,7 @@ export function TerminalView({
         onFullTab={docked ? () => openPaneAsFullTab(tab) : undefined}
         onFloat={canSplit ? () => floatPane(tab) : undefined}
         onDock={floating ? () => dockFloat(key) : undefined}
+        onMinimize={floating ? () => minimizeFloat(key) : undefined}
         onHeaderPointerDown={floating ? (e) => startFloatDrag(e, key, 'move') : undefined}
         onClose={() => { void requestCloseTab(tab); }}
       />
@@ -2223,6 +2227,42 @@ export function TerminalView({
   };
   const dockFloat = (key: string) => {
     setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).filter((f) => f.key !== key));
+  };
+  const setMin = (key: string, min: boolean) =>
+    setFloats(worktree.path, (paneFloatsRef.current[worktree.path] ?? []).map((f) => (f.key === key ? { ...f, min } : f)));
+  // Minimize: the card and its surface shrink off toward the corner, then it
+  // becomes a pill there, and the keyboard goes back to the tiled pane.
+  const minimizeFloat = (key: string) => {
+    const card = document.querySelector<HTMLElement>(`[data-float-key="${CSS.escape(key)}"]`);
+    const area = card?.parentElement?.getBoundingClientRect();
+    const box = card?.getBoundingClientRect();
+    const done = () => {
+      setMin(key, true);
+      if (focusedKey === key) {
+        const under = keyToTab(worktree.path, activePaneKey);
+        if (under) setActive(under);
+      }
+    };
+    if (!card || !area || !box || typeof card.animate !== 'function'
+      || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
+    const dx = area.right - 24 - (box.left + box.width / 2);
+    const dy = area.bottom - 24 - (box.top + box.height / 2);
+    const els = [card, ...document.querySelectorAll<HTMLElement>(`[data-surface-key="${CSS.escape(key)}"], [data-float-grip="${CSS.escape(key)}"]`)];
+    const anims = els.map((el) => el.animate(
+      [{ transform: 'none', opacity: 1 }, { transform: `translate(${dx}px, ${dy}px) scale(0.08)`, opacity: 0 }],
+      { duration: 200, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
+    ));
+    void Promise.all(anims.map((a) => a.finished)).then(() => {
+      done();
+      // Drawn hidden now; drop the end state so a restore starts clean.
+      requestAnimationFrame(() => anims.forEach((a) => a.cancel()));
+    }, done);
+  };
+  const restoreFloat = (key: string) => {
+    setMin(key, false);
+    floatPopRef.current = key;
+    const tab = keyToTab(worktree.path, key);
+    if (tab) setActive(tab);
   };
   // A floating pane just appeared: it rises into place, card and live surface together.
   useEffect(() => {
@@ -4079,7 +4119,7 @@ export function TerminalView({
             })}
         <div data-testid="xterm-pane" className="relative h-full w-full p-2">
           <PaneLayout node={paneTree} renderLeaf={renderLeaf} onDividerPointerDown={startDividerDrag} />
-          {floats.map((f) => (
+          {shownFloats.map((f) => (
             <div
               key={`float:${f.key}`}
               data-float-key={f.key}
@@ -4090,7 +4130,7 @@ export function TerminalView({
             </div>
           ))}
           {/* Each float's resize corner, above its live surface (which sits over the card). */}
-          {floats.map((f) => (
+          {shownFloats.map((f) => (
             <div
               key={`float-grip:${f.key}`}
               data-float-grip={f.key}
@@ -4100,6 +4140,29 @@ export function TerminalView({
               style={{ left: `${(f.x + f.w) * 100}%`, top: `${(f.y + f.h) * 100}%` }}
             />
           ))}
+          {/* Minimized floats: a pill each in the bottom-right corner; a click brings it back. */}
+          {minimized.length > 0 && (
+            <div className="absolute bottom-4 right-4 z-40 flex flex-row-reverse gap-2">
+              {minimized.map((f) => {
+                const entry = tabs.find((t) => tabKeyOf(t.tab) === f.key);
+                if (!entry) return null;
+                return (
+                  <button
+                    key={`float-pill:${f.key}`}
+                    type="button"
+                    data-float-pill={f.key}
+                    onClick={() => restoreFloat(f.key)}
+                    title={`Restore ${entry.label}`}
+                    aria-label={`Restore ${entry.label}`}
+                    className="pane-floating float-pill glass flex h-9 items-center gap-2 rounded-xl pl-2 pr-3 text-[13px] font-medium text-zinc-200 hover:text-zinc-50"
+                  >
+                    <TabTile mode={entry.tab.mode} icon={entry.icon} />
+                    {entry.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         </div>
       </div>
@@ -4147,4 +4210,16 @@ export function TerminalView({
     </div>
     </SavePromptProvided.Provider>
   );
+}
+
+/** The tab beside `key` in the strip (left first, then right) that isn't floating; '' if none. */
+function nearestTiled(keys: string[], key: string, floating: Set<string>): string {
+  const at = keys.indexOf(key);
+  for (let d = 1; d < keys.length; d++) {
+    for (const i of [at - d, at + d]) {
+      const k = keys[i];
+      if (k !== undefined && !floating.has(k)) return k;
+    }
+  }
+  return keys.find((k) => !floating.has(k)) ?? '';
 }

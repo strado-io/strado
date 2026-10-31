@@ -7,7 +7,7 @@ import { CloseIcon } from './icons';
 // positions it over the body element, so moving panes never remounts it.
 export function PaneCard({
   paneKey, title, icon, subtitle, focused, docked, floating = false, hostRef, bodyRef, onActivate, onHeaderPointerDown,
-  onSplitRight, onSplitDown, onFullTab, onFloat, onDock, onClose, children,
+  onSplitRight, onSplitDown, onFullTab, onFloat, onDock, onMinimize, onClose, children,
 }: {
   paneKey: string;
   title: string;
@@ -33,6 +33,8 @@ export function PaneCard({
   onFloat?: () => void;
   /** Put a floating pane back as a tab. */
   onDock?: () => void;
+  /** Tuck a floating pane away into a pill in the corner. */
+  onMinimize?: () => void;
   onClose?: () => void;
   /** Drawn in the body, for a pane with no live surface (the empty "New pane"). */
   children?: React.ReactNode;
@@ -59,6 +61,7 @@ export function PaneCard({
           {onSplitDown && <PaneButton label={`Split ${title} down`} onClick={onSplitDown}><SplitDownIcon /></PaneButton>}
           {onFullTab && <PaneButton label={`Open ${title} as full tab`} onClick={onFullTab}><MaximizeIcon /></PaneButton>}
           {onFloat && <PaneButton label={`Float ${title}`} onClick={onFloat}><FloatIcon /></PaneButton>}
+          {onMinimize && <PaneButton label={`Minimize ${title}`} onClick={onMinimize}><MinimizeIcon /></PaneButton>}
           {onDock && <PaneButton label={`Dock ${title}`} onClick={onDock}><DockIcon /></PaneButton>}
           {onClose && <PaneButton label={`Close ${title}`} onClick={onClose}><CloseIcon size={13} /></PaneButton>}
         </span>
@@ -102,4 +105,7 @@ function FloatIcon() {
 // The same frame, the small window drawn back in: an arrow from the corner into the frame.
 function DockIcon() {
   return <svg {...ICON} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M11.5 10.5 6.5 5.5M6.5 8.5v-3h3" /></svg>;
+}
+function MinimizeIcon() {
+  return <svg {...ICON} strokeLinecap="round"><path d="M4 11.5h8" /></svg>;
 }
