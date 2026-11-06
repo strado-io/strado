@@ -36,7 +36,7 @@ jobs:
 
   mac:
     needs: create-release
-    runs-on: macos-14           # arm64, matches the DMG we ship
+    runs-on: macos-15           # arm64, matches the DMG we ship
     # Optional: create a "release" environment with yourself as required
     # reviewer, so a pushed tag cannot mint a signed build without a click.
     # environment: release

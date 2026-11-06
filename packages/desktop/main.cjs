@@ -804,6 +804,7 @@ if (!gotLock) {
   });
 
   const PREVIEW_CLICK_MS = 800;
+  const PREVIEW_FOCUS_SETTLE_MS = 150;
   ipcMain.handle('strado:preview', (e, action, key, payload) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const zoom = e.sender.getZoomFactor?.() ?? 1;
@@ -850,14 +851,23 @@ if (!gotLock) {
           if (input.type === 'mouseDown' || input.type === 'gestureTapDown' || input.type === 'touchStart') pressedAt = Date.now();
         });
         wc.on('focus', () => {
-          // Not chosen: the page took focus by itself (a reload after a dev
-          // server restart, autofocus, HMR). Hand the keyboard straight back
-          // and stay on the tab the user is on (a terminal, Files, …).
-          if (Date.now() - pressedAt > PREVIEW_CLICK_MS) {
-            if (!win.isDestroyed()) win.webContents.focus();
+          if (Date.now() - pressedAt <= PREVIEW_CLICK_MS) {
+            send({ type: 'focus' });
             return;
           }
-          send({ type: 'focus' });
+          // A click focuses the view before its mouseDown reaches
+          // 'input-event', so a first click looks unchosen here: wait for it.
+          setTimeout(() => {
+            if (wc.isDestroyed() || win.isDestroyed()) return;
+            if (Date.now() - pressedAt <= PREVIEW_CLICK_MS) {
+              send({ type: 'focus' });
+              return;
+            }
+            // Not chosen: the page took focus by itself (a reload after a dev
+            // server restart, autofocus, HMR). Hand the keyboard back and
+            // stay on the tab the user is on (a terminal, Files, …).
+            if (wc.isFocused()) win.webContents.focus();
+          }, PREVIEW_FOCUS_SETTLE_MS);
         });
         // Scripted popups (window.open with features — OAuth/Google Sign-In)
         // must be REAL child windows: the popup delivers its result through
